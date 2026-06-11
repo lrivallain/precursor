@@ -1,0 +1,6 @@
+# Alembic revision scripts live here. Generate the first one with:
+#
+#     alembic revision --autogenerate -m "initial"
+#
+# In dev, ``init_db()`` in precursor.backend.db creates tables directly so you
+# can iterate without migrations. Switch to Alembic before deploying.

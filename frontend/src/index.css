@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f7f7f8;
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-muted: #6b7280;
+  --color-accent: #2563eb;
+}
+
+.dark {
+  --color-bg: #0b0d10;
+  --color-surface: #15181d;
+  --color-border: #2a2f37;
+  --color-text: #e6e8eb;
+  --color-muted: #8a93a0;
+  --color-accent: #60a5fa;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: theme(fontFamily.sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Minimal markdown styling — keeps chat bubbles uncluttered. */
+.markdown :where(p, ul, ol, pre, blockquote):not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+.markdown code {
+  background: var(--color-surface);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  font-family: theme(fontFamily.mono);
+  font-size: 0.9em;
+}
+.markdown pre {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+.markdown a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}

@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a new capability or improvement.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve? Why does it matter?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like Precursor to behave?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Backend
+        - Frontend
+        - GitHub integration
+        - MCP
+        - Plugins
+        - Docs / DX
+    validations:
+      required: true

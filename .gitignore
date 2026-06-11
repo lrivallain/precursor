@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.env.local
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# SQLite dev DB
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Node / Vite
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+npm-debug.log*
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Alembic local overrides
+precursor/backend/alembic/versions/__pycache__/
