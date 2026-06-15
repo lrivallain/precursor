@@ -23,6 +23,8 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   Security & deployment section in the README documenting the single-user,
   local-first, no-auth model.
 - Dependabot config for pip, npm, and GitHub Actions.
+- Contributor prompt helpers (`.github/prompts/`): `/ship-change` and
+  `/release` workflows.
 
 ### Changed
 
@@ -31,11 +33,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 - `mypy precursor` passes under `strict` and is a hard CI gate.
 - **uv** is the documented tool for the Python env, running, building, and
   releasing (README, CONTRIBUTING, Makefile, RELEASING).
-- The built wheel is now **self-contained**: the SPA is bundled inside the
-  package (`force-include`), so `uvx precursor` / `uv tool install precursor`
+- The built wheel is now **self-contained**: a conditional build hook
+  (`hatch_build.py`) bundles the SPA inside the package for distribution builds
+  (not editable installs), so `uvx precursor` / `uv tool install precursor`
   serve the UI with no extra files.
 - `.env.example` LLM section reconciled with `config.py` (lists all three
   providers; default `github_copilot`).
+- Docs: rewrote `docs/architecture.md` to current state (scheduler, workspaces,
+  command-runner jail, skills/memory, real MCP transports, three LLM providers);
+  clarified GitHub token resolution (`GITHUB_TOKEN` → `gh` CLI → mock) and the
+  dev-vs-prod port model (Vite `:5173` proxy → backend `:8000`).
 
 <!--
 Release sections are added below by the release process, newest first, e.g.:

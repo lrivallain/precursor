@@ -42,11 +42,15 @@ environment, running, building, and releasing. Install it once
 ```bash
 uv sync --extra dev          # create .venv + install (uv manages the interpreter)
 cp .env.example .env
-# Add GITHUB_TOKEN with the `models:read` fine-grained permission to your .env.
 ```
 
-Without `GITHUB_TOKEN`, Precursor automatically uses the `MockProvider` so the
-chat flow stays usable.
+**GitHub credentials (optional).** Precursor resolves a GitHub token in this
+order: (1) `GITHUB_TOKEN` in your environment / `.env`, then (2) your **GitHub
+CLI** session (`gh auth token`) if you're signed in via `gh auth login`. So if
+you already use `gh`, you don't need to set anything. A token needs the
+`models:read` fine-grained permission (or Copilot access) for real model
+responses. With **no** token at all, Precursor falls back to the `MockProvider`
+so the chat flow stays usable offline.
 
 ### Run it (one command)
 

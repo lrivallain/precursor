@@ -2,7 +2,8 @@
 
 Precursor is a single-process Python service that serves a JSON API and the
 built React SPA from the same uvicorn worker. There is no Node.js runtime in
-production.
+production. A small in-process scheduler and an in-process event bus run
+alongside the request handlers.
 
 ```mermaid
 flowchart LR
@@ -13,92 +14,226 @@ flowchart LR
     subgraph Process[uvicorn worker]
       FAPI[FastAPI app]
       DB[(SQLite / Postgres)]
-      LLM[LLM provider\n(GH Models / mock)]
-      MCPS[MCP Server\n(exposes conversations)]
-      MCPC[MCP Client manager\n(attaches tool servers)]
+      LLM["LLM provider<br/>(Copilot / GH Models / mock)"]
+      SCHED["Scheduler<br/>(recurring topics)"]
+      BUS["Event bus<br/>(SSE pub/sub)"]
+      MCPS["MCP server 'precursor'<br/>(stdio + HTTP /mcp)"]
+      MCPC["MCP client manager<br/>(built-in + user tool servers)"]
       PLG[Plugin registry]
     end
 
     GH[GitHub REST API]
+    WS["Workspaces<br/>(git clones / local dirs)"]
+    JAIL["Docker jail<br/>(cmd-runner)"]
     EXT_MCP[External MCP servers]
-    EXT_CLI[CLI agents / IDE extensions]
+    HOST["MCP hosts<br/>(VS Code, CLI agents)"]
 
     SPA -- "/api/*" --> FAPI
-    SPA <-- "SSE stream" --- FAPI
+    SPA <-- "SSE /api/events" --- BUS
     FAPI --> DB
     FAPI --> LLM
     FAPI --> GH
+    FAPI --> SCHED --> LLM
     FAPI --> MCPC --> EXT_MCP
-    EXT_CLI --> MCPS --> FAPI
+    MCPC --> JAIL
+    MCPC --> WS
+    HOST --> MCPS --> DB
     PLG --> FAPI
 ```
 
+## Process model
+
+A single `uvicorn` worker hosts everything (`precursor/backend/main.py`):
+
+- **FastAPI app** — JSON API under `/api/*`, the built SPA at `/`, and the MCP
+  server's streamable-HTTP endpoint at `/mcp` (gated, loopback-only).
+- **Scheduler** (`services/scheduler.py`) — an async ticker + bounded worker
+  pool that runs due "scheduled" topics; started/stopped in the app lifespan.
+- **Event bus** (`services/events.py`) — in-process pub/sub so multiple browser
+  windows stay in sync over a single SSE stream (`/api/events`). A contextvar
+  carries the originating client id so a window suppresses its own echoes.
+- **MCP session manager** — the `precursor` MCP server's HTTP transport task
+  group, also started in the lifespan.
+
+Version is CalVer, derived from git tags by hatch-vcs at build time and exposed
+at `GET /api/version` (and `/api/health`).
+
 ## Request flow: streamed chat
 
-1. `POST /api/topics/{id}/messages/stream` with the user prompt.
-2. The router persists the user `Message`, then snapshots history and builds a
+1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.
+2. The router persists the user `Message`, snapshots history, and builds a
    system prompt that includes the linked GitHub issue body + most-recent
-   comments + labels.
-3. The configured `LLMProvider` yields text deltas, forwarded as SSE
-   `delta` events.
-4. On stream end, the assistant turn is persisted (using a fresh DB session so
-   the response generator is not bound to the request scope).
+   comments + labels, plus any attached skills/memory.
+3. Enabled MCP tool servers are opened for the turn; their tools are advertised
+   to the provider. The router runs a **tool loop**: stream text, collect tool
+   calls, execute them, append `tool` results, call again — up to a configured
+   max-rounds — until the model stops requesting tools.
+4. Each round is trimmed to a token budget (`services/context_budget.py`) so a
+   few large tool results can't overflow the context window.
+5. Text deltas and tool-call events stream to the browser over SSE.
+6. On stream end (or user "stop"), the assistant turn is persisted using a
+   **fresh DB session** (the request-scoped one may be closed by the time the
+   generator finishes), and `message.changed` / `stream.ended` events publish.
+
+Scheduled topics run the *same* turn logic off the request path via
+`services/turn.py`, driven by the scheduler instead of an HTTP request.
 
 ## Database
 
-- Models live in `precursor/backend/models/`.
-- `Topic` self-references for a tree (parent/children).
-- `Message` is per-topic with cascade delete.
-- `AppSetting` is a JSON-encoded key/value store for runtime-editable settings
-  (theme, model, MCP toggles, opaque secrets that are never echoed back).
-- Dev startup runs `Base.metadata.create_all`; production uses Alembic.
+- Models live in `precursor/backend/models/`. Async SQLAlchemy 2 via
+  `AsyncSession` (`db.py`).
+- `Topic` — self-referencing tree (parent/children); `kind` is
+  `standard | schedule_root | scheduled`.
+- `Message` — per-topic, cascade delete; roles `user/assistant/system/tool`.
+- `TopicSchedule` — recurrence config + run state for a scheduled topic
+  (interval, weekday mask, time-of-day, timezone, lease/status).
+- `Workspace` — a git clone or a local directory the assistant can browse/edit.
+- `Skill` — a reusable prompt preset (`/name` invocation).
+- `Memory` — long-term notes injected into the system prompt.
+- `Attachment` — image blobs bound to messages (vision content-parts).
+- `MCPServer` — user-defined external MCP tool servers (transport, headers).
+- `IssueContextCache` — cached GitHub issue summary/state/labels (TTL refresh).
+- `AppSetting` — JSON key/value store for runtime-editable settings (theme,
+  model, MCP toggles, `mcp_expose`, jail config, **secrets that are never echoed
+  back** — only `*_present` booleans are returned).
+- Dev startup runs `Base.metadata.create_all` plus a `_ensure_dev_columns`
+  backfill shim (SQLite ALTER/rebuild); **production uses Alembic migrations**
+  (`alembic upgrade head`), which mirror the dev shim.
+
+Runtime settings layer over env defaults: `services/app_settings.py` resolves
+each setting as "env/`.env` default, overridden by an `AppSetting` row if
+present, clamped to a sane range".
 
 ## GitHub integration
 
 `services/github_client.py` wraps just the endpoints the app needs (list/get
-issues, list comments, list labels, create issue). Topic context is rebuilt
-on every turn so changes to the linked issue propagate instantly.
+issues, list comments, list labels, create/update issue, post comment). Topic
+context is rebuilt on every turn so changes to the linked issue propagate
+instantly; the result is cached (`IssueContextCache`) with a TTL.
+
+Auth resolves in `services/github_auth.py`, in order:
+
+1. `GITHUB_TOKEN` from the environment / `.env`.
+2. The **GitHub CLI** session (`gh auth token`) if signed in via `gh auth login`.
+
+A token is never required to start: with neither source, the LLM falls back to
+the mock provider. The resolved source is surfaced to the UI as
+`env | gh-cli | none` (tokens themselves are never returned).
 
 ## LLM provider abstraction
 
-`services/llm/base.py` defines a tiny protocol:
+`services/llm/base.py` defines a small protocol — two streaming methods
+(plain text and a tool-capable event stream) plus `list_models()`:
 
 ```python
 class LLMProvider(Protocol):
     name: str
-    async def stream_chat(self, *, model: str, messages: Sequence[ChatMessage]) -> AsyncIterator[str]: ...
+    def stream_chat(self, *, model, messages) -> AsyncIterator[str]: ...
+    def stream_chat_with_tools(self, *, model, messages, tools) -> AsyncIterator[ProviderEvent]: ...
+    async def list_models(self) -> list[LLMModel]: ...
 ```
 
-Two implementations ship:
+Three implementations ship; `get_llm_provider()` selects by the
+`llm_provider` setting (`github_copilot | github_models | mock`):
 
-- `GitHubModelsProvider` — official, uses the `openai` SDK against
-  `https://models.github.ai/inference`.
+- `GitHubCopilotProvider` — **default**; the Copilot model catalogue (Claude,
+  Gemini, GPT, …) via a `gho_*` token, OpenAI-compatible at
+  `https://api.githubcopilot.com`.
+- `GitHubModelsProvider` — GitHub Models inference
+  (`https://models.github.ai/inference`), PAT with `models:read`.
 - `MockProvider` — deterministic streamed reply, used automatically when no
-  `GITHUB_TOKEN` is set.
+  token is available.
 
-Adding a new provider (Azure OpenAI, local Ollama, ...) is one file plus a
-branch in `get_llm_provider()`.
+Shared OpenAI-compatible plumbing (message/tool translation, the tool-call
+delta accumulator) lives in `services/llm/_openai_compat.py`. Adding a provider
+(Azure OpenAI, local Ollama, …) is one file plus a branch in
+`get_llm_provider()`.
 
 ## MCP
 
-Precursor is *both* an MCP server and an MCP client:
+Precursor is *both* an MCP client and an MCP server, with working transports.
 
-- **As server** (`services/mcp/server.py`) — exposes `list_topics`, `get_topic`,
-  `post_message` so external agents can drive conversations.
-- **As client** (`services/mcp/client.py`) — keeps a registry of external tool
-  servers users can attach per-topic.
+**As client** (`services/mcp/client.py`) — `MCPClientManager` holds a registry
+of tool servers. Built-ins ship in-tree as stdio subprocesses or remote
+streamable-HTTP: `github`, `workiq`, `fetch`, `workspace-fs`, `cmd-runner`, and
+`precursor` itself. Users add their own (`MCPServer` rows). Each server is
+toggled in Settings (the `mcp_enabled` map); sessions are opened per chat turn
+and their tools surfaced to the provider. A host-dependency *preflight* gates
+enabling (e.g. `cmd-runner` needs Docker when its jail is on).
 
-The current code ships the descriptor / registry layer; transport wiring is the
-next step and lives behind these stable surfaces.
+**As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
+`precursor` exposing Precursor's own data: topics, messages, search, skills,
+memory, `post_message` (runs a full turn), and schedules. Every tool is gated by
+a per-section `mcp_expose` toggle (default **off** — exposing conversation
+history outbound is opt-in). Two transports, same tools:
+
+- **stdio** — `python -m precursor.backend.services.mcp.precursor_server`; how a
+  host like VS Code launches it as a subprocess.
+- **HTTP** — mounted in-process at `/mcp` (streamable-http). Off by default,
+  loopback-only, with a Host-header allowlist (DNS-rebinding protection) and no
+  auth — so it never answers on a non-loopback bind.
+
+`services/mcp/server.py` is the descriptor behind `GET /api/mcp/server/info`.
+
+## Scheduler
+
+`services/scheduler.py` drives recurring "scheduled" topics: a single async
+ticker enqueues due `TopicSchedule` rows, a bounded worker pool runs each via
+`services/turn.py` (the same generation path as manual chat) under a timeout,
+with DB row leasing for crash recovery. Recurrence supports interval,
+weekday mask, and daily time-of-day in a timezone (`services/schedule_timing.py`).
+
+## Workspaces
+
+A `Workspace` is a git clone or a local directory the assistant can browse and
+edit. `services/workspace_git.py` clones/pulls/commits (token injected at op
+time, never stored on the row); `services/workspace_fs.py` does sandboxed file
+ops — every path is routed through `safe_join`, which rejects traversal outside
+the workspace root and blocks `.git`. The same sandbox backs the `workspace-fs`
+MCP server so the assistant edits files within the jail.
+
+## Command runner (jail)
+
+`services/cmd_runner.py` + the `cmd-runner` MCP server execute bash/python/node
+either inside a throwaway **Docker container** (the default "jail": bind-mounted
+workdir, network off, cpu/memory/pid limits) or — when the jail is disabled —
+directly on the host with full disk access (a loud, opt-in disclaimer). Enabling
+the server preflights Docker availability against the effective jail setting.
+
+## Skills & memory
+
+- **Skills** (`Skill`, `routers/skills.py`) — reusable prompt presets invoked as
+  `/name` in chat; the SPA expands them inline.
+- **Memory** (`Memory`, `routers/memories.py`) — long-term notes injected into
+  the system prompt so context persists across topics.
 
 ## SPA
 
-- Vite + React 19 + Tailwind.
+- Vite + React 19 + Tailwind. Built to `frontend/dist`; in production FastAPI
+  serves it from there, and the build is also **bundled inside the wheel**
+  (`precursor/frontend_dist`) so an installed package is self-contained.
+- All HTTP goes through `src/lib/api.ts`. Streaming chat uses a manual SSE
+  reader (`src/lib/sse.ts`) because it POSTs a JSON body (not `EventSource`);
+  cross-window sync uses the `/api/events` SSE stream.
 - Theming via CSS variables (`light` / `dark` / `system`), toggled by adding
   `.dark` to `<html>`.
 - The SPA fetches `/api/plugins` on boot — extensions describe themselves
-  declaratively (kind + slot + config) and are rendered by renderers
-  registered through `src/lib/plugins.ts`.
+  declaratively (kind + slot + config) and are rendered by renderers registered
+  through `src/lib/plugins.ts`.
+
+## Build, versioning & packaging
+
+- **uv** is the toolchain (env, run, build, release); `pyproject.toml` is a uv
+  project with a committed `uv.lock`.
+- Version is **CalVer** (`YYYY.M.MICRO`) derived from git tags by **hatch-vcs**
+  at build time — no literal to edit (`precursor.__version__`).
+- A conditional build hook (`hatch_build.py`) bundles the built SPA into the
+  wheel only for real (non-editable) builds, so `uv sync` / dev / CI never need
+  a frontend build.
+- CI (`.github/workflows/ci.yml`) runs ruff, mypy (strict), pytest, and the
+  frontend typecheck+build on every PR. A tag push (`v*`) triggers
+  `release.yml`, which builds the wheel and publishes a GitHub Release. See
+  [../RELEASING.md](../RELEASING.md).
 
 ## Plugin contract
 
