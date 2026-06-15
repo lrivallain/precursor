@@ -15,6 +15,14 @@ plus a frontend extension registry.
 
 ## Conventions
 
+### Tooling
+
+- **uv** is the Python toolchain — env, run, build, release. Prefer
+  `uv run <cmd>` (e.g. `uv run pytest`, `uv run ruff check .`) over a manually
+  activated venv, and `uv build` for wheels. `make` targets wrap these
+  (`make sync`, `make dev`, `make check`, `make wheel`). Don't reintroduce
+  `pip install` / bare `uvicorn` invocations in docs or scripts.
+
 ### Python (backend)
 
 - Target **Python 3.12+**. Always use `from __future__ import annotations`.
@@ -54,7 +62,7 @@ plus a frontend extension registry.
    `create_all`, prod uses migrations).
 3. Keep comments to "why", not "what". Don't add docstrings to code you didn't
    touch.
-4. Run the quality gates listed in `CONTRIBUTING.md`.
+4. Run the quality gates (`make check`, listed in `CONTRIBUTING.md`).
 
 ## What *not* to do
 
@@ -63,4 +71,6 @@ plus a frontend extension registry.
   be pre-built and served by FastAPI.
 - Don't echo secret values (API tokens) in API responses. Use the
   `api_keys_present` boolean pattern from `schemas/settings.py`.
+- Don't hardcode the version anywhere — it's CalVer from git tags via hatch-vcs
+  (read `precursor.__version__`). See `RELEASING.md`.
 - Don't add unrelated refactors to a feature PR.

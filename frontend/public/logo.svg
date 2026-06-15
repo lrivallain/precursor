@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Precursor">
+  <title>Precursor</title>
+  <!-- Rounded-square brand badge using the app's accent blue. -->
+  <rect width="256" height="256" rx="56" fill="#2563eb"/>
+  <!-- Faint trailing chevron — a "motion echo" hinting at "precursor".
+       Centered vertically on the main chevron's apex (y=98). -->
+  <polyline points="75,49 140,98 75,147"
+            fill="none" stroke="#ffffff" stroke-opacity="0.18"
+            stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Stem of the P. Top raised to y=36 and bottom kept at y=208 so the
+       leg extends further below the bowl. rx=17 matches the chevron's
+       cap radius so the stem corner arc and chevron cap fuse seamlessly. -->
+  <rect x="58" y="36" width="34" height="172" rx="17" fill="#ffffff"/>
+  <!-- Bowl as a rounded chevron. Narrower apex (x=180 vs former 200) and
+       endpoint y values (53, 143) chosen so the cap centers (75, 53)
+       and (75, 143) coincide with the stem's top- and the chevron's
+       bottom-cap; vertical center is the apex at y=98. -->
+  <polyline points="75,53 180,98 75,143"
+            fill="none" stroke="#ffffff" stroke-width="34"
+            stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

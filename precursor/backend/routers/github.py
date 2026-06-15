@@ -6,8 +6,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
+from precursor.backend.db import get_session
+from precursor.backend.services.app_settings import (
+    resolve_global_github_repo,
+    resolve_issue_associations_enabled,
+)
+from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
 
 router = APIRouter(prefix="/api/github", tags=["github"])
@@ -20,8 +27,13 @@ class IssueCreatePayload(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
-def _resolve_repo(repo: str | None, settings: Settings) -> str:
-    target = repo or settings.github_repo
+async def _resolve_repo(repo: str | None, session: AsyncSession) -> str:
+    if not await resolve_issue_associations_enabled(session):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "GitHub issue associations are disabled. Enable the feature in Settings → GitHub.",
+        )
+    target = repo or await resolve_global_github_repo(session)
     if not target:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -31,12 +43,14 @@ def _resolve_repo(repo: str | None, settings: Settings) -> str:
 
 
 def _require_token(settings: Settings) -> str:
-    if not settings.github_token:
+    token = resolve_github_token(settings)
+    if not token:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "GITHUB_TOKEN is not configured.",
+            "No GitHub token available. Configure one in Settings, set GITHUB_TOKEN, "
+            "or sign in with `gh auth login`.",
         )
-    return settings.github_token
+    return token
 
 
 @router.get("/issues")
@@ -44,8 +58,9 @@ async def list_issues(
     repo: str | None = None,
     q: str | None = None,
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    target = _resolve_repo(repo, settings)
+    target = await _resolve_repo(repo, session)
     token = _require_token(settings)
     client = GitHubClient(token=token)
     try:
@@ -58,8 +73,9 @@ async def list_issues(
 async def create_issue(
     payload: IssueCreatePayload,
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    target = _resolve_repo(payload.repo, settings)
+    target = await _resolve_repo(payload.repo, session)
     token = _require_token(settings)
     client = GitHubClient(token=token)
     try:
@@ -74,8 +90,9 @@ async def create_issue(
 async def list_labels(
     repo: str | None = None,
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    target = _resolve_repo(repo, settings)
+    target = await _resolve_repo(repo, session)
     token = _require_token(settings)
     client = GitHubClient(token=token)
     try:

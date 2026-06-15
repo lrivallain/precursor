@@ -1,3 +1,29 @@
 """Precursor — per-topic AI chat for work follow-up."""
 
-__version__ = "0.1.0"
+from __future__ import annotations
+
+import importlib
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+
+def _resolve_version() -> str:
+    """Best-effort version: installed metadata → built _version.py → unknown.
+
+    The version is CalVer (YYYY.M.MICRO), derived from git tags by hatch-vcs at
+    build/install time (see pyproject ``[tool.hatch.version]``).
+    """
+    try:
+        return _pkg_version("precursor")
+    except PackageNotFoundError:
+        pass
+    try:
+        # Imported dynamically: this file is generated at build time and absent
+        # from a raw source checkout, so a static import would not resolve.
+        module = importlib.import_module("precursor._version")
+        return str(module.__version__)
+    except Exception:  # running from a raw source tree without a built version
+        return "0.0.0+unknown"
+
+
+__version__ = _resolve_version()

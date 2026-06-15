@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Theme = Literal["light", "dark", "system"]
+GitHubTokenSource = Literal["env", "gh-cli", "settings", "none"]
 
 
 class SettingsPayload(BaseModel):
@@ -15,20 +16,75 @@ class SettingsPayload(BaseModel):
     theme: Theme | None = None
     llm_model: str | None = None
     github_repo: str | None = None
-    # Map of MCP server name -> enabled.
-    mcp_enabled: dict[str, bool] | None = None
+    issue_context_ttl_minutes: int | None = None
+    # When true, the per-conversation stats sidebar is rendered in the UI.
+    # Token usage is collected and persisted regardless.
+    show_chat_stats: bool | None = None
+    # Max tool-call iterations per user turn before the stream aborts.
+    max_tool_rounds: int | None = None
+    # Map of MCP server name -> enabled.    mcp_enabled: dict[str, bool] | None = None
     # Map of MCP server name -> attachment config (per-topic attachments are
     # stored separately, this map is the global registry of available servers).
     mcp_servers: dict[str, dict[str, Any]] | None = None
     # Stored as opaque tokens; the backend never returns these in responses.
     api_keys: dict[str, str] | None = None
+    # App-level switch for the GitHub-issue association feature.
+    issue_associations_enabled: bool | None = None
+    # Map of Precursor capability section -> exposed over the built-in MCP server.
+    mcp_expose: dict[str, bool] | None = None
+    # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
+    mcp_http_enabled: bool | None = None
+    # --- System settings (env default + DB override) ---
+    # Prompt budgeting.
+    llm_max_input_tokens: int | None = None
+    llm_max_tool_result_tokens: int | None = None
+    # Scheduler (only the live-applicable timeout is editable).
+    scheduled_run_timeout_seconds: int | None = None
+    # Command runner ("jail").
+    cmd_runner_jail: bool | None = None
+    cmd_runner_image: str | None = None
+    cmd_runner_network: bool | None = None
+    cmd_runner_timeout_seconds: int | None = None
+    cmd_runner_max_output_bytes: int | None = None
+    cmd_runner_memory: str | None = None
+    cmd_runner_pids_limit: int | None = None
+    cmd_runner_cpus: str | None = None
 
 
 class SettingsRead(BaseModel):
     theme: Theme = "system"
-    llm_model: str = "openai/gpt-4o-mini"
+    llm_model: str = "claude-sonnet-4.5"
     github_repo: str = ""
+    issue_context_ttl_minutes: int = 60
+    show_chat_stats: bool = True
+    max_tool_rounds: int = 15
     mcp_enabled: dict[str, bool] = Field(default_factory=dict)
     mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
     # Booleans only — actual values are write-only and never echoed.
     api_keys_present: dict[str, bool] = Field(default_factory=dict)
+    # Where the effective GitHub token comes from. Lets the UI hide the token
+    # input when the user is already signed in via `gh auth login`.
+    github_token_source: GitHubTokenSource = "none"
+    issue_associations_enabled: bool = True
+    # Which Precursor capability sections the built-in MCP server exposes.
+    mcp_expose: dict[str, bool] = Field(default_factory=dict)
+    # HTTP transport for the built-in 'precursor' MCP server.
+    mcp_http_enabled: bool = False
+    # Effective localhost endpoint URL, or null when the app isn't loopback-bound.
+    mcp_http_url: str | None = None
+    # True when the app is bound to a loopback host (HTTP transport is allowed).
+    mcp_http_loopback_ok: bool = True
+    # --- System settings (effective: env default with DB override applied) ---
+    llm_max_input_tokens: int = 600_000
+    llm_max_tool_result_tokens: int = 20_000
+    scheduled_run_timeout_seconds: int = 600
+    cmd_runner_jail: bool = True
+    cmd_runner_image: str = "python:3.14-slim"
+    cmd_runner_network: bool = False
+    cmd_runner_timeout_seconds: int = 120
+    cmd_runner_max_output_bytes: int = 100_000
+    cmd_runner_memory: str = "512m"
+    cmd_runner_pids_limit: int = 256
+    cmd_runner_cpus: str = "1"
+    # True when Docker is usable right now (informs the jail toggle in the UI).
+    docker_available: bool = False

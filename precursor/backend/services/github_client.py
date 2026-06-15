@@ -36,7 +36,7 @@ class GitHubClient:
     ) -> list[dict[str, Any]]:
         owner, name = self._split(repo)
         if query:
-            params = {
+            params: dict[str, str | int] = {
                 "q": f"repo:{owner}/{name} is:issue {query}",
                 "per_page": 50,
             }
@@ -91,11 +91,60 @@ class GitHubClient:
         r.raise_for_status()
         return self._issue_summary(r.json())
 
+    async def update_issue(
+        self,
+        repo: str,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+        state_reason: str | None = None,
+    ) -> dict[str, Any]:
+        owner, name = self._split(repo)
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if state is not None:
+            payload["state"] = state
+        if state_reason is not None:
+            payload["state_reason"] = state_reason
+        r = await self._client.patch(f"/repos/{owner}/{name}/issues/{number}", json=payload)
+        r.raise_for_status()
+        return self._issue_summary(r.json())
+
     async def list_labels(self, repo: str) -> list[dict[str, Any]]:
         owner, name = self._split(repo)
         r = await self._client.get(f"/repos/{owner}/{name}/labels", params={"per_page": 100})
         r.raise_for_status()
         return [{"name": label["name"], "color": label["color"]} for label in r.json()]
+
+    async def add_issue_comment(self, repo: str, number: int, body: str) -> dict[str, Any]:
+        owner, name = self._split(repo)
+        r = await self._client.post(
+            f"/repos/{owner}/{name}/issues/{number}/comments",
+            json={"body": body},
+        )
+        r.raise_for_status()
+        c = r.json()
+        return {
+            "id": c["id"],
+            "url": c.get("html_url"),
+            "body": c.get("body") or "",
+        }
+
+    async def get_authenticated_user(self) -> dict[str, Any]:
+        r = await self._client.get("/user")
+        r.raise_for_status()
+        u = r.json()
+        return {
+            "login": u.get("login") or "",
+            "name": u.get("name"),
+            "avatar_url": u.get("avatar_url"),
+            "html_url": u.get("html_url"),
+        }
 
     @staticmethod
     def _issue_summary(issue: dict[str, Any]) -> dict[str, Any]:
@@ -106,7 +155,9 @@ class GitHubClient:
             "url": issue.get("html_url"),
             "body": issue.get("body") or "",
             "labels": [
-                label["name"] if isinstance(label, dict) else label
+                {"name": label["name"], "color": label.get("color") or "888888"}
+                if isinstance(label, dict)
+                else {"name": label, "color": "888888"}
                 for label in issue.get("labels", [])
             ],
             "updated_at": issue.get("updated_at"),

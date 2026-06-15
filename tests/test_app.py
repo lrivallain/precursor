@@ -12,7 +12,9 @@ def test_create_app_and_health() -> None:
     with TestClient(app) as client:
         r = client.get("/api/health")
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        body = r.json()
+        assert body["status"] == "ok"
+        assert isinstance(body.get("version"), str) and body["version"]
 
 
 def test_topics_empty_tree() -> None:

@@ -26,6 +26,7 @@ older ones.
 
 | Layer    | Tech                                                                  |
 | -------- | --------------------------------------------------------------------- |
+| Tooling  | [uv](https://docs.astral.sh/uv/) for env, run, build & release        |
 | Backend  | Python 3.12+, FastAPI, SQLAlchemy 2 (async), Alembic, sse-starlette   |
 | LLM      | `openai` SDK pointed at `https://models.github.ai/inference`          |
 | MCP      | `mcp` Python SDK (client + server scaffolding)                        |
@@ -34,37 +35,54 @@ older ones.
 
 ## Quick start
 
-### 1. Backend
+Precursor uses **[uv](https://docs.astral.sh/uv/)** for everything Python —
+environment, running, building, and releasing. Install it once
+([instructions](https://docs.astral.sh/uv/getting-started/installation/)), then:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --extra dev          # create .venv + install (uv manages the interpreter)
 cp .env.example .env
-# Add GITHUB_TOKEN with the `models:read` fine-grained permission to your .env.
-
-uvicorn precursor.backend.main:app --reload
 ```
 
-Without `GITHUB_TOKEN`, Precursor automatically uses the `MockProvider` so the
-chat flow stays usable.
+**GitHub credentials (optional).** Precursor resolves a GitHub token in this
+order: (1) `GITHUB_TOKEN` in your environment / `.env`, then (2) your **GitHub
+CLI** session (`gh auth token`) if you're signed in via `gh auth login`. So if
+you already use `gh`, you don't need to set anything. A token needs the
+`models:read` fine-grained permission (or Copilot access) for real model
+responses. With **no** token at all, Precursor falls back to the `MockProvider`
+so the chat flow stays usable offline.
 
-### 2. Frontend (dev)
+### Run it (one command)
 
 ```bash
-cd frontend
-npm install
-npm run dev      # http://localhost:5173, proxies /api to :8000
+uv run precursor --dev        # uvicorn --reload + Vite HMR (Ctrl-C stops both)
+# or:  make dev
 ```
 
-### 3. Frontend (prod build, served by FastAPI)
+`uv run` resolves the project's environment on the fly — no manual activation.
+Other entry points:
 
 ```bash
-cd frontend
-npm install
-npm run build    # outputs to frontend/dist
+uv run precursor                     # single process: API + pre-built SPA on one port
+uv run precursor --dev --no-frontend # backend only (uvicorn --reload)
+npm --prefix frontend run dev        # Vite only
 ```
 
-Restart uvicorn and the SPA is mounted at `/`.
+### Frontend prod build (served by FastAPI)
+
+```bash
+make build                    # npm --prefix frontend run build → frontend/dist
+uv run precursor              # serves API + SPA on :8000
+```
+
+The single-process run needs the SPA pre-built; `uv run precursor` then serves
+it from `frontend/dist`. The SPA is also bundled **inside the wheel**, so an
+installed build is self-contained:
+
+```bash
+uvx precursor                 # run the latest published wheel, zero setup
+# or pin it:  uv tool install precursor && precursor
+```
 
 ## Project layout
 
@@ -86,8 +104,10 @@ precursor/
 ├── frontend/
 │   ├── src/components/     # Sidebar, ChatPanel, SettingsPanel, MessageBubble
 │   ├── src/lib/            # api, sse, plugins, theme, types
-│   └── vite.config.ts
-├── pyproject.toml
+│   └── vite.config.ts      # built to frontend/dist → bundled into the wheel
+├── pyproject.toml          # uv project: deps, build (hatch-vcs CalVer), tooling
+├── uv.lock                 # uv-managed lockfile (committed)
+├── Makefile                # uv-based dev/build shortcuts
 └── alembic.ini
 ```
 
@@ -101,11 +121,44 @@ precursor/
   plugin contract — third parties can mount routers, contribute frontend
   panels, and register MCP tools without forking the core
 
+## Security & deployment model
+
+> [!IMPORTANT]
+> Precursor is designed as a **single-user, local-first** app and ships with
+> **no authentication**. Run it bound to `127.0.0.1` (the default) and do not
+> expose it to a network or the public internet without putting your own
+> authenticating reverse proxy in front of it.
+
+Specific things to keep local:
+
+- The API and SPA have **no auth** — anyone who can reach the port has full
+  access to your topics, settings, and stored tokens.
+- The optional **command-runner** MCP tool can execute shell/Python/Node. Keep
+  the Docker "jail" enabled; disabling it grants full local-disk access.
+- The built-in **MCP-over-HTTP** transport is off by default and only binds to
+  loopback — leave it that way unless you front it with auth.
+- Secrets (`GITHUB_TOKEN`, provider keys) live in `.env` / the local DB and are
+  never echoed by the API. Don't commit `.env`.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+## Versioning & releases
+
+Precursor uses **CalVer** (`YYYY.M.MICRO`, e.g. `2026.6.0`). The version is a
+single source of truth derived from git tags by hatch-vcs at build time — there
+is no literal to edit. The running version is exposed at `GET /api/version` and
+shown in the Settings panel.
+
+Releases ship from a pushed `v<version>` tag via GitHub Actions. See
+[RELEASING.md](RELEASING.md) and [CHANGELOG.md](CHANGELOG.md).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Plugin system](docs/plugins.md)
 - [Contributing](CONTRIBUTING.md)
+- [Releasing](RELEASING.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

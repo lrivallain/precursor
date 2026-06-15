@@ -34,11 +34,11 @@ class FrontendExtension:
 
 @dataclass(slots=True)
 class PluginRegistry:
-    routers: list["APIRouter"] = field(default_factory=list)
+    routers: list[APIRouter] = field(default_factory=list)
     frontend_extensions: list[FrontendExtension] = field(default_factory=list)
     mcp_tools: list[dict[str, Any]] = field(default_factory=list)
 
-    def add_router(self, router: "APIRouter") -> None:
+    def add_router(self, router: APIRouter) -> None:
         self.routers.append(router)
 
     def add_frontend_extension(self, ext: FrontendExtension) -> None:
@@ -53,7 +53,7 @@ def get_registry() -> PluginRegistry:
     return PluginRegistry()
 
 
-def discover(app: "FastAPI | None" = None) -> PluginRegistry:
+def discover(app: FastAPI | None = None) -> PluginRegistry:
     """Load every installed plugin and let it register its contributions."""
     registry = get_registry()
     for ep in entry_points(group=ENTRY_POINT_GROUP):

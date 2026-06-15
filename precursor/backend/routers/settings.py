@@ -13,11 +13,39 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
+from precursor.backend.services.app_settings import (
+    DEFAULT_GITHUB_REPO,
+    DEFAULT_ISSUE_ASSOCIATIONS_ENABLED,
+    DEFAULT_ISSUE_CONTEXT_TTL_MINUTES,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_MAX_TOOL_ROUNDS,
+    MAX_TOOL_ROUNDS_CEILING,
+    resolve_mcp_expose,
+    resolve_mcp_http_enabled,
+    resolve_system_settings,
+)
+from precursor.backend.services.cmd_runner import docker_available
+from precursor.backend.services.github_auth import github_token_source
+from precursor.backend.services.mcp.precursor_server import (
+    http_endpoint_url,
+    is_loopback_host,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 # Keys that contain secrets — never echoed back, only their presence is reported.
 _SECRET_KEYS = {"api_keys"}
+
+
+def _clamp_max_tool_rounds(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_MAX_TOOL_ROUNDS
+    n = int(value)
+    if n < 1:
+        return 1
+    if n > MAX_TOOL_ROUNDS_CEILING:
+        return MAX_TOOL_ROUNDS_CEILING
+    return n
 
 
 async def _load_all(session: AsyncSession) -> dict[str, Any]:
@@ -34,22 +62,47 @@ async def _upsert(session: AsyncSession, key: str, value: Any) -> None:
         existing.value = encoded
 
 
-def _as_read(data: dict[str, Any]) -> SettingsRead:
-    defaults = get_settings()
+def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> SettingsRead:
     api_keys = data.get("api_keys") or {}
     return SettingsRead(
         theme=data.get("theme", "system"),
-        llm_model=data.get("llm_model", defaults.llm_model),
-        github_repo=data.get("github_repo", defaults.github_repo),
+        llm_model=data.get("llm_model", DEFAULT_LLM_MODEL),
+        github_repo=data.get("github_repo", DEFAULT_GITHUB_REPO),
+        issue_context_ttl_minutes=data.get(
+            "issue_context_ttl_minutes", DEFAULT_ISSUE_CONTEXT_TTL_MINUTES
+        ),
+        show_chat_stats=bool(data.get("show_chat_stats", True)),
+        max_tool_rounds=_clamp_max_tool_rounds(
+            data.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
+        ),
         mcp_enabled=data.get("mcp_enabled", {}),
         mcp_servers=data.get("mcp_servers", {}),
         api_keys_present={k: bool(v) for k, v in api_keys.items()},
+        github_token_source=github_token_source(get_settings()),
+        issue_associations_enabled=bool(
+            data.get("issue_associations_enabled", DEFAULT_ISSUE_ASSOCIATIONS_ENABLED)
+        ),
+        docker_available=docker_ok,
+        **system,
     )
+
+
+async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
+    cfg = get_settings()
+    return {
+        "mcp_http_enabled": await resolve_mcp_http_enabled(session),
+        "mcp_http_url": http_endpoint_url(),
+        "mcp_http_loopback_ok": is_loopback_host(cfg.host),
+    }
 
 
 @router.get("", response_model=SettingsRead)
 async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
-    return _as_read(await _load_all(session))
+    data = await _load_all(session)
+    system = await resolve_system_settings(session)
+    system["mcp_expose"] = await resolve_mcp_expose(session)
+    system.update(await _mcp_http_block(session))
+    return _as_read(data, system, docker_available()[0])
 
 
 @router.put("", response_model=SettingsRead)
@@ -68,4 +121,8 @@ async def update_settings(
     for key, value in data.items():
         await _upsert(session, key, value)
     await session.commit()
-    return _as_read(await _load_all(session))
+    refreshed = await _load_all(session)
+    system = await resolve_system_settings(session)
+    system["mcp_expose"] = await resolve_mcp_expose(session)
+    system.update(await _mcp_http_block(session))
+    return _as_read(refreshed, system, docker_available()[0])
