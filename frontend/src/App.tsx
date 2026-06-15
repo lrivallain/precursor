@@ -1,16 +1,80 @@
-import { useEffect, useState } from "react";
-import { Settings as SettingsIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { TopicCreateModal } from "./components/TopicCreateModal";
+import { ScheduleModal } from "./components/ScheduleModal";
+import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
+import { ArchivedTopicsPanel } from "./components/ArchivedTopicsPanel";
+import { IssueStatusBadge } from "./components/IssueStatusBadge";
+import { IssueLabelChip, IssueStateBadge } from "./components/IssueTags";
+import { WorkspacesPage } from "./components/WorkspacesPage";
+import { TooltipProvider } from "./components/Tooltip";
 import { api } from "./lib/api";
-import type { Topic, TopicNode } from "./lib/types";
+import { eventBus } from "./lib/events";
+import { skillsStore } from "./lib/skillsStore";
+import { useSettings } from "./lib/settingsStore";
+import { streamStore, useStreamVersion } from "./lib/streamStore";
+import { useIssueContext } from "./lib/useIssueContext";
+import type { Schedule, Topic, TopicNode } from "./lib/types";
+
+interface WsRoute {
+  open: boolean;
+  slug: string | null;
+  path: string | null;
+}
+
+// Parse the current pathname into a workspace route. `/ws` opens the overlay,
+// `/ws/<slug>/<file/path>` deep-links straight to a file.
+function parseWsRoute(): WsRoute {
+  const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  if (segs[0] !== "ws") return { open: false, slug: null, path: null };
+  const slug = segs[1] ? decodeURIComponent(segs[1]) : null;
+  const path =
+    segs.length > 2 ? segs.slice(2).map(decodeURIComponent).join("/") : null;
+  return { open: true, slug, path };
+}
 
 export default function App() {
   const [tree, setTree] = useState<TopicNode[]>([]);
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [wsRoute, setWsRoute] = useState<WsRoute>(parseWsRoute);
+  const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
+  const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
+    "settings",
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [createParentId, setCreateParentId] = useState<number | null | undefined>(undefined);
+  const [chatReloadKey, setChatReloadKey] = useState(0);
+  // Schedule editor: undefined = closed, null = creating, Schedule = editing.
+  const [scheduleModal, setScheduleModal] = useState<Schedule | null | undefined>(
+    undefined,
+  );
+
+  useStreamVersion();
+  const streamingTopicIds = streamStore.streamingTopicIds();
+
+  const settings = useSettings();
+  const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
+
+  const issueContext = useIssueContext(activeTopic, setActiveTopic);
+
+  // Mirror activeTopic into a ref so the onComplete callback (set up once)
+  // can read the current value without resubscribing on every change.
+  const activeTopicRef = useRef<Topic | null>(activeTopic);
+  useEffect(() => {
+    activeTopicRef.current = activeTopic;
+  }, [activeTopic]);
+
+  // Mirror the workspaces overlay state so the topic-hash effect can bail out
+  // without re-subscribing whenever the overlay toggles.
+  const workspacesOpenRef = useRef(wsRoute.open);
+  useEffect(() => {
+    workspacesOpenRef.current = wsRoute.open;
+  }, [wsRoute.open]);
 
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
@@ -18,58 +82,381 @@ export default function App() {
 
   useEffect(() => {
     void refreshTree();
+    void skillsStore.load();
+  }, []);
+
+  // ---- URL hash routing ------------------------------------------------
+  // `#<slug>` is the canonical deep link for a topic. We keep it in sync
+  // both ways: clicking a topic updates the hash, and back/forward (or a
+  // pasted link) resolves the slug back to an active topic. The equality
+  // checks below break the feedback loop between the two effects.
+
+  // hash -> activeTopic (initial mount + back/forward + pasted links).
+  useEffect(() => {
+    const sync = (): void => {
+      const slug = window.location.hash.replace(/^#/, "").trim();
+      if (!slug) return;
+      if (activeTopicRef.current?.slug === slug) return;
+      void (async () => {
+        try {
+          const t = await api.getTopicBySlug(slug);
+          setActiveTopic(t);
+          try {
+            await api.markTopicRead(t.id);
+            await refreshTree();
+          } catch {
+            // non-fatal
+          }
+        } catch {
+          // unknown slug — leave the user where they are
+        }
+      })();
+    };
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  // activeTopic -> hash. Use replaceState when there's no prior hash so the
+  // initial selection doesn't leave a junk history entry; use a real
+  // assignment otherwise so back/forward walks through topics.
+  useEffect(() => {
+    if (workspacesOpenRef.current) return; // Workspaces own the URL while open
+    if (activeTopic) {
+      const target = `#${activeTopic.slug}`;
+      if (window.location.hash !== target) {
+        if (!window.location.hash) {
+          history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${window.location.search}${target}`,
+          );
+        } else {
+          window.location.hash = target;
+        }
+      }
+    } else if (window.location.hash) {
+      history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    }
+  }, [activeTopic]);
+
+  // ---- /ws route --------------------------------------------------------
+  // Workspaces are a full-screen overlay with their own real path so they can
+  // be deep-linked (down to a file) and survive reloads / back-forward. We use
+  // a real path (not a hash) because topic deep links already own the hash.
+  useEffect(() => {
+    const sync = (): void => setWsRoute(parseWsRoute());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+
+  function openWorkspaces(): void {
+    if (!parseWsRoute().open) history.pushState(null, "", "/ws");
+    setWsRoute(parseWsRoute());
+  }
+
+  function closeWorkspaces(): void {
+    if (parseWsRoute().open) {
+      const hash = activeTopicRef.current ? `#${activeTopicRef.current.slug}` : "";
+      history.pushState(null, "", `/${hash}`);
+    }
+    setWsRoute({ open: false, slug: null, path: null });
+  }
+
+  // Reflect the active workspace + open file in the URL so a reload returns to
+  // the same place. replaceState keeps the overlay as a single history entry.
+  function navigateWorkspace(slug: string | null, filePath: string | null): void {
+    let url = "/ws";
+    if (slug) {
+      url += `/${encodeURIComponent(slug)}`;
+      if (filePath) {
+        url += "/" + filePath.split("/").map(encodeURIComponent).join("/");
+      }
+    }
+    history.replaceState(null, "", url);
+    setWsRoute({ open: true, slug, path: filePath });
+  }
+
+
+  // Whenever any stream finishes, refresh the tree so unread badges and
+  // updated_at timestamps reflect the new server state. If the user happens to
+  // be viewing the topic that just finished, also mark it read.
+  useEffect(() => {
+    streamStore.setOnComplete((topicId) => {
+      void (async () => {
+        if (activeTopicRef.current?.id === topicId) {
+          try {
+            await api.markTopicRead(topicId);
+          } catch {
+            // non-fatal
+          }
+        }
+        await refreshTree();
+      })();
+    });
+    return () => streamStore.setOnComplete(null);
+  }, []);
+
+  // Live sync across windows: any mutation in another tab/process pushes an
+  // event over /api/events. Echoes (events tagged with our own client id)
+  // are filtered out inside the bus.
+  useEffect(() => {
+    eventBus.start();
+    return eventBus.subscribe((event) => {
+      if (event.type === "topic.changed") {
+        void refreshTree();
+        const active = activeTopicRef.current;
+        if (active && (event.topic_id === null || event.topic_id === active.id)) {
+          void (async () => {
+            try {
+              const refreshed = await api.getTopic(active.id);
+              setActiveTopic(refreshed);
+            } catch {
+              // topic may have been deleted in another window; ignore
+            }
+          })();
+        }
+      } else if (event.type === "message.changed") {
+        // Sidebar badge tracking depends on the tree, so always refresh.
+        void refreshTree();
+        if (activeTopicRef.current?.id === event.topic_id) {
+          // Re-mount ChatPanel so it re-fetches messages from scratch.
+          setChatReloadKey((k) => k + 1);
+        }
+      } else if (event.type === "stream.started") {
+        streamStore.setRemoteStreaming(event.topic_id, true);
+      } else if (event.type === "stream.ended") {
+        streamStore.setRemoteStreaming(event.topic_id, false);
+      }
+    });
   }, []);
 
   async function handleSelect(id: number): Promise<void> {
     setActiveTopic(await api.getTopic(id));
+    try {
+      await api.markTopicRead(id);
+      await refreshTree();
+    } catch {
+      // non-fatal
+    }
   }
 
-  async function handleCreate(parentId: number | null): Promise<void> {
-    const title = window.prompt("Topic title?");
-    if (!title) return;
-    const created = await api.createTopic({ title, parent_id: parentId });
+  function handleCreate(parentId: number | null): void {
+    // Top-level "+ create" passes null; in that case, if a topic is currently
+    // selected, nest the new one under it. Per-node "+ child" buttons pass
+    // their own id explicitly and are left alone.
+    setCreateParentId(parentId ?? activeTopic?.id ?? null);
+  }
+
+  async function handleEditSchedule(topicId: number): Promise<void> {
+    try {
+      setScheduleModal(await api.getSchedule(topicId));
+    } catch {
+      // schedule may have been deleted elsewhere; ignore
+    }
+  }
+
+  function openTopicSettings(tab: "settings" | "context" = "settings"): void {
+    setTopicSettingsTab(tab);
+    setTopicSettingsOpen(true);
+  }
+
+  async function togglePin(): Promise<void> {
+    if (!activeTopic) return;
+    const updated = await api.updateTopic(activeTopic.id, {
+      pinned: !activeTopic.pinned,
+    });
+    setActiveTopic(updated);
     await refreshTree();
-    setActiveTopic(created);
   }
 
   return (
     <div className="flex h-full w-full bg-bg text-text">
+      <TooltipProvider />
       <Sidebar
         tree={tree}
         activeId={activeTopic?.id ?? null}
+        streamingTopicIds={streamingTopicIds}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onSelect={handleSelect}
         onCreate={handleCreate}
+        onCreateSchedule={() => setScheduleModal(null)}
+        onEditSchedule={handleEditSchedule}
         onRefresh={refreshTree}
+        onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
+        onOpenArchive={() => setArchiveOpen(true)}
+        onOpenWorkspaces={openWorkspaces}
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between px-4 h-12 border-b border-border">
-          <div className="truncate font-medium">
-            {activeTopic ? activeTopic.title : "Select or create a topic"}
+        <header className="flex items-center justify-between px-4 h-12 border-b border-border gap-3">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="truncate font-medium">
+              {activeTopic ? activeTopic.title : "Select or create a topic"}
+            </span>
+            {activeTopic && issueAssociationsEnabled && activeTopic.kind !== "scheduled" && (
+              <IssueStatusBadge
+                status={issueContext.status}
+                onClick={() => openTopicSettings("context")}
+              />
+            )}
           </div>
-          <button
-            className="p-2 rounded hover:bg-surface"
-            aria-label="Open settings"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <SettingsIcon size={18} />
-          </button>
+          {activeTopic &&
+            issueAssociationsEnabled &&
+            activeTopic.kind !== "scheduled" &&
+            issueContext.summary && (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
+              <IssueStateBadge state={issueContext.summary.issue_state} />
+              {issueContext.summary.labels.map((label) => (
+                <IssueLabelChip key={label.name} label={label} />
+              ))}
+            </div>
+          )}
+          {activeTopic && (
+            <button
+              className="p-2 rounded hover:bg-surface shrink-0"
+              aria-label={activeTopic.pinned ? "Unpin topic" : "Pin topic"}
+              data-tooltip={activeTopic.pinned ? "Unpin topic" : "Pin topic"}
+              onClick={togglePin}
+            >
+              {activeTopic.pinned ? (
+                <PinOff size={18} className="text-accent" />
+              ) : (
+                <Pin size={18} />
+              )}
+            </button>
+          )}
+          {activeTopic && (
+            <button
+              className="p-2 rounded hover:bg-surface shrink-0"
+              aria-label="Topic settings"
+              data-tooltip="Topic settings"
+              onClick={() => openTopicSettings("settings")}
+            >
+              <SettingsIcon size={18} />
+            </button>
+          )}
         </header>
 
         <div className="flex-1 min-h-0">
           {activeTopic ? (
-            <ChatPanel topic={activeTopic} onTopicUpdated={refreshTree} />
+            <ChatPanel
+              key={`${activeTopic.id}:${chatReloadKey}`}
+              topic={activeTopic}
+              onTopicUpdated={async () => {
+                // Commands persist messages server-side; clear the badge
+                // for the topic the user is actively viewing before
+                // re-loading the tree so its unread count doesn't tick up.
+                // Also re-fetch the active topic itself — some commands
+                // (e.g. /gh-create) mutate topic fields like the linked
+                // issue number, and the chat header needs to reflect that.
+                try {
+                  await api.markTopicRead(activeTopic.id);
+                } catch {
+                  // non-fatal
+                }
+                try {
+                  setActiveTopic(await api.getTopic(activeTopic.id));
+                } catch {
+                  // non-fatal
+                }
+                await refreshTree();
+              }}
+            />
           ) : (
-            <div className="h-full flex items-center justify-center text-muted">
-              No topic selected.
+            <div className="h-full flex flex-col items-center justify-center text-muted gap-3">
+              <img
+                src="/logo.svg"
+                alt=""
+                aria-hidden="true"
+                width={72}
+                height={72}
+                className="rounded-2xl opacity-90"
+              />
+              <span>No topic selected.</span>
             </div>
           )}
         </div>
       </main>
 
-      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {globalSettingsOpen && (
+        <SettingsPanel onClose={() => setGlobalSettingsOpen(false)} />
+      )}
+
+      {wsRoute.open && (
+        <WorkspacesPage
+          routeSlug={wsRoute.slug}
+          routePath={wsRoute.path}
+          onNavigate={navigateWorkspace}
+          onClose={closeWorkspaces}
+        />
+      )}
+
+      {archiveOpen && (
+        <ArchivedTopicsPanel
+          onClose={() => setArchiveOpen(false)}
+          onRestored={async () => {
+            await refreshTree();
+          }}
+          onDeleted={async (id) => {
+            if (activeTopic?.id === id) setActiveTopic(null);
+            await refreshTree();
+          }}
+        />
+      )}
+
+      {topicSettingsOpen && activeTopic && (
+        <TopicSettingsPanel
+          topic={activeTopic}
+          tree={tree}
+          context={issueContext}
+          initialTab={topicSettingsTab}
+          onClose={() => setTopicSettingsOpen(false)}
+          onSaved={async (updated) => {
+            setActiveTopic(updated);
+            setTopicSettingsOpen(false);
+            await refreshTree();
+          }}
+          onDeleted={async () => {
+            setTopicSettingsOpen(false);
+            setActiveTopic(null);
+            await refreshTree();
+          }}
+          onCleared={() => {
+            setChatReloadKey((k) => k + 1);
+            setTopicSettingsOpen(false);
+          }}
+        />
+      )}
+
+      {createParentId !== undefined && (
+        <TopicCreateModal
+          initialParentId={createParentId}
+          tree={tree}
+          onClose={() => setCreateParentId(undefined)}
+          onCreated={async (topic) => {
+            setCreateParentId(undefined);
+            await refreshTree();
+            setActiveTopic(topic);
+          }}
+        />
+      )}
+
+      {scheduleModal !== undefined && (
+        <ScheduleModal
+          schedule={scheduleModal}
+          onClose={() => setScheduleModal(undefined)}
+          onSaved={async () => {
+            setScheduleModal(undefined);
+            await refreshTree();
+          }}
+        />
+      )}
     </div>
   );
 }

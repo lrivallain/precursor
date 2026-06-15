@@ -1,18 +1,89 @@
 export type MessageRole = "user" | "assistant" | "system" | "tool";
 
+// Running app version (CalVer), surfaced by GET /api/version.
+export interface AppVersion {
+  version: string;
+  commit: string | null;
+  build_date: string | null;
+}
+
+export type TopicKind = "standard" | "schedule_root" | "scheduled";
+
 export interface Topic {
   id: number;
+  slug: string;
   title: string;
   description: string | null;
   parent_id: number | null;
   github_repo: string | null;
   github_issue_number: number | null;
+  pinned: boolean;
+  kind: TopicKind;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
+// Lightweight schedule view embedded in the sidebar tree (mirrors backend
+// ScheduleSummary). Datetimes are ISO-8601 UTC strings.
+export interface ScheduleSummary {
+  enabled: boolean;
+  interval_seconds: number;
+  days_of_week: number;
+  run_at_minute: number | null;
+  timezone: string;
+  clear_context: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  status: string;
+}
+
+// Full schedule record (mirrors backend ScheduleRead).
+export interface Schedule extends ScheduleSummary {
+  id: number;
+  topic_id: number;
+  prompt: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleCreate {
+  title: string;
+  prompt: string;
+  interval_seconds: number;
+  days_of_week?: number;
+  run_at_minute?: number | null;
+  timezone?: string;
+  clear_context?: boolean;
+  enabled?: boolean;
+}
+
+export interface ScheduleUpdate {
+  title?: string;
+  prompt?: string;
+  interval_seconds?: number;
+  days_of_week?: number;
+  run_at_minute?: number | null;
+  timezone?: string;
+  clear_context?: boolean;
+  enabled?: boolean;
+}
+
 export interface TopicNode extends Topic {
   children: TopicNode[];
+  unread_count: number;
+  schedule: ScheduleSummary | null;
+}
+
+export interface Attachment {
+  id: number;
+  topic_id: number;
+  message_id: number | null;
+  mime: string;
+  size: number;
+  original_filename: string;
+  created_at: string;
 }
 
 export interface Message {
@@ -21,25 +92,74 @@ export interface Message {
   role: MessageRole;
   content: string;
   tool_calls: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
   created_at: string;
+  attachments?: Attachment[];
 }
 
 export interface Settings {
   theme: "light" | "dark" | "system";
   llm_model: string;
   github_repo: string;
+  issue_context_ttl_minutes: number;
+  show_chat_stats: boolean;
+  max_tool_rounds: number;
   mcp_enabled: Record<string, boolean>;
   mcp_servers: Record<string, Record<string, unknown>>;
   api_keys_present: Record<string, boolean>;
+  github_token_source: "env" | "gh-cli" | "settings" | "none";
+  issue_associations_enabled: boolean;
+  // Which Precursor capability sections the built-in MCP server exposes.
+  mcp_expose: Record<string, boolean>;
+  // HTTP transport for the built-in 'precursor' MCP server.
+  mcp_http_enabled: boolean;
+  mcp_http_url: string | null;
+  mcp_http_loopback_ok: boolean;
+  // System settings (effective: env default with DB override applied).
+  llm_max_input_tokens: number;
+  llm_max_tool_result_tokens: number;
+  scheduled_run_timeout_seconds: number;
+  cmd_runner_jail: boolean;
+  cmd_runner_image: string;
+  cmd_runner_network: boolean;
+  cmd_runner_timeout_seconds: number;
+  cmd_runner_max_output_bytes: number;
+  cmd_runner_memory: string;
+  cmd_runner_pids_limit: number;
+  cmd_runner_cpus: string;
+  docker_available: boolean;
 }
 
 export interface SettingsUpdate {
   theme?: Settings["theme"];
   llm_model?: string;
   github_repo?: string;
+  issue_context_ttl_minutes?: number;
+  show_chat_stats?: boolean;
+  max_tool_rounds?: number;
   mcp_enabled?: Record<string, boolean>;
   mcp_servers?: Record<string, Record<string, unknown>>;
   api_keys?: Record<string, string>;
+  issue_associations_enabled?: boolean;
+  mcp_expose?: Record<string, boolean>;
+  mcp_http_enabled?: boolean;
+  llm_max_input_tokens?: number;
+  llm_max_tool_result_tokens?: number;
+  scheduled_run_timeout_seconds?: number;
+  cmd_runner_jail?: boolean;
+  cmd_runner_image?: string;
+  cmd_runner_network?: boolean;
+  cmd_runner_timeout_seconds?: number;
+  cmd_runner_max_output_bytes?: number;
+  cmd_runner_memory?: string;
+  cmd_runner_pids_limit?: number;
+  cmd_runner_cpus?: string;
+}
+
+export interface IssueLabel {
+  name: string;
+  color: string;
 }
 
 export interface GitHubIssue {
@@ -48,18 +168,123 @@ export interface GitHubIssue {
   state: string;
   url: string;
   body: string;
-  labels: string[];
+  labels: IssueLabel[];
   updated_at: string;
+}
+
+export interface MCPTool {
+  name: string;
+  description: string;
 }
 
 export interface MCPServerStatus {
   name: string;
   transport: string;
   command: string | null;
+  command_bin: string | null;
+  args: string[];
   url: string | null;
-  state: "disconnected" | "connecting" | "connected" | "error";
+  state: "disconnected" | "connecting" | "connected" | "ready" | "error" | "disabled";
   error: string | null;
-  tools: string[];
+  tools: MCPTool[];
+  builtin: boolean;
+  enabled: boolean;
+  // Populated for user-defined entries only.
+  id: number | null;
+  header_keys: string[];
+}
+
+export interface MCPServerCreate {
+  name: string;
+  transport: "streamable_http" | "stdio";
+  url?: string | null;
+  command?: string | null;
+  args?: string[];
+  headers?: Record<string, string>;
+}
+
+export interface MCPServerUpdate {
+  name?: string;
+  transport?: "streamable_http" | "stdio";
+  url?: string | null;
+  command?: string | null;
+  args?: string[];
+  headers?: Record<string, string>;
+}
+
+export interface LLMModel {
+  id: string;
+  name: string;
+  publisher: string;
+  summary: string;
+  tags: string[];
+  context_window?: number | null;
+}
+
+export interface IssueSummary {
+  repo: string;
+  issue_number: number;
+  issue_title: string;
+  issue_state: string;
+  issue_url: string | null;
+  labels: IssueLabel[];
+  summary: string;
+  model: string;
+  fetched_at: string;
+  cached: boolean;
+}
+
+export interface IssuePushResult {
+  repo: string;
+  issue_number: number;
+  issue_title: string;
+  issue_state: string;
+  issue_url: string | null;
+}
+
+export interface CommentDraft {
+  draft: string;
+  source: "user" | "llm";
+  repo: string;
+  issue_number: number;
+}
+
+export interface CommentPostResult {
+  repo: string;
+  issue_number: number;
+  comment_url: string | null;
+  message: Message;
+}
+
+export interface GhSyncResult {
+  repo: string;
+  issue_number: number;
+  issue_state: string;
+  issue_title: string;
+  message: Message;
+}
+
+export interface GhCreateDraft {
+  title: string;
+  body: string;
+  repo: string;
+  source: string;
+}
+
+export interface GhCreatePostResult {
+  repo: string;
+  issue_number: number;
+  issue_url: string | null;
+  issue_title: string;
+  message: Message;
+}
+
+export interface GhCloseResult {
+  repo: string;
+  issue_number: number;
+  issue_state: string;
+  comment_url: string | null;
+  message: Message;
 }
 
 export interface PluginDescriptor {
@@ -68,4 +293,127 @@ export interface PluginDescriptor {
   slot: string;
   title: string;
   config: Record<string, unknown>;
+}
+
+export interface GitHubIdentity {
+  login: string;
+  name: string | null;
+  avatar_url: string | null;
+  html_url: string | null;
+}
+
+export interface Me {
+  github: GitHubIdentity | null;
+  github_token_source: "env" | "gh-cli" | "settings" | "none";
+}
+
+export interface Skill {
+  id: number;
+  name: string;
+  description: string | null;
+  instructions: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillCreate {
+  name: string;
+  description?: string | null;
+  instructions: string;
+}
+
+export interface SkillUpdate {
+  name?: string;
+  description?: string | null;
+  instructions?: string;
+}
+
+export interface Memory {
+  id: number;
+  kind: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryCreate {
+  kind: string;
+  content: string;
+}
+
+export interface MemoryUpdate {
+  kind?: string;
+  content?: string;
+}
+
+export type WorkspaceKind = "git" | "local";
+
+export interface Workspace {
+  id: number;
+  name: string;
+  slug: string;
+  kind: WorkspaceKind;
+  repo_url: string | null;
+  branch: string;
+  subdir: string | null;
+  cloned_at: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceCreate {
+  name: string;
+  kind?: WorkspaceKind;
+  repo_url?: string | null;
+  branch?: string;
+  subdir?: string | null;
+  slug?: string | null;
+}
+
+export interface WorkspaceFileNode {
+  path: string;
+  name: string;
+  type: "file" | "dir";
+}
+
+export interface WorkspaceFileContent {
+  path: string;
+  content: string;
+}
+
+export interface GitFileStatus {
+  path: string;
+  code: string;
+}
+
+export interface GitStatus {
+  branch: string;
+  ahead: number | null;
+  behind: number | null;
+  dirty: boolean;
+  files: GitFileStatus[];
+}
+
+export interface GitActionResult {
+  ok: boolean;
+  detail: string;
+  needs_manual_merge: boolean;
+  local_path: string | null;
+  status: GitStatus | null;
+}
+
+export interface FileDiff {
+  path: string;
+  diff: string;
+  binary: boolean;
+}
+
+export interface LocalPath {
+  path: string;
+}
+
+export interface WorkspaceChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }

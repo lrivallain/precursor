@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from precursor.backend.schemas.schedule import ScheduleSummary
+
 
 class TopicBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
@@ -13,10 +15,12 @@ class TopicBase(BaseModel):
     parent_id: int | None = None
     github_repo: str | None = None
     github_issue_number: int | None = None
+    pinned: bool = False
 
 
 class TopicCreate(TopicBase):
-    pass
+    # Optional explicit slug. If omitted, the server derives one from the title.
+    slug: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class TopicUpdate(BaseModel):
@@ -25,20 +29,28 @@ class TopicUpdate(BaseModel):
     parent_id: int | None = None
     github_repo: str | None = None
     github_issue_number: int | None = None
+    pinned: bool | None = None
+    # When present, the router normalizes and uniquifies it before storing.
+    slug: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class TopicRead(TopicBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    slug: str
+    kind: str = "standard"
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None = None
 
 
 class TopicNode(TopicRead):
     """Topic with nested children, used by the sidebar tree."""
 
-    children: list["TopicNode"] = Field(default_factory=list)
+    children: list[TopicNode] = Field(default_factory=list)
+    unread_count: int = 0
+    schedule: ScheduleSummary | None = None
 
 
 TopicNode.model_rebuild()

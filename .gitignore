@@ -14,11 +14,17 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Version file generated at build time by hatch-vcs from git tags.
+precursor/_version.py
+
 # SQLite dev DB
 *.db
 *.db-journal
 *.sqlite
 *.sqlite3
+
+# Precursor local data (Knowledge git clones, etc.)
+.precursor/
 
 # Node / Vite
 node_modules/
@@ -26,6 +32,11 @@ frontend/dist/
 frontend/.vite/
 *.log
 npm-debug.log*
+
+# TypeScript build artifacts (emitted by `tsc -b` for composite projects)
+*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
 
 # Editors / OS
 .vscode/*
@@ -37,3 +48,6 @@ Thumbs.db
 
 # Alembic local overrides
 precursor/backend/alembic/versions/__pycache__/
+
+# Playwright test artifacts
+.playwright-mcp/

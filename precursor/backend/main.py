@@ -12,16 +12,39 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.resources import as_file, files
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+if TYPE_CHECKING:
+    from starlette.routing import Route
+
+from precursor import __version__
 from precursor.backend.config import get_settings
 from precursor.backend.db import init_db
 from precursor.backend.plugins import discover, get_registry
-from precursor.backend.routers import chat, github, mcp, settings, topics
+from precursor.backend.routers import (
+    attachments,
+    chat,
+    commands,
+    events,
+    github,
+    issue,
+    llm,
+    mcp,
+    me,
+    memories,
+    raw,
+    settings,
+    skills,
+    summary,
+    topics,
+    version,
+    workspaces,
+)
 
 logger = logging.getLogger("precursor")
 
@@ -29,8 +52,56 @@ logger = logging.getLogger("precursor")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    from precursor.backend.services.mcp.user_servers import hydrate_user_entries
+
+    await hydrate_user_entries()
     discover(app)
-    yield
+    # The mounted streamable-HTTP MCP app needs its session manager's task group
+    # running for the lifetime of the server (the mount itself doesn't start it).
+    mcp_instance = getattr(app.state, "precursor_http_mcp", None)
+    if mcp_instance is not None:
+        async with mcp_instance.session_manager.run():
+            yield
+    else:
+        yield
+
+
+class _McpHttpGate:
+    """Gate the mounted MCP HTTP app behind the live ``mcp_http_enabled`` setting.
+
+    Also enforces a loopback-bind guard: an unauthenticated endpoint must never
+    answer when the app is bound to a non-loopback host (e.g. 0.0.0.0). When
+    closed it returns 404 so the endpoint simply appears absent. FastMCP's own
+    Host-header allowlist (set in ``precursor_server``) is the second layer.
+    """
+
+    def __init__(self, inner: object, host: str) -> None:
+        from precursor.backend.services.mcp.precursor_server import is_loopback_host
+
+        self._inner = inner
+        self._loopback = is_loopback_host(host)
+
+    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope["type"] == "http" and not await self._open():
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 404,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"Not Found"})
+            return
+        await self._inner(scope, receive, send)  # type: ignore[operator]
+
+    async def _open(self) -> bool:
+        if not self._loopback:
+            return False
+        from precursor.backend.db import SessionLocal
+        from precursor.backend.services.app_settings import resolve_mcp_http_enabled
+
+        async with SessionLocal() as session:
+            return await resolve_mcp_http_enabled(session)
 
 
 def _frontend_dist_dir() -> Path | None:
@@ -57,7 +128,7 @@ def create_app() -> FastAPI:
     cfg = get_settings()
     app = FastAPI(
         title="Precursor",
-        version="0.1.0",
+        version=__version__,
         description="Per-topic AI chat for work follow-up.",
         lifespan=lifespan,
     )
@@ -71,8 +142,35 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
+    @app.middleware("http")
+    async def _client_id_middleware(request, call_next):  # type: ignore[no-untyped-def]
+        # Tag this request with the originating window's id so events
+        # published by handlers can be echo-suppressed in that window.
+        from precursor.backend.services.events import set_current_client_id
+
+        set_current_client_id(request.headers.get("x-client-id"))
+        return await call_next(request)
+
     # API
-    for r in (topics.router, chat.router, settings.router, github.router, mcp.router):
+    for r in (
+        topics.router,
+        chat.router,
+        attachments.router,
+        settings.router,
+        github.router,
+        mcp.router,
+        llm.router,
+        summary.router,
+        issue.router,
+        me.router,
+        commands.router,
+        skills.router,
+        memories.router,
+        events.router,
+        workspaces.router,
+        raw.router,
+        version.router,
+    ):
         app.include_router(r)
 
     plugin_router = APIRouter(prefix="/api", tags=["plugins"])
@@ -92,9 +190,36 @@ def create_app() -> FastAPI:
 
     @plugin_router.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": __version__}
 
     app.include_router(plugin_router)
+
+    # Outbound MCP over HTTP — serve the built-in "precursor" server's
+    # streamable-HTTP endpoint at exactly /mcp. It runs in this process (so
+    # post_message events reach the SPA) and inherits the app's bind. Access is
+    # gated live by the mcp_http_enabled setting + a loopback guard; the session
+    # manager's task group is started in the lifespan above (keyed off
+    # app.state). A fresh instance per app keeps the run-once session manager
+    # isolated.
+    #
+    # We reuse the SDK's own Route('/mcp') instead of app.mount("/mcp", …): a
+    # mount only matches "/mcp/…", so a bare POST /mcp would fall through to the
+    # SPA catch-all (GET-only) and 405. The exact Route matches /mcp for all
+    # methods, with no trailing-slash redirect. It is appended before the SPA
+    # fallback below.
+    from precursor.backend.services.mcp.precursor_server import build_mcp
+
+    precursor_mcp = build_mcp()
+    _mcp_http_app = precursor_mcp.streamable_http_app()  # builds Route + manager
+    app.state.precursor_http_mcp = precursor_mcp
+    mcp_route = cast("Route", _mcp_http_app.routes[0])
+    if getattr(mcp_route, "path", None) != "/mcp":  # defensive: SDK shape changed
+        logger.warning(
+            "Unexpected MCP route path %r; HTTP transport may misbehave",
+            getattr(mcp_route, "path", None),
+        )
+    mcp_route.app = _McpHttpGate(mcp_route.app, cfg.host)
+    app.router.routes.append(mcp_route)
 
     # SPA
     dist = _frontend_dist_dir()

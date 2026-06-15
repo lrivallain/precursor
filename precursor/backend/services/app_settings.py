@@ -1,0 +1,226 @@
+"""Resolve runtime app-settings values stored in the `AppSetting` DB table.
+
+These values are written by the UI Settings panel. The constants below act as
+factory defaults used until the user picks something in the UI.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from precursor.backend.config import get_settings
+from precursor.backend.models import AppSetting
+from precursor.backend.services.cmd_runner import CmdRunnerConfig
+
+# Factory defaults — surface in the UI before the user has saved a preference.
+DEFAULT_LLM_MODEL = "claude-sonnet-4.5"
+DEFAULT_GITHUB_REPO = ""
+# How long a cached issue context (summary + state + labels) stays fresh
+# before being transparently refreshed on the next read. The user can always
+# force a refresh from the Context tab.
+DEFAULT_ISSUE_CONTEXT_TTL_MINUTES = 60
+# Hard ceiling on tool-call iterations per user turn — prevents runaway loops
+# while still leaving room for multi-step agents (browser automation,
+# multi-search workflows, etc.).
+DEFAULT_MAX_TOOL_ROUNDS = 15
+MAX_TOOL_ROUNDS_CEILING = 50
+# When false, the GitHub-issue association feature is hidden across the UI
+# and all related API endpoints reject requests. Existing topic links and
+# cached contexts are preserved so the user can re-enable later.
+DEFAULT_ISSUE_ASSOCIATIONS_ENABLED = True
+
+# Sections of Precursor's *own* capabilities that the built-in "precursor" MCP
+# server can expose to callers (the in-app agent and external MCP hosts). Each
+# is opt-in (default False) — serving conversation history / write actions
+# outbound is a deliberate disclosure, so nothing is exposed until the user
+# turns it on in Settings.
+MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
+    "topics",
+    "messages",
+    "search",
+    "skills",
+    "memory",
+    "post_message",
+    "schedules",
+)
+DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
+
+# Whether the built-in "precursor" MCP server is also served over HTTP
+# (streamable-http at /mcp), in addition to stdio. Default off; the endpoint is
+# unauthenticated and only answers on the app's loopback bind.
+DEFAULT_MCP_HTTP_ENABLED = False
+
+
+async def _get_db_value(session: AsyncSession, key: str) -> Any | None:
+    row = await session.get(AppSetting, key)
+    if row is None:
+        return None
+    try:
+        return json.loads(row.value)
+    except json.JSONDecodeError:
+        return None
+
+
+async def resolve_global_github_repo(session: AsyncSession) -> str:
+    """Return the effective global `owner/name` repo, or `""` if unset."""
+    db_value = await _get_db_value(session, "github_repo")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return DEFAULT_GITHUB_REPO
+
+
+async def resolve_llm_model(session: AsyncSession) -> str:
+    """Return the user-selected LLM model id, or the factory default."""
+    db_value = await _get_db_value(session, "llm_model")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return DEFAULT_LLM_MODEL
+
+
+async def resolve_issue_context_ttl_minutes(session: AsyncSession) -> int:
+    """Return the configured issue-context TTL, clamped to a sane range."""
+    db_value = await _get_db_value(session, "issue_context_ttl_minutes")
+    if isinstance(db_value, (int, float)) and db_value > 0:
+        return max(1, min(int(db_value), 60 * 24 * 7))
+    return DEFAULT_ISSUE_CONTEXT_TTL_MINUTES
+
+
+async def resolve_max_tool_rounds(session: AsyncSession) -> int:
+    """Return the configured tool-call round cap, clamped to a sane range."""
+    db_value = await _get_db_value(session, "max_tool_rounds")
+    if isinstance(db_value, (int, float)) and db_value >= 1:
+        return max(1, min(int(db_value), MAX_TOOL_ROUNDS_CEILING))
+    return DEFAULT_MAX_TOOL_ROUNDS
+
+
+async def resolve_issue_associations_enabled(session: AsyncSession) -> bool:
+    """Return whether the GitHub-issue association feature is enabled."""
+    db_value = await _get_db_value(session, "issue_associations_enabled")
+    if isinstance(db_value, bool):
+        return db_value
+    return DEFAULT_ISSUE_ASSOCIATIONS_ENABLED
+
+
+# -- System settings (env-default + DB override) ---------------------------
+#
+# These mirror fields on ``config.Settings`` (env / .env). The env value is the
+# factory default; a DB row written from the Settings → System panel overrides
+# it at runtime. Helpers below clamp to sane ranges so a bad value can't wedge
+# the app.
+
+# Clamp bounds.
+_MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
+_MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
+_MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT = 10, 24 * 3600
+_MIN_CMD_TIMEOUT, _MAX_CMD_TIMEOUT = 1, 3600
+_MIN_CMD_OUTPUT, _MAX_CMD_OUTPUT = 1_000, 50_000_000
+_MIN_PIDS, _MAX_PIDS = 1, 100_000
+
+
+def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return max(lo, min(int(value), hi))
+
+
+async def resolve_llm_max_input_tokens(session: AsyncSession) -> int:
+    default = get_settings().llm_max_input_tokens
+    db_value = await _get_db_value(session, "llm_max_input_tokens")
+    return _clamp_int(db_value, default, _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS)
+
+
+async def resolve_llm_max_tool_result_tokens(session: AsyncSession) -> int:
+    default = get_settings().llm_max_tool_result_tokens
+    db_value = await _get_db_value(session, "llm_max_tool_result_tokens")
+    return _clamp_int(db_value, default, _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS)
+
+
+async def resolve_scheduled_run_timeout_seconds(session: AsyncSession) -> int:
+    default = get_settings().scheduled_run_timeout_seconds
+    db_value = await _get_db_value(session, "scheduled_run_timeout_seconds")
+    return _clamp_int(db_value, default, _MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT)
+
+
+async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
+    """Effective cmd-runner config: env defaults with DB overrides applied."""
+    settings = get_settings()
+    jail = await _get_db_value(session, "cmd_runner_jail")
+    image = await _get_db_value(session, "cmd_runner_image")
+    network = await _get_db_value(session, "cmd_runner_network")
+    memory = await _get_db_value(session, "cmd_runner_memory")
+    cpus = await _get_db_value(session, "cmd_runner_cpus")
+    return CmdRunnerConfig(
+        jail=jail if isinstance(jail, bool) else settings.cmd_runner_jail,
+        image=(
+            image.strip() if isinstance(image, str) and image.strip() else settings.cmd_runner_image
+        ),
+        network=network if isinstance(network, bool) else settings.cmd_runner_network,
+        timeout_seconds=_clamp_int(
+            await _get_db_value(session, "cmd_runner_timeout_seconds"),
+            settings.cmd_runner_timeout_seconds,
+            _MIN_CMD_TIMEOUT,
+            _MAX_CMD_TIMEOUT,
+        ),
+        max_output_bytes=_clamp_int(
+            await _get_db_value(session, "cmd_runner_max_output_bytes"),
+            settings.cmd_runner_max_output_bytes,
+            _MIN_CMD_OUTPUT,
+            _MAX_CMD_OUTPUT,
+        ),
+        memory=(
+            memory.strip()
+            if isinstance(memory, str) and memory.strip()
+            else settings.cmd_runner_memory
+        ),
+        pids_limit=_clamp_int(
+            await _get_db_value(session, "cmd_runner_pids_limit"),
+            settings.cmd_runner_pids_limit,
+            _MIN_PIDS,
+            _MAX_PIDS,
+        ),
+        cpus=(cpus.strip() if isinstance(cpus, str) and cpus.strip() else settings.cmd_runner_cpus),
+    )
+
+
+async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
+    """All effective "System" settings (env defaults + DB overrides) for the UI."""
+    cfg = await resolve_cmd_runner_config(session)
+    return {
+        "llm_max_input_tokens": await resolve_llm_max_input_tokens(session),
+        "llm_max_tool_result_tokens": await resolve_llm_max_tool_result_tokens(session),
+        "scheduled_run_timeout_seconds": await resolve_scheduled_run_timeout_seconds(session),
+        "cmd_runner_jail": cfg.jail,
+        "cmd_runner_image": cfg.image,
+        "cmd_runner_network": cfg.network,
+        "cmd_runner_timeout_seconds": cfg.timeout_seconds,
+        "cmd_runner_max_output_bytes": cfg.max_output_bytes,
+        "cmd_runner_memory": cfg.memory,
+        "cmd_runner_pids_limit": cfg.pids_limit,
+        "cmd_runner_cpus": cfg.cpus,
+    }
+
+
+async def resolve_mcp_expose(session: AsyncSession) -> dict[str, bool]:
+    """Which Precursor capability sections the built-in MCP server may serve.
+
+    Returns every known section with an explicit boolean (default False),
+    overlaying any DB-stored values. Unknown keys in the DB are ignored.
+    """
+    out = dict(DEFAULT_MCP_EXPOSE)
+    db_value = await _get_db_value(session, "mcp_expose")
+    if isinstance(db_value, dict):
+        for key in out:
+            if isinstance(db_value.get(key), bool):
+                out[key] = db_value[key]
+    return out
+
+
+async def resolve_mcp_http_enabled(session: AsyncSession) -> bool:
+    """Whether the built-in 'precursor' MCP server is served over HTTP too."""
+    db_value = await _get_db_value(session, "mcp_http_enabled")
+    if isinstance(db_value, bool):
+        return db_value
+    return DEFAULT_MCP_HTTP_ENABLED

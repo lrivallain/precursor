@@ -1,10 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "precursor"
-version = "0.1.0"
+# Version is CalVer (YYYY.M.MICRO), derived from the latest git tag (v<version>)
+# by hatch-vcs — see [tool.hatch.version]. Tag a release with e.g. `v2026.6.0`.
+dynamic = ["version"]
 description = "Per-topic AI chat interface for work follow-up, where each topic maps to a GitHub issue."
 readme = "README.md"
 license = { text = "MIT" }
@@ -53,14 +55,48 @@ precursor = "precursor.backend.__main__:main"
 # example_plugin = "my_pkg.precursor_plugin:register"
 
 [project.urls]
-Homepage = "https://github.com/your-org/precursor"
-Issues = "https://github.com/your-org/precursor/issues"
+Homepage = "https://github.com/lrivallain/precursor"
+Repository = "https://github.com/lrivallain/precursor"
+Issues = "https://github.com/lrivallain/precursor/issues"
+Changelog = "https://github.com/lrivallain/precursor/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["precursor"]
 
-[tool.hatch.build.targets.wheel.shared-data]
+# Bundle the built SPA *inside* the importable package (precursor/frontend_dist)
+# so an installed wheel is self-contained — `uv tool install precursor` / `uvx
+# precursor` then serves the UI with no extra files. Build the frontend
+# (`npm --prefix frontend run build`) before `uv build`; the release workflow
+# does this. force-include over shared-data: shared-data installs next to the
+# venv (not in the package), where the runtime SPA lookup can't find it.
+[tool.hatch.build.targets.wheel.force-include]
 "frontend/dist" = "precursor/frontend_dist"
+
+# frontend/dist is gitignored (a build product), so it's excluded from the sdist
+# by default. `uv build` builds the wheel *from the sdist*, so the SPA must ride
+# along in the sdist or the wheel's force-include can't find it. `artifacts`
+# overrides gitignore for these paths in both the sdist and the wheel.
+[tool.hatch.build]
+artifacts = ["frontend/dist/**"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"frontend/dist" = "frontend/dist"
+
+# CalVer version derived from git tags (tag a release `v2026.6.0`). Untagged
+# dev builds get e.g. `2026.6.1.devN+g<sha>.dYYYYMMDD`. The fallback keeps
+# builds working in a shallow checkout with no tags/history.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+fallback_version = "0.0.0"
+
+# Write the resolved version into the package so installed wheels report it
+# without needing git. Ignored by git (regenerated at build time).
+[tool.hatch.build.hooks.vcs]
+version-file = "precursor/_version.py"
 
 [tool.ruff]
 line-length = 100
@@ -68,7 +104,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]
+# E501: line length handled by the formatter.
+# B008: FastAPI's `Depends()` / `Query()` defaults are the framework idiom.
+ignore = ["E501", "B008"]
 
 [tool.mypy]
 python_version = "3.12"

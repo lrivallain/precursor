@@ -1,0 +1,49 @@
+# Changelog
+
+All notable changes to Precursor are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Precursor uses **CalVer** (`YYYY.M.MICRO`); the version is derived from the
+latest git tag (`v<version>`) by hatch-vcs at build time. See
+[RELEASING.md](RELEASING.md).
+
+## [Unreleased]
+
+### Added
+
+- CalVer versioning derived from git tags (hatch-vcs); a single source of truth
+  replaces the previously hardcoded version literals.
+- `GET /api/version` endpoint and a version line in the Settings panel.
+- `version` field on `GET /api/health`.
+- CI workflow (lint, format, type-check, tests, frontend build) on PRs and
+  pushes to `main`.
+- Release workflow: pushing a `v*` tag builds the wheel + sdist and publishes a
+  GitHub Release with auto-generated notes.
+- `SECURITY.md` (threat model + private vulnerability reporting) and a
+  Security & deployment section in the README documenting the single-user,
+  local-first, no-auth model.
+- Dependabot config for pip, npm, and GitHub Actions.
+
+### Changed
+
+- `ruff` now ignores `B008` (FastAPI `Depends()` idiom); the lint gate passes
+  clean across the repo.
+- `mypy precursor` passes under `strict` and is a hard CI gate.
+- **uv** is the documented tool for the Python env, running, building, and
+  releasing (README, CONTRIBUTING, Makefile, RELEASING).
+- The built wheel is now **self-contained**: the SPA is bundled inside the
+  package (`force-include`), so `uvx precursor` / `uv tool install precursor`
+  serve the UI with no extra files.
+- `.env.example` LLM section reconciled with `config.py` (lists all three
+  providers; default `github_copilot`).
+
+<!--
+Release sections are added below by the release process, newest first, e.g.:
+
+## [2026.6.0] - 2026-06-15
+
+### Added
+### Changed
+### Fixed
+### Removed
+-->

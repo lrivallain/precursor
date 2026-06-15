@@ -5,37 +5,78 @@ opinionated — issues and small focused PRs are the easiest way to land changes
 
 ## Getting set up
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env
+Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
+(env, run, build, release). Install it once, then:
 
+```bash
+make sync                 # uv sync --extra dev + npm install
+cp .env.example .env
+```
+
+<details>
+<summary>Without make</summary>
+
+```bash
+uv sync --extra dev
+cp .env.example .env
 cd frontend && npm install && cd ..
 ```
+</details>
 
-Run the dev stack:
+Run the dev stack (uvicorn `--reload` + Vite HMR, both stop on Ctrl-C):
 
 ```bash
-# terminal 1 — API
-uvicorn precursor.backend.main:app --reload
-
-# terminal 2 — Vite
-npm --prefix frontend run dev
+make dev
+# or:  uv run precursor --dev
 ```
+
+Other launch options:
+
+```bash
+uv run precursor                  # single process: API + pre-built SPA on one port
+uv run precursor --dev --no-frontend   # backend only (uvicorn --reload)
+npm --prefix frontend run dev          # Vite only
+```
+
+For a one-process production run, build the SPA first so FastAPI can serve it:
+
+```bash
+make build        # npm --prefix frontend run build
+uv run precursor  # serves API + SPA on :8000
+```
+
 
 ## Quality gates
 
-Before opening a PR, please run:
+Before opening a PR, run the full gate set (mirrors CI):
 
 ```bash
-ruff check .
-ruff format --check .
-mypy precursor
-pytest
+make check
+```
+
+<details>
+<summary>Individual commands</summary>
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy precursor
+uv run pytest
 
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
 ```
+</details>
+
+All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
+
+## Versioning & releases
+
+Precursor uses **CalVer** (`YYYY.M.MICRO`). The version is derived from git
+tags by hatch-vcs — **never edit a version literal**; there isn't one. Cutting a
+release is a tag push; see [RELEASING.md](RELEASING.md). Keep the `[Unreleased]`
+section of [CHANGELOG.md](CHANGELOG.md) up to date in your PR when the change is
+user-facing.
 
 ## Workflow
 

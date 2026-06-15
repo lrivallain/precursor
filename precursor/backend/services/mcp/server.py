@@ -1,9 +1,15 @@
-"""Outbound MCP — Precursor as an MCP server exposing its conversations.
+"""Outbound MCP — Precursor as an MCP server exposing its own capabilities.
 
-This is a thin scaffold: it advertises the tools we plan to expose so external
-clients (CLI agents, IDE extensions) can introspect the surface. Wiring it to
-the actual MCP transport (stdio / SSE / streamable-http) is the next step and
-lives in ``precursor.backend.__main__`` (or a dedicated CLI entrypoint).
+The working implementation lives in
+:mod:`precursor.backend.services.mcp.precursor_server` (a FastMCP stdio server
+registered as the built-in ``precursor`` entry, see ``mcp/client.py``). External
+hosts connect by launching::
+
+    python -m precursor.backend.services.mcp.precursor_server
+
+This module stays as the lightweight descriptor used by ``GET
+/api/mcp/server/info`` to advertise the surface + which capability sections
+exist (each gated at call time by the ``mcp_expose`` setting).
 """
 
 from __future__ import annotations
@@ -12,62 +18,55 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
+from precursor.backend.services.app_settings import MCP_EXPOSE_SECTIONS
+
+# Advertised tools grouped by the ``mcp_expose`` section that gates them.
+_TOOLS_BY_SECTION: dict[str, list[str]] = {
+    "topics": ["list_topics", "get_topic"],
+    "messages": ["list_messages"],
+    "search": ["search"],
+    "skills": ["list_skills", "get_skill"],
+    "memory": ["list_memories"],
+    "post_message": ["post_message"],
+    "schedules": [
+        "list_schedules",
+        "get_schedule",
+        "create_schedule",
+        "set_schedule_enabled",
+        "run_schedule_now",
+    ],
+}
+
 
 @dataclass(slots=True)
 class ToolSpec:
     name: str
-    description: str
-    input_schema: dict[str, Any]
+    section: str
 
 
 class PrecursorMCPServer:
-    """Declarative description of the MCP surface Precursor exposes."""
+    """Declarative description of the MCP surface Precursor can expose."""
 
     def __init__(self) -> None:
+        self.transport = "stdio"
+        self.entrypoint = "python -m precursor.backend.services.mcp.precursor_server"
+        self.sections: tuple[str, ...] = MCP_EXPOSE_SECTIONS
         self.tools: list[ToolSpec] = [
-            ToolSpec(
-                name="list_topics",
-                description="List Precursor topics, optionally filtered by a query string.",
-                input_schema={
-                    "type": "object",
-                    "properties": {"q": {"type": "string"}},
-                },
-            ),
-            ToolSpec(
-                name="get_topic",
-                description="Get a topic and its messages by id.",
-                input_schema={
-                    "type": "object",
-                    "required": ["id"],
-                    "properties": {"id": {"type": "integer"}},
-                },
-            ),
-            ToolSpec(
-                name="post_message",
-                description="Append a message to a topic and (optionally) stream an assistant reply.",
-                input_schema={
-                    "type": "object",
-                    "required": ["topic_id", "content"],
-                    "properties": {
-                        "topic_id": {"type": "integer"},
-                        "content": {"type": "string"},
-                    },
-                },
-            ),
+            ToolSpec(name=name, section=section)
+            for section, names in _TOOLS_BY_SECTION.items()
+            for name in names
         ]
 
     def describe(self) -> dict[str, Any]:
+        from precursor import __version__
+
         return {
             "name": "precursor",
-            "version": "0.1.0",
-            "tools": [
-                {
-                    "name": t.name,
-                    "description": t.description,
-                    "inputSchema": t.input_schema,
-                }
-                for t in self.tools
-            ],
+            "version": __version__,
+            "transport": self.transport,
+            "entrypoint": self.entrypoint,
+            "sections": list(self.sections),
+            "tools": [{"name": t.name, "section": t.section} for t in self.tools],
         }
 
 
