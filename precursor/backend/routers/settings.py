@@ -77,6 +77,7 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
             "issue_context_ttl_minutes", DEFAULT_ISSUE_CONTEXT_TTL_MINUTES
         ),
         show_chat_stats=bool(data.get("show_chat_stats", True)),
+        notifications_enabled=bool(data.get("notifications_enabled", False)),
         max_tool_rounds=_clamp_max_tool_rounds(
             data.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
         ),
