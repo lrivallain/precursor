@@ -20,6 +20,9 @@ from precursor.backend.services.app_settings import (
     DEFAULT_LLM_MODEL,
     DEFAULT_MAX_TOOL_ROUNDS,
     MAX_TOOL_ROUNDS_CEILING,
+    azure_stt_ready,
+    resolve_azure_speech_endpoint,
+    resolve_azure_speech_language,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
     resolve_system_settings,
@@ -96,12 +99,21 @@ async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def _stt_block(session: AsyncSession) -> dict[str, Any]:
+    return {
+        "azure_speech_endpoint": await resolve_azure_speech_endpoint(session),
+        "azure_speech_language": await resolve_azure_speech_language(session),
+        "stt_azure_ready": await azure_stt_ready(session),
+    }
+
+
 @router.get("", response_model=SettingsRead)
 async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
     data = await _load_all(session)
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
+    system.update(await _stt_block(session))
     return _as_read(data, system, docker_available()[0])
 
 
@@ -125,4 +137,5 @@ async def update_settings(
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
+    system.update(await _stt_block(session))
     return _as_read(refreshed, system, docker_available()[0])

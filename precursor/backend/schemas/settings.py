@@ -30,6 +30,10 @@ class SettingsPayload(BaseModel):
     api_keys: dict[str, str] | None = None
     # App-level switch for the GitHub-issue association feature.
     issue_associations_enabled: bool | None = None
+    # Azure AI Speech for the speech-to-text composer (key goes via api_keys as
+    # `azure_speech_key`). Endpoint is the resource URL; language is BCP-47.
+    azure_speech_endpoint: str | None = None
+    azure_speech_language: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
     mcp_expose: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
@@ -66,6 +70,11 @@ class SettingsRead(BaseModel):
     # input when the user is already signed in via `gh auth login`.
     github_token_source: GitHubTokenSource = "none"
     issue_associations_enabled: bool = True
+    # Azure AI Speech: configured endpoint + language (never echoes the key) and
+    # a readiness flag the composer uses to choose the STT provider.
+    azure_speech_endpoint: str = ""
+    azure_speech_language: str = ""
+    stt_azure_ready: bool = False
     # Which Precursor capability sections the built-in MCP server exposes.
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
     # HTTP transport for the built-in 'precursor' MCP server.

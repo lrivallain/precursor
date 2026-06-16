@@ -13,6 +13,7 @@ import {
   Sparkles,
   Brain,
   SlidersHorizontal,
+  Mic,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -70,6 +71,7 @@ type Category =
   | "chat"
   | "model"
   | "github"
+  | "speech"
   | "mcp"
   | "skills"
   | "memory"
@@ -85,10 +87,28 @@ const CATEGORIES: ReadonlyArray<{
   { id: "chat", label: "Chat", icon: MessageSquare, group: "App" },
   { id: "model", label: "Model", icon: Cpu, group: "App" },
   { id: "github", label: "GitHub", icon: Github, group: "Integrations" },
+  { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
+];
+
+// Speech-to-text recognition languages (BCP-47). "" => use the browser locale.
+const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Auto (browser)" },
+  { value: "en-US", label: "English (US)" },
+  { value: "en-GB", label: "English (UK)" },
+  { value: "fr-FR", label: "French (France)" },
+  { value: "de-DE", label: "German" },
+  { value: "es-ES", label: "Spanish (Spain)" },
+  { value: "it-IT", label: "Italian" },
+  { value: "pt-PT", label: "Portuguese (Portugal)" },
+  { value: "pt-BR", label: "Portuguese (Brazil)" },
+  { value: "nl-NL", label: "Dutch" },
+  { value: "ja-JP", label: "Japanese" },
+  { value: "ko-KR", label: "Korean" },
+  { value: "zh-CN", label: "Chinese (Mandarin, Simplified)" },
 ];
 
 export function SettingsPanel({ onClose }: Props) {
@@ -101,6 +121,12 @@ export function SettingsPanel({ onClose }: Props) {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [repo, setRepo] = useState("");
   const [githubToken, setGithubToken] = useState("");
+  const [azureEndpoint, setAzureEndpoint] = useState("");
+  const [azureLanguage, setAzureLanguage] = useState("");
+  const [azureKey, setAzureKey] = useState("");
+  const [sttTest, setSttTest] = useState<
+    { state: "idle" | "testing" | "ok" | "error"; detail?: string }
+  >({ state: "idle" });
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
@@ -136,6 +162,8 @@ export function SettingsPanel({ onClose }: Props) {
       setShowChatStats(s.show_chat_stats);
       setMaxToolRounds(s.max_tool_rounds);
       setIssueAssociationsEnabled(s.issue_associations_enabled);
+      setAzureEndpoint(s.azure_speech_endpoint);
+      setAzureLanguage(s.azure_speech_language);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -172,22 +200,44 @@ export function SettingsPanel({ onClose }: Props) {
         show_chat_stats: showChatStats,
         max_tool_rounds: maxToolRounds,
         issue_associations_enabled: issueAssociationsEnabled,
+        azure_speech_endpoint: azureEndpoint,
+        azure_speech_language: azureLanguage,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         ...(sys ?? {}),
       };
-      if (githubToken) {
-        payload.api_keys = { github_token: githubToken };
+      const apiKeys: Record<string, string> = {};
+      if (githubToken) apiKeys.github_token = githubToken;
+      if (azureKey) apiKeys.azure_speech_key = azureKey;
+      if (Object.keys(apiKeys).length > 0) {
+        payload.api_keys = apiKeys;
       }
       const updated = await api.updateSettings(payload);
       setSettings(updated);
       modelsStore.applySettings(updated);
       settingsStore.set(updated);
       setGithubToken("");
+      setAzureKey("");
       setTheme(theme);
       onClose();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function testStt(): Promise<void> {
+    setSttTest({ state: "testing" });
+    try {
+      const res = await api.testSttConnection(azureEndpoint, azureKey);
+      setSttTest({
+        state: res.ok ? "ok" : "error",
+        detail: res.detail ?? undefined,
+      });
+    } catch (e) {
+      setSttTest({
+        state: "error",
+        detail: e instanceof Error ? e.message : "Test failed",
+      });
     }
   }
 
@@ -529,6 +579,107 @@ export function SettingsPanel({ onClose }: Props) {
                       "No token detected. Provide a PAT here, set GITHUB_TOKEN, or run `gh auth login`."}
                   </p>
                 )}
+              </section>
+            )}
+
+            {category === "speech" && (
+              <section>
+                <p className="text-sm text-muted mb-3">
+                  Dictate prompts with the mic button in the chat composer.
+                  Configure an <strong>Azure AI Speech</strong> resource to
+                  enable speech-to-text. Without it, the mic button is hidden.
+                </p>
+                <div
+                  className={`mb-4 text-[11px] px-2 py-1.5 rounded border ${
+                    settings?.stt_azure_ready
+                      ? "border-green-600/40 text-green-500"
+                      : "border-border text-muted"
+                  }`}
+                >
+                  {settings?.stt_azure_ready
+                    ? "Azure Speech is configured — dictation is enabled."
+                    : "Azure Speech not configured — the mic button is hidden."}
+                </div>
+
+                <label className="block text-xs text-muted mb-1">Endpoint URL</label>
+                <input
+                  type="text"
+                  value={azureEndpoint}
+                  onChange={(e) => {
+                    setAzureEndpoint(e.target.value);
+                    setSttTest({ state: "idle" });
+                  }}
+                  placeholder="https://<name>.cognitiveservices.azure.com/"
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  The resource endpoint URL from your Azure Speech / Cognitive
+                  Services resource ("Keys and Endpoint").
+                </p>
+
+                <label className="block text-xs text-muted mt-4 mb-1">Language</label>
+                <select
+                  value={azureLanguage}
+                  onChange={(e) => setAzureLanguage(e.target.value)}
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                >
+                  {STT_LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted mt-1">
+                  Recognition language. "Auto (browser)" uses the browser's
+                  current locale.
+                </p>
+
+                <label className="block text-xs text-muted mt-4 mb-1">
+                  Subscription key{" "}
+                  {settings?.api_keys_present?.azure_speech_key && (
+                    <span className="text-green-500">(configured)</span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={azureKey}
+                  onChange={(e) => {
+                    setAzureKey(e.target.value);
+                    setSttTest({ state: "idle" });
+                  }}
+                  placeholder={
+                    settings?.api_keys_present?.azure_speech_key
+                      ? "••••••••••••••••"
+                      : "Azure Speech key"
+                  }
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  Stored server-side and never returned. The browser only ever
+                  receives a short-lived token minted from it. Leave blank to keep
+                  the saved key.
+                </p>
+
+                <div className="flex items-center gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => void testStt()}
+                    disabled={!azureEndpoint || sttTest.state === "testing"}
+                    className="px-3 py-1.5 rounded text-xs border border-border hover:bg-bg disabled:opacity-50"
+                  >
+                    {sttTest.state === "testing" ? "Testing…" : "Test connection"}
+                  </button>
+                  {sttTest.state === "ok" && (
+                    <span className="text-[11px] text-green-500">
+                      {sttTest.detail ?? "Connection OK."}
+                    </span>
+                  )}
+                  {sttTest.state === "error" && (
+                    <span className="text-[11px] text-red-500">
+                      {sttTest.detail ?? "Test failed."}
+                    </span>
+                  )}
+                </div>
               </section>
             )}
 

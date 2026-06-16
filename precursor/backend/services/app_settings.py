@@ -104,6 +104,39 @@ async def resolve_issue_associations_enabled(session: AsyncSession) -> bool:
     return DEFAULT_ISSUE_ASSOCIATIONS_ENABLED
 
 
+async def resolve_azure_speech_key(session: AsyncSession) -> str:
+    """Effective Azure Speech key from the DB ``api_keys`` (Settings panel)."""
+    api_keys = await _get_db_value(session, "api_keys")
+    if isinstance(api_keys, dict):
+        key = api_keys.get("azure_speech_key")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    return ""
+
+
+async def resolve_azure_speech_endpoint(session: AsyncSession) -> str:
+    """Effective Azure Speech endpoint URL from the DB (Settings panel)."""
+    db_value = await _get_db_value(session, "azure_speech_endpoint")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return ""
+
+
+async def resolve_azure_speech_language(session: AsyncSession) -> str:
+    """Effective dictation language (BCP-47, e.g. ``en-US``); ``""`` => auto."""
+    db_value = await _get_db_value(session, "azure_speech_language")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return ""
+
+
+async def azure_stt_ready(session: AsyncSession) -> bool:
+    """True when both an Azure Speech key and endpoint are configured."""
+    return bool(
+        await resolve_azure_speech_key(session) and await resolve_azure_speech_endpoint(session)
+    )
+
+
 # -- System settings (env-default + DB override) ---------------------------
 #
 # These mirror fields on ``config.Settings`` (env / .env). The env value is the
