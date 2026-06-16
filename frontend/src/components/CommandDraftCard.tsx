@@ -81,7 +81,7 @@ export function CommandDraftCard({
       onBodyChange={setBody}
       bodyPlaceholder={bodyPlaceholder}
       bodyClassName="font-mono leading-relaxed"
-      resizeStorageKey="precursor:commandDraft:height"
+      windowStorageKey="precursor:commandDraft:window"
       previewEmptyHint={
         bodyRequired ? "Nothing to preview." : "(empty — will be sent without a comment)"
       }

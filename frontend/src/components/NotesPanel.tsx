@@ -59,7 +59,7 @@ export function NotesPanel({
       body={text}
       onBodyChange={setText}
       bodyPlaceholder="Start typing your notes… (Markdown supported)"
-      resizeStorageKey="precursor:notesPanel:height"
+      windowStorageKey="precursor:notesPanel:window"
       previewEmptyHint="Nothing to preview yet."
       disabled={busy}
       error={error}
