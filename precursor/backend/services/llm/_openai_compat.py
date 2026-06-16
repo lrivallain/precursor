@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -17,6 +18,13 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
+
+logger = logging.getLogger(__name__)
+
+# OpenAI / Azure OpenAI reject a request whose ``tools`` array exceeds 128
+# entries. With many MCP servers enabled the aggregate easily passes that, so
+# we cap it (keeping the first N) rather than letting the API 400 the turn.
+_MAX_TOOLS = 128
 
 
 def to_openai_messages(messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -81,10 +89,18 @@ async def stream_openai_tools(
         "stream_options": {"include_usage": True},
     }
     if tools:
-        kwargs["tools"] = to_openai_tools(tools)
+        capped = tools[:_MAX_TOOLS]
+        if len(tools) > _MAX_TOOLS:
+            logger.warning(
+                "Tool count %d exceeds the %d-tool API limit; sending the first %d. "
+                "Disable some MCP servers to control which tools are available.",
+                len(tools),
+                _MAX_TOOLS,
+                _MAX_TOOLS,
+            )
+        kwargs["tools"] = to_openai_tools(capped)
 
     stream = await client.chat.completions.create(**kwargs)
-
     # tool_call_id -> {id, name, arguments}
     pending: dict[int, dict[str, str]] = {}
     finish_reason: str | None = None
