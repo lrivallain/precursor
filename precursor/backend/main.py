@@ -38,6 +38,7 @@ from precursor.backend.routers import (
     me,
     memories,
     raw,
+    schedules,
     settings,
     skills,
     summary,
@@ -56,14 +57,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await hydrate_user_entries()
     discover(app)
-    # The mounted streamable-HTTP MCP app needs its session manager's task group
-    # running for the lifetime of the server (the mount itself doesn't start it).
-    mcp_instance = getattr(app.state, "precursor_http_mcp", None)
-    if mcp_instance is not None:
-        async with mcp_instance.session_manager.run():
+    from precursor.backend.services.scheduler import get_scheduler
+
+    scheduler = get_scheduler()
+    await scheduler.start()
+    try:
+        # The mounted streamable-HTTP MCP app needs its session manager's task group
+        # running for the lifetime of the server (the mount itself doesn't start it).
+        mcp_instance = getattr(app.state, "precursor_http_mcp", None)
+        if mcp_instance is not None:
+            async with mcp_instance.session_manager.run():
+                yield
+        else:
             yield
-    else:
-        yield
+    finally:
+        await scheduler.stop()
 
 
 class _McpHttpGate:
@@ -168,6 +176,7 @@ def create_app() -> FastAPI:
         memories.router,
         events.router,
         workspaces.router,
+        schedules.router,
         raw.router,
         version.router,
     ):
