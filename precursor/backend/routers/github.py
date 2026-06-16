@@ -42,12 +42,12 @@ async def _resolve_repo(repo: str | None, session: AsyncSession) -> str:
     return target
 
 
-def _require_token(settings: Settings) -> str:
-    token = resolve_github_token(settings)
+async def _require_token(session: AsyncSession) -> str:
+    token = await resolve_github_token(session)
     if not token:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "No GitHub token available. Configure one in Settings, set GITHUB_TOKEN, "
+            "No GitHub token available. Configure one in Settings, "
             "or sign in with `gh auth login`.",
         )
     return token
@@ -61,7 +61,7 @@ async def list_issues(
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     target = await _resolve_repo(repo, session)
-    token = _require_token(settings)
+    token = await _require_token(session)
     client = GitHubClient(token=token)
     try:
         return await client.list_issues(target, query=q)
@@ -76,7 +76,7 @@ async def create_issue(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     target = await _resolve_repo(payload.repo, session)
-    token = _require_token(settings)
+    token = await _require_token(session)
     client = GitHubClient(token=token)
     try:
         return await client.create_issue(
@@ -93,7 +93,7 @@ async def list_labels(
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     target = await _resolve_repo(repo, session)
-    token = _require_token(settings)
+    token = await _require_token(session)
     client = GitHubClient(token=token)
     try:
         return await client.list_labels(target)

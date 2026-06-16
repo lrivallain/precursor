@@ -118,11 +118,11 @@ async def summarize_issue(
         if _is_fresh(cache, ttl):
             return _cache_to_summary(cache, cached=True)
 
-    token = resolve_github_token(settings)
+    token = await resolve_github_token(session)
     if not token:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "No GitHub token available. Configure one in Settings, set GITHUB_TOKEN, "
+            "No GitHub token available. Configure one in Settings, "
             "or sign in with `gh auth login`.",
         )
 
@@ -175,7 +175,7 @@ async def refresh_issue_context(
     )
     user = "\n\n".join(prompt_parts)
 
-    provider = get_llm_provider()
+    provider = await get_llm_provider(session)
     model = await resolve_llm_model(session)
     chunks: list[str] = []
     try:

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting, MCPServer
+from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.mcp.server import get_mcp_server
 from precursor.backend.services.mcp.user_servers import (
@@ -84,12 +85,13 @@ async def list_servers(
 ) -> list[dict[str, Any]]:
     manager = get_mcp_client_manager()
     enabled = await _load_enabled(session)
+    github_token = await resolve_github_token(session)
     # Lazily probe enabled servers with an empty tool catalogue (e.g. after a
     # process restart). The chat router itself opens fresh sessions, but the
     # UI relies on the cached tools list to render the catalogue.
     for entry in manager.list_entries():
         if enabled.get(entry.name, False) and not entry.tools:
-            await manager.probe(entry.name, settings=settings)
+            await manager.probe(entry.name, github_token=github_token)
 
     out: list[dict[str, Any]] = []
     for entry in manager.list_entries():
@@ -135,7 +137,7 @@ async def connect_server(
     enabled[name] = True
     await _store_enabled(session, enabled)
 
-    entry = await manager.probe(name, settings=settings)
+    entry = await manager.probe(name, github_token=await resolve_github_token(session))
     base = manager.status_dict(entry, enabled=True)
     row = None if entry.builtin else await get_row_by_name(session, name)
     return _enrich_with_user_meta(base, row)

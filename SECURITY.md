@@ -13,8 +13,8 @@ Particularly sensitive surfaces:
 - **Command-runner MCP tool** — can execute shell/Python/Node. Keep the Docker
   "jail" enabled; disabling it grants full local-disk access.
 - **MCP-over-HTTP transport** — off by default, loopback-only when on.
-- **Secrets** — `GITHUB_TOKEN` and provider keys live in `.env` / the local DB
-  and are never returned by the API.
+- **Secrets** — the GitHub token and LLM provider keys live in the local DB
+  (set via Settings) and are never returned by the API.
 
 ## Supported versions
 

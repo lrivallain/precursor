@@ -21,7 +21,6 @@ import anyio
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
-from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
 from precursor.backend.routers.chat import (
@@ -43,6 +42,7 @@ from precursor.backend.services.events import (
     publish_stream_ended,
     publish_stream_started,
 )
+from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import (
     ChatMessage,
@@ -72,9 +72,7 @@ async def run_topic_turn(topic_id: int, prompt: str, *, clear_context: bool = Fa
 
 
 async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> None:
-    settings = get_settings()
     manager = get_mcp_client_manager()
-    provider = get_llm_provider()
 
     async with SessionLocal() as session:
         topic = await session.get(Topic, topic_id)
@@ -111,6 +109,8 @@ async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> No
         max_tool_rounds = await resolve_max_tool_rounds(session)
         max_input_tokens = await resolve_llm_max_input_tokens(session)
         max_tool_result_tokens = await resolve_llm_max_tool_result_tokens(session)
+        provider = await get_llm_provider(session)
+        github_token = await resolve_github_token(session)
 
     async with AsyncExitStack() as stack:
         sessions: dict[str, Any] = {}
@@ -120,7 +120,7 @@ async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> No
         for server_name in enabled_servers:
             try:
                 mcp_session, tools = await stack.enter_async_context(
-                    manager.open_session(server_name, settings=settings)
+                    manager.open_session(server_name, github_token=github_token)
                 )
             except Exception as exc:
                 logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, exc)

@@ -22,9 +22,6 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
-from precursor.backend.config import Settings
-from precursor.backend.services.github_auth import resolve_github_token
-
 logger = logging.getLogger(__name__)
 
 ConnectionState = Literal[
@@ -53,7 +50,7 @@ class MCPToolDef:
         return f"{self.server}__{self.name}"
 
 
-HeadersProvider = Callable[[Settings], dict[str, str] | None]
+HeadersProvider = Callable[[str], dict[str, str] | None]
 
 
 @dataclass(slots=True)
@@ -176,7 +173,7 @@ class MCPClientManager:
             raise ValueError(f"'{name}' is reserved by a built-in MCP server")
         static_headers = dict(headers) if headers else None
         provider: HeadersProvider | None = (
-            (lambda _settings, h=static_headers: dict(h)) if static_headers else None
+            (lambda _token, h=static_headers: dict(h)) if static_headers else None
         )
         entry = MCPServerEntry(
             name=name,
@@ -199,11 +196,13 @@ class MCPClientManager:
 
     @asynccontextmanager
     async def open_session(
-        self, name: str, *, settings: Settings
+        self, name: str, *, github_token: str = ""
     ) -> AsyncIterator[tuple[ClientSession, list[MCPToolDef]]]:
         """Open a live MCP session against a configured server.
 
         Yields ``(session, tools)``; caller must use as ``async with``.
+        ``github_token`` is the resolved token for servers that authenticate
+        with it (e.g. the built-in GitHub server).
         """
         entry = self._servers.get(name)
         if entry is None:
@@ -215,7 +214,7 @@ class MCPClientManager:
             if entry.transport == "streamable_http":
                 if not entry.url:
                     raise RuntimeError(f"MCP server '{name}' has no URL configured")
-                headers = entry.headers_provider(settings) if entry.headers_provider else None
+                headers = entry.headers_provider(github_token) if entry.headers_provider else None
                 if entry.headers_provider and headers is None:
                     raise RuntimeError(
                         f"MCP server '{name}' has no credentials; configure them in Settings"
@@ -277,13 +276,13 @@ class MCPClientManager:
             for t in result.tools
         ]
 
-    async def probe(self, name: str, *, settings: Settings) -> MCPServerEntry:
+    async def probe(self, name: str, *, github_token: str = "") -> MCPServerEntry:
         """Open + close a session purely to refresh the catalog/state for the UI."""
         entry = self._servers.get(name)
         if entry is None:
             raise KeyError(name)
         try:
-            async with self.open_session(name, settings=settings):
+            async with self.open_session(name, github_token=github_token):
                 pass
         except Exception:
             pass
@@ -310,8 +309,7 @@ class MCPClientManager:
         }
 
 
-def _github_headers(settings: Settings) -> dict[str, str] | None:
-    token = resolve_github_token(settings)
+def _github_headers(token: str) -> dict[str, str] | None:
     if not token:
         return None
     return {

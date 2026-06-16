@@ -15,6 +15,12 @@ class SettingsPayload(BaseModel):
 
     theme: Theme | None = None
     llm_model: str | None = None
+    # Active LLM provider id (see services/llm/registry.py).
+    llm_provider: str | None = None
+    # Per-provider config maps, e.g. {"azure_foundry": {"endpoint": ..., "key": ...}}.
+    # Merged into the stored config; secret fields are accepted here but never
+    # echoed back. An empty-string value clears that field.
+    llm_providers: dict[str, dict[str, str]] | None = None
     github_repo: str | None = None
     issue_context_ttl_minutes: int | None = None
     # When true, the per-conversation stats sidebar is rendered in the UI.
@@ -70,6 +76,11 @@ class SettingsRead(BaseModel):
     # input when the user is already signed in via `gh auth login`.
     github_token_source: GitHubTokenSource = "none"
     issue_associations_enabled: bool = True
+    # Active LLM provider id + per-provider public config (secrets redacted) and
+    # a per-provider secret-presence map.
+    llm_provider: str = "github_copilot"
+    llm_providers: dict[str, dict[str, str]] = Field(default_factory=dict)
+    llm_providers_present: dict[str, dict[str, bool]] = Field(default_factory=dict)
     # Azure AI Speech: configured endpoint + language (never echoes the key) and
     # a readiness flag the composer uses to choose the STT provider.
     azure_speech_endpoint: str = ""

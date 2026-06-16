@@ -7,8 +7,9 @@ import time
 import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.config import Settings, get_settings
+from precursor.backend.db import get_session
 from precursor.backend.services.github_auth import (
     github_token_source,
     resolve_github_token,
@@ -50,9 +51,9 @@ async def _fetch_identity(token: str) -> GitHubIdentity | None:
 
 
 @router.get("", response_model=Me)
-async def get_me(settings: Settings = Depends(get_settings)) -> Me:
-    source = github_token_source(settings)
-    token = resolve_github_token(settings)
+async def get_me(session: AsyncSession = Depends(get_session)) -> Me:
+    source = await github_token_source(session)
+    token = await resolve_github_token(session)
     if not token:
         return Me(github=None, github_token_source=source)
     identity = await _fetch_identity(token)

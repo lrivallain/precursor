@@ -110,6 +110,11 @@ export interface Settings {
   api_keys_present: Record<string, boolean>;
   github_token_source: "env" | "gh-cli" | "settings" | "none";
   issue_associations_enabled: boolean;
+  // Active LLM provider id + per-provider public config (secrets redacted) and
+  // a per-provider secret-presence map.
+  llm_provider: string;
+  llm_providers: Record<string, Record<string, string>>;
+  llm_providers_present: Record<string, Record<string, boolean>>;
   // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
   azure_speech_endpoint: string;
   azure_speech_language: string;
@@ -146,6 +151,8 @@ export interface SettingsUpdate {
   mcp_servers?: Record<string, Record<string, unknown>>;
   api_keys?: Record<string, string>;
   issue_associations_enabled?: boolean;
+  llm_provider?: string;
+  llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
   mcp_expose?: Record<string, boolean>;
@@ -225,6 +232,23 @@ export interface LLMModel {
   summary: string;
   tags: string[];
   context_window?: number | null;
+}
+
+export interface LLMProviderField {
+  name: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  placeholder: string;
+  help: string;
+}
+
+export interface LLMProviderSpec {
+  id: string;
+  label: string;
+  fields: LLMProviderField[];
+  uses_github_token: boolean;
+  discovers_models: boolean;
 }
 
 export interface IssueSummary {

@@ -11,6 +11,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- Multiple **LLM providers**, selectable at runtime in Settings → Model: GitHub
+  Copilot, GitHub Models, **Azure AI Foundry**, OpenAI, Mistral, Hugging Face,
+  Ollama, and Mock. Providers are declared in a registry
+  (`services/llm/registry.py`) — adding one is a single entry plus an
+  implementation. `GET /api/llm/providers` exposes each provider's config
+  fields so the UI renders the right inputs (secrets redacted on read), and the
+  Model panel shows discovered-model metadata (summary, context window, tags)
+  with a manual model-id fallback when a provider has no catalog.
 - CalVer versioning derived from git tags (hatch-vcs); a single source of truth
   replaces the previously hardcoded version literals.
 - `GET /api/version` endpoint and a version line in the Settings panel.
@@ -47,6 +55,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Breaking (dev/config):** the LLM provider and GitHub token are no longer
+  read from the environment (`PRECURSOR_LLM_PROVIDER`, `GITHUB_TOKEN`). They now
+  live in the app settings and are configured in the UI, so they can change at
+  runtime without a restart. The GitHub token still falls back to your
+  `gh auth login` session. The LLM provider factory is now resolved per request
+  from the DB.
 - `ruff` now ignores `B008` (FastAPI `Depends()` idiom); the lint gate passes
   clean across the repo.
 - `mypy precursor` passes under `strict` and is a hard CI gate.
@@ -87,6 +101,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- Chat errors (provider rejections, the tool-round cap, …) now **stay in the
+  transcript** instead of flashing for a few seconds and vanishing. They were
+  only added to the transient stream buffer, which was discarded when the
+  persisted history reloaded after the stream ended; the error is now persisted
+  as a system message.
 - `precursor --dev` no longer prints a burst of Vite `http proxy error …
   ECONNREFUSED 127.0.0.1:8000` on startup: the Vite dev server now launches only
   once the backend port is accepting connections, instead of racing it.

@@ -99,12 +99,12 @@ async def _require_linked_issue(session: AsyncSession, topic_id: int) -> tuple[T
     return topic, repo, topic.github_issue_number
 
 
-def _require_token(settings: Settings) -> str:
-    token = resolve_github_token(settings)
+async def _require_token(session: AsyncSession) -> str:
+    token = await resolve_github_token(session)
     if not token:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "No GitHub token available. Configure one in Settings, set GITHUB_TOKEN, "
+            "No GitHub token available. Configure one in Settings, "
             "or sign in with `gh auth login`.",
         )
     return token
@@ -156,7 +156,7 @@ async def _build_transcript(session: AsyncSession, topic_id: int) -> str:
 
 
 async def _stream_llm(session: AsyncSession, system: str, user: str, *, label: str) -> str:
-    provider = get_llm_provider()
+    provider = await get_llm_provider(session)
     model = await resolve_llm_model(session)
     chunks: list[str] = []
     try:
@@ -223,7 +223,7 @@ async def gh_update_post(
     session: AsyncSession = Depends(get_session),
 ) -> CommentPostResponse:
     topic, repo, issue_number = await _require_linked_issue(session, topic_id)
-    token = _require_token(settings)
+    token = await _require_token(session)
 
     gh = GitHubClient(token=token)
     try:
@@ -273,7 +273,7 @@ async def gh_sync(
     session: AsyncSession = Depends(get_session),
 ) -> GhSyncResponse:
     _, repo, issue_number = await _require_linked_issue(session, topic_id)
-    token = _require_token(settings)
+    token = await _require_token(session)
 
     # Drop the stale entry first so a partial failure doesn't leave a
     # mismatched cache behind, then regenerate it from GitHub + the LLM.
@@ -402,7 +402,7 @@ async def gh_create_post(
             status.HTTP_400_BAD_REQUEST,
             f"Topic is already linked to {repo}#{topic.github_issue_number}.",
         )
-    token = _require_token(settings)
+    token = await _require_token(session)
 
     gh = GitHubClient(token=token)
     try:
@@ -492,7 +492,7 @@ async def gh_close_post(
     session: AsyncSession = Depends(get_session),
 ) -> GhCloseResponse:
     _, repo, issue_number = await _require_linked_issue(session, topic_id)
-    token = _require_token(settings)
+    token = await _require_token(session)
     body = payload.body.strip()
 
     gh = GitHubClient(token=token)

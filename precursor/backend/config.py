@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from functools import cached_property, lru_cache
-from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -42,11 +41,9 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "workspaces")
 
-    # LLM
-    llm_provider: Literal["github_copilot", "github_models", "mock"] = "github_copilot"
-    # GitHub Models / Copilot token — read from GITHUB_TOKEN (unprefixed) to
-    # match the convention used by Actions and the `gh` CLI.
-    github_token: str = Field(default="", validation_alias="GITHUB_TOKEN")
+    # LLM — the active provider and its credentials live in the app settings
+    # (Settings → Model), not in the environment, so they can be changed at
+    # runtime without a restart. See services/llm/registry.py.
 
     # Prompt budgeting — caps how much of the (history + tool results) transcript
     # is sent to the model, so a few large file reads / fetches across tool

@@ -80,6 +80,59 @@ async def resolve_llm_model(session: AsyncSession) -> str:
     return DEFAULT_LLM_MODEL
 
 
+async def resolve_llm_provider(session: AsyncSession) -> str:
+    """Return the active LLM provider id, or the factory default."""
+    from precursor.backend.services.llm.registry import DEFAULT_PROVIDER, PROVIDERS
+
+    db_value = await _get_db_value(session, "llm_provider")
+    if isinstance(db_value, str) and db_value in PROVIDERS:
+        return db_value
+    return DEFAULT_PROVIDER
+
+
+async def resolve_llm_provider_config(session: AsyncSession, provider_id: str) -> dict[str, str]:
+    """Return the stored config dict for ``provider_id`` (incl. secrets)."""
+    db_value = await _get_db_value(session, "llm_providers")
+    if isinstance(db_value, dict):
+        cfg = db_value.get(provider_id)
+        if isinstance(cfg, dict):
+            return {k: v for k, v in cfg.items() if isinstance(v, str)}
+    return {}
+
+
+def redact_llm_providers(
+    stored: object,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, bool]]]:
+    """Split stored provider configs into (public fields, secret-presence map).
+
+    Secret field values are never returned to the client — only a boolean per
+    secret field indicating whether it's set.
+    """
+    from precursor.backend.services.llm.registry import provider_secret_fields
+
+    public: dict[str, dict[str, str]] = {}
+    present: dict[str, dict[str, bool]] = {}
+    if not isinstance(stored, dict):
+        return public, present
+    for provider_id, cfg in stored.items():
+        if not isinstance(cfg, dict):
+            continue
+        secrets = provider_secret_fields(provider_id)
+        pub: dict[str, str] = {}
+        pres: dict[str, bool] = {}
+        for key, value in cfg.items():
+            if not isinstance(value, str):
+                continue
+            if key in secrets:
+                pres[key] = bool(value)
+            else:
+                pub[key] = value
+        public[provider_id] = pub
+        if pres:
+            present[provider_id] = pres
+    return public, present
+
+
 async def resolve_issue_context_ttl_minutes(session: AsyncSession) -> int:
     """Return the configured issue-context TTL, clamped to a sane range."""
     db_value = await _get_db_value(session, "issue_context_ttl_minutes")

@@ -22,6 +22,7 @@ import { modelsStore } from "../lib/modelsStore";
 import { settingsStore } from "../lib/settingsStore";
 import type {
   LLMModel,
+  LLMProviderSpec,
   MCPServerStatus,
   MCPServerCreate,
   MCPServerUpdate,
@@ -119,6 +120,12 @@ export function SettingsPanel({ onClose }: Props) {
   const [model, setModel] = useState("");
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [provider, setProvider] = useState("");
+  const [providers, setProviders] = useState<LLMProviderSpec[]>([]);
+  const [providerConfig, setProviderConfig] = useState<
+    Record<string, Record<string, string>>
+  >({});
   const [repo, setRepo] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [azureEndpoint, setAzureEndpoint] = useState("");
@@ -152,11 +159,42 @@ export function SettingsPanel({ onClose }: Props) {
     }
   }
 
+  async function loadModels(providerOverride?: string): Promise<void> {
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const list = await api.listModels(providerOverride);
+      setModels(list);
+      // When a catalog exists, the model MUST come from it — if the current
+      // selection isn't in the list (e.g. it belonged to another provider),
+      // snap to the first available model so the picker never shows a stale,
+      // "(not in catalog)" id.
+      if (list.length > 0) {
+        setModel((cur) => (list.some((m) => m.id === cur) ? cur : list[0].id));
+      }
+    } catch (e) {
+      setModels([]);
+      setModelsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setModelsLoading(false);
+    }
+  }
+
+  // Switching providers reloads the catalog for the newly selected provider
+  // (previewed via the override param, using its saved config) so the model
+  // list and selection always match the chosen provider.
+  function onProviderChange(next: string): void {
+    setProvider(next);
+    void loadModels(next);
+  }
+
   useEffect(() => {
     void (async () => {
       const s = await api.getSettings();
       setSettings(s);
       setModel(s.llm_model);
+      setProvider(s.llm_provider);
+      setProviderConfig(s.llm_providers ?? {});
       setRepo(s.github_repo);
       setTtlMinutes(s.issue_context_ttl_minutes);
       setShowChatStats(s.show_chat_stats);
@@ -171,11 +209,11 @@ export function SettingsPanel({ onClose }: Props) {
       settingsStore.set(s);
       await refreshMcp();
       try {
-        const list = await api.listModels();
-        setModels(list);
-      } catch (e) {
-        setModelsError(e instanceof Error ? e.message : String(e));
+        setProviders(await api.listProviders());
+      } catch {
+        setProviders([]);
       }
+      await loadModels();
       try {
         setMe(await api.getMe());
       } catch {
@@ -189,12 +227,55 @@ export function SettingsPanel({ onClose }: Props) {
     })();
   }, []);
 
+  // Build the llm_providers payload from edits, omitting empty secret fields so
+  // a blank password input never clears an already-saved secret.
+  function buildLlmProvidersPayload(): Record<string, Record<string, string>> {
+    const secretFields: Record<string, Set<string>> = {};
+    for (const spec of providers) {
+      secretFields[spec.id] = new Set(
+        spec.fields.filter((f) => f.secret).map((f) => f.name),
+      );
+    }
+    const out: Record<string, Record<string, string>> = {};
+    for (const [pid, cfg] of Object.entries(providerConfig)) {
+      const entry: Record<string, string> = {};
+      for (const [k, v] of Object.entries(cfg)) {
+        if (secretFields[pid]?.has(k) && v === "") continue;
+        entry[k] = v;
+      }
+      if (Object.keys(entry).length > 0) out[pid] = entry;
+    }
+    return out;
+  }
+
+  // Persist provider + model + per-provider config, then refresh the catalog —
+  // without closing the panel (so the user can verify discovery).
+  async function applyModelSettings(): Promise<void> {
+    setModelsLoading(true);
+    try {
+      const updated = await api.updateSettings({
+        llm_provider: provider,
+        llm_model: model,
+        llm_providers: buildLlmProvidersPayload(),
+      });
+      setSettings(updated);
+      setProviderConfig(updated.llm_providers ?? {});
+      modelsStore.applySettings(updated);
+      settingsStore.set(updated);
+      await loadModels(provider);
+    } catch (e) {
+      setModelsError(e instanceof Error ? e.message : String(e));
+      setModelsLoading(false);
+    }
+  }
+
   async function save(): Promise<void> {
     setSaving(true);
     try {
       const payload: Parameters<typeof api.updateSettings>[0] = {
         theme,
         llm_model: model,
+        llm_provider: provider,
         github_repo: repo,
         issue_context_ttl_minutes: ttlMinutes,
         show_chat_stats: showChatStats,
@@ -206,6 +287,10 @@ export function SettingsPanel({ onClose }: Props) {
         mcp_http_enabled: httpEnabled,
         ...(sys ?? {}),
       };
+      const llmProviders = buildLlmProvidersPayload();
+      if (Object.keys(llmProviders).length > 0) {
+        payload.llm_providers = llmProviders;
+      }
       const apiKeys: Record<string, string> = {};
       if (githubToken) apiKeys.github_token = githubToken;
       if (azureKey) apiKeys.azure_speech_key = azureKey;
@@ -403,7 +488,78 @@ export function SettingsPanel({ onClose }: Props) {
 
             {category === "model" && (
               <section>
-                <h3 className="text-sm font-medium mb-2">Model</h3>
+                <h3 className="text-sm font-medium mb-2">Provider</h3>
+                <select
+                  value={provider}
+                  onChange={(e) => onProviderChange(e.target.value)}
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                >
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+
+                {(() => {
+                  const activeSpec = providers.find((p) => p.id === provider);
+                  if (!activeSpec) return null;
+                  if (activeSpec.uses_github_token) {
+                    return (
+                      <p className="text-[11px] text-muted mt-2">
+                        Authenticates with your GitHub token (configured in
+                        Settings → GitHub, or your <code>gh auth login</code>{" "}
+                        session).
+                      </p>
+                    );
+                  }
+                  if (activeSpec.fields.length === 0) return null;
+                  const cfg = providerConfig[provider] ?? {};
+                  const present =
+                    settings?.llm_providers_present?.[provider] ?? {};
+                  return (
+                    <div className="mt-3 space-y-3 p-3 rounded border border-border bg-surface">
+                      {activeSpec.fields.map((f) => (
+                        <div key={f.name}>
+                          <label className="block text-xs text-muted mb-1">
+                            {f.label}
+                            {f.secret && present[f.name] && (
+                              <span className="text-green-500"> (configured)</span>
+                            )}
+                          </label>
+                          <input
+                            type={f.secret ? "password" : "text"}
+                            value={cfg[f.name] ?? ""}
+                            onChange={(e) =>
+                              setProviderConfig((prev) => ({
+                                ...prev,
+                                [provider]: {
+                                  ...(prev[provider] ?? {}),
+                                  [f.name]: e.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={
+                              f.secret && present[f.name]
+                                ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+                                : f.placeholder
+                            }
+                            className="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                          />
+                          {f.help && (
+                            <p className="text-[11px] text-muted mt-1">{f.help}</p>
+                          )}
+                        </div>
+                      ))}
+                      <p className="text-[11px] text-muted">
+                        Secrets are stored server-side and never returned. Leave a
+                        configured key blank to keep it.
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                <h3 className="text-sm font-medium mt-6 mb-2">Model</h3>
                 {models.length > 0 ? (
                   <select
                     value={models.some((m) => m.id === model) ? model : ""}
@@ -436,17 +592,59 @@ export function SettingsPanel({ onClose }: Props) {
                     type="text"
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
-                    placeholder="openai/gpt-4o-mini"
+                    placeholder="e.g. gpt-4o-mini"
                     className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                   />
                 )}
-                <p className="text-xs text-muted mt-1">
-                  {modelsError
-                    ? `Catalog unavailable (${modelsError}). Type a model id manually.`
-                    : models.length > 0
-                    ? `${models.length} models from the GitHub Models catalog.`
-                    : "Loading catalog\u2026"}
-                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => void applyModelSettings()}
+                    disabled={modelsLoading}
+                    className="px-3 py-1.5 rounded text-xs border border-border hover:bg-bg disabled:opacity-50"
+                  >
+                    {modelsLoading ? "Refreshing\u2026" : "Apply & refresh models"}
+                  </button>
+                  <span className="text-[11px] text-muted">
+                    {modelsError
+                      ? `Catalog unavailable: ${modelsError}. Type a model id manually.`
+                      : models.length > 0
+                        ? `${models.length} models`
+                        : "No catalog — enter a model id manually."}
+                  </span>
+                </div>
+
+                {(() => {
+                  const selected = models.find((m) => m.id === model);
+                  if (!selected) return null;
+                  return (
+                    <div className="mt-3 text-[11px] text-muted space-y-1">
+                      {selected.summary && (
+                        <p className="text-text/80">{selected.summary}</p>
+                      )}
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
+                        {selected.context_window != null && (
+                          <span>
+                            Context: {selected.context_window.toLocaleString()} tokens
+                          </span>
+                        )}
+                        {selected.publisher && <span>By {selected.publisher}</span>}
+                      </div>
+                      {selected.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-0.5">
+                          {selected.tags.map((t) => (
+                            <span
+                              key={t}
+                              className="px-1.5 py-0.5 rounded bg-surface border border-border"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {sys && (
                   <div className="mt-6 space-y-3">
                     <h3 className="text-sm font-medium">Prompt budgeting</h3>

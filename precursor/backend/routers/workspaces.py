@@ -175,7 +175,7 @@ async def create_workspace(
         dest.mkdir(parents=True, exist_ok=True)
     else:
         # Clone inline. On failure, keep the row so the user can retry via re-clone.
-        token = resolve_github_token(get_settings())
+        token = await resolve_github_token(session)
         try:
             if dest.exists():
                 shutil.rmtree(dest, ignore_errors=True)
@@ -331,7 +331,7 @@ async def git_pull(
     workspace_id: int, session: AsyncSession = Depends(get_session)
 ) -> GitActionResult:
     ws = await _get_git_workspace(workspace_id, session)
-    token = resolve_github_token(get_settings())
+    token = await resolve_github_token(session)
     root = workspace_root(ws)
     try:
         ok, detail = await git.pull(root, ws.branch, token)
@@ -357,7 +357,7 @@ async def git_commit_push(
     session: AsyncSession = Depends(get_session),
 ) -> GitActionResult:
     ws = await _get_git_workspace(workspace_id, session)
-    token = resolve_github_token(get_settings())
+    token = await resolve_github_token(session)
     root = workspace_root(ws)
     try:
         if payload.paths is not None:
@@ -482,7 +482,8 @@ async def chat_stream(
     model = payload.model or await resolve_llm_model(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
     enabled_servers = await _load_enabled_mcp_servers(session)
-    provider = get_llm_provider()
+    provider = await get_llm_provider(session)
+    github_token = await resolve_github_token(session)
     manager = get_mcp_client_manager()
 
     system_prompt = _SYSTEM_PROMPT + file_context + _workspace_tool_context(ws, payload.path)
@@ -507,7 +508,7 @@ async def chat_stream(
             for server_name in enabled_servers:
                 try:
                     mcp_session, tools = await stack.enter_async_context(
-                        manager.open_session(server_name, settings=settings)
+                        manager.open_session(server_name, github_token=github_token)
                     )
                 except Exception as exc:
                     logger.warning(
