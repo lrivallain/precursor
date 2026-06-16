@@ -1,14 +1,7 @@
 import { useState } from "react";
-import {
-  Loader2,
-  MessageSquarePlus,
-  NotebookPen,
-  Send,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { Loader2, MessageSquarePlus, NotebookPen, Send, Sparkles } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
-import { ResizableTextarea } from "./ResizableTextarea";
+import { CommandPanel } from "./CommandPanel";
 
 export type NotesAction =
   | "append"
@@ -57,42 +50,21 @@ export function NotesPanel({
   const busy = rephrasing || acting;
 
   return (
-    <div className="border border-border rounded bg-surface">
-      <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">
-        <div className="flex items-center gap-2 min-w-0">
-          <NotebookPen size={14} className="text-accent" />
-          <span className="text-sm font-medium truncate">Notes</span>
-          <span className="text-[11px] text-muted truncate">
-            scratch pad — not posted until you choose an action
-          </span>
-        </div>
-        <button
-          onClick={onCancel}
-          className="p-1 rounded hover:bg-bg text-muted"
-          aria-label="Discard notes"
-          data-tooltip="Discard notes"
-        >
-          <X size={14} />
-        </button>
-      </header>
-
-      <div className="p-3 space-y-2">
-        <ResizableTextarea
-          value={text}
-          onChange={setText}
-          storageKey="precursor:notesPanel:height"
-          placeholder="Start typing your notes… (Markdown supported)"
-          disabled={busy}
-          aria-label="Notes"
-        />
-
-        {error && (
-          <div className="text-xs text-red-500 whitespace-pre-wrap break-words">
-            {error}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2 justify-end">
+    <CommandPanel
+      icon={<NotebookPen size={14} className="text-accent" />}
+      title="Notes"
+      subtitle="scratch pad — not posted until you choose an action"
+      onClose={onCancel}
+      closeLabel="Discard notes"
+      body={text}
+      onBodyChange={setText}
+      bodyPlaceholder="Start typing your notes… (Markdown supported)"
+      resizeStorageKey="precursor:notesPanel:height"
+      previewEmptyHint="Nothing to preview yet."
+      disabled={busy}
+      error={error}
+      footer={
+        <>
           <button
             onClick={() => void onRephrase(text)}
             disabled={empty || busy}
@@ -135,8 +107,9 @@ export function NotesPanel({
             <Github size={14} />
             Post as comment
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
+

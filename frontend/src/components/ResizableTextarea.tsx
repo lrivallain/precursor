@@ -38,11 +38,20 @@ export function ResizableTextarea({
     defaultHeight,
     min: minHeight,
     max: maxHeight,
-    side: "bottom",
+    side: "top",
   });
 
   return (
     <div className="relative">
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        onMouseDown={onMouseDown}
+        title="Drag to resize"
+        className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize select-none group z-10"
+      >
+        <div className="h-px w-12 mx-auto bg-border group-hover:bg-accent/60 transition-colors" />
+      </div>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -52,15 +61,6 @@ export function ResizableTextarea({
         style={{ height }}
         className={`w-full resize-none bg-bg border border-border rounded p-2 text-sm outline-none focus:border-accent disabled:opacity-60 ${className}`}
       />
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        onMouseDown={onMouseDown}
-        title="Drag to resize"
-        className="absolute -bottom-1 left-0 right-0 h-2 cursor-row-resize select-none group z-10"
-      >
-        <div className="h-px w-12 mx-auto mt-1 bg-border group-hover:bg-accent/60 transition-colors" />
-      </div>
     </div>
   );
 }

@@ -25,9 +25,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 - Dependabot config for pip, npm, and GitHub Actions.
 - Contributor prompt helpers (`.github/prompts/`): `/ship-change` and
   `/release` workflows.
-- The build-in command panels (`/notes`, GitHub draft cards) now use a shared
-  `ResizableTextarea` with a draggable bottom edge; the chosen height is
-  remembered per panel across sessions, giving a larger editing area.
+- The build-in command panels (`/notes`, `/gh-update`, `/gh-create`,
+  `/gh-close`) now share a single `CommandPanel` with a consistent Edit/Preview
+  toggle (Markdown preview) and a resizable editing area whose height is
+  remembered per panel across sessions. `/notes` previously had no preview; the
+  resize grip sits on the panel's top edge so it grows naturally upward above
+  the composer.
 
 ### Changed
 
