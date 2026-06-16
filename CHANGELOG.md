@@ -32,6 +32,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   means the scratch pad / draft cards no longer share vertical space with the
   message composer, so each is sized independently. The panels also gained a
   consistent Edit/Preview (Markdown) toggle — `/notes` previously had none.
+- Speech-to-text dictation in the chat composer via **Azure AI Speech**. A mic
+  button streams interim results into the draft live and appends each finalized
+  phrase. Configure the resource endpoint, key, and language in Settings →
+  Speech-to-text (with a "Test connection" button). The key is stored
+  server-side and never returned; the browser only receives a short-lived token
+  minted by the backend (`GET /api/stt/token`), and talks to Azure directly via
+  the Speech SDK (lazy-loaded, so it doesn't bloat the default bundle). The mic
+  is hidden when Azure isn't configured.
 
 ### Changed
 
