@@ -52,8 +52,25 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `postcss.config.js` / `tailwind.config.js`).
 - Dependabot now groups only minor/patch bumps; majors get their own PR so a
   breaking upgrade (e.g. Tailwind v4) is never bundled with safe ones.
+- Unified backend logging: a single `logging.config.dictConfig` (applied at
+  startup and passed to uvicorn as `log_config`) gives every record — app,
+  uvicorn, and third-party (httpx, mcp, watchfiles) — one human format with an
+  ISO-8601 UTC timestamp, level, and logger name. Modules now use
+  `getLogger(__name__)` (no hardcoded `precursor.*` names) and operational
+  `print()` calls became logger calls. App `debug` stays app-only: noisy
+  libraries (aiosqlite, SQLAlchemy, sse-starlette, …) are pinned to fixed levels
+  so turning on app DEBUG doesn't unleash per-statement library spam. Output is
+  ANSI-coloured when stderr is a TTY and plain when piped/redirected. The
+  in-tree stdio MCP servers (fetch / workspace-fs / cmd-runner / precursor)
+  apply the same config in their entrypoints, so their `mcp.server` logs share
+  the format instead of FastMCP's timestamp-less default; routine `mcp.client`
+  connection chatter (session IDs, protocol negotiation) is quieted to WARNING.
 
 ### Fixed
+
+- `precursor --dev` no longer prints a burst of Vite `http proxy error …
+  ECONNREFUSED 127.0.0.1:8000` on startup: the Vite dev server now launches only
+  once the backend port is accepting connections, instead of racing it.
 
 - Scheduled topics now actually run: the background scheduler is started (and
   stopped) with the app lifespan. It was constructed but never started, so no

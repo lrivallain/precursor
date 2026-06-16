@@ -18,7 +18,7 @@ from typing import Literal
 
 from precursor.backend.config import Settings
 
-logger = logging.getLogger("precursor.github_auth")
+logger = logging.getLogger(__name__)
 
 TokenSource = Literal["env", "gh-cli", "none"]
 

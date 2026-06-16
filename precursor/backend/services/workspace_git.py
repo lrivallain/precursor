@@ -18,7 +18,7 @@ from pathlib import Path
 
 from precursor.backend.schemas.workspace import GitFileStatus, GitStatus
 
-logger = logging.getLogger("precursor.workspace_git")
+logger = logging.getLogger(__name__)
 
 _TIMEOUT = 120.0
 

@@ -11,7 +11,7 @@ from precursor.backend.schemas.llm import LLMModelRead
 from precursor.backend.services.llm import get_llm_provider
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
-logger = logging.getLogger("precursor.llm")
+logger = logging.getLogger(__name__)
 
 
 @router.get("/models", response_model=list[LLMModelRead])

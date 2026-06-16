@@ -25,7 +25,7 @@ from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
 
 router = APIRouter(prefix="/api/topics/{topic_id}/summary", tags=["chat"])
-logger = logging.getLogger("precursor.summary")
+logger = logging.getLogger(__name__)
 
 
 class IssueLabel(BaseModel):
