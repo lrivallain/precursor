@@ -37,10 +37,28 @@ export function useAzureSpeech({ onFinalChunk, onInterim, enabled, lang }: Optio
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recognizerRef = useRef<SpeechRecognizer | null>(null);
+  // We own the microphone MediaStream (rather than letting the SDK open its
+  // own) so teardown can stop its tracks and reliably release the OS mic — the
+  // SDK's close() alone leaves the microphone indicator on in the browser.
+  const streamRef = useRef<MediaStream | null>(null);
   const finalRef = useRef(onFinalChunk);
   const interimRef = useRef(onInterim);
   finalRef.current = onFinalChunk;
   interimRef.current = onInterim;
+
+  const releaseStream = useCallback(() => {
+    const stream = streamRef.current;
+    streamRef.current = null;
+    if (stream) {
+      for (const track of stream.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+    }
+  }, []);
 
   const teardown = useCallback(() => {
     const rec = recognizerRef.current;
@@ -48,15 +66,23 @@ export function useAzureSpeech({ onFinalChunk, onInterim, enabled, lang }: Optio
     if (rec) {
       try {
         rec.stopContinuousRecognitionAsync(
-          () => rec.close(),
-          () => rec.close(),
+          () => {
+            rec.close();
+            releaseStream();
+          },
+          () => {
+            rec.close();
+            releaseStream();
+          },
         );
       } catch {
-        /* already closing */
+        releaseStream();
       }
+    } else {
+      releaseStream();
     }
     setListening(false);
-  }, []);
+  }, [releaseStream]);
 
   useEffect(() => teardown, [teardown]);
 
@@ -75,7 +101,11 @@ export function useAzureSpeech({ onFinalChunk, onInterim, enabled, lang }: Optio
           language ||
           lang ||
           (typeof navigator !== "undefined" ? navigator.language : "en-US");
-        const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
+        // Own the mic stream so teardown can stop its tracks (releases the OS
+        // mic; the SDK's close() alone doesn't reliably do so in the browser).
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+        const audioConfig = sdk.AudioConfig.fromStreamInput(stream);
         const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
 
         recognizer.recognizing = (_s, e) => {
