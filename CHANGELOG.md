@@ -64,6 +64,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- `precursor --dev` no longer prints a burst of Vite `http proxy error …
+  ECONNREFUSED 127.0.0.1:8000` on startup: the Vite dev server now launches only
+  once the backend port is accepting connections, instead of racing it.
+
 - Scheduled topics now actually run: the background scheduler is started (and
   stopped) with the app lifespan. It was constructed but never started, so no
   schedule ever fired and "Run now" was a no-op.
