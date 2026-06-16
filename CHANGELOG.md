@@ -52,6 +52,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `postcss.config.js` / `tailwind.config.js`).
 - Dependabot now groups only minor/patch bumps; majors get their own PR so a
   breaking upgrade (e.g. Tailwind v4) is never bundled with safe ones.
+- Unified backend logging: a single `logging.config.dictConfig` (applied at
+  startup and passed to uvicorn as `log_config`) gives every record — app,
+  uvicorn, and third-party (httpx, mcp, watchfiles) — one human format with an
+  ISO-8601 UTC timestamp, level, and logger name. Modules now use
+  `getLogger(__name__)` (no hardcoded `precursor.*` names) and operational
+  `print()` calls became logger calls.
 
 ### Fixed
 

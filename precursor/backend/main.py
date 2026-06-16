@@ -47,7 +47,7 @@ from precursor.backend.routers import (
     workspaces,
 )
 
-logger = logging.getLogger("precursor")
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

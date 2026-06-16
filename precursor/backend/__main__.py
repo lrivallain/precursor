@@ -14,13 +14,16 @@ Two modes:
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
-import sys
 from pathlib import Path
 
 import uvicorn
 
 from precursor.backend.config import get_settings
+from precursor.backend.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def _repo_root() -> Path:
@@ -33,22 +36,23 @@ def _run_prod(host: str, port: int, log_level: str) -> None:
         host=host,
         port=port,
         log_level=log_level,
+        log_config=configure_logging(log_level),
         reload=False,
     )
 
 
 def _run_dev(host: str, port: int, log_level: str, *, frontend_port: int, frontend: bool) -> None:
+    log_config = configure_logging(log_level)
     vite: subprocess.Popen[bytes] | None = None
     if frontend:
         frontend_dir = _repo_root() / "frontend"
         if not (frontend_dir / "package.json").is_file():
-            print(
-                "warning: frontend/ not found — running backend only. "
+            logger.warning(
+                "frontend/ not found — running backend only. "
                 "`--dev` with the Vite server needs a source checkout.",
-                file=sys.stderr,
             )
         else:
-            print(f"Starting Vite dev server on :{frontend_port}")
+            logger.info("Starting Vite dev server on :%s", frontend_port)
             vite = subprocess.Popen(
                 [
                     "npm",
@@ -72,6 +76,7 @@ def _run_dev(host: str, port: int, log_level: str, *, frontend_port: int, fronte
             host=host,
             port=port,
             log_level=log_level,
+            log_config=log_config,
             reload=True,
         )
     finally:

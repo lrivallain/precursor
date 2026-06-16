@@ -23,3 +23,36 @@ def test_topics_empty_tree() -> None:
         r = client.get("/api/topics/tree")
         assert r.status_code == 200
         assert isinstance(r.json(), list)
+
+
+def test_log_config_unifies_format() -> None:
+    import logging
+    import re
+
+    from precursor.backend.logging_config import UTCFormatter, build_log_config
+
+    cfg = build_log_config("info")
+    # uvicorn + noisy third-party loggers route through the single root handler.
+    assert cfg["root"]["handlers"] == ["default"]
+    assert cfg["root"]["level"] == "INFO"
+    for name in ("uvicorn", "uvicorn.access", "mcp", "httpx", "watchfiles"):
+        assert cfg["loggers"][name]["handlers"] == []
+        assert cfg["loggers"][name]["propagate"] is True
+    # Keeps import-time module loggers alive so they propagate to root.
+    assert cfg["disable_existing_loggers"] is False
+
+    record = logging.LogRecord(
+        "precursor.backend.services.scheduler",
+        logging.INFO,
+        __file__,
+        1,
+        "Scheduler started",
+        None,
+        None,
+    )
+    line = UTCFormatter(cfg["formatters"]["precursor"]["format"]).format(record)
+    timestamp = line.split(" ", 1)[0]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp)
+    assert "INFO" in line
+    assert "precursor.backend.services.scheduler" in line
+    assert line.endswith("Scheduler started")

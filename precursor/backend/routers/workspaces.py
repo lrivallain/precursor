@@ -60,7 +60,7 @@ from precursor.backend.services.llm.base import (
 )
 from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
 
-logger = logging.getLogger("precursor.workspaces")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
