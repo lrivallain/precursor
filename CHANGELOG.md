@@ -44,6 +44,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   clarified GitHub token resolution (`GITHUB_TOKEN` → `gh` CLI → mock) and the
   dev-vs-prod port model (Vite `:5173` proxy → backend `:8000`).
 
+### Fixed
+
+- Scheduled topics now actually run: the background scheduler is started (and
+  stopped) with the app lifespan. It was constructed but never started, so no
+  schedule ever fired and "Run now" was a no-op.
+- The `schedules` router is now registered, so `PATCH /api/schedules/{id}`
+  (Save) and `POST /api/schedules/{id}/run` (Run now) work instead of returning
+  `405 Method Not Allowed` (the requests were falling through to the SPA
+  catch-all).
+
 <!--
 Release sections are added below by the release process, newest first, e.g.:
 
