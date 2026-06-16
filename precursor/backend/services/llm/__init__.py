@@ -15,14 +15,24 @@ from precursor.backend.services.llm.mock import MockProvider
 from precursor.backend.services.llm.registry import PROVIDERS
 
 
-async def get_llm_provider(session: AsyncSession) -> LLMProvider:
-    """Build the configured provider, falling back to the mock when unusable."""
+async def get_llm_provider(
+    session: AsyncSession, *, override_provider: str | None = None
+) -> LLMProvider:
+    """Build the configured provider, falling back to the mock when unusable.
+
+    ``override_provider`` lets the catalog endpoint preview a provider the user
+    has selected but not yet saved, using that provider's already-saved config.
+    """
     from precursor.backend.services.app_settings import (
         resolve_llm_provider,
         resolve_llm_provider_config,
     )
 
-    provider_id = await resolve_llm_provider(session)
+    provider_id = (
+        override_provider
+        if override_provider and override_provider in PROVIDERS
+        else await resolve_llm_provider(session)
+    )
     spec = PROVIDERS.get(provider_id)
     if spec is None:
         return MockProvider()
@@ -43,12 +53,3 @@ async def get_llm_provider(session: AsyncSession) -> LLMProvider:
 
 
 __all__ = ["get_llm_provider"]
-
-
-__all__ = [
-    "GitHubCopilotProvider",
-    "GitHubModelsProvider",
-    "LLMProvider",
-    "MockProvider",
-    "get_llm_provider",
-]

@@ -159,17 +159,33 @@ export function SettingsPanel({ onClose }: Props) {
     }
   }
 
-  async function loadModels(): Promise<void> {
+  async function loadModels(providerOverride?: string): Promise<void> {
     setModelsLoading(true);
     setModelsError(null);
     try {
-      setModels(await api.listModels());
+      const list = await api.listModels(providerOverride);
+      setModels(list);
+      // When a catalog exists, the model MUST come from it — if the current
+      // selection isn't in the list (e.g. it belonged to another provider),
+      // snap to the first available model so the picker never shows a stale,
+      // "(not in catalog)" id.
+      if (list.length > 0) {
+        setModel((cur) => (list.some((m) => m.id === cur) ? cur : list[0].id));
+      }
     } catch (e) {
       setModels([]);
       setModelsError(e instanceof Error ? e.message : String(e));
     } finally {
       setModelsLoading(false);
     }
+  }
+
+  // Switching providers reloads the catalog for the newly selected provider
+  // (previewed via the override param, using its saved config) so the model
+  // list and selection always match the chosen provider.
+  function onProviderChange(next: string): void {
+    setProvider(next);
+    void loadModels(next);
   }
 
   useEffect(() => {
@@ -246,7 +262,7 @@ export function SettingsPanel({ onClose }: Props) {
       setProviderConfig(updated.llm_providers ?? {});
       modelsStore.applySettings(updated);
       settingsStore.set(updated);
-      await loadModels();
+      await loadModels(provider);
     } catch (e) {
       setModelsError(e instanceof Error ? e.message : String(e));
       setModelsLoading(false);
@@ -475,7 +491,7 @@ export function SettingsPanel({ onClose }: Props) {
                 <h3 className="text-sm font-medium mb-2">Provider</h3>
                 <select
                   value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
+                  onChange={(e) => onProviderChange(e.target.value)}
                   className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                 >
                   {providers.map((p) => (

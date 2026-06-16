@@ -43,14 +43,16 @@ async def list_providers() -> list[ProviderRead]:
 
 
 @router.get("/models", response_model=list[LLMModelRead])
-async def list_models(session: AsyncSession = Depends(get_session)) -> list[LLMModelRead]:
-    provider = await get_llm_provider(session)
-    lister = getattr(provider, "list_models", None)
+async def list_models(
+    provider: str | None = None, session: AsyncSession = Depends(get_session)
+) -> list[LLMModelRead]:
+    llm = await get_llm_provider(session, override_provider=provider)
+    lister = getattr(llm, "list_models", None)
     if lister is None:
         return []
     try:
         models = await lister()
     except Exception as exc:  # network / auth failures shouldn't 500 the UI
-        logger.warning("Failed to fetch model catalog from %s: %s", provider.name, exc)
+        logger.warning("Failed to fetch model catalog from %s: %s", llm.name, exc)
         raise HTTPException(status_code=502, detail=f"catalog fetch failed: {exc}") from exc
     return [LLMModelRead(**asdict(m)) for m in models]

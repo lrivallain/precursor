@@ -184,7 +184,10 @@ export const api = {
     request<void>(`/api/mcp/servers/user/${id}`, { method: "DELETE" }),
 
   // LLM
-  listModels: () => request<LLMModel[]>(`/api/llm/models`),
+  listModels: (provider?: string) =>
+    request<LLMModel[]>(
+      `/api/llm/models${provider ? `?provider=${encodeURIComponent(provider)}` : ""}`,
+    ),
   listProviders: () => request<LLMProviderSpec[]>(`/api/llm/providers`),
 
   // Summaries
