@@ -45,7 +45,7 @@ cp .env.example .env
 ```
 
 **GitHub credentials (optional).** Precursor resolves a GitHub token in this
-order: (1) `GITHUB_TOKEN` in your environment / `.env`, then (2) your **GitHub
+order: (1) a token saved in **Settings → GitHub**, then (2) your **GitHub
 CLI** session (`gh auth token`) if you're signed in via `gh auth login`. So if
 you already use `gh`, you don't need to set anything. A token needs the
 `models:read` fine-grained permission (or Copilot access) for real model
@@ -137,8 +137,8 @@ Specific things to keep local:
   the Docker "jail" enabled; disabling it grants full local-disk access.
 - The built-in **MCP-over-HTTP** transport is off by default and only binds to
   loopback — leave it that way unless you front it with auth.
-- Secrets (`GITHUB_TOKEN`, provider keys) live in `.env` / the local DB and are
-  never echoed by the API. Don't commit `.env`.
+- Secrets (the GitHub token, LLM provider keys) live in the local DB (set via
+  Settings) and are never echoed by the API. Don't commit `.env`.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 

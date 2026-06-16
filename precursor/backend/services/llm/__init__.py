@@ -1,31 +1,48 @@
 """LLM provider abstraction.
 
-Ships GitHub Copilot, GitHub Models (both OpenAI-compatible), and a Mock
-provider for offline dev. Future providers can be added by implementing
-``LLMProvider`` and registering them in ``get_llm_provider``.
+The active provider and its credentials live in the app settings (DB), resolved
+per request. Providers are declared in :mod:`precursor.backend.services.llm.registry`
+— add one there to onboard a new backend.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.config import get_settings
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm.base import LLMProvider
-from precursor.backend.services.llm.github_copilot import GitHubCopilotProvider
-from precursor.backend.services.llm.github_models import GitHubModelsProvider
 from precursor.backend.services.llm.mock import MockProvider
+from precursor.backend.services.llm.registry import PROVIDERS
 
 
-@lru_cache
-def get_llm_provider() -> LLMProvider:
-    settings = get_settings()
-    token = resolve_github_token(settings)
-    if settings.llm_provider == "mock" or not token:
+async def get_llm_provider(session: AsyncSession) -> LLMProvider:
+    """Build the configured provider, falling back to the mock when unusable."""
+    from precursor.backend.services.app_settings import (
+        resolve_llm_provider,
+        resolve_llm_provider_config,
+    )
+
+    provider_id = await resolve_llm_provider(session)
+    spec = PROVIDERS.get(provider_id)
+    if spec is None:
         return MockProvider()
-    if settings.llm_provider == "github_models":
-        return GitHubModelsProvider(token=token)
-    return GitHubCopilotProvider(token=token)
+    if spec.uses_github_token:
+        token = await resolve_github_token(session)
+        if not token:
+            return MockProvider()
+        return spec.build({}, token)
+    config = await resolve_llm_provider_config(session, provider_id)
+    # A required field missing => the provider can't authenticate; surface the
+    # mock so the app stays usable instead of erroring mid-stream.
+    if any(f.required and not config.get(f.name) for f in spec.fields):
+        return MockProvider()
+    try:
+        return spec.build(config, "")
+    except Exception:  # defensive: a malformed config shouldn't 500 a chat turn
+        return MockProvider()
+
+
+__all__ = ["get_llm_provider"]
 
 
 __all__ = [

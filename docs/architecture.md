@@ -113,12 +113,12 @@ instantly; the result is cached (`IssueContextCache`) with a TTL.
 
 Auth resolves in `services/github_auth.py`, in order:
 
-1. `GITHUB_TOKEN` from the environment / `.env`.
+1. A token saved in the app settings (Settings → GitHub).
 2. The **GitHub CLI** session (`gh auth token`) if signed in via `gh auth login`.
 
 A token is never required to start: with neither source, the LLM falls back to
 the mock provider. The resolved source is surfaced to the UI as
-`env | gh-cli | none` (tokens themselves are never returned).
+`settings | gh-cli | none` (tokens themselves are never returned).
 
 ## LLM provider abstraction
 
@@ -133,21 +133,27 @@ class LLMProvider(Protocol):
     async def list_models(self) -> list[LLMModel]: ...
 ```
 
-Three implementations ship; `get_llm_provider()` selects by the
-`llm_provider` setting (`github_copilot | github_models | mock`):
+Providers are declared in `services/llm/registry.py` — each `ProviderSpec`
+carries a label, its config fields (rendered in Settings; secrets redacted),
+and a builder. `get_llm_provider(session)` reads the active provider id + its
+config from the DB (Settings → Model) per request and constructs it, falling
+back to the mock when credentials are missing. Shipped providers:
 
 - `GitHubCopilotProvider` — **default**; the Copilot model catalogue (Claude,
   Gemini, GPT, …) via a `gho_*` token, OpenAI-compatible at
   `https://api.githubcopilot.com`.
 - `GitHubModelsProvider` — GitHub Models inference
   (`https://models.github.ai/inference`), PAT with `models:read`.
+- `AzureFoundryProvider` — Azure OpenAI / AI Foundry deployments via
+  `AsyncAzureOpenAI` (endpoint + key + deployment).
+- `OpenAICompatibleProvider` — OpenAI, Mistral, Hugging Face, Ollama, and any
+  OpenAI-compatible gateway (base URL + key).
 - `MockProvider` — deterministic streamed reply, used automatically when no
-  token is available.
+  credentials are available.
 
 Shared OpenAI-compatible plumbing (message/tool translation, the tool-call
 delta accumulator) lives in `services/llm/_openai_compat.py`. Adding a provider
-(Azure OpenAI, local Ollama, …) is one file plus a branch in
-`get_llm_provider()`.
+is one `ProviderSpec` in the registry plus an implementation class.
 
 ## MCP
 

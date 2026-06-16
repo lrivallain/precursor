@@ -54,11 +54,11 @@ async def push_topic_to_issue(
             status.HTTP_400_BAD_REQUEST,
             f"Topic has issue #{topic.github_issue_number} but no repository.",
         )
-    token = resolve_github_token(settings)
+    token = await resolve_github_token(session)
     if not token:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "No GitHub token available. Configure one in Settings, set GITHUB_TOKEN, "
+            "No GitHub token available. Configure one in Settings, "
             "or sign in with `gh auth login`.",
         )
 

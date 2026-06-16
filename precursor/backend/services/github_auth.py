@@ -1,7 +1,7 @@
 """Resolve a usable GitHub token.
 
 Priority:
-1. ``GITHUB_TOKEN`` environment variable (already loaded into ``Settings``).
+1. ``github_token`` saved in the app settings (``api_keys`` in the DB).
 2. ``gh auth token`` output, if the GitHub CLI is installed and signed in.
 
 The CLI result is cached for the lifetime of the process — if the user runs
@@ -10,17 +10,20 @@ The CLI result is cached for the lifetime of the process — if the user runs
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
 from functools import lru_cache
 from typing import Literal
 
-from precursor.backend.config import Settings
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from precursor.backend.models import AppSetting
 
 logger = logging.getLogger(__name__)
 
-TokenSource = Literal["env", "gh-cli", "none"]
+TokenSource = Literal["settings", "gh-cli", "none"]
 
 
 @lru_cache(maxsize=1)
@@ -43,15 +46,33 @@ def _gh_cli_token() -> str:
     return result.stdout.strip()
 
 
-def resolve_github_token(settings: Settings) -> str:
-    if settings.github_token:
-        return settings.github_token
+async def _settings_github_token(session: AsyncSession) -> str:
+    row = await session.get(AppSetting, "api_keys")
+    if row is None:
+        return ""
+    try:
+        api_keys = json.loads(row.value)
+    except json.JSONDecodeError:
+        return ""
+    if isinstance(api_keys, dict):
+        token = api_keys.get("github_token")
+        if isinstance(token, str) and token.strip():
+            return token.strip()
+    return ""
+
+
+async def resolve_github_token(session: AsyncSession) -> str:
+    """Return the effective GitHub token: saved settings, else the gh CLI."""
+    token = await _settings_github_token(session)
+    if token:
+        return token
     return _gh_cli_token()
 
 
-def github_token_source(settings: Settings) -> TokenSource:
-    if settings.github_token:
-        return "env"
+async def github_token_source(session: AsyncSession) -> TokenSource:
+    """Where the effective token comes from (drives the Settings UI hint)."""
+    if await _settings_github_token(session):
+        return "settings"
     if _gh_cli_token():
         return "gh-cli"
     return "none"

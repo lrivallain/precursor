@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
-from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import Attachment, Memory, Message, MessageRole, Topic
 from precursor.backend.schemas import ChatRequest, MessageRead, StoppedTurn
@@ -148,9 +147,8 @@ async def _build_system_context(session: AsyncSession, topic: Topic) -> str:
     if topic.description:
         parts.append(f"Topic description: {topic.description}")
 
-    settings = get_settings()
     repo = topic.github_repo or await resolve_global_github_repo(session)
-    token = resolve_github_token(settings)
+    token = await resolve_github_token(session)
     if repo and topic.github_issue_number and token:
         try:
             gh = GitHubClient(token=token)
@@ -370,12 +368,12 @@ async def stream_chat(
                 break
 
     enabled_servers = await _load_enabled_mcp_servers(session)
-    settings = get_settings()
     model = payload.model or await resolve_llm_model(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
     max_input_tokens = await resolve_llm_max_input_tokens(session)
     max_tool_result_tokens = await resolve_llm_max_tool_result_tokens(session)
-    provider = get_llm_provider()
+    provider = await get_llm_provider(session)
+    github_token = await resolve_github_token(session)
     manager = get_mcp_client_manager()
 
     user_msg_id = user_msg.id
@@ -415,7 +413,7 @@ async def stream_chat(
             for server_name in enabled_servers:
                 try:
                     mcp_session, tools = await stack.enter_async_context(
-                        manager.open_session(server_name, settings=settings)
+                        manager.open_session(server_name, github_token=github_token)
                     )
                 except Exception as exc:
                     logger.warning("MCP server %s unavailable: %s", server_name, exc)

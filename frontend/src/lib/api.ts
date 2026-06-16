@@ -14,6 +14,7 @@ import type {
   IssuePushResult,
   IssueSummary,
   LLMModel,
+  LLMProviderSpec,
   LocalPath,
   MCPServerCreate,
   MCPServerStatus,
@@ -184,6 +185,7 @@ export const api = {
 
   // LLM
   listModels: () => request<LLMModel[]>(`/api/llm/models`),
+  listProviders: () => request<LLMProviderSpec[]>(`/api/llm/providers`),
 
   // Summaries
   summarizeIssue: (topicId: number, opts: { force?: boolean } = {}) =>

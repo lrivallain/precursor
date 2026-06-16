@@ -21,8 +21,10 @@ from precursor.backend.services.app_settings import (
     DEFAULT_MAX_TOOL_ROUNDS,
     MAX_TOOL_ROUNDS_CEILING,
     azure_stt_ready,
+    redact_llm_providers,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
+    resolve_llm_provider,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
     resolve_system_settings,
@@ -81,7 +83,6 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
         mcp_enabled=data.get("mcp_enabled", {}),
         mcp_servers=data.get("mcp_servers", {}),
         api_keys_present={k: bool(v) for k, v in api_keys.items()},
-        github_token_source=github_token_source(get_settings()),
         issue_associations_enabled=bool(
             data.get("issue_associations_enabled", DEFAULT_ISSUE_ASSOCIATIONS_ENABLED)
         ),
@@ -107,6 +108,16 @@ async def _stt_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, Any]:
+    public, present = redact_llm_providers(data.get("llm_providers"))
+    return {
+        "github_token_source": await github_token_source(session),
+        "llm_provider": await resolve_llm_provider(session),
+        "llm_providers": public,
+        "llm_providers_present": present,
+    }
+
+
 @router.get("", response_model=SettingsRead)
 async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
     data = await _load_all(session)
@@ -114,6 +125,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
     system.update(await _stt_block(session))
+    system.update(await _llm_block(session, data))
     return _as_read(data, system, docker_available()[0])
 
 
@@ -130,6 +142,24 @@ async def update_settings(
         merged = {**(current.get("api_keys") or {}), **data["api_keys"]}
         data["api_keys"] = {k: v for k, v in merged.items() if v}
 
+    # Deep-merge llm_providers per provider so a partial update (e.g. one field)
+    # doesn't drop the rest; an empty-string value clears a field.
+    if "llm_providers" in data:
+        current = await _load_all(session)
+        stored = current.get("llm_providers")
+        merged_providers: dict[str, dict[str, str]] = (
+            dict(stored) if isinstance(stored, dict) else {}
+        )
+        for provider_id, cfg in (data["llm_providers"] or {}).items():
+            existing = dict(merged_providers.get(provider_id) or {})
+            for key, value in (cfg or {}).items():
+                if value == "":
+                    existing.pop(key, None)
+                else:
+                    existing[key] = value
+            merged_providers[provider_id] = existing
+        data["llm_providers"] = merged_providers
+
     for key, value in data.items():
         await _upsert(session, key, value)
     await session.commit()
@@ -138,4 +168,5 @@ async def update_settings(
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
     system.update(await _stt_block(session))
+    system.update(await _llm_block(session, refreshed))
     return _as_read(refreshed, system, docker_available()[0])
