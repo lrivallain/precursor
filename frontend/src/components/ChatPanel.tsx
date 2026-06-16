@@ -27,6 +27,8 @@ interface ChatPanelProps {
   onTopicUpdated: () => void;
   /** Called after the topic is archived via the /archive command. */
   onArchived?: () => void;
+  /** Switch the active topic (used by the /new command after creating one). */
+  onNavigateTopic?: (topic: Topic) => void;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -49,6 +51,9 @@ const HANDLED_COMMANDS = new Set<string>([
   "gh-close",
   "notes",
   "rename",
+  "new",
+  "pin",
+  "unpin",
   "clear",
   "archive",
 ]);
@@ -117,7 +122,7 @@ interface PendingNotes {
   rephrasedText?: string;
 }
 
-export function ChatPanel({ topic, onTopicUpdated, onArchived }: ChatPanelProps) {
+export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }: ChatPanelProps) {
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
@@ -473,6 +478,14 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived }: ChatPanelProps)
       await runRename(argument);
       return;
     }
+    if (name === "new") {
+      await runNew(argument);
+      return;
+    }
+    if (name === "pin" || name === "unpin") {
+      await runSetPinned(name === "pin");
+      return;
+    }
     if (name === "clear") {
       await runClear();
       return;
@@ -512,6 +525,33 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived }: ChatPanelProps)
       onTopicUpdated();
     } catch (err) {
       systemNote(`Rename failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function runNew(argument: string): Promise<void> {
+    const title = argument.trim();
+    if (!title) {
+      systemNote("Usage: `/new <title>`");
+      return;
+    }
+    try {
+      const created = await api.createTopic({ title, parent_id: topic.id });
+      onNavigateTopic?.(created);
+    } catch (err) {
+      systemNote(`Create failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function runSetPinned(pinned: boolean): Promise<void> {
+    if (topic.pinned === pinned) {
+      systemNote(pinned ? "Already pinned." : "Not pinned.");
+      return;
+    }
+    try {
+      await api.updateTopic(topic.id, { pinned });
+      onTopicUpdated();
+    } catch (err) {
+      systemNote(`${pinned ? "Pin" : "Unpin"} failed: ${(err as Error).message}`);
     }
   }
 

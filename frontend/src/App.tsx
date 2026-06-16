@@ -373,6 +373,12 @@ export default function App() {
                 setActiveTopic(null);
                 await refreshTree();
               }}
+              onNavigateTopic={async (topic) => {
+                // /new created a child topic — switch to it and refresh so it
+                // appears in the tree.
+                setActiveTopic(topic);
+                await refreshTree();
+              }}
             />
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-muted gap-3">

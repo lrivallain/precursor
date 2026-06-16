@@ -41,8 +41,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the Speech SDK (lazy-loaded, so it doesn't bloat the default bundle). The mic
   is hidden when Azure isn't configured.
 - Chat slash commands for topic actions: `/clear` (erase the transcript, with
-  confirmation), `/archive` (archive the topic and leave it), and `/rename
-  <title>` — quick keyboard alternatives to the existing buttons.
+  confirmation), `/archive` (archive the topic and leave it), `/rename
+  <title>`, `/new <title>` (create a child topic and switch to it), and
+  `/pin` / `/unpin` — quick keyboard alternatives to the existing buttons.
 
 ### Changed
 

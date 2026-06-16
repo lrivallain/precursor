@@ -63,6 +63,26 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     kind: "builtin",
   },
   {
+    name: "new",
+    label: "/new",
+    description:
+      "Create a new topic nested under this one and switch to it. The text after the command is its title.",
+    argumentHint: "title",
+    kind: "builtin",
+  },
+  {
+    name: "pin",
+    label: "/pin",
+    description: "Pin this topic to the top of the sidebar.",
+    kind: "builtin",
+  },
+  {
+    name: "unpin",
+    label: "/unpin",
+    description: "Remove this topic from the pinned list.",
+    kind: "builtin",
+  },
+  {
     name: "clear",
     label: "/clear",
     description:
