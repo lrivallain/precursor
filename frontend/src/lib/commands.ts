@@ -54,6 +54,48 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Open a scratch pad to capture freeform notes (e.g. during a meeting). Then choose: rephrase via AI, post as a GitHub comment, or add to the chat with or without an AI follow-up.",
     kind: "builtin",
   },
+  {
+    name: "rename",
+    label: "/rename",
+    description:
+      "Rename this topic. The text after the command becomes the new title.",
+    argumentHint: "new title",
+    kind: "builtin",
+  },
+  {
+    name: "new",
+    label: "/new",
+    description:
+      "Create a new topic nested under this one and switch to it. The text after the command is its title.",
+    argumentHint: "title",
+    kind: "builtin",
+  },
+  {
+    name: "pin",
+    label: "/pin",
+    description: "Pin this topic to the top of the sidebar.",
+    kind: "builtin",
+  },
+  {
+    name: "unpin",
+    label: "/unpin",
+    description: "Remove this topic from the pinned list.",
+    kind: "builtin",
+  },
+  {
+    name: "clear",
+    label: "/clear",
+    description:
+      "Erase the entire chat transcript for this topic (asks for confirmation). The topic and its GitHub link are kept.",
+    kind: "builtin",
+  },
+  {
+    name: "archive",
+    label: "/archive",
+    description:
+      "Archive this topic and leave it. Restore it any time from the archive (your profile menu in the sidebar).",
+    kind: "builtin",
+  },
 ];
 
 export interface ParsedCommand {
