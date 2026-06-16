@@ -305,6 +305,20 @@ def _format_tool_result(payload: Any) -> str:
     return "\n\n".join(blocks) if blocks else "(empty result)"
 
 
+async def _persist_system_message(topic_id: int, content: str) -> None:
+    """Save a system-role message in a fresh session.
+
+    Used for stream errors so they stay in the transcript instead of vanishing
+    when the client reloads the persisted history after the stream ends. Uses a
+    separate session because the request-scoped one may be closed by the time
+    the generator reaches an error.
+    """
+    async with SessionLocal() as ws:
+        ws.add(Message(topic_id=topic_id, role=MessageRole.SYSTEM, content=content))
+        await ws.commit()
+    await publish_message_changed(topic_id)
+
+
 @router.post("/stream")
 async def stream_chat(
     topic_id: int,
@@ -641,20 +655,22 @@ async def stream_chat(
                         )
 
                 # Hit the iteration cap.
+                cap_msg = f"Stopped after {max_tool_rounds} tool rounds."
+                await _persist_system_message(topic_id, f"Error: {cap_msg}")
                 yield {
                     "event": "error",
-                    "data": json.dumps(
-                        {"message": f"Stopped after {max_tool_rounds} tool rounds."}
-                    ),
+                    "data": json.dumps({"message": cap_msg}),
                 }
             except LLMError as exc:
                 # Provider rejected the request for a reason worth showing the
                 # user (too many tools, bad credentials, …) — surface it cleanly
                 # without a crash-style traceback.
                 logger.warning("Chat stream rejected by provider: %s", exc)
+                await _persist_system_message(topic_id, f"Error: {exc}")
                 yield {"event": "error", "data": json.dumps({"message": str(exc)})}
             except Exception as exc:
                 logger.exception("Chat stream failed")
+                await _persist_system_message(topic_id, f"Error: {exc}")
                 yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
     async def lifecycle_stream() -> AsyncIterator[dict[str, str]]:

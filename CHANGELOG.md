@@ -101,6 +101,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- Chat errors (provider rejections, the tool-round cap, …) now **stay in the
+  transcript** instead of flashing for a few seconds and vanishing. They were
+  only added to the transient stream buffer, which was discarded when the
+  persisted history reloaded after the stream ended; the error is now persisted
+  as a system message.
 - `precursor --dev` no longer prints a burst of Vite `http proxy error …
   ECONNREFUSED 127.0.0.1:8000` on startup: the Vite dev server now launches only
   once the backend port is accepting connections, instead of racing it.
