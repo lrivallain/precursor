@@ -87,6 +87,16 @@ class UsageEvent:
 ProviderEvent = TextDeltaEvent | ToolCallsEvent | TurnDoneEvent | UsageEvent
 
 
+class LLMError(Exception):
+    """A provider error with a user-facing message.
+
+    Raised by providers when a request is rejected for a reason worth showing
+    the user verbatim (e.g. too many tools, bad credentials). The chat router
+    surfaces ``str(exc)`` to the UI and logs it concisely — no traceback — so
+    these expected failures don't look like crashes.
+    """
+
+
 class LLMProvider(Protocol):
     name: str
 

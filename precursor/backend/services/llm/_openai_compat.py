@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import logging
+import re
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    LLMError,
     ProviderEvent,
     TextDeltaEvent,
     ToolCallRequest,
@@ -19,12 +20,41 @@ from precursor.backend.services.llm.base import (
     UsageEvent,
 )
 
-logger = logging.getLogger(__name__)
 
-# OpenAI / Azure OpenAI reject a request whose ``tools`` array exceeds 128
-# entries. With many MCP servers enabled the aggregate easily passes that, so
-# we cap it (keeping the first N) rather than letting the API 400 the turn.
-_MAX_TOOLS = 128
+def _extract_api_error(exc: APIStatusError) -> tuple[str | None, str | None, str]:
+    """Pull (code, param, message) out of an OpenAI-style error response."""
+    code: str | None = getattr(exc, "code", None)
+    param: str | None = getattr(exc, "param", None)
+    message = str(exc)
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            code = err.get("code") or code
+            param = err.get("param") or param
+            message = err.get("message") or message
+    return code, param, message
+
+
+def _friendly_request_error(exc: APIStatusError, *, tool_count: int) -> LLMError:
+    """Translate a provider 4xx into a clear, actionable user message."""
+    code, param, message = _extract_api_error(exc)
+    # Too many tools: providers (OpenAI / Azure) cap the ``tools`` array. Tell
+    # the user exactly how many they have and how to reduce it.
+    if param == "tools" and (code == "array_above_max_length" or "array too long" in message):
+        limit_match = re.search(r"maximum length (\d+)", message)
+        limit = limit_match.group(1) if limit_match else "the provider's limit"
+        return LLMError(
+            f"Too many tools for this model: {tool_count} are enabled, but this "
+            f"provider accepts at most {limit}. Disable some MCP servers in "
+            "Settings → MCP servers and try again."
+        )
+    if exc.status_code in (401, 403):
+        return LLMError(
+            "The model provider rejected the credentials (check the API key / "
+            "endpoint in Settings → Model)."
+        )
+    return LLMError(f"The model provider rejected the request: {message}")
 
 
 def to_openai_messages(messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -89,18 +119,14 @@ async def stream_openai_tools(
         "stream_options": {"include_usage": True},
     }
     if tools:
-        capped = tools[:_MAX_TOOLS]
-        if len(tools) > _MAX_TOOLS:
-            logger.warning(
-                "Tool count %d exceeds the %d-tool API limit; sending the first %d. "
-                "Disable some MCP servers to control which tools are available.",
-                len(tools),
-                _MAX_TOOLS,
-                _MAX_TOOLS,
-            )
-        kwargs["tools"] = to_openai_tools(capped)
+        kwargs["tools"] = to_openai_tools(tools)
 
-    stream = await client.chat.completions.create(**kwargs)
+    try:
+        stream = await client.chat.completions.create(**kwargs)
+    except APIStatusError as exc:
+        # Turn provider 4xx rejections (too many tools, bad key, …) into a clean
+        # user-facing message instead of a raw traceback.
+        raise _friendly_request_error(exc, tool_count=len(tools)) from exc
     # tool_call_id -> {id, name, arguments}
     pending: dict[int, dict[str, str]] = {}
     finish_reason: str | None = None

@@ -36,6 +36,7 @@ from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    LLMError,
     TextDeltaEvent,
     ToolCallsEvent,
     ToolDef,
@@ -646,6 +647,12 @@ async def stream_chat(
                         {"message": f"Stopped after {max_tool_rounds} tool rounds."}
                     ),
                 }
+            except LLMError as exc:
+                # Provider rejected the request for a reason worth showing the
+                # user (too many tools, bad credentials, …) — surface it cleanly
+                # without a crash-style traceback.
+                logger.warning("Chat stream rejected by provider: %s", exc)
+                yield {"event": "error", "data": json.dumps({"message": str(exc)})}
             except Exception as exc:
                 logger.exception("Chat stream failed")
                 yield {"event": "error", "data": json.dumps({"message": str(exc)})}
