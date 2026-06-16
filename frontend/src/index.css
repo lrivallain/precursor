@@ -1,23 +1,40 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Dark mode is toggled by a `.dark` class on <html> (see lib/theme.ts), not the
+   OS preference — so override Tailwind v4's default media-based dark variant. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Theme tokens. Defined as @theme so Tailwind generates the matching utilities
+   (bg-bg, text-muted, border-border, …). The values are CSS variables so the
+   .dark block below can swap them at runtime without regenerating utilities. */
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", Menlo, monospace;
+}
 
 :root {
-  --color-bg: #ffffff;
-  --color-surface: #f7f7f8;
-  --color-border: #e5e7eb;
-  --color-text: #111827;
-  --color-muted: #6b7280;
-  --color-accent: #2563eb;
+  --bg: #ffffff;
+  --surface: #f7f7f8;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
 }
 
 .dark {
-  --color-bg: #0b0d10;
-  --color-surface: #15181d;
-  --color-border: #2a2f37;
-  --color-text: #e6e8eb;
-  --color-muted: #8a93a0;
-  --color-accent: #60a5fa;
+  --bg: #0b0d10;
+  --surface: #15181d;
+  --border: #2a2f37;
+  --text: #e6e8eb;
+  --muted: #8a93a0;
+  --accent: #60a5fa;
 }
 
 html,
@@ -27,7 +44,7 @@ body,
 }
 
 body {
-  font-family: theme(fontFamily.sans);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -136,7 +153,7 @@ body {
   background: var(--color-surface);
   padding: 0.1em 0.3em;
   border-radius: 4px;
-  font-family: theme(fontFamily.mono);
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 .markdown pre {
