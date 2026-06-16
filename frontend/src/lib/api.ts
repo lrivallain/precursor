@@ -143,6 +143,11 @@ export const api = {
   // Speech-to-text (Azure token broker)
   getSttToken: () =>
     request<{ token: string; endpoint: string; language: string }>(`/api/stt/token`),
+  testSttConnection: (endpoint: string, key?: string) =>
+    request<{ ok: boolean; detail: string | null }>(`/api/stt/test`, {
+      method: "POST",
+      body: JSON.stringify({ endpoint, key: key || null }),
+    }),
 
   // GitHub
   listIssues: (repo?: string, q?: string) => {

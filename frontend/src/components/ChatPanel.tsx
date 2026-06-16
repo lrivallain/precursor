@@ -18,7 +18,6 @@ import { streamStore, useStreamVersion } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
-import { useSpeechRecognition } from "../lib/useSpeechRecognition";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ResizeHandle } from "./ResizeHandle";
 import type { Attachment, Message, Topic } from "../lib/types";
@@ -190,10 +189,9 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
     [persisted],
   );
 
-  // Live speech-to-text. Final chunks are appended to the draft as the user
-  // speaks; the interim transcript is shown transiently. Azure (portable) is
-  // used when configured server-side, otherwise the browser Web Speech API
-  // (Chrome-only) — both share the same append behaviour and interface.
+  // Live speech-to-text via Azure (when configured server-side). Final chunks
+  // are appended to the draft as the user speaks; the interim transcript is
+  // shown transiently. The mic is hidden entirely when Azure isn't configured.
   const [interimText, setInterimText] = useState("");
   const appendFinalChunk = (text: string) => {
     const chunk = text.trim();
@@ -204,18 +202,12 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
   };
   const azureReady = settings?.stt_azure_ready ?? false;
   const sttLanguage = settings?.azure_speech_language || undefined;
-  const browserSpeech = useSpeechRecognition({
-    onFinalChunk: appendFinalChunk,
-    onInterim: setInterimText,
-    lang: sttLanguage,
-  });
-  const azureSpeech = useAzureSpeech({
+  const speech = useAzureSpeech({
     onFinalChunk: appendFinalChunk,
     onInterim: setInterimText,
     enabled: azureReady,
     lang: sttLanguage,
   });
-  const speech = azureReady ? azureSpeech : browserSpeech;
   // Drop any lingering interim text once dictation stops.
   useEffect(() => {
     if (!speech.listening) setInterimText("");
@@ -791,9 +783,9 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
             </div>
           )}
           {speech.listening && (
-            <div className="flex items-center gap-2 text-[11px] text-muted px-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="truncate">
+            <div className="flex items-start gap-2 text-[11px] text-muted px-1">
+              <span className="inline-block h-2 w-2 mt-1 shrink-0 rounded-full bg-red-500 animate-pulse" />
+              <span className="min-w-0 break-words max-h-20 overflow-y-auto">
                 Listening… {interimText && <span className="italic">{interimText}</span>}
               </span>
             </div>
@@ -998,11 +990,7 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
                   aria-label={speech.listening ? "Stop dictation" : "Dictate"}
                   aria-pressed={speech.listening}
                   data-tooltip={
-                    speech.listening
-                      ? "Stop dictation"
-                      : azureReady
-                        ? "Dictate (Azure Speech)"
-                        : "Dictate (browser, Chrome only)"
+                    speech.listening ? "Stop dictation" : "Dictate (Azure Speech)"
                   }
                 >
                   <Mic size={18} />

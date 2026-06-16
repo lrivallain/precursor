@@ -32,6 +32,18 @@ class SpeechToken(BaseModel):
     language: str
 
 
+class SpeechTestRequest(BaseModel):
+    endpoint: str
+    # Optional: when omitted/blank, the already-saved key is used (so the user
+    # can test without re-typing a configured secret).
+    key: str | None = None
+
+
+class SpeechTestResult(BaseModel):
+    ok: bool
+    detail: str | None = None
+
+
 @router.get("/token", response_model=SpeechToken)
 async def get_speech_token(session: AsyncSession = Depends(get_session)) -> SpeechToken:
     """Return a short-lived Azure Speech authorization token + endpoint."""
@@ -56,3 +68,26 @@ async def get_speech_token(session: AsyncSession = Depends(get_session)) -> Spee
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Could not reach Azure Speech.") from exc
     language = await resolve_azure_speech_language(session)
     return SpeechToken(token=token, endpoint=endpoint, language=language)
+
+
+@router.post("/test", response_model=SpeechTestResult)
+async def test_speech_connection(
+    payload: SpeechTestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> SpeechTestResult:
+    """Validate an endpoint + key by minting a token (without saving them)."""
+    endpoint = payload.endpoint.strip()
+    key = (payload.key or "").strip() or await resolve_azure_speech_key(session)
+    if not endpoint:
+        return SpeechTestResult(ok=False, detail="Provide the endpoint URL.")
+    if not key:
+        return SpeechTestResult(ok=False, detail="Provide the subscription key.")
+    try:
+        await mint_speech_token(key, endpoint)
+    except httpx.HTTPStatusError as exc:
+        return SpeechTestResult(
+            ok=False, detail=f"Azure rejected the credentials ({exc.response.status_code})."
+        )
+    except httpx.HTTPError:
+        return SpeechTestResult(ok=False, detail="Could not reach the endpoint.")
+    return SpeechTestResult(ok=True, detail="Connection OK.")

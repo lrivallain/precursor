@@ -105,21 +105,21 @@ async def resolve_issue_associations_enabled(session: AsyncSession) -> bool:
 
 
 async def resolve_azure_speech_key(session: AsyncSession) -> str:
-    """Effective Azure Speech key: DB ``api_keys`` override, else env default."""
+    """Effective Azure Speech key from the DB ``api_keys`` (Settings panel)."""
     api_keys = await _get_db_value(session, "api_keys")
     if isinstance(api_keys, dict):
         key = api_keys.get("azure_speech_key")
         if isinstance(key, str) and key.strip():
             return key.strip()
-    return get_settings().azure_speech_key
+    return ""
 
 
 async def resolve_azure_speech_endpoint(session: AsyncSession) -> str:
-    """Effective Azure Speech endpoint URL: DB override, else env default."""
+    """Effective Azure Speech endpoint URL from the DB (Settings panel)."""
     db_value = await _get_db_value(session, "azure_speech_endpoint")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return get_settings().azure_speech_endpoint
+    return ""
 
 
 async def resolve_azure_speech_language(session: AsyncSession) -> str:

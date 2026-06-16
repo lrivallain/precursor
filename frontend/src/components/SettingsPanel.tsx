@@ -124,6 +124,9 @@ export function SettingsPanel({ onClose }: Props) {
   const [azureEndpoint, setAzureEndpoint] = useState("");
   const [azureLanguage, setAzureLanguage] = useState("");
   const [azureKey, setAzureKey] = useState("");
+  const [sttTest, setSttTest] = useState<
+    { state: "idle" | "testing" | "ok" | "error"; detail?: string }
+  >({ state: "idle" });
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
@@ -219,6 +222,22 @@ export function SettingsPanel({ onClose }: Props) {
       onClose();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function testStt(): Promise<void> {
+    setSttTest({ state: "testing" });
+    try {
+      const res = await api.testSttConnection(azureEndpoint, azureKey);
+      setSttTest({
+        state: res.ok ? "ok" : "error",
+        detail: res.detail ?? undefined,
+      });
+    } catch (e) {
+      setSttTest({
+        state: "error",
+        detail: e instanceof Error ? e.message : "Test failed",
+      });
     }
   }
 
@@ -567,9 +586,8 @@ export function SettingsPanel({ onClose }: Props) {
               <section>
                 <p className="text-sm text-muted mb-3">
                   Dictate prompts with the mic button in the chat composer.
-                  Configure an <strong>Azure AI Speech</strong> resource for
-                  portable, in-browser speech-to-text. Without it, the mic falls
-                  back to the browser Web Speech API (Google Chrome only).
+                  Configure an <strong>Azure AI Speech</strong> resource to
+                  enable speech-to-text. Without it, the mic button is hidden.
                 </p>
                 <div
                   className={`mb-4 text-[11px] px-2 py-1.5 rounded border ${
@@ -579,15 +597,18 @@ export function SettingsPanel({ onClose }: Props) {
                   }`}
                 >
                   {settings?.stt_azure_ready
-                    ? "Azure Speech is configured — dictation works in any modern browser."
-                    : "Azure Speech not configured — using the browser fallback (Chrome only)."}
+                    ? "Azure Speech is configured — dictation is enabled."
+                    : "Azure Speech not configured — the mic button is hidden."}
                 </div>
 
                 <label className="block text-xs text-muted mb-1">Endpoint URL</label>
                 <input
                   type="text"
                   value={azureEndpoint}
-                  onChange={(e) => setAzureEndpoint(e.target.value)}
+                  onChange={(e) => {
+                    setAzureEndpoint(e.target.value);
+                    setSttTest({ state: "idle" });
+                  }}
                   placeholder="https://<name>.cognitiveservices.azure.com/"
                   className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                 />
@@ -622,14 +643,43 @@ export function SettingsPanel({ onClose }: Props) {
                 <input
                   type="password"
                   value={azureKey}
-                  onChange={(e) => setAzureKey(e.target.value)}
-                  placeholder="Azure Speech key"
+                  onChange={(e) => {
+                    setAzureKey(e.target.value);
+                    setSttTest({ state: "idle" });
+                  }}
+                  placeholder={
+                    settings?.api_keys_present?.azure_speech_key
+                      ? "••••••••••••••••"
+                      : "Azure Speech key"
+                  }
                   className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                 />
                 <p className="text-[11px] text-muted mt-1">
                   Stored server-side and never returned. The browser only ever
-                  receives a short-lived token minted from it.
+                  receives a short-lived token minted from it. Leave blank to keep
+                  the saved key.
                 </p>
+
+                <div className="flex items-center gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => void testStt()}
+                    disabled={!azureEndpoint || sttTest.state === "testing"}
+                    className="px-3 py-1.5 rounded text-xs border border-border hover:bg-bg disabled:opacity-50"
+                  >
+                    {sttTest.state === "testing" ? "Testing…" : "Test connection"}
+                  </button>
+                  {sttTest.state === "ok" && (
+                    <span className="text-[11px] text-green-500">
+                      {sttTest.detail ?? "Connection OK."}
+                    </span>
+                  )}
+                  {sttTest.state === "error" && (
+                    <span className="text-[11px] text-red-500">
+                      {sttTest.detail ?? "Test failed."}
+                    </span>
+                  )}
+                </div>
               </section>
             )}
 
