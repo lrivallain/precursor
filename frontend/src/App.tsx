@@ -367,6 +367,12 @@ export default function App() {
                 }
                 await refreshTree();
               }}
+              onArchived={async () => {
+                // /archive removes the topic from the active view; drop the
+                // selection and refresh the tree so it moves to the archive.
+                setActiveTopic(null);
+                await refreshTree();
+              }}
             />
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-muted gap-3">
