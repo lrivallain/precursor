@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.services.app_settings import (
+    resolve_azure_speech_endpoint,
     resolve_azure_speech_key,
-    resolve_azure_speech_region,
+    resolve_azure_speech_language,
 )
 from precursor.backend.services.stt import mint_speech_token
 
@@ -27,23 +28,24 @@ router = APIRouter(prefix="/api/stt", tags=["stt"])
 
 class SpeechToken(BaseModel):
     token: str
-    region: str
+    endpoint: str
+    language: str
 
 
 @router.get("/token", response_model=SpeechToken)
 async def get_speech_token(session: AsyncSession = Depends(get_session)) -> SpeechToken:
-    """Return a short-lived Azure Speech authorization token + region."""
+    """Return a short-lived Azure Speech authorization token + endpoint."""
     key = await resolve_azure_speech_key(session)
-    region = await resolve_azure_speech_region(session)
-    if not key or not region:
+    endpoint = await resolve_azure_speech_endpoint(session)
+    if not key or not endpoint:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Azure Speech is not configured. Set the key and region in Settings.",
+            "Azure Speech is not configured. Set the key and endpoint in Settings.",
         )
     try:
-        token = await mint_speech_token(key, region)
+        token = await mint_speech_token(key, endpoint)
     except httpx.HTTPStatusError as exc:
-        # Surface a clean message; never echo the key. 401/403 => bad key/region.
+        # Surface a clean message; never echo the key. 401/403 => bad key/endpoint.
         logger.warning("Azure Speech token request failed: %s", exc.response.status_code)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
@@ -52,4 +54,5 @@ async def get_speech_token(session: AsyncSession = Depends(get_session)) -> Spee
     except httpx.HTTPError as exc:
         logger.warning("Azure Speech token request error: %s", exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Could not reach Azure Speech.") from exc
-    return SpeechToken(token=token, region=region)
+    language = await resolve_azure_speech_language(session)
+    return SpeechToken(token=token, endpoint=endpoint, language=language)

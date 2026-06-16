@@ -21,7 +21,8 @@ from precursor.backend.services.app_settings import (
     DEFAULT_MAX_TOOL_ROUNDS,
     MAX_TOOL_ROUNDS_CEILING,
     azure_stt_ready,
-    resolve_azure_speech_region,
+    resolve_azure_speech_endpoint,
+    resolve_azure_speech_language,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
     resolve_system_settings,
@@ -100,7 +101,8 @@ async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
 
 async def _stt_block(session: AsyncSession) -> dict[str, Any]:
     return {
-        "azure_speech_region": await resolve_azure_speech_region(session),
+        "azure_speech_endpoint": await resolve_azure_speech_endpoint(session),
+        "azure_speech_language": await resolve_azure_speech_language(session),
         "stt_azure_ready": await azure_stt_ready(session),
     }
 

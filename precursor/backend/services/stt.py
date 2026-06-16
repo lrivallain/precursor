@@ -8,18 +8,27 @@ without the secret ever leaving the backend — the standard browser-app pattern
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import httpx
 
-# Azure regional Security Token Service. Returns a JWT (plain text) valid ~10m.
-_STS_TEMPLATE = "https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+
+def _issue_token_url(endpoint: str) -> str:
+    """Derive the STS issueToken URL from a Speech resource endpoint.
+
+    Works for both custom-domain (``https://<name>.cognitiveservices.azure.com``)
+    and regional (``https://<region>.api.cognitive.microsoft.com``) endpoints by
+    appending the standard ``/sts/v1.0/issueToken`` path to the origin.
+    """
+    parsed = urlparse(endpoint)
+    return f"{parsed.scheme}://{parsed.netloc}/sts/v1.0/issueToken"
 
 
-async def mint_speech_token(key: str, region: str) -> str:
+async def mint_speech_token(key: str, endpoint: str) -> str:
     """Exchange an Azure Speech subscription key for a short-lived token."""
-    url = _STS_TEMPLATE.format(region=region)
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
-            url,
+            _issue_token_url(endpoint),
             headers={
                 "Ocp-Apim-Subscription-Key": key,
                 "Content-Length": "0",

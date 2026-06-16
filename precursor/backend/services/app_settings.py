@@ -114,18 +114,26 @@ async def resolve_azure_speech_key(session: AsyncSession) -> str:
     return get_settings().azure_speech_key
 
 
-async def resolve_azure_speech_region(session: AsyncSession) -> str:
-    """Effective Azure Speech region (e.g. ``swedencentral``): DB override, else env."""
-    db_value = await _get_db_value(session, "azure_speech_region")
+async def resolve_azure_speech_endpoint(session: AsyncSession) -> str:
+    """Effective Azure Speech endpoint URL: DB override, else env default."""
+    db_value = await _get_db_value(session, "azure_speech_endpoint")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return get_settings().azure_speech_region
+    return get_settings().azure_speech_endpoint
+
+
+async def resolve_azure_speech_language(session: AsyncSession) -> str:
+    """Effective dictation language (BCP-47, e.g. ``en-US``); ``""`` => auto."""
+    db_value = await _get_db_value(session, "azure_speech_language")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return ""
 
 
 async def azure_stt_ready(session: AsyncSession) -> bool:
-    """True when both an Azure Speech key and region are configured."""
+    """True when both an Azure Speech key and endpoint are configured."""
     return bool(
-        await resolve_azure_speech_key(session) and await resolve_azure_speech_region(session)
+        await resolve_azure_speech_key(session) and await resolve_azure_speech_endpoint(session)
     )
 
 

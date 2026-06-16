@@ -203,14 +203,17 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
     setInterimText("");
   };
   const azureReady = settings?.stt_azure_ready ?? false;
+  const sttLanguage = settings?.azure_speech_language || undefined;
   const browserSpeech = useSpeechRecognition({
     onFinalChunk: appendFinalChunk,
     onInterim: setInterimText,
+    lang: sttLanguage,
   });
   const azureSpeech = useAzureSpeech({
     onFinalChunk: appendFinalChunk,
     onInterim: setInterimText,
     enabled: azureReady,
+    lang: sttLanguage,
   });
   const speech = azureReady ? azureSpeech : browserSpeech;
   // Drop any lingering interim text once dictation stops.
@@ -987,10 +990,10 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
                 <button
                   type="button"
                   onClick={speech.toggle}
-                  className={`px-2 py-2 rounded border border-border ${
+                  className={`px-2 py-2 rounded border ${
                     speech.listening
-                      ? "bg-accent text-white animate-pulse"
-                      : "bg-surface text-muted hover:text-text hover:bg-bg"
+                      ? "bg-red-600 border-red-600 text-white animate-pulse"
+                      : "bg-surface border-border text-muted hover:text-text hover:bg-bg"
                   }`}
                   aria-label={speech.listening ? "Stop dictation" : "Dictate"}
                   aria-pressed={speech.listening}

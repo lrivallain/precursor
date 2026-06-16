@@ -94,6 +94,23 @@ const CATEGORIES: ReadonlyArray<{
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
 ];
 
+// Speech-to-text recognition languages (BCP-47). "" => use the browser locale.
+const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Auto (browser)" },
+  { value: "en-US", label: "English (US)" },
+  { value: "en-GB", label: "English (UK)" },
+  { value: "fr-FR", label: "French (France)" },
+  { value: "de-DE", label: "German" },
+  { value: "es-ES", label: "Spanish (Spain)" },
+  { value: "it-IT", label: "Italian" },
+  { value: "pt-PT", label: "Portuguese (Portugal)" },
+  { value: "pt-BR", label: "Portuguese (Brazil)" },
+  { value: "nl-NL", label: "Dutch" },
+  { value: "ja-JP", label: "Japanese" },
+  { value: "ko-KR", label: "Korean" },
+  { value: "zh-CN", label: "Chinese (Mandarin, Simplified)" },
+];
+
 export function SettingsPanel({ onClose }: Props) {
   const [category, setCategory] = useState<Category>("appearance");
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -104,7 +121,8 @@ export function SettingsPanel({ onClose }: Props) {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [repo, setRepo] = useState("");
   const [githubToken, setGithubToken] = useState("");
-  const [azureRegion, setAzureRegion] = useState("");
+  const [azureEndpoint, setAzureEndpoint] = useState("");
+  const [azureLanguage, setAzureLanguage] = useState("");
   const [azureKey, setAzureKey] = useState("");
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
@@ -141,7 +159,8 @@ export function SettingsPanel({ onClose }: Props) {
       setShowChatStats(s.show_chat_stats);
       setMaxToolRounds(s.max_tool_rounds);
       setIssueAssociationsEnabled(s.issue_associations_enabled);
-      setAzureRegion(s.azure_speech_region);
+      setAzureEndpoint(s.azure_speech_endpoint);
+      setAzureLanguage(s.azure_speech_language);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -178,7 +197,8 @@ export function SettingsPanel({ onClose }: Props) {
         show_chat_stats: showChatStats,
         max_tool_rounds: maxToolRounds,
         issue_associations_enabled: issueAssociationsEnabled,
-        azure_speech_region: azureRegion,
+        azure_speech_endpoint: azureEndpoint,
+        azure_speech_language: azureLanguage,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         ...(sys ?? {}),
@@ -563,17 +583,34 @@ export function SettingsPanel({ onClose }: Props) {
                     : "Azure Speech not configured — using the browser fallback (Chrome only)."}
                 </div>
 
-                <label className="block text-xs text-muted mb-1">Region</label>
+                <label className="block text-xs text-muted mb-1">Endpoint URL</label>
                 <input
                   type="text"
-                  value={azureRegion}
-                  onChange={(e) => setAzureRegion(e.target.value)}
-                  placeholder="e.g. swedencentral"
+                  value={azureEndpoint}
+                  onChange={(e) => setAzureEndpoint(e.target.value)}
+                  placeholder="https://<name>.cognitiveservices.azure.com/"
                   className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                 />
                 <p className="text-[11px] text-muted mt-1">
-                  The Azure region of your Speech / Cognitive Services resource
-                  (the subdomain in its endpoint URL).
+                  The resource endpoint URL from your Azure Speech / Cognitive
+                  Services resource ("Keys and Endpoint").
+                </p>
+
+                <label className="block text-xs text-muted mt-4 mb-1">Language</label>
+                <select
+                  value={azureLanguage}
+                  onChange={(e) => setAzureLanguage(e.target.value)}
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                >
+                  {STT_LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted mt-1">
+                  Recognition language. "Auto (browser)" uses the browser's
+                  current locale.
                 </p>
 
                 <label className="block text-xs text-muted mt-4 mb-1">

@@ -110,8 +110,9 @@ export interface Settings {
   api_keys_present: Record<string, boolean>;
   github_token_source: "env" | "gh-cli" | "settings" | "none";
   issue_associations_enabled: boolean;
-  // Azure AI Speech: configured region + readiness flag (key never echoed).
-  azure_speech_region: string;
+  // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
+  azure_speech_endpoint: string;
+  azure_speech_language: string;
   stt_azure_ready: boolean;
   // Which Precursor capability sections the built-in MCP server exposes.
   mcp_expose: Record<string, boolean>;
@@ -145,7 +146,8 @@ export interface SettingsUpdate {
   mcp_servers?: Record<string, Record<string, unknown>>;
   api_keys?: Record<string, string>;
   issue_associations_enabled?: boolean;
-  azure_speech_region?: string;
+  azure_speech_endpoint?: string;
+  azure_speech_language?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   llm_max_input_tokens?: number;
