@@ -44,6 +44,8 @@ _THIRD_PARTY_LEVELS: dict[str, str] = {
     "sqlalchemy.engine": "WARNING",
     "sse_starlette": "INFO",
     "sse_starlette.sse": "INFO",
+    "openai": "WARNING",
+    "openai._base_client": "WARNING",
     "asyncio": "WARNING",
 }
 
