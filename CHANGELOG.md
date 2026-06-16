@@ -11,6 +11,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- Browser notifications when an assistant turn finishes (including scheduled
+  tasks) while the Precursor window isn't focused — opt-in via Settings → Chat →
+  Notifications (asks for browser permission on enable). The number of unread
+  messages always shows in the tab title (`(N) Precursor`), regardless of the
+  notification setting.
 - Multiple **LLM providers**, selectable at runtime in Settings → Model: GitHub
   Copilot, GitHub Models, **Azure AI Foundry**, OpenAI, Mistral, Hugging Face,
   Ollama, and Mock. Providers are declared in a registry

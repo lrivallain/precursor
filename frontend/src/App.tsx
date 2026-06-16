@@ -13,6 +13,7 @@ import { WorkspacesPage } from "./components/WorkspacesPage";
 import { TooltipProvider } from "./components/Tooltip";
 import { api } from "./lib/api";
 import { eventBus } from "./lib/events";
+import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion } from "./lib/streamStore";
@@ -35,6 +36,31 @@ function parseWsRoute(): WsRoute {
     segs.length > 2 ? segs.slice(2).map(decodeURIComponent).join("/") : null;
   return { open: true, slug, path };
 }
+
+const BASE_TITLE = "Precursor";
+
+/** Sum unread counts across the whole topic tree (recursively). */
+function totalUnread(nodes: TopicNode[]): number {
+  let n = 0;
+  for (const node of nodes) {
+    n += node.unread_count ?? 0;
+    if (node.children?.length) n += totalUnread(node.children);
+  }
+  return n;
+}
+
+/** Find a topic's title anywhere in the tree (for notification text). */
+function findTitle(nodes: TopicNode[], topicId: number): string | null {
+  for (const node of nodes) {
+    if (node.id === topicId) return node.title;
+    if (node.children?.length) {
+      const hit = findTitle(node.children, topicId);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 
 export default function App() {
   const [tree, setTree] = useState<TopicNode[]>([]);
@@ -84,6 +110,37 @@ export default function App() {
     void refreshTree();
     void skillsStore.load();
   }, []);
+
+  // Reflect the unread count in the tab title (always, independent of the
+  // notification permission/setting). Cleared title falls back to the base.
+  useEffect(() => {
+    const n = totalUnread(tree);
+    document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
+  }, [tree]);
+
+  // Mirror tree + notification setting into refs so the completion callbacks
+  // (registered once) read current values without re-subscribing.
+  const treeRef = useRef<TopicNode[]>(tree);
+  useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+  const notificationsEnabledRef = useRef(false);
+  useEffect(() => {
+    notificationsEnabledRef.current = settings?.notifications_enabled ?? false;
+  }, [settings]);
+
+  // Fire a browser notification for a completed turn, when enabled and the
+  // window isn't focused. Skips the topic the user is actively viewing.
+  function maybeNotify(topicId: number): void {
+    if (!notificationsEnabledRef.current) return;
+    if (activeTopicRef.current?.id === topicId && document.hasFocus()) return;
+    const title = findTitle(treeRef.current, topicId) ?? "Precursor";
+    notifyIfUnfocused({
+      title,
+      body: "A new reply is ready.",
+      tag: `precursor-topic-${topicId}`,
+    });
+  }
 
   // ---- URL hash routing ------------------------------------------------
   // `#<slug>` is the canonical deep link for a topic. We keep it in sync
@@ -196,6 +253,8 @@ export default function App() {
           }
         }
         await refreshTree();
+        // Foreground turn finished — notify if the user has switched away.
+        maybeNotify(topicId);
       })();
     });
     return () => streamStore.setOnComplete(null);
@@ -231,6 +290,10 @@ export default function App() {
         streamStore.setRemoteStreaming(event.topic_id, true);
       } else if (event.type === "stream.ended") {
         streamStore.setRemoteStreaming(event.topic_id, false);
+        // A turn finished elsewhere (another window or a scheduled task). The
+        // driving window's own echo is filtered by client id, so this only
+        // covers background completions — notify if enabled + unfocused.
+        maybeNotify(event.topic_id);
       }
     });
   }, []);

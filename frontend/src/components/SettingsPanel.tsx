@@ -20,6 +20,10 @@ import { api } from "../lib/api";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { modelsStore } from "../lib/modelsStore";
 import { settingsStore } from "../lib/settingsStore";
+import {
+  notificationsSupported,
+  requestNotificationPermission,
+} from "../lib/notifications";
 import type {
   LLMModel,
   LLMProviderSpec,
@@ -136,6 +140,7 @@ export function SettingsPanel({ onClose }: Props) {
   >({ state: "idle" });
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
   // System settings (env default + DB override). Loaded as a single object.
@@ -198,6 +203,7 @@ export function SettingsPanel({ onClose }: Props) {
       setRepo(s.github_repo);
       setTtlMinutes(s.issue_context_ttl_minutes);
       setShowChatStats(s.show_chat_stats);
+      setNotificationsEnabled(s.notifications_enabled);
       setMaxToolRounds(s.max_tool_rounds);
       setIssueAssociationsEnabled(s.issue_associations_enabled);
       setAzureEndpoint(s.azure_speech_endpoint);
@@ -279,6 +285,7 @@ export function SettingsPanel({ onClose }: Props) {
         github_repo: repo,
         issue_context_ttl_minutes: ttlMinutes,
         show_chat_stats: showChatStats,
+        notifications_enabled: notificationsEnabled,
         max_tool_rounds: maxToolRounds,
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
@@ -454,6 +461,39 @@ export function SettingsPanel({ onClose }: Props) {
                         Displays token usage and context-window occupancy next
                         to each chat. Stats are always collected; this only
                         controls the panel's visibility.
+                      </span>
+                    </span>
+                  </label>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-medium mb-2">Notifications</h3>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={notificationsEnabled}
+                      onChange={async (e) => {
+                        const on = e.target.checked;
+                        if (on) {
+                          const perm = await requestNotificationPermission();
+                          if (perm !== "granted") {
+                            setNotificationsEnabled(false);
+                            return;
+                          }
+                        }
+                        setNotificationsEnabled(on);
+                      }}
+                      disabled={!notificationsSupported()}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span>
+                      <span className="block text-sm">
+                        Notify when a reply is ready
+                      </span>
+                      <span className="block text-[11px] text-muted">
+                        {notificationsSupported()
+                          ? "Shows a browser notification when an assistant turn (including scheduled tasks) finishes while the Precursor window isn't focused. The unread count always appears in the tab title regardless of this setting."
+                          : "Your browser doesn't support notifications."}
                       </span>
                     </span>
                   </label>
