@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Eye, Github, Loader2, Pencil, Send, X } from "lucide-react";
+import { Eye, Loader2, Pencil, Send, X } from "lucide-react";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 import { Markdown } from "./Markdown";
 
 export interface CommandDraftPayload {

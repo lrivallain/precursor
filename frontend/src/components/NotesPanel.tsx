@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  Github,
   Loader2,
   MessageSquarePlus,
   NotebookPen,
@@ -8,6 +7,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 
 export type NotesAction =
   | "append"

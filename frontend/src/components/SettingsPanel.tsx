@@ -6,7 +6,6 @@ import {
   Palette,
   MessageSquare,
   Cpu,
-  Github,
   Plug,
   Plus,
   Pencil,
@@ -15,6 +14,7 @@ import {
   Brain,
   SlidersHorizontal,
 } from "lucide-react";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { modelsStore } from "../lib/modelsStore";
