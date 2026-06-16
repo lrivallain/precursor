@@ -6,7 +6,6 @@ import {
   Clock,
   Eraser,
   ExternalLink,
-  Github,
   Loader2,
   Play,
   RefreshCw,
@@ -14,6 +13,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
 import type { Schedule, Topic, TopicNode } from "../lib/types";

@@ -43,6 +43,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   command-runner jail, skills/memory, real MCP transports, three LLM providers);
   clarified GitHub token resolution (`GITHUB_TOKEN` → `gh` CLI → mock) and the
   dev-vs-prod port model (Vite `:5173` proxy → backend `:8000`).
+- Frontend dependencies upgraded (Vite 8, TypeScript 6, `@vitejs/plugin-react`
+  6, `react-markdown` 10, `lucide-react` 1). Tailwind is held at v3 pending a
+  dedicated v4 migration. `lucide-react` 1 removed brand icons, so the GitHub
+  mark now ships as a local `GithubIcon` component.
+- Dependabot now groups only minor/patch bumps; majors get their own PR so a
+  breaking upgrade (e.g. Tailwind v4) is never bundled with safe ones.
 
 ### Fixed
 

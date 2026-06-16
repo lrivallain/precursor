@@ -1,4 +1,5 @@
-import { AlertCircle, CheckCircle2, Github, Loader2, Unlink } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Unlink } from "lucide-react";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 import type { IssueContextStatus } from "../lib/useIssueContext";
 
 interface Props {
