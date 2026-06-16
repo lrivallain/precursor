@@ -25,6 +25,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 - Dependabot config for pip, npm, and GitHub Actions.
 - Contributor prompt helpers (`.github/prompts/`): `/ship-change` and
   `/release` workflows.
+- The build-in command panels (`/notes`, `/gh-update`, `/gh-create`,
+  `/gh-close`) now share a single `CommandPanel` rendered as a **floating
+  window** — draggable by its header and resizable from a corner grip, with
+  position and size remembered per panel. Detaching them from the chat layout
+  means the scratch pad / draft cards no longer share vertical space with the
+  message composer, so each is sized independently. The panels also gained a
+  consistent Edit/Preview (Markdown) toggle — `/notes` previously had none.
 
 ### Changed
 
