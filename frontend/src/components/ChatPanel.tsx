@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, Send, StopCircle, X } from "lucide-react";
+import { Mic, Paperclip, Send, StopCircle, X } from "lucide-react";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
@@ -18,6 +18,7 @@ import { streamStore, useStreamVersion } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
+import { useSpeechRecognition } from "../lib/useSpeechRecognition";
 import { ResizeHandle } from "./ResizeHandle";
 import type { Attachment, Message, Topic } from "../lib/types";
 
@@ -187,6 +188,25 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
     () => persisted.filter((m) => m.role === "user").map((m) => m.content),
     [persisted],
   );
+
+  // Live speech-to-text (Web Speech API). Final chunks are appended to the
+  // draft as the user speaks; the interim transcript is shown transiently as a
+  // dim suffix so they see words land in real time before they're committed.
+  const [interimText, setInterimText] = useState("");
+  const speech = useSpeechRecognition({
+    onFinalChunk: (text) => {
+      const chunk = text.trim();
+      if (!chunk) return;
+      historyIndexRef.current = null;
+      setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
+      setInterimText("");
+    },
+    onInterim: setInterimText,
+  });
+  // Drop any lingering interim text once dictation stops.
+  useEffect(() => {
+    if (!speech.listening) setInterimText("");
+  }, [speech.listening]);
 
   const skills = useSkills();
   const skillCommands = useMemo<SlashCommand[]>(
@@ -367,6 +387,7 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
     const hasAttachments = pendingAttachments.length > 0;
     if ((!content && !hasAttachments) || streaming) return;
     historyIndexRef.current = null;
+    if (speech.listening) speech.stop();
 
     const cmd = content
       ? parseSlashCommand(content, skillCommands, excludedCommands)
@@ -756,6 +777,17 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
               )}
             </div>
           )}
+          {speech.listening && (
+            <div className="flex items-center gap-2 text-[11px] text-muted px-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="truncate">
+                Listening… {interimText && <span className="italic">{interimText}</span>}
+              </span>
+            </div>
+          )}
+          {speech.error && (
+            <div className="text-[11px] text-red-500 px-1">Dictation error: {speech.error}</div>
+          )}
           <div
             className={`relative flex items-end gap-2 ${
               isDraggingFile
@@ -941,6 +973,24 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
               >
                 <Paperclip size={18} />
               </button>
+              {speech.supported && (
+                <button
+                  type="button"
+                  onClick={speech.toggle}
+                  className={`px-2 py-2 rounded border border-border ${
+                    speech.listening
+                      ? "bg-accent text-white animate-pulse"
+                      : "bg-surface text-muted hover:text-text hover:bg-bg"
+                  }`}
+                  aria-label={speech.listening ? "Stop dictation" : "Dictate"}
+                  aria-pressed={speech.listening}
+                  data-tooltip={
+                    speech.listening ? "Stop dictation" : "Dictate (speech-to-text)"
+                  }
+                >
+                  <Mic size={18} />
+                </button>
+              )}
               {streaming ? (
                 <button
                   onClick={stop}
