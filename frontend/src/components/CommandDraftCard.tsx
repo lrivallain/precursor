@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Eye, Loader2, Pencil, Send, X } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { Markdown } from "./Markdown";
+import { ResizableTextarea } from "./ResizableTextarea";
 
 export interface CommandDraftPayload {
   title?: string;
@@ -131,12 +132,13 @@ export function CommandDraftCard({
                 />
               </label>
             )}
-            <textarea
+            <ResizableTextarea
               value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={8}
-              className="w-full resize-y bg-bg border border-border rounded p-2 text-sm font-mono leading-relaxed outline-none focus:border-accent"
+              onChange={setBody}
+              storageKey="precursor:commandDraft:height"
+              className="font-mono leading-relaxed"
               placeholder={bodyPlaceholder}
+              aria-label="Draft body"
             />
           </>
         ) : (

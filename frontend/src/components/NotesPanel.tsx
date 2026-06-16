@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
+import { ResizableTextarea } from "./ResizableTextarea";
 
 export type NotesAction =
   | "append"
@@ -76,13 +77,13 @@ export function NotesPanel({
       </header>
 
       <div className="p-3 space-y-2">
-        <textarea
+        <ResizableTextarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={setText}
+          storageKey="precursor:notesPanel:height"
           placeholder="Start typing your notes… (Markdown supported)"
-          rows={8}
           disabled={busy}
-          className="w-full resize-y min-h-[140px] bg-bg border border-border rounded p-2 text-sm outline-none focus:border-accent disabled:opacity-60"
+          aria-label="Notes"
         />
 
         {error && (

@@ -25,6 +25,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 - Dependabot config for pip, npm, and GitHub Actions.
 - Contributor prompt helpers (`.github/prompts/`): `/ship-change` and
   `/release` workflows.
+- The build-in command panels (`/notes`, GitHub draft cards) now use a shared
+  `ResizableTextarea` with a draggable bottom edge; the chosen height is
+  remembered per panel across sessions, giving a larger editing area.
 
 ### Changed
 
