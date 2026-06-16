@@ -43,6 +43,23 @@ function getCtor(): SpeechRecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+function messageForError(code: string): string {
+  switch (code) {
+    case "network":
+      // The API surface exists but the recognition service is unreachable.
+      // This is the norm outside official Google Chrome (Electron, VS Code's
+      // browser, Brave, etc. expose the interface but have no speech backend).
+      return "speech recognition is unavailable in this browser — try Google Chrome";
+    case "not-allowed":
+    case "service-not-allowed":
+      return "microphone permission was denied";
+    case "audio-capture":
+      return "no microphone was found";
+    default:
+      return code || "speech recognition error";
+  }
+}
+
 interface Options {
   /** Called with the finalized chunk each time a result is marked final. */
   onFinalChunk: (text: string) => void;
@@ -105,9 +122,8 @@ export function useSpeechRecognition({ onFinalChunk, onInterim, lang }: Options)
     };
     rec.onerror = (e) => {
       // "no-speech" / "aborted" are routine; surface only the actionable ones.
-      if (e.error !== "no-speech" && e.error !== "aborted") {
-        setError(e.error || "Speech recognition error");
-      }
+      if (e.error === "no-speech" || e.error === "aborted") return;
+      setError(messageForError(e.error));
     };
     rec.onend = () => setListening(false);
 
