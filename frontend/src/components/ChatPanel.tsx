@@ -19,6 +19,7 @@ import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useSpeechRecognition } from "../lib/useSpeechRecognition";
+import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ResizeHandle } from "./ResizeHandle";
 import type { Attachment, Message, Topic } from "../lib/types";
 
@@ -189,20 +190,29 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
     [persisted],
   );
 
-  // Live speech-to-text (Web Speech API). Final chunks are appended to the
-  // draft as the user speaks; the interim transcript is shown transiently as a
-  // dim suffix so they see words land in real time before they're committed.
+  // Live speech-to-text. Final chunks are appended to the draft as the user
+  // speaks; the interim transcript is shown transiently. Azure (portable) is
+  // used when configured server-side, otherwise the browser Web Speech API
+  // (Chrome-only) — both share the same append behaviour and interface.
   const [interimText, setInterimText] = useState("");
-  const speech = useSpeechRecognition({
-    onFinalChunk: (text) => {
-      const chunk = text.trim();
-      if (!chunk) return;
-      historyIndexRef.current = null;
-      setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-      setInterimText("");
-    },
+  const appendFinalChunk = (text: string) => {
+    const chunk = text.trim();
+    if (!chunk) return;
+    historyIndexRef.current = null;
+    setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
+    setInterimText("");
+  };
+  const azureReady = settings?.stt_azure_ready ?? false;
+  const browserSpeech = useSpeechRecognition({
+    onFinalChunk: appendFinalChunk,
     onInterim: setInterimText,
   });
+  const azureSpeech = useAzureSpeech({
+    onFinalChunk: appendFinalChunk,
+    onInterim: setInterimText,
+    enabled: azureReady,
+  });
+  const speech = azureReady ? azureSpeech : browserSpeech;
   // Drop any lingering interim text once dictation stops.
   useEffect(() => {
     if (!speech.listening) setInterimText("");
@@ -985,7 +995,11 @@ export function ChatPanel({ topic, onTopicUpdated }: ChatPanelProps) {
                   aria-label={speech.listening ? "Stop dictation" : "Dictate"}
                   aria-pressed={speech.listening}
                   data-tooltip={
-                    speech.listening ? "Stop dictation" : "Dictate (speech-to-text)"
+                    speech.listening
+                      ? "Stop dictation"
+                      : azureReady
+                        ? "Dictate (Azure Speech)"
+                        : "Dictate (browser, Chrome only)"
                   }
                 >
                   <Mic size={18} />

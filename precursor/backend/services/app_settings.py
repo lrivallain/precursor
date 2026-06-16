@@ -104,6 +104,31 @@ async def resolve_issue_associations_enabled(session: AsyncSession) -> bool:
     return DEFAULT_ISSUE_ASSOCIATIONS_ENABLED
 
 
+async def resolve_azure_speech_key(session: AsyncSession) -> str:
+    """Effective Azure Speech key: DB ``api_keys`` override, else env default."""
+    api_keys = await _get_db_value(session, "api_keys")
+    if isinstance(api_keys, dict):
+        key = api_keys.get("azure_speech_key")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    return get_settings().azure_speech_key
+
+
+async def resolve_azure_speech_region(session: AsyncSession) -> str:
+    """Effective Azure Speech region (e.g. ``swedencentral``): DB override, else env."""
+    db_value = await _get_db_value(session, "azure_speech_region")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return get_settings().azure_speech_region
+
+
+async def azure_stt_ready(session: AsyncSession) -> bool:
+    """True when both an Azure Speech key and region are configured."""
+    return bool(
+        await resolve_azure_speech_key(session) and await resolve_azure_speech_region(session)
+    )
+
+
 # -- System settings (env-default + DB override) ---------------------------
 #
 # These mirror fields on ``config.Settings`` (env / .env). The env value is the

@@ -13,6 +13,7 @@ import {
   Sparkles,
   Brain,
   SlidersHorizontal,
+  Mic,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -70,6 +71,7 @@ type Category =
   | "chat"
   | "model"
   | "github"
+  | "speech"
   | "mcp"
   | "skills"
   | "memory"
@@ -85,6 +87,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "chat", label: "Chat", icon: MessageSquare, group: "App" },
   { id: "model", label: "Model", icon: Cpu, group: "App" },
   { id: "github", label: "GitHub", icon: Github, group: "Integrations" },
+  { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
@@ -101,6 +104,8 @@ export function SettingsPanel({ onClose }: Props) {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [repo, setRepo] = useState("");
   const [githubToken, setGithubToken] = useState("");
+  const [azureRegion, setAzureRegion] = useState("");
+  const [azureKey, setAzureKey] = useState("");
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
@@ -136,6 +141,7 @@ export function SettingsPanel({ onClose }: Props) {
       setShowChatStats(s.show_chat_stats);
       setMaxToolRounds(s.max_tool_rounds);
       setIssueAssociationsEnabled(s.issue_associations_enabled);
+      setAzureRegion(s.azure_speech_region);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -172,18 +178,23 @@ export function SettingsPanel({ onClose }: Props) {
         show_chat_stats: showChatStats,
         max_tool_rounds: maxToolRounds,
         issue_associations_enabled: issueAssociationsEnabled,
+        azure_speech_region: azureRegion,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         ...(sys ?? {}),
       };
-      if (githubToken) {
-        payload.api_keys = { github_token: githubToken };
+      const apiKeys: Record<string, string> = {};
+      if (githubToken) apiKeys.github_token = githubToken;
+      if (azureKey) apiKeys.azure_speech_key = azureKey;
+      if (Object.keys(apiKeys).length > 0) {
+        payload.api_keys = apiKeys;
       }
       const updated = await api.updateSettings(payload);
       setSettings(updated);
       modelsStore.applySettings(updated);
       settingsStore.set(updated);
       setGithubToken("");
+      setAzureKey("");
       setTheme(theme);
       onClose();
     } finally {
@@ -529,6 +540,59 @@ export function SettingsPanel({ onClose }: Props) {
                       "No token detected. Provide a PAT here, set GITHUB_TOKEN, or run `gh auth login`."}
                   </p>
                 )}
+              </section>
+            )}
+
+            {category === "speech" && (
+              <section>
+                <p className="text-sm text-muted mb-3">
+                  Dictate prompts with the mic button in the chat composer.
+                  Configure an <strong>Azure AI Speech</strong> resource for
+                  portable, in-browser speech-to-text. Without it, the mic falls
+                  back to the browser Web Speech API (Google Chrome only).
+                </p>
+                <div
+                  className={`mb-4 text-[11px] px-2 py-1.5 rounded border ${
+                    settings?.stt_azure_ready
+                      ? "border-green-600/40 text-green-500"
+                      : "border-border text-muted"
+                  }`}
+                >
+                  {settings?.stt_azure_ready
+                    ? "Azure Speech is configured — dictation works in any modern browser."
+                    : "Azure Speech not configured — using the browser fallback (Chrome only)."}
+                </div>
+
+                <label className="block text-xs text-muted mb-1">Region</label>
+                <input
+                  type="text"
+                  value={azureRegion}
+                  onChange={(e) => setAzureRegion(e.target.value)}
+                  placeholder="e.g. swedencentral"
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  The Azure region of your Speech / Cognitive Services resource
+                  (the subdomain in its endpoint URL).
+                </p>
+
+                <label className="block text-xs text-muted mt-4 mb-1">
+                  Subscription key{" "}
+                  {settings?.api_keys_present?.azure_speech_key && (
+                    <span className="text-green-500">(configured)</span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={azureKey}
+                  onChange={(e) => setAzureKey(e.target.value)}
+                  placeholder="Azure Speech key"
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  Stored server-side and never returned. The browser only ever
+                  receives a short-lived token minted from it.
+                </p>
               </section>
             )}
 

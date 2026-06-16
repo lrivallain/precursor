@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # match the convention used by Actions and the `gh` CLI.
     github_token: str = Field(default="", validation_alias="GITHUB_TOKEN")
 
+    # Azure AI Speech (optional) — powers speech-to-text in the chat composer.
+    # Key + region are read unprefixed (AZURE_SPEECH_*) to match the Azure CLI /
+    # SDK convention; both can also be set from the Settings panel (DB override).
+    azure_speech_key: str = Field(default="", validation_alias="AZURE_SPEECH_KEY")
+    azure_speech_region: str = Field(default="", validation_alias="AZURE_SPEECH_REGION")
+
     # Prompt budgeting — caps how much of the (history + tool results) transcript
     # is sent to the model, so a few large file reads / fetches across tool
     # rounds can't overflow the context window. Lower these for smaller models.

@@ -140,6 +140,9 @@ export const api = {
   // Version
   getVersion: () => request<AppVersion>(`/api/version`),
 
+  // Speech-to-text (Azure token broker)
+  getSttToken: () => request<{ token: string; region: string }>(`/api/stt/token`),
+
   // GitHub
   listIssues: (repo?: string, q?: string) => {
     const params = new URLSearchParams();
