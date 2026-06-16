@@ -210,6 +210,9 @@ async def run_script(
 
 
 def main() -> None:
+    from precursor.backend.logging_config import configure_subprocess_logging
+
+    configure_subprocess_logging()
     mcp.run()
 
 

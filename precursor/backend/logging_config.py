@@ -35,6 +35,10 @@ _THIRD_PARTY_LEVELS: dict[str, str] = {
     "uvicorn.error": "INFO",
     "uvicorn.access": "INFO",
     "mcp": "INFO",
+    # The streamable-http / stdio client transports log session IDs, protocol
+    # negotiation and reconnect attempts at INFO on every connection — routine
+    # chatter, so quiet it to WARNING (real failures still surface).
+    "mcp.client": "WARNING",
     "httpx": "WARNING",
     "httpcore": "WARNING",
     "watchfiles": "WARNING",
@@ -139,3 +143,20 @@ def configure_logging(log_level: str) -> dict[str, Any]:
     cfg = build_log_config(log_level)
     logging.config.dictConfig(cfg)
     return cfg
+
+
+def configure_subprocess_logging() -> None:
+    """Apply the shared config in a stdio MCP subprocess.
+
+    The in-tree MCP servers (fetch / workspace-fs / cmd-runner / precursor) run
+    as ``python -m …`` subprocesses; importing FastMCP installs a plain root
+    StreamHandler, so without this their ``mcp.server`` logs print in a
+    different, timestamp-less format. Calling this in each ``main()`` replaces
+    that handler with the unified formatter and honours ``PRECURSOR_LOG_LEVEL``
+    (the parent forwards the env).
+    """
+    # Imported lazily so this module stays import-cheap and free of a config
+    # dependency at top level.
+    from precursor.backend.config import get_settings
+
+    configure_logging(get_settings().log_level)

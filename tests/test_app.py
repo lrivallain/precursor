@@ -42,6 +42,7 @@ def test_log_config_unifies_format() -> None:
     assert cfg["loggers"]["sqlalchemy.engine"]["level"] == "WARNING"
     assert cfg["loggers"]["sse_starlette.sse"]["level"] == "INFO"
     assert cfg["loggers"]["openai._base_client"]["level"] == "WARNING"
+    assert cfg["loggers"]["mcp.client"]["level"] == "WARNING"
     for name in ("uvicorn", "uvicorn.access", "mcp", "httpx", "watchfiles"):
         assert cfg["loggers"][name]["handlers"] == []
         assert cfg["loggers"][name]["propagate"] is True

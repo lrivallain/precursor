@@ -60,7 +60,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `print()` calls became logger calls. App `debug` stays app-only: noisy
   libraries (aiosqlite, SQLAlchemy, sse-starlette, …) are pinned to fixed levels
   so turning on app DEBUG doesn't unleash per-statement library spam. Output is
-  ANSI-coloured when stderr is a TTY and plain when piped/redirected.
+  ANSI-coloured when stderr is a TTY and plain when piped/redirected. The
+  in-tree stdio MCP servers (fetch / workspace-fs / cmd-runner / precursor)
+  apply the same config in their entrypoints, so their `mcp.server` logs share
+  the format instead of FastMCP's timestamp-less default; routine `mcp.client`
+  connection chatter (session IDs, protocol negotiation) is quieted to WARNING.
 
 ### Fixed
 

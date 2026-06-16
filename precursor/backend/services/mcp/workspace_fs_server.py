@@ -195,6 +195,9 @@ async def create_folder(workspace_id: int, path: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    from precursor.backend.logging_config import configure_subprocess_logging
+
+    configure_subprocess_logging()
     mcp.run()
 
 
