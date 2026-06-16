@@ -57,7 +57,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   uvicorn, and third-party (httpx, mcp, watchfiles) — one human format with an
   ISO-8601 UTC timestamp, level, and logger name. Modules now use
   `getLogger(__name__)` (no hardcoded `precursor.*` names) and operational
-  `print()` calls became logger calls.
+  `print()` calls became logger calls. App `debug` stays app-only: noisy
+  libraries (aiosqlite, SQLAlchemy, sse-starlette, …) are pinned to fixed levels
+  so turning on app DEBUG doesn't unleash per-statement library spam. Output is
+  ANSI-coloured when stderr is a TTY and plain when piped/redirected.
 
 ### Fixed
 
