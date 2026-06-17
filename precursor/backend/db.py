@@ -32,6 +32,7 @@ async def init_db() -> None:
     # Import models so they register with the metadata before create_all runs.
     from precursor.backend.models import (  # noqa: F401
         attachment,
+        chat,
         mcp_server,
         memory,
         message,
@@ -96,12 +97,76 @@ def _ensure_dev_columns(sync_conn: Connection) -> None:
             sync_conn.execute(
                 text("CREATE UNIQUE INDEX IF NOT EXISTS ix_topics_slug ON topics(slug)")
             )
-    if "messages" in inspector.get_table_names():
+    tables = set(inspector.get_table_names())
+    if "messages" in tables:
         cols = {c["name"] for c in inspector.get_columns("messages")}
-        if "prompt_tokens" not in cols:
-            sync_conn.execute(text("ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER"))
-        if "completion_tokens" not in cols:
-            sync_conn.execute(text("ALTER TABLE messages ADD COLUMN completion_tokens INTEGER"))
+        if "chat_id" not in cols:
+            # Chats reuse the messages table via a nullable chat_id (exactly one
+            # of topic_id / chat_id is set). Adding chat_id, dropping topic_id's
+            # NOT NULL, and adding the container CHECK all require recreating the
+            # table on SQLite — ALTER can't do them. Rebuild + copy existing rows.
+            _rebuild_messages_table(sync_conn, source="messages")
+        elif "_messages_old" in tables:
+            # Finish a rebuild that was interrupted (e.g. an index-name clash on
+            # a prior boot): the live rows are still stranded in _messages_old.
+            _rebuild_messages_table(sync_conn, source="_messages_old")
+        else:
+            if "prompt_tokens" not in cols:
+                sync_conn.execute(text("ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER"))
+            if "completion_tokens" not in cols:
+                sync_conn.execute(text("ALTER TABLE messages ADD COLUMN completion_tokens INTEGER"))
+
+
+def _rebuild_messages_table(sync_conn: Connection, *, source: str) -> None:
+    """Recreate ``messages`` with the current model schema, copying rows over.
+
+    Dev-only. SQLite can't ALTER a column's nullability or add a CHECK in place,
+    so we rebuild the table. ``source`` is the table holding the live rows —
+    ``messages`` for a first run, or ``_messages_old`` when resuming a rebuild
+    that a previous boot left half-finished. Renamed tables keep their old index
+    names, so we drop those first to avoid a clash when the fresh table and its
+    indexes are created.
+    """
+    from sqlalchemy import Table, inspect, text
+
+    from precursor.backend.models.message import Message
+
+    messages_table = Message.__table__
+    assert isinstance(messages_table, Table)
+
+    sync_conn.execute(text("PRAGMA foreign_keys=OFF"))
+    if source == "messages":
+        sync_conn.execute(text("ALTER TABLE messages RENAME TO _messages_old"))
+    else:
+        # Resuming: drop the empty half-built table so create() can run clean.
+        sync_conn.execute(text("DROP TABLE IF EXISTS messages"))
+
+    _drop_user_indexes(sync_conn, "_messages_old")
+    messages_table.create(sync_conn)
+
+    old_cols = {c["name"] for c in inspect(sync_conn).get_columns("_messages_old")}
+    new_cols = {c.name for c in messages_table.columns}
+    carry = ", ".join(c for c in old_cols if c in new_cols)
+    sync_conn.execute(text(f"INSERT INTO messages ({carry}) SELECT {carry} FROM _messages_old"))
+    sync_conn.execute(text("DROP TABLE _messages_old"))
+    sync_conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _drop_user_indexes(sync_conn: Connection, table: str) -> None:
+    """Drop the explicit (non-constraint) indexes attached to ``table``."""
+    from sqlalchemy import text
+
+    # ``sql IS NOT NULL`` skips auto indexes backing UNIQUE/PK constraints,
+    # which can't be dropped directly.
+    rows = sync_conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'index' AND tbl_name = :t AND sql IS NOT NULL"
+        ),
+        {"t": table},
+    ).fetchall()
+    for (name,) in rows:
+        sync_conn.execute(text(f'DROP INDEX IF EXISTS "{name}"'))
 
 
 @asynccontextmanager

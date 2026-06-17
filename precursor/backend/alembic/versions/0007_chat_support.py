@@ -39,38 +39,40 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_chats_slug"), "chats", ["slug"])
 
-    # Modify messages table to support chats.
+    # Modify the messages table to also host chat turns: add a nullable chat_id,
+    # relax topic_id to nullable, and enforce that exactly one container is set.
+    # batch_alter_table makes this work on SQLite (which can't ALTER a column's
+    # nullability or add a CHECK in place) as well as on Postgres.
     bind = op.get_bind()
     inspector = inspect(bind)
-
-    # Check if topic_id is already nullable (skip if already applied).
     cols = {c["name"]: c for c in inspector.get_columns("messages")}
-    if cols.get("topic_id", {}).get("nullable") is False:
-        # Make topic_id nullable and add chat_id.
-        op.alter_column("messages", "topic_id", existing_type=sa.Integer, nullable=True)
-
-    # Add chat_id if it doesn't exist.
-    if "chat_id" not in cols:
-        op.add_column(
-            "messages",
-            sa.Column(
-                "chat_id",
-                sa.Integer,
-                sa.ForeignKey("chats.id", ondelete="CASCADE"),
-                nullable=True,
-            ),
-        )
-        op.create_index(op.f("ix_messages_chat_id"), "messages", ["chat_id"])
-
-    # Add the check constraint if it doesn't exist.
-    # Note: This is platform-specific; some databases may not enforce it.
     constraints = {c["name"] for c in inspector.get_check_constraints("messages")}
-    if "ck_message_container" not in constraints:
-        op.create_check_constraint(
-            "ck_message_container",
-            "messages",
-            "(topic_id IS NOT NULL AND chat_id IS NULL) OR (topic_id IS NULL AND chat_id IS NOT NULL)",
-        )
+
+    needs_chat_id = "chat_id" not in cols
+    needs_nullable = cols.get("topic_id", {}).get("nullable") is False
+    needs_constraint = "ck_message_container" not in constraints
+    if not (needs_chat_id or needs_nullable or needs_constraint):
+        return
+
+    with op.batch_alter_table("messages", recreate="always") as batch:
+        if needs_nullable:
+            batch.alter_column("topic_id", existing_type=sa.Integer(), nullable=True)
+        if needs_chat_id:
+            batch.add_column(
+                sa.Column(
+                    "chat_id",
+                    sa.Integer,
+                    sa.ForeignKey("chats.id", ondelete="CASCADE"),
+                    nullable=True,
+                )
+            )
+            batch.create_index(op.f("ix_messages_chat_id"), ["chat_id"])
+        if needs_constraint:
+            batch.create_check_constraint(
+                "ck_message_container",
+                "(topic_id IS NOT NULL AND chat_id IS NULL) "
+                "OR (topic_id IS NULL AND chat_id IS NOT NULL)",
+            )
 
 
 def downgrade() -> None:
