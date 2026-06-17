@@ -272,17 +272,25 @@ export default function App() {
   }, []);
 
   // activeTopic -> /topics/<…>/<slug>. pushState for a different item (so
-  // back/forward walks topics); replaceState when only the ancestor chain
-  // changes (e.g. the tree finished loading) to avoid junk history entries.
+  // back/forward walks topics); replaceState to *refine* the same item's path
+  // (e.g. once the tree loads and the ancestor chain is known). Never strips
+  // ancestors, so a deep link like /topics/a/b/c survives the initial load.
   useEffect(() => {
     if (sidebarMode !== "topics" || !activeTopic) return;
     const target = topicUrl(tree, activeTopic);
     if (window.location.pathname === target) return;
-    const lastSeg = decodeURIComponent(
-      window.location.pathname.replace(/\/+$/, "").split("/").pop() ?? "",
-    );
-    if (lastSeg === activeTopic.slug) history.replaceState(null, "", target);
-    else history.pushState(null, "", target);
+    const curSegs = window.location.pathname
+      .replace(/\/+$/, "")
+      .split("/")
+      .filter(Boolean);
+    const lastSeg = decodeURIComponent(curSegs[curSegs.length - 1] ?? "");
+    if (lastSeg === activeTopic.slug) {
+      // Same item already in the URL — only extend the ancestor chain.
+      const targetSegs = target.split("/").filter(Boolean);
+      if (targetSegs.length > curSegs.length) history.replaceState(null, "", target);
+    } else {
+      history.pushState(null, "", target);
+    }
   }, [activeTopic, sidebarMode, tree]);
 
   // activeChat -> /chats/<slug>.
