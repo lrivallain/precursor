@@ -24,8 +24,16 @@ async def list_chats(
     q: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[ChatRead]:
-    """List non-archived chats, most recently updated first."""
-    stmt = select(Chat).where(Chat.archived_at.is_(None)).order_by(Chat.updated_at.desc())
+    """List non-archived chats in a fixed creation order (newest first).
+
+    Ordering by creation (not ``updated_at``) keeps the list stable: opening or
+    replying to a chat never reshuffles it, so it stays easy to follow.
+    """
+    stmt = (
+        select(Chat)
+        .where(Chat.archived_at.is_(None))
+        .order_by(Chat.created_at.desc(), Chat.id.desc())
+    )
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(Chat.title.ilike(like))
