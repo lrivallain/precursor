@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  FolderGit2,
   MessageSquare,
   MessagesSquare,
   PanelLeftClose,
@@ -18,7 +19,7 @@ import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
-export type SidebarMode = "topics" | "chats";
+export type SidebarMode = "topics" | "chats" | "workspaces";
 
 interface Props {
   tree: TopicNode[];
@@ -29,6 +30,8 @@ interface Props {
   onModeChange: (mode: SidebarMode) => void;
   /** Rendered in the body when mode === "chats" (the chat list). */
   chatSlot?: ReactNode;
+  /** Rendered in the body when mode === "workspaces" (the workspace list). */
+  workspaceSlot?: ReactNode;
   onToggleCollapsed: () => void;
   onSelect: (id: number) => void;
   onCreate: (parentId: number | null) => void;
@@ -37,7 +40,6 @@ interface Props {
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
-  onOpenWorkspaces: () => void;
 }
 
 export function Sidebar({
@@ -48,6 +50,7 @@ export function Sidebar({
   mode,
   onModeChange,
   chatSlot,
+  workspaceSlot,
   onToggleCollapsed,
   onSelect,
   onCreate,
@@ -55,7 +58,6 @@ export function Sidebar({
   onEditSchedule,
   onOpenGlobalSettings,
   onOpenArchive,
-  onOpenWorkspaces,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
@@ -98,16 +100,33 @@ export function Sidebar({
         >
           <PanelLeftOpen size={18} />
         </button>
+        <div className="my-1 h-px w-6 bg-border" />
         <button
-          className="p-2 rounded hover:bg-surface"
-          aria-label="New topic"
-          data-tooltip="New topic"
-          onClick={() => onCreate(null)}
+          className={`p-2 rounded ${mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Topics"
+          data-tooltip="Topics"
+          onClick={() => onModeChange("topics")}
         >
-          <Plus size={18} />
+          <MessagesSquare size={18} />
+        </button>
+        <button
+          className={`p-2 rounded ${mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Chats"
+          data-tooltip="Chats"
+          onClick={() => onModeChange("chats")}
+        >
+          <MessageSquare size={18} />
+        </button>
+        <button
+          className={`p-2 rounded ${mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Workspaces"
+          data-tooltip="Workspaces"
+          onClick={() => onModeChange("workspaces")}
+        >
+          <FolderGit2 size={18} />
         </button>
         <div className="flex-1" />
-        <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} onOpenWorkspaces={onOpenWorkspaces} />
+        <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </aside>
     );
   }
@@ -158,9 +177,9 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Mode switcher: Topics ⟷ Chats. Persona + settings stay visible at the
-          bottom of the sidebar across both modes. */}
-      <div className="flex gap-1 px-3 py-2 border-b border-border">
+      {/* Mode switcher: Topics ⟷ Chats ⟷ Workspaces. Persona + settings stay
+          visible at the bottom of the sidebar across every mode. */}
+      <div className="flex gap-1 px-2 py-2 border-b border-border">
         <button
           className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
             mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
@@ -177,10 +196,20 @@ export function Sidebar({
         >
           <MessageSquare size={14} /> Chats
         </button>
+        <button
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
+            mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+          }`}
+          onClick={() => onModeChange("workspaces")}
+        >
+          <FolderGit2 size={14} /> Files
+        </button>
       </div>
 
       {mode === "chats" ? (
         chatSlot
+      ) : mode === "workspaces" ? (
+        workspaceSlot
       ) : (
         <>
           <div className="px-3 py-2 border-b border-border">
@@ -278,7 +307,7 @@ export function Sidebar({
       )}
 
       <div className="border-t border-border px-2 py-2">
-        <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} onOpenWorkspaces={onOpenWorkspaces} />
+        <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </div>
     </aside>
   );
