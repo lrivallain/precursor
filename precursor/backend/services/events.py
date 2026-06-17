@@ -23,6 +23,7 @@ from typing import TypedDict
 class Event(TypedDict, total=False):
     type: str
     topic_id: int | None
+    chat_id: int | None
     client_id: str | None
 
 
@@ -82,9 +83,21 @@ async def publish_message_changed(topic_id: int) -> None:
     await _bus.publish({"type": "message.changed", "topic_id": topic_id})
 
 
+async def publish_message_changed_chat(chat_id: int) -> None:
+    await _bus.publish({"type": "message.changed", "chat_id": chat_id})
+
+
 async def publish_stream_started(topic_id: int) -> None:
     await _bus.publish({"type": "stream.started", "topic_id": topic_id})
 
 
+async def publish_stream_started_chat(chat_id: int) -> None:
+    await _bus.publish({"type": "stream.started", "chat_id": chat_id})
+
+
 async def publish_stream_ended(topic_id: int) -> None:
     await _bus.publish({"type": "stream.ended", "topic_id": topic_id})
+
+
+async def publish_stream_ended_chat(chat_id: int) -> None:
+    await _bus.publish({"type": "stream.ended", "chat_id": chat_id})

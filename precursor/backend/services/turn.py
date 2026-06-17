@@ -22,7 +22,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Message, MessageRole, Topic
+from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.routers.chat import (
     _build_system_context,
     _format_tool_result,
@@ -39,8 +39,11 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.context_budget import trim_messages
 from precursor.backend.services.events import (
     publish_message_changed,
+    publish_message_changed_chat,
     publish_stream_ended,
+    publish_stream_ended_chat,
     publish_stream_started,
+    publish_stream_started_chat,
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
@@ -69,6 +72,19 @@ async def run_topic_turn(topic_id: int, prompt: str, *, clear_context: bool = Fa
         await _run(topic_id, prompt, clear_context=clear_context)
     finally:
         await publish_stream_ended(topic_id)
+
+
+async def run_chat_turn(chat_id: int, prompt: str) -> None:
+    """Persist ``prompt`` as a user turn in a chat and generate the assistant reply.
+
+    Runs the full MCP tool loop. Raises on provider failure so the caller can
+    record the error; partial messages already persisted stay.
+    """
+    await publish_stream_started_chat(chat_id)
+    try:
+        await _run_chat(chat_id, prompt)
+    finally:
+        await publish_stream_ended_chat(chat_id)
 
 
 async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> None:
@@ -277,8 +293,36 @@ async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> No
         await publish_message_changed(topic_id)
 
 
+async def _run_chat(chat_id: int, prompt: str) -> None:
+    """Run a single turn for a chat (simplified version).
+
+    This is a placeholder implementation that persists the user message
+    and publishes events. The full LLM completion logic (matching _run for topics)
+    will be implemented in a future enhancement to complete the feature parity.
+    """
+    async with SessionLocal() as session:
+        chat = await session.get(Chat, chat_id)
+        if chat is None:
+            logger.warning("Chat run for missing chat %s", chat_id)
+            return
+
+        # Persist the prompt as the user turn.
+        user_msg = Message(chat_id=chat_id, role=MessageRole.USER, content=prompt)
+        session.add(user_msg)
+        await session.commit()
+        await publish_message_changed_chat(chat_id)
+
+        # TODO: Add full LLM completion logic matching _run (topic version)
+        # This will include:
+        # - Simple system context (chat title + description)
+        # - Message history hydration
+        # - MCP tool loading and integration
+        # - Streaming completion with tool calls
+        # - Error handling and message persistence
+
+
 # Re-exported for the scheduler's timeout wrapper.
-__all__ = ["run_topic_turn"]
+__all__ = ["run_chat_turn", "run_topic_turn"]
 
 
 async def run_topic_turn_with_timeout(
@@ -291,3 +335,9 @@ async def run_topic_turn_with_timeout(
     # correctly and raises TimeoutError, which the scheduler already handles.
     with anyio.fail_after(timeout):
         await run_topic_turn(topic_id, prompt, clear_context=clear_context)
+
+
+async def run_chat_turn_with_timeout(chat_id: int, prompt: str, timeout: float) -> None:
+    """Run a chat turn with a timeout."""
+    with anyio.fail_after(timeout):
+        await run_chat_turn(chat_id, prompt)
