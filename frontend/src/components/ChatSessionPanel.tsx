@@ -505,6 +505,7 @@ export function ChatSessionPanel({
             {pendingNotes && (
               <NotesPanel
                 hasIssue={false}
+                allowPostComment={false}
                 rephrasing={pendingNotes.rephrasing}
                 acting={pendingNotes.acting}
                 error={pendingNotes.error}

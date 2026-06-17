@@ -58,7 +58,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "rename",
     label: "/rename",
     description:
-      "Rename this topic. The text after the command becomes the new title.",
+      "Rename this conversation. The text after the command becomes the new title.",
     argumentHint: "new title",
     kind: "builtin",
   },
@@ -73,27 +73,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "pin",
     label: "/pin",
-    description: "Pin this topic to the top of the sidebar.",
+    description: "Pin this conversation to the top of the sidebar.",
     kind: "builtin",
   },
   {
     name: "unpin",
     label: "/unpin",
-    description: "Remove this topic from the pinned list.",
+    description: "Remove this conversation from the pinned list.",
     kind: "builtin",
   },
   {
     name: "clear",
     label: "/clear",
     description:
-      "Erase the entire chat transcript for this topic (asks for confirmation). The topic and its GitHub link are kept.",
+      "Erase the entire transcript for this conversation (asks for confirmation).",
     kind: "builtin",
   },
   {
     name: "archive",
     label: "/archive",
     description:
-      "Archive this topic and leave it. Restore it any time from the archive (your profile menu in the sidebar).",
+      "Archive this conversation and leave it. Restore it any time from the archive (your profile menu in the sidebar).",
     kind: "builtin",
   },
 ];

@@ -11,6 +11,8 @@ export type NotesAction =
 interface Props {
   /** True when the topic is linked to a GitHub issue (controls the post button). */
   hasIssue: boolean;
+  /** When false, the "Post as comment" (GitHub) action is hidden entirely (chats). */
+  allowPostComment?: boolean;
   /** True while a rephrase round-trip is in flight. */
   rephrasing: boolean;
   /** True while one of the terminal actions is in flight. */
@@ -29,6 +31,7 @@ interface Props {
 
 export function NotesPanel({
   hasIssue,
+  allowPostComment = true,
   rephrasing,
   acting,
   error,
@@ -94,19 +97,21 @@ export function NotesPanel({
             <Send size={14} />
             Add &amp; ask AI
           </button>
-          <button
-            onClick={() => void onAction("post-comment", text)}
-            disabled={empty || busy || !hasIssue}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-accent text-white text-xs disabled:opacity-40"
-            title={
-              hasIssue
-                ? "Post the notes as a comment on the linked GitHub issue."
-                : "Link a GitHub issue to this topic to enable posting."
-            }
-          >
-            <Github size={14} />
-            Post as comment
-          </button>
+          {allowPostComment && (
+            <button
+              onClick={() => void onAction("post-comment", text)}
+              disabled={empty || busy || !hasIssue}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-accent text-white text-xs disabled:opacity-40"
+              title={
+                hasIssue
+                  ? "Post the notes as a comment on the linked GitHub issue."
+                  : "Link a GitHub issue to this topic to enable posting."
+              }
+            >
+              <Github size={14} />
+              Post as comment
+            </button>
+          )}
         </>
       }
     />

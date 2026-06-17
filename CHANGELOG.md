@@ -11,13 +11,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
-- **Chats**: flat conversation sessions alongside the topic tree. A sidebar
-  mode switcher toggles between **Topics** and **Chats** while the persona and
-  settings stay visible across both. Chats have no tree hierarchy and no GitHub
-  issue context — just a title, description, and transcript — with pin, archive,
-  unread badges, and the same streaming MCP tool loop as topics. New endpoints
-  under `/api/chats/*` and `/api/chats/{id}/messages/*`; the topic streaming
-  generator was refactored into a container-agnostic helper shared by both.
+- **Chats**: flat conversation sessions alongside the topic tree, reachable from
+  a sidebar mode switcher (**Topics · Chats · Files**) while the persona/settings
+  menu stays visible across every mode. Chats are "a topic without the tree or
+  GitHub issue" — they support the full conversation toolkit: streaming replies
+  with the MCP tool loop, skills and slash commands (`/rename`, `/pin`, `/unpin`,
+  `/clear`, `/archive`, `/notes`), a live stats panel, dictation, message
+  delete + undo, history recall, pin, archive, and unread badges. A **chat
+  settings** drawer adds rename/description plus a **Promote to topic**
+  transform that moves the transcript into Topics. The **Archive** view is now
+  unified (Topics + Chats tabs) and restores each item into its own mode. New
+  endpoints under `/api/chats/*`, `/api/chats/{id}/messages/*` (incl. `/notes`
+  and `/promote`); the topic streaming generator and the stream store were both
+  refactored to be container-agnostic so chats and topics share one code path.
 - Browser notifications when an assistant turn finishes (including scheduled
   tasks) while the Precursor window isn't focused — opt-in via Settings → Chat →
   Notifications (asks for browser permission on enable). The number of unread
