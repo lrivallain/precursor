@@ -19,6 +19,7 @@ import type { TopicNode } from "../lib/types";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
+import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
 export type SidebarMode = "topics" | "chats" | "workspaces";
@@ -39,6 +40,8 @@ interface Props {
   /** Mode-aware "New" action (topic / chat / workspace) in the header. */
   onNew: () => void;
   onCreate: (parentId: number | null) => void;
+  /** Inline rename of a topic (double-click its name in the tree). */
+  onRename: (id: number, title: string) => void | Promise<void>;
   onCreateSchedule: () => void;
   onEditSchedule: (topicId: number) => void;
   onRefresh: () => Promise<void> | void;
@@ -59,6 +62,7 @@ export function Sidebar({
   onSelect,
   onNew,
   onCreate,
+  onRename,
   onCreateSchedule,
   onEditSchedule,
   onOpenGlobalSettings,
@@ -244,6 +248,7 @@ export function Sidebar({
                     activeId={activeId}
                     streamingTopicIds={streamingTopicIds}
                     onSelect={onSelect}
+                    onRename={onRename}
                   />
                 ))}
               </ul>
@@ -273,6 +278,7 @@ export function Sidebar({
                     onSelect={onSelect}
                     onCreate={onCreate}
                     onEditSchedule={onEditSchedule}
+                    onRename={onRename}
                   />
                 ))}
               </ul>
@@ -296,6 +302,7 @@ export function Sidebar({
                 onSelect={onSelect}
                 onCreate={onCreate}
                 onEditSchedule={onEditSchedule}
+                onRename={onRename}
               />
             ))}
           </ul>
@@ -321,6 +328,7 @@ interface ItemProps {
   onSelect: (id: number) => void;
   onCreate: (parentId: number | null) => void;
   onEditSchedule: (topicId: number) => void;
+  onRename: (id: number, title: string) => void | Promise<void>;
 }
 
 function TopicItem({
@@ -333,6 +341,7 @@ function TopicItem({
   onSelect,
   onCreate,
   onEditSchedule,
+  onRename,
 }: ItemProps) {
   const open = !collapsedIds.has(node.id);
   const isActive = node.id === activeId;
@@ -349,6 +358,7 @@ function TopicItem({
           isActive ? "bg-surface text-text" : "hover:bg-surface text-text/90"
         }`}
         style={{ paddingLeft: 6 + depth * 12 }}
+        onClick={() => onSelect(node.id)}
       >
         {isScheduled ? (
           <span
@@ -382,14 +392,13 @@ function TopicItem({
             )}
           </button>
         )}
-        <span
+        <InlineTitle
+          title={node.title}
+          onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
             node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
           } ${scheduleDisabled ? "text-muted" : ""}`}
-          onClick={() => onSelect(node.id)}
-        >
-          {node.title}
-        </span>
+        />
         {node.pinned && (
           <Pin
             size={11}
@@ -451,6 +460,7 @@ function TopicItem({
               onSelect={onSelect}
               onCreate={onCreate}
               onEditSchedule={onEditSchedule}
+              onRename={onRename}
             />
           ))}
         </ul>
@@ -681,7 +691,9 @@ interface PinnedItemProps {
   activeId: number | null;
   streamingTopicIds: number[];
   onSelect: (id: number) => void;
-}function PinnedItem({ node, activeId, streamingTopicIds, onSelect }: PinnedItemProps) {
+  onRename: (id: number, title: string) => void | Promise<void>;
+}
+function PinnedItem({ node, activeId, streamingTopicIds, onSelect, onRename }: PinnedItemProps) {
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
   return (
@@ -693,13 +705,13 @@ interface PinnedItemProps {
         onClick={() => onSelect(node.id)}
       >
         <Pin size={12} className="text-muted shrink-0" />
-        <span
+        <InlineTitle
+          title={node.title}
+          onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
             node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
           }`}
-        >
-          {node.title}
-        </span>
+        />
         {isStreaming ? (
           <StreamingDots />
         ) : node.unread_count > 0 ? (

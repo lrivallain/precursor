@@ -17,6 +17,7 @@ import {
   WorkspaceView,
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
+import { InlineTitle } from "./components/InlineTitle";
 import { TooltipProvider } from "./components/Tooltip";
 import { api } from "./lib/api";
 import { eventBus } from "./lib/events";
@@ -436,6 +437,13 @@ export default function App() {
     }
   }
 
+  // Inline rename from the sidebar tree (double-click a topic's name).
+  async function handleRenameTopic(id: number, title: string): Promise<void> {
+    const updated = await api.updateTopic(id, { title });
+    if (activeTopicRef.current?.id === id) setActiveTopic(updated);
+    await refreshTree();
+  }
+
   async function handleSelectChat(chat: Chat): Promise<void> {
     setActiveChat(chat);
     try {
@@ -462,6 +470,12 @@ export default function App() {
     if (!activeChat) return;
     const updated = await api.updateChat(activeChat.id, { pinned: !activeChat.pinned });
     setActiveChat(updated);
+    setChatListReloadKey((k) => k + 1);
+  }
+
+  async function handleRenameChat(id: number, title: string): Promise<void> {
+    const updated = await api.updateChat(id, { title });
+    if (activeChatRef.current?.id === id) setActiveChat(updated);
     setChatListReloadKey((k) => k + 1);
   }
 
@@ -556,7 +570,11 @@ export default function App() {
             reloadKey={chatListReloadKey}
             streamingIds={streamingChatIds}
             onSelect={handleSelectChat}
-            onChatsChanged={() => setChatListReloadKey((k) => k + 1)}
+            onOpenSettings={(chat) => {
+              setActiveChat(chat);
+              setChatSettingsOpen(true);
+            }}
+            onChatsChanged={() => void refreshActiveChat()}
           />
         }
         workspaceSlot={
@@ -570,6 +588,7 @@ export default function App() {
         onSelect={handleSelect}
         onNew={handleNew}
         onCreate={handleCreate}
+        onRename={handleRenameTopic}
         onCreateSchedule={() => setScheduleModal(null)}
         onEditSchedule={handleEditSchedule}
         onRefresh={refreshTree}
@@ -584,9 +603,16 @@ export default function App() {
           {sidebarMode === "topics" ? (
             <>
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                <span className="truncate font-medium">
-                  {activeTopic ? activeTopic.title : "Select or create a topic"}
-                </span>
+                {activeTopic ? (
+                  <InlineTitle
+                    title={activeTopic.title}
+                    onRename={(t) => handleRenameTopic(activeTopic.id, t)}
+                    className="truncate font-medium"
+                    inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+                  />
+                ) : (
+                  <span className="truncate font-medium">Select or create a topic</span>
+                )}
                 {activeTopic && issueAssociationsEnabled && activeTopic.kind !== "scheduled" && (
                   <IssueStatusBadge
                     status={issueContext.status}
@@ -632,9 +658,18 @@ export default function App() {
             </>
           ) : sidebarMode === "chats" ? (
             <>
-              <span className="truncate font-medium min-w-0 flex-1">
-                {activeChat ? activeChat.title : "Select or create a chat"}
-              </span>
+              {activeChat ? (
+                <InlineTitle
+                  title={activeChat.title}
+                  onRename={(t) => handleRenameChat(activeChat.id, t)}
+                  className="truncate font-medium min-w-0 flex-1"
+                  inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+                />
+              ) : (
+                <span className="truncate font-medium min-w-0 flex-1">
+                  Select or create a chat
+                </span>
+              )}
               {activeChat && (
                 <button
                   className="p-2 rounded hover:bg-surface shrink-0"

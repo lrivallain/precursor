@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Loader2, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
+import { Loader2, MessageSquare, Pin, Search, Settings2 } from "lucide-react";
 import { api } from "../lib/api";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
+import { InlineTitle } from "./InlineTitle";
 import type { Chat } from "../lib/types";
 
 interface ChatListProps {
@@ -9,6 +10,8 @@ interface ChatListProps {
   reloadKey: number;
   streamingIds: number[];
   onSelect: (chat: Chat) => void;
+  /** Open the chat settings drawer (archive/delete/rename/promote live there). */
+  onOpenSettings: (chat: Chat) => void;
   onChatsChanged?: () => void;
 }
 
@@ -17,6 +20,7 @@ export function ChatList({
   reloadKey,
   streamingIds,
   onSelect,
+  onOpenSettings,
   onChatsChanged,
 }: ChatListProps) {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -46,17 +50,8 @@ export function ChatList({
   const pinned = useMemo(() => filtered.filter((c) => c.pinned), [filtered]);
   const rest = useMemo(() => filtered.filter((c) => !c.pinned), [filtered]);
 
-  async function handleArchive(e: React.MouseEvent, id: number): Promise<void> {
-    e.stopPropagation();
-    await api.archiveChat(id);
-    await refresh();
-    onChatsChanged?.();
-  }
-
-  async function handleDelete(e: React.MouseEvent, id: number): Promise<void> {
-    e.stopPropagation();
-    if (!window.confirm("Delete this chat and its transcript?")) return;
-    await api.deleteChat(id);
+  async function renameChat(id: number, title: string): Promise<void> {
+    await api.updateChat(id, { title });
     await refresh();
     onChatsChanged?.();
   }
@@ -85,7 +80,11 @@ export function ChatList({
           ) : (
             <MessageSquare size={14} className="shrink-0 opacity-70" />
           )}
-          <span className="flex-1 truncate">{chat.title}</span>
+          <InlineTitle
+            title={chat.title}
+            onRename={(t) => renameChat(chat.id, t)}
+            className="flex-1 truncate"
+          />
           {chat.unread_count > 0 && !isActive && (
             <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-white">
               {chat.unread_count}
@@ -93,19 +92,14 @@ export function ChatList({
           )}
           <button
             className="hidden shrink-0 rounded p-1 hover:bg-border group-hover:block"
-            aria-label="Archive chat"
-            data-tooltip="Archive chat"
-            onClick={(e) => void handleArchive(e, chat.id)}
+            aria-label="Chat settings"
+            data-tooltip="Chat settings"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSettings(chat);
+            }}
           >
-            <Archive size={13} />
-          </button>
-          <button
-            className="hidden shrink-0 rounded p-1 hover:bg-border group-hover:block"
-            aria-label="Delete chat"
-            data-tooltip="Delete chat"
-            onClick={(e) => void handleDelete(e, chat.id)}
-          >
-            <Trash2 size={13} />
+            <Settings2 size={13} />
           </button>
         </div>
       </li>
