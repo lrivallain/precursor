@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Archive, Loader2, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
+import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import type { Chat } from "../lib/types";
 
 interface ChatListProps {
@@ -20,6 +21,9 @@ export function ChatList({
 }: ChatListProps) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [query, setQuery] = useState("");
+  const { collapsed: collapsedSections, toggle: toggleSection } = useCollapsedSections(
+    "precursor:chats:collapsedSections",
+  );
 
   async function refresh(): Promise<void> {
     try {
@@ -130,11 +134,15 @@ export function ChatList({
           <>
             {pinned.length > 0 && (
               <div className="mb-2">
-                <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] uppercase tracking-wide text-muted">
-                  <Pin size={11} />
-                  <span>Pinned</span>
-                </div>
-                <ul className="space-y-0.5">{pinned.map(renderItem)}</ul>
+                <SectionHeader
+                  icon={<Pin size={11} />}
+                  label="Pinned"
+                  collapsed={collapsedSections.has("pinned")}
+                  onToggle={() => toggleSection("pinned")}
+                />
+                {!collapsedSections.has("pinned") && (
+                  <ul className="space-y-0.5">{pinned.map(renderItem)}</ul>
+                )}
                 <div className="mt-2 border-t border-border" />
               </div>
             )}

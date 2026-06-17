@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -102,12 +103,21 @@ def test_chats_crud_lifecycle() -> None:
         assert r.status_code == 201
         chat = r.json()
         assert chat["title"] == "My first chat"
-        assert chat["slug"] == "my-first-chat"
+        # Default chat slug is a random UUID hex (not derived from the title),
+        # so repeated "New chat" creates don't pile up new-chat-2, new-chat-3…
+        assert re.fullmatch(r"[0-9a-f]{32}", chat["slug"])
         assert chat["unread_count"] == 0
         chat_id = chat["id"]
+        slug = chat["slug"]
+
+        # An explicit slug is still honoured (and slugified).
+        r2 = client.post("/api/chats", json={"title": "Other", "slug": "My Custom Slug"})
+        assert r2.status_code == 201
+        assert r2.json()["slug"] == "my-custom-slug"
+        client.delete(f"/api/chats/{r2.json()['id']}")
 
         # Resolvable by slug for /chats/<slug> deep links.
-        r = client.get("/api/chats/by-slug/my-first-chat")
+        r = client.get(f"/api/chats/by-slug/{slug}")
         assert r.status_code == 200
         assert r.json()["id"] == chat_id
         assert client.get("/api/chats/by-slug/nope").status_code == 404
@@ -196,7 +206,6 @@ def test_chat_promote_to_topic_moves_messages() -> None:
 
 def test_log_config_unifies_format() -> None:
     import logging
-    import re
 
     from precursor.backend.logging_config import UTCFormatter, build_log_config
 

@@ -18,6 +18,7 @@ import {
 import type { TopicNode } from "../lib/types";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
+import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
 export type SidebarMode = "topics" | "chats" | "workspaces";
@@ -65,7 +66,9 @@ export function Sidebar({
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
-  const { collapsedSections, toggleSection } = useCollapsedSections();
+  const { collapsed: collapsedSections, toggle: toggleSection } = useCollapsedSections(
+    "precursor:sidebar:collapsedSections",
+  );
   const { width, onMouseDown: onResizeStart } = useResizableWidth({
     storageKey: "precursor:sidebar:width",
     defaultWidth: 288,
@@ -513,51 +516,6 @@ function useCollapsedTopics() {
   return { collapsedIds, toggleCollapsed };
 }
 
-const COLLAPSED_SECTIONS_KEY = "precursor:sidebar:collapsedSections";
-
-type SectionKey = "pinned" | "scheduled";
-
-// Tracks which named sidebar sections (Pinned / Scheduled) are collapsed and
-// persists the collapsed set so the choice survives reloads.
-function useCollapsedSections() {
-  const [collapsed, setCollapsed] = useState<Set<SectionKey>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.localStorage.getItem(COLLAPSED_SECTIONS_KEY);
-      if (!raw) return new Set();
-      const keys = JSON.parse(raw) as unknown;
-      if (!Array.isArray(keys)) return new Set();
-      return new Set(
-        keys.filter(
-          (k): k is SectionKey => k === "pinned" || k === "scheduled",
-        ),
-      );
-    } catch {
-      return new Set();
-    }
-  });
-
-  const toggleSection = useCallback((key: SectionKey) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(
-          COLLAPSED_SECTIONS_KEY,
-          JSON.stringify([...next]),
-        );
-      }
-      return next;
-    });
-  }, []);
-
-  return { collapsedSections: collapsed, toggleSection };
-}
-
 function filterTree(tree: TopicNode[], q: string): TopicNode[] {
   if (!q) return tree;
   const out: TopicNode[] = [];
@@ -715,33 +673,6 @@ function ModeSwitcher({
         </>
       )}
     </div>
-  );
-}
-
-function SectionHeader({
-  icon,
-  label,
-  collapsed,
-  onToggle,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={!collapsed}
-      className="group w-full flex items-center gap-1.5 px-2 py-1 text-[11px] uppercase tracking-wide text-muted hover:text-text"
-    >
-      <span className="text-muted group-hover:text-text">
-        {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-      </span>
-      {icon}
-      <span>{label}</span>
-    </button>
   );
 }
 

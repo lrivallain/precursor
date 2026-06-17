@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
@@ -70,12 +71,15 @@ async def create_chat(
     payload: ChatCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Chat:
-    """Create a new chat."""
-    slug = await allocate_unique_slug(
-        session,
-        payload.slug or slugify(payload.title),
-        Chat,
-    )
+    """Create a new chat.
+
+    Unlike topics, a chat's default slug is a random UUID rather than one derived
+    from the title — so the common "New chat" default doesn't produce a wall of
+    ``new-chat``, ``new-chat-2``… URLs. An explicit slug (or one set later in
+    settings) still wins.
+    """
+    base = slugify(payload.slug) if payload.slug else uuid4().hex
+    slug = await allocate_unique_slug(session, base or uuid4().hex, Chat)
     chat = Chat(
         title=payload.title,
         slug=slug,
