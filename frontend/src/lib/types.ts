@@ -107,7 +107,8 @@ export interface ChatUpdate {
 
 export interface Attachment {
   id: number;
-  topic_id: number;
+  topic_id?: number | null;
+  chat_id?: number | null;
   message_id: number | null;
   mime: string;
   size: number;

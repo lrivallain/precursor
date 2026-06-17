@@ -10,13 +10,13 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import SessionLocal, get_session
-from precursor.backend.models import Chat, Message, MessageRole
+from precursor.backend.models import Attachment, Chat, Message, MessageRole
 from precursor.backend.routers.chat import (
     _build_chat_system_context,
     _hydrate_history,
@@ -132,6 +132,29 @@ async def stream_chat(
     await session.refresh(user_msg)
     await publish_message_changed_chat(chat_id)
 
+    # Bind any pre-uploaded attachments to this user message. We only adopt
+    # rows that belong to the same chat and are still unbound, so a stale id
+    # from another container / already-sent turn is silently dropped.
+    bound_attachments: list[Attachment] = []
+    if payload.attachment_ids:
+        att_rows = await session.execute(
+            select(Attachment).where(
+                Attachment.id.in_(payload.attachment_ids),
+                Attachment.chat_id == chat_id,
+                Attachment.message_id.is_(None),
+            )
+        )
+        bound_attachments = list(att_rows.scalars().all())
+        if bound_attachments:
+            await session.execute(
+                update(Attachment)
+                .where(Attachment.id.in_([a.id for a in bound_attachments]))
+                .values(message_id=user_msg.id)
+            )
+            await session.commit()
+            for a in bound_attachments:
+                a.message_id = user_msg.id
+
     # Snapshot history + system context now, before the session closes.
     system_prompt = await _build_chat_system_context(session, chat)
     history_result = await session.execute(
@@ -165,7 +188,18 @@ async def stream_chat(
     user_echo = {
         "id": user_msg.id,
         "content": user_msg.content,
-        "attachments": [],
+        "attachments": [
+            {
+                "id": a.id,
+                "chat_id": a.chat_id,
+                "message_id": a.message_id,
+                "mime": a.mime,
+                "size": a.size,
+                "original_filename": a.original_filename,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in bound_attachments
+        ],
     }
 
     inner = _run_message_stream(

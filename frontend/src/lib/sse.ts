@@ -86,6 +86,7 @@ export async function streamChatSession(
     content: string;
     model?: string;
     prompt_override?: string;
+    attachment_ids?: number[];
   },
   { signal, onEvent }: StreamChatOptions,
 ): Promise<void> {

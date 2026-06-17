@@ -177,6 +177,20 @@ export const api = {
     }
     return (await res.json()) as Attachment;
   },
+  uploadChatAttachment: async (chatId: number, file: File): Promise<Attachment> => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`/api/chats/${chatId}/attachments`, {
+      method: "POST",
+      headers: { "X-Client-Id": CLIENT_ID },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return (await res.json()) as Attachment;
+  },
   deleteAttachment: (attachmentId: number) =>
     request<void>(`/api/attachments/${attachmentId}`, { method: "DELETE" }),
   attachmentUrl: (attachmentId: number) => `/api/attachments/${attachmentId}`,

@@ -183,7 +183,13 @@ class StreamStore {
       } else {
         await streamChatSession(
           id,
-          { content, ...(promptOverride ? { prompt_override: promptOverride } : {}) },
+          {
+            content,
+            ...(promptOverride ? { prompt_override: promptOverride } : {}),
+            ...(attachments && attachments.length
+              ? { attachment_ids: attachments.map((a) => a.id) }
+              : {}),
+          },
           { signal: controller.signal, onEvent },
         );
       }

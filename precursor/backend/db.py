@@ -116,6 +116,17 @@ def _ensure_dev_columns(sync_conn: Connection) -> None:
             if "completion_tokens" not in cols:
                 sync_conn.execute(text("ALTER TABLE messages ADD COLUMN completion_tokens INTEGER"))
 
+    tables = set(inspector.get_table_names())
+    if "attachments" in tables:
+        cols = {c["name"] for c in inspector.get_columns("attachments")}
+        if "chat_id" not in cols:
+            # Attachments gained chat support the same way messages did: a
+            # nullable chat_id, topic_id relaxed to nullable, and a container
+            # CHECK. SQLite can't ALTER those in place, so rebuild + copy.
+            _rebuild_attachments_table(sync_conn, source="attachments")
+        elif "_attachments_old" in tables:
+            _rebuild_attachments_table(sync_conn, source="_attachments_old")
+
 
 def _rebuild_messages_table(sync_conn: Connection, *, source: str) -> None:
     """Recreate ``messages`` with the current model schema, copying rows over.
@@ -127,28 +138,46 @@ def _rebuild_messages_table(sync_conn: Connection, *, source: str) -> None:
     names, so we drop those first to avoid a clash when the fresh table and its
     indexes are created.
     """
-    from sqlalchemy import Table, inspect, text
-
     from precursor.backend.models.message import Message
 
-    messages_table = Message.__table__
-    assert isinstance(messages_table, Table)
+    _rebuild_table(sync_conn, Message.__table__, source=source)
+
+
+def _rebuild_attachments_table(sync_conn: Connection, *, source: str) -> None:
+    """Recreate ``attachments`` with the current model schema, copying rows over.
+
+    Dev-only twin of :func:`_rebuild_messages_table` — see its docstring for the
+    rebuild rationale. ``source`` is ``attachments`` on a first run or
+    ``_attachments_old`` when resuming an interrupted rebuild.
+    """
+    from precursor.backend.models.attachment import Attachment
+
+    _rebuild_table(sync_conn, Attachment.__table__, source=source)
+
+
+def _rebuild_table(sync_conn: Connection, model_table: object, *, source: str) -> None:
+    """Rebuild ``model_table``'s table from ``source``, carrying common columns."""
+    from sqlalchemy import Table, inspect, text
+
+    assert isinstance(model_table, Table)
+    table = model_table.name
+    old = f"_{table}_old"
 
     sync_conn.execute(text("PRAGMA foreign_keys=OFF"))
-    if source == "messages":
-        sync_conn.execute(text("ALTER TABLE messages RENAME TO _messages_old"))
+    if source == table:
+        sync_conn.execute(text(f"ALTER TABLE {table} RENAME TO {old}"))
     else:
         # Resuming: drop the empty half-built table so create() can run clean.
-        sync_conn.execute(text("DROP TABLE IF EXISTS messages"))
+        sync_conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
 
-    _drop_user_indexes(sync_conn, "_messages_old")
-    messages_table.create(sync_conn)
+    _drop_user_indexes(sync_conn, old)
+    model_table.create(sync_conn)
 
-    old_cols = {c["name"] for c in inspect(sync_conn).get_columns("_messages_old")}
-    new_cols = {c.name for c in messages_table.columns}
+    old_cols = {c["name"] for c in inspect(sync_conn).get_columns(old)}
+    new_cols = {c.name for c in model_table.columns}
     carry = ", ".join(c for c in old_cols if c in new_cols)
-    sync_conn.execute(text(f"INSERT INTO messages ({carry}) SELECT {carry} FROM _messages_old"))
-    sync_conn.execute(text("DROP TABLE _messages_old"))
+    sync_conn.execute(text(f"INSERT INTO {table} ({carry}) SELECT {carry} FROM {old}"))
+    sync_conn.execute(text(f"DROP TABLE {old}"))
     sync_conn.execute(text("PRAGMA foreign_keys=ON"))
 
 

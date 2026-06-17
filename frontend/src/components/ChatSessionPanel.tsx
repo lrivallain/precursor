@@ -18,7 +18,7 @@ import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
-import type { Chat, Message } from "../lib/types";
+import type { Attachment, Chat, Message } from "../lib/types";
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -80,6 +80,13 @@ export function ChatSessionPanel({
   const [pendingDeletes, setPendingDeletes] = useState<
     { message: Message; timer: number }[]
   >([]);
+  // Images uploaded but not yet bound to a sent message. They live as orphan
+  // rows server-side until /messages/stream binds them, or the user removes
+  // them / leaves the chat (in which case we DELETE them).
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const pendingAttachmentsRef = useRef<Attachment[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stoppingRef = useRef(false);
 
@@ -230,6 +237,56 @@ export function ChatSessionPanel({
     };
   }, [chat.id]);
 
+  // Keep a ref so the unmount/switch cleanup reads the latest list.
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
+
+  // When the chat changes, drop unsent attachments + delete them server-side
+  // so they don't accumulate as orphan rows.
+  useEffect(() => {
+    return () => {
+      const orphans = pendingAttachmentsRef.current;
+      pendingAttachmentsRef.current = [];
+      setPendingAttachments([]);
+      setAttachmentError(null);
+      for (const a of orphans) {
+        void api.deleteAttachment(a.id).catch(() => {});
+      }
+    };
+  }, [chat.id]);
+
+  async function uploadFiles(files: Iterable<File>): Promise<void> {
+    const images: File[] = [];
+    for (const f of files) {
+      if (f && f.type && f.type.startsWith("image/")) images.push(f);
+    }
+    if (images.length === 0) return;
+    setAttachmentError(null);
+    setUploadingCount((n) => n + images.length);
+    try {
+      for (const file of images) {
+        try {
+          const att = await api.uploadChatAttachment(chat.id, file);
+          setPendingAttachments((prev) => [...prev, att]);
+        } catch (err) {
+          setAttachmentError((err as Error).message || "Upload failed");
+        }
+      }
+    } finally {
+      setUploadingCount((n) => Math.max(0, n - images.length));
+    }
+  }
+
+  async function removeAttachment(id: number): Promise<void> {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    try {
+      await api.deleteAttachment(id);
+    } catch {
+      // Already gone server-side, or bound to a sent message — nothing to do.
+    }
+  }
+
   function systemNote(content: string): void {
     setPersisted((prev) => [
       ...prev,
@@ -348,10 +405,13 @@ export function ChatSessionPanel({
 
   async function send(): Promise<void> {
     const content = draft.trim();
-    if (!content || streaming) return;
+    const hasAttachments = pendingAttachments.length > 0;
+    if ((!content && !hasAttachments) || streaming) return;
     if (speech.listening) speech.stop();
 
-    const cmd = parseSlashCommand(content, skillCommands, CHAT_EXCLUDED_COMMANDS);
+    const cmd = content
+      ? parseSlashCommand(content, skillCommands, CHAT_EXCLUDED_COMMANDS)
+      : null;
     if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
       setDraft("");
       await dispatchCommand(cmd.name, cmd.argument);
@@ -362,12 +422,21 @@ export function ChatSessionPanel({
       if (skill) {
         setDraft("");
         const expanded = `${skill.instructions.trim()}\n\n---\n\n${cmd.argument}`;
-        void streamStore.start(streamKey, content, expanded);
+        const atts = pendingAttachments;
+        setPendingAttachments([]);
+        void streamStore.start(streamKey, content, expanded, atts);
         return;
       }
     }
     setDraft("");
-    void streamStore.start(streamKey, content);
+    const atts = pendingAttachments;
+    setPendingAttachments([]);
+    void streamStore.start(
+      streamKey,
+      content || "(image attached)",
+      undefined,
+      atts,
+    );
   }
 
   function stop(): void {
@@ -484,6 +553,13 @@ export function ChatSessionPanel({
               interimText={interimText}
               height={composerHeight}
               onResizeStart={onComposerResize}
+              attachments={{
+                pending: pendingAttachments,
+                uploadingCount,
+                error: attachmentError,
+                onFiles: uploadFiles,
+                onRemove: removeAttachment,
+              }}
             />
           </div>
         </div>
