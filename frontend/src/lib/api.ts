@@ -98,6 +98,9 @@ export const api = {
     request<Chat>(`/api/chats/${id}/archive`, { method: "POST" }),
   unarchiveChat: (id: number) =>
     request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
+  // Promote a flat chat into a full topic (moves the transcript over).
+  promoteChat: (id: number) =>
+    request<Topic>(`/api/chats/${id}/promote`, { method: "POST" }),
 
   // Chat messages (mirror topic message endpoints)
   listChatMessages: (chatId: number) =>
@@ -110,6 +113,17 @@ export const api = {
     request<Message>(`/api/chats/${chatId}/messages/stopped`, {
       method: "POST",
       body: JSON.stringify({ content }),
+    }),
+  // /notes for chats (no GitHub comment option)
+  rephraseChatNotes: (chatId: number, text: string, instruction?: string) =>
+    request<{ text: string }>(`/api/chats/${chatId}/messages/notes/rephrase`, {
+      method: "POST",
+      body: JSON.stringify({ text, instruction: instruction ?? null }),
+    }),
+  appendChatNotes: (chatId: number, text: string) =>
+    request<{ message: Message }>(`/api/chats/${chatId}/messages/notes/append`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
     }),
 
   // Schedules (recurring automation topics). Keyed by topic id.

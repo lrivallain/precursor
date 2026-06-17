@@ -1,15 +1,14 @@
 import { useMemo, useState } from "react";
-import { FolderGit2, HardDrive, Plus, Search } from "lucide-react";
+import { FolderGit2, HardDrive, Search } from "lucide-react";
 import type { Workspace } from "../lib/types";
 
 interface WorkspaceListProps {
   workspaces: Workspace[] | null;
   activeId: number | null;
   onSelect: (workspace: Workspace) => void;
-  onCreate: () => void;
 }
 
-export function WorkspaceList({ workspaces, activeId, onSelect, onCreate }: WorkspaceListProps) {
+export function WorkspaceList({ workspaces, activeId, onSelect }: WorkspaceListProps) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -21,8 +20,8 @@ export function WorkspaceList({ workspaces, activeId, onSelect, onCreate }: Work
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <div className="relative flex-1">
+      <div className="px-3 py-2 border-b border-border">
+        <div className="relative">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
           <input
             type="search"
@@ -32,14 +31,6 @@ export function WorkspaceList({ workspaces, activeId, onSelect, onCreate }: Work
             className="w-full rounded border border-border bg-surface py-1.5 pl-7 pr-2 text-sm outline-none focus:border-accent"
           />
         </div>
-        <button
-          className="rounded p-1.5 hover:bg-surface"
-          aria-label="New workspace"
-          data-tooltip="New workspace"
-          onClick={onCreate}
-        >
-          <Plus size={16} />
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">

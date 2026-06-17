@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
-from precursor.backend.db import get_session
+from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import Chat, Message, MessageRole
 from precursor.backend.routers.chat import (
     _build_chat_system_context,
@@ -23,6 +23,13 @@ from precursor.backend.routers.chat import (
     _lifecycle_stream,
     _load_enabled_mcp_servers,
     _run_message_stream,
+)
+from precursor.backend.routers.commands import (
+    NotesAppendRequest,
+    NotesAppendResponse,
+    NotesRephraseRequest,
+    NotesRephraseResponse,
+    _stream_llm,
 )
 from precursor.backend.schemas import ChatRequest, MessageRead, StoppedTurn
 from precursor.backend.services.app_settings import (
@@ -176,3 +183,52 @@ async def stream_chat(
         enabled_servers=enabled_servers,
     )
     return EventSourceResponse(_lifecycle_stream("chat", chat_id, inner))
+
+
+@router.post("/notes/rephrase", response_model=NotesRephraseResponse)
+async def notes_rephrase(
+    chat_id: int,
+    payload: NotesRephraseRequest,
+    session: AsyncSession = Depends(get_session),
+) -> NotesRephraseResponse:
+    """Clean up rough notes via the LLM (no persistence)."""
+    chat = await session.get(Chat, chat_id)
+    if chat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+
+    instruction = (payload.instruction or "").strip()
+    system = (
+        "You clean up rough meeting / working notes. Preserve every fact and "
+        "decision verbatim; do not invent content. Reorganise into short, "
+        "scannable bullet points grouped by theme when useful, fix typos and "
+        "obvious shorthand, and keep neutral phrasing. Output ONLY the cleaned "
+        "notes in GitHub-Flavored Markdown — no preamble, no signature."
+    )
+    user_prompt = (
+        f"Chat: {chat.title}\n\n"
+        f"Extra instruction: {instruction or '(none — default cleanup)'}\n\n"
+        f"Raw notes:\n{payload.text}"
+    )
+    rebuilt = await _stream_llm(session, system, user_prompt, label="/notes rephrase")
+    return NotesRephraseResponse(text=rebuilt or payload.text)
+
+
+@router.post("/notes/append", response_model=NotesAppendResponse)
+async def notes_append(
+    chat_id: int,
+    payload: NotesAppendRequest,
+    session: AsyncSession = Depends(get_session),
+) -> NotesAppendResponse:
+    """Persist freeform notes verbatim as a user message in the chat."""
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+
+    body = f"**Notes**\n\n{payload.text.strip()}"
+    async with SessionLocal() as write_session:
+        msg = Message(chat_id=chat_id, role=MessageRole.USER, content=body)
+        write_session.add(msg)
+        await write_session.commit()
+        await write_session.refresh(msg, attribute_names=["attachments"])
+        message_read = MessageRead.model_validate(msg, from_attributes=True)
+    await publish_message_changed_chat(chat_id)
+    return NotesAppendResponse(message=message_read)

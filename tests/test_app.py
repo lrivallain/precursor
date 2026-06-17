@@ -141,6 +141,53 @@ def test_chats_crud_lifecycle() -> None:
         assert client.get(f"/api/chats/{chat_id}").status_code == 404
 
 
+def test_chat_message_serialization_handles_null_topic_id() -> None:
+    """Chat messages have topic_id=None; the read model must allow it.
+
+    Regression: MessageRead.topic_id was a required int, so GET on a chat's
+    messages 500'd with a ResponseValidationError.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        cid = client.post("/api/chats", json={"title": "Notes chat"}).json()["id"]
+        # /notes append persists a user message without invoking the LLM.
+        r = client.post(f"/api/chats/{cid}/messages/notes/append", json={"text": "hello"})
+        assert r.status_code == 200
+        msg = r.json()["message"]
+        assert msg["topic_id"] is None
+        assert msg["chat_id"] == cid
+
+        r = client.get(f"/api/chats/{cid}/messages")
+        assert r.status_code == 200
+        msgs = r.json()
+        assert len(msgs) == 1
+        assert msgs[0]["topic_id"] is None
+        assert msgs[0]["chat_id"] == cid
+
+
+def test_chat_promote_to_topic_moves_messages() -> None:
+    """Promoting a chat creates a topic, moves the transcript, drops the chat."""
+    app = create_app()
+    with TestClient(app) as client:
+        cid = client.post("/api/chats", json={"title": "Promote me", "description": "ctx"}).json()[
+            "id"
+        ]
+        client.post(f"/api/chats/{cid}/messages/notes/append", json={"text": "carry over"})
+
+        r = client.post(f"/api/chats/{cid}/promote")
+        assert r.status_code == 200
+        topic = r.json()
+        assert topic["title"] == "Promote me"
+        assert topic["description"] == "ctx"
+        tid = topic["id"]
+
+        # The chat is gone, the message moved onto the new topic.
+        assert client.get(f"/api/chats/{cid}").status_code == 404
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        assert any("carry over" in m["content"] for m in msgs)
+        assert all(m["topic_id"] == tid and m["chat_id"] is None for m in msgs)
+
+
 def test_log_config_unifies_format() -> None:
     import logging
     import re

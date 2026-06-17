@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { streamChat } from "./sse";
+import { streamChat, streamChatSession } from "./sse";
 import type { Attachment, Message } from "./types";
 
 export interface UsageReport {
@@ -8,8 +8,31 @@ export interface UsageReport {
   total_tokens: number;
 }
 
+// A conversation is either a topic or a flat chat session. The store keys
+// everything by a `kind:id` string so topic 5 and chat 5 never collide.
+export type ConvKind = "topic" | "chat";
+
+export function convKey(kind: ConvKind, id: number): string {
+  return `${kind}:${id}`;
+}
+
+function parseKey(key: string): { kind: ConvKind; id: number } {
+  const idx = key.indexOf(":");
+  return { kind: key.slice(0, idx) as ConvKind, id: Number(key.slice(idx + 1)) };
+}
+
+// FK fields to stamp on buffered messages so they round-trip like persisted ones.
+function containerFields(
+  kind: ConvKind,
+  id: number,
+): { topic_id: number | null; chat_id: number | null } {
+  return kind === "topic" ? { topic_id: id, chat_id: null } : { topic_id: null, chat_id: id };
+}
+
 interface Session {
-  topicId: number;
+  key: string;
+  kind: ConvKind;
+  id: number;
   streaming: boolean;
   pendingContent: string;
   messages: Message[];
@@ -30,13 +53,13 @@ function hashString(s: string): number {
 }
 
 class StreamStore {
-  private sessions = new Map<number, Session>();
-  private remoteStreaming = new Set<number>();
+  private sessions = new Map<string, Session>();
+  private remoteStreaming = new Set<string>();
   private version = 0;
   private listeners = new Set<Listener>();
-  private onCompleteCb: ((topicId: number) => void) | null = null;
+  private onCompleteCb: ((key: string) => void) | null = null;
 
-  setOnComplete(cb: ((topicId: number) => void) | null): void {
+  setOnComplete(cb: ((key: string) => void) | null): void {
     this.onCompleteCb = cb;
   }
 
@@ -54,74 +77,80 @@ class StreamStore {
     for (const l of this.listeners) l();
   }
 
-  hasSession(topicId: number): boolean {
-    return this.sessions.has(topicId);
+  hasSession(key: string): boolean {
+    return this.sessions.has(key);
   }
 
-  isStreaming(topicId: number): boolean {
+  isStreaming(key: string): boolean {
     return (
-      (this.sessions.get(topicId)?.streaming ?? false) ||
-      this.remoteStreaming.has(topicId)
+      (this.sessions.get(key)?.streaming ?? false) || this.remoteStreaming.has(key)
     );
   }
 
-  pendingContent(topicId: number): string {
-    return this.sessions.get(topicId)?.pendingContent ?? "";
+  pendingContent(key: string): string {
+    return this.sessions.get(key)?.pendingContent ?? "";
   }
 
-  bufferedMessages(topicId: number): Message[] {
-    return this.sessions.get(topicId)?.messages ?? [];
+  bufferedMessages(key: string): Message[] {
+    return this.sessions.get(key)?.messages ?? [];
   }
 
-  lastUsage(topicId: number): UsageReport | null {
-    return this.sessions.get(topicId)?.lastUsage ?? null;
+  lastUsage(key: string): UsageReport | null {
+    return this.sessions.get(key)?.lastUsage ?? null;
   }
 
-  streamingTopicIds(): number[] {
+  /** Streaming conversation ids of a given kind (local + remote). */
+  streamingIds(kind: ConvKind): number[] {
     const out = new Set<number>();
     for (const s of this.sessions.values()) {
-      if (s.streaming) out.add(s.topicId);
+      if (s.streaming && s.kind === kind) out.add(s.id);
     }
-    for (const id of this.remoteStreaming) out.add(id);
+    for (const key of this.remoteStreaming) {
+      const { kind: k, id } = parseKey(key);
+      if (k === kind) out.add(id);
+    }
     return [...out];
   }
 
-  setRemoteStreaming(topicId: number, value: boolean): void {
-    const has = this.remoteStreaming.has(topicId);
+  setRemoteStreaming(key: string, value: boolean): void {
+    const has = this.remoteStreaming.has(key);
     if (value && !has) {
-      this.remoteStreaming.add(topicId);
+      this.remoteStreaming.add(key);
       this.notify();
     } else if (!value && has) {
-      this.remoteStreaming.delete(topicId);
+      this.remoteStreaming.delete(key);
       this.notify();
     }
   }
 
-  clear(topicId: number): void {
-    if (this.sessions.delete(topicId)) this.notify();
+  clear(key: string): void {
+    if (this.sessions.delete(key)) this.notify();
   }
 
-  stop(topicId: number): void {
-    this.sessions.get(topicId)?.abort.abort();
+  stop(key: string): void {
+    this.sessions.get(key)?.abort.abort();
   }
 
   async start(
-    topicId: number,
+    key: string,
     content: string,
     promptOverride?: string,
     attachments?: Attachment[],
   ): Promise<void> {
-    if (this.sessions.get(topicId)?.streaming) return;
+    if (this.sessions.get(key)?.streaming) return;
+    const { kind, id } = parseKey(key);
     const controller = new AbortController();
     const optimisticId = -Date.now();
     const session: Session = {
-      topicId,
+      key,
+      kind,
+      id,
       streaming: true,
       pendingContent: "",
       messages: [
         {
           id: optimisticId,
-          topic_id: topicId,
+          ...containerFields(kind, id),
           role: "user",
           content,
           tool_calls: null,
@@ -133,44 +162,49 @@ class StreamStore {
       pendingUsage: null,
       lastUsage: null,
     };
-    this.sessions.set(topicId, session);
+    this.sessions.set(key, session);
     this.notify();
 
     try {
-      await streamChat(
-        topicId,
-        {
-          content,
-          ...(promptOverride ? { prompt_override: promptOverride } : {}),
-          ...(attachments && attachments.length
-            ? { attachment_ids: attachments.map((a) => a.id) }
-            : {}),
-        },
-        {
-          signal: controller.signal,
-          onEvent: (ev) => this.handleEvent(topicId, ev),
-        },
-      );
+      const onEvent = (ev: { event: string; data: string }): void =>
+        this.handleEvent(key, ev);
+      if (kind === "topic") {
+        await streamChat(
+          id,
+          {
+            content,
+            ...(promptOverride ? { prompt_override: promptOverride } : {}),
+            ...(attachments && attachments.length
+              ? { attachment_ids: attachments.map((a) => a.id) }
+              : {}),
+          },
+          { signal: controller.signal, onEvent },
+        );
+      } else {
+        await streamChatSession(
+          id,
+          { content, ...(promptOverride ? { prompt_override: promptOverride } : {}) },
+          { signal: controller.signal, onEvent },
+        );
+      }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         console.error(err);
       }
     } finally {
-      const cur = this.sessions.get(topicId);
+      const cur = this.sessions.get(key);
       if (cur) {
         cur.streaming = false;
         this.notify();
       }
-      this.onCompleteCb?.(topicId);
+      this.onCompleteCb?.(key);
     }
   }
 
-  private handleEvent(
-    topicId: number,
-    ev: { event: string; data: string },
-  ): void {
-    const session = this.sessions.get(topicId);
+  private handleEvent(key: string, ev: { event: string; data: string }): void {
+    const session = this.sessions.get(key);
     if (!session) return;
+    const fk = containerFields(session.kind, session.id);
     const payload = JSON.parse(ev.data) as Record<string, unknown>;
     const now = new Date().toISOString();
 
@@ -194,7 +228,7 @@ class StreamStore {
       } else {
         session.messages.push({
           id: realId,
-          topic_id: topicId,
+          ...fk,
           role: "user",
           content: realContent,
           tool_calls: null,
@@ -236,7 +270,7 @@ class StreamStore {
       session.pendingUsage = null;
       session.messages.push({
         id: assistantId,
-        topic_id: topicId,
+        ...fk,
         role: "assistant",
         content: session.pendingContent,
         tool_calls: JSON.stringify(
@@ -253,7 +287,7 @@ class StreamStore {
       for (const c of calls) {
         session.messages.push({
           id: -Math.abs(hashString(c.id)),
-          topic_id: topicId,
+          ...fk,
           role: "tool",
           content: "",
           tool_calls: JSON.stringify({
@@ -293,7 +327,7 @@ class StreamStore {
     } else if (ev.event === "system") {
       session.messages.push({
         id: -Date.now(),
-        topic_id: topicId,
+        ...fk,
         role: "system",
         content: payload.message as string,
         tool_calls: null,
@@ -304,7 +338,7 @@ class StreamStore {
       session.pendingUsage = null;
       session.messages.push({
         id: payload.id as number,
-        topic_id: topicId,
+        ...fk,
         role: "assistant",
         content: payload.content as string,
         tool_calls: null,
@@ -316,7 +350,7 @@ class StreamStore {
     } else if (ev.event === "error") {
       session.messages.push({
         id: -Date.now(),
-        topic_id: topicId,
+        ...fk,
         role: "system",
         content: `Error: ${payload.message as string}`,
         tool_calls: null,

@@ -42,7 +42,8 @@ class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    topic_id: int
+    topic_id: int | None = None
+    chat_id: int | None = None
     role: MessageRole
     content: str
     tool_calls: str | None = None

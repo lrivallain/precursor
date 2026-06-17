@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Chat, Message, MessageRole
+from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
+from precursor.backend.schemas.topic import TopicRead
+from precursor.backend.services.events import publish_topic_changed
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -174,3 +176,39 @@ async def unarchive_chat(
     chat.archived_at = None
     await session.commit()
     return chat
+
+
+@router.post("/{chat_id}/promote", response_model=TopicRead)
+async def promote_chat_to_topic(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Topic:
+    """Promote a flat chat into a full topic.
+
+    Creates a topic from the chat's title/description, re-parents every message
+    onto the new topic (clearing chat_id), then deletes the now-empty chat. The
+    transcript is preserved verbatim.
+    """
+    chat = await session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    topic = Topic(
+        title=chat.title,
+        slug=await allocate_unique_slug(session, slugify(chat.title) or "topic", Topic),
+        description=chat.description,
+        pinned=chat.pinned,
+    )
+    session.add(topic)
+    await session.flush()  # assign topic.id
+
+    # Move the transcript over: exactly-one-container constraint stays satisfied
+    # because we set topic_id and clear chat_id in the same statement.
+    await session.execute(
+        update(Message).where(Message.chat_id == chat_id).values(topic_id=topic.id, chat_id=None)
+    )
+    await session.delete(chat)
+    await session.commit()
+    await session.refresh(topic)
+    await publish_topic_changed(topic.id)
+    return topic

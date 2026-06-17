@@ -14,7 +14,7 @@ import {
   type SlashCommand,
 } from "../lib/commands";
 import { skillsStore, useSkills } from "../lib/skillsStore";
-import { streamStore, useStreamVersion } from "../lib/streamStore";
+import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -159,10 +159,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     () => (issueAssociationsEnabled ? new Set<string>() : GITHUB_SLASH_COMMANDS),
     [issueAssociationsEnabled],
   );
-  const streaming = streamStore.isStreaming(topic.id);
-  const pendingContent = streamStore.pendingContent(topic.id);
-  const buffered = streamStore.bufferedMessages(topic.id);
-  const hasSession = streamStore.hasSession(topic.id);
+  const streamKey = convKey("topic", topic.id);
+  const streaming = streamStore.isStreaming(streamKey);
+  const pendingContent = streamStore.pendingContent(streamKey);
+  const buffered = streamStore.bufferedMessages(streamKey);
+  const hasSession = streamStore.hasSession(streamKey);
   const messages = useMemo<Message[]>(
     () => (hasSession ? [...persisted, ...buffered] : persisted),
     [persisted, buffered, hasSession],
@@ -354,10 +355,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
       // If we just switched into a topic whose session has already finished,
       // drop the buffered copy now that we have the canonical server state.
       if (
-        streamStore.hasSession(topic.id) &&
-        !streamStore.isStreaming(topic.id)
+        streamStore.hasSession(streamKey) &&
+        !streamStore.isStreaming(streamKey)
       ) {
-        streamStore.clear(topic.id);
+        streamStore.clear(streamKey);
       }
     })();
     return () => {
@@ -369,7 +370,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
   // refetch persisted messages and discard the buffered turn.
   const prevStreamingRef = useRef(streaming);
   useEffect(() => {
-    prevStreamingRef.current = streamStore.isStreaming(topic.id);
+    prevStreamingRef.current = streamStore.isStreaming(streamKey);
   }, [topic.id]);
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current;
@@ -385,7 +386,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
       const msgs = await api.listMessages(topic.id);
       if (cancelled) return;
       setPersisted(msgs);
-      streamStore.clear(topic.id);
+      streamStore.clear(streamKey);
       onTopicUpdated();
     })();
     return () => {
@@ -421,7 +422,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         setPendingAttachments([]);
         // Persist the literal slash command as the user message;
         // the LLM receives the expanded prompt for this turn only.
-        void streamStore.start(topic.id, content, expanded, atts);
+        void streamStore.start(streamKey, content, expanded, atts);
         return;
       }
     }
@@ -430,7 +431,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     const atts = pendingAttachments;
     setPendingAttachments([]);
     void streamStore.start(
-      topic.id,
+      streamKey,
       content || "(image attached)",
       undefined,
       atts,
@@ -443,9 +444,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     // once we disconnect — so we save the partial reply ourselves instead of
     // letting it vanish. stoppingRef suppresses the streaming→done effect's
     // reload so this handler owns the post-persist refresh.
-    const partial = streamStore.pendingContent(topic.id).trim();
+    const partial = streamStore.pendingContent(streamKey).trim();
     stoppingRef.current = true;
-    streamStore.stop(topic.id);
+    streamStore.stop(streamKey);
     void (async () => {
       try {
         if (partial) {
@@ -459,7 +460,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         } catch {
           // ignore — the topic may have changed underneath us
         }
-        streamStore.clear(topic.id);
+        streamStore.clear(streamKey);
         onTopicUpdated();
       }
     })();
@@ -601,7 +602,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         setPendingNotes(null);
       } else if (action === "append-and-ask") {
         setPendingNotes(null);
-        void streamStore.start(topic.id, `**Notes**\n\n${text.trim()}`);
+        void streamStore.start(streamKey, `**Notes**\n\n${text.trim()}`);
       } else if (action === "post-comment") {
         const res = await api.postGhUpdate(topic.id, text);
         setPersisted((prev) => [...prev, res.message]);
@@ -1127,7 +1128,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         </div>
       </div>
       </div>
-      {showStats && <ChatStatsPanel topicId={topic.id} messages={messages} />}
+      {showStats && <ChatStatsPanel streamKey={streamKey} messages={messages} />}
     </div>
   );
 }

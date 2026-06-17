@@ -34,6 +34,8 @@ interface Props {
   workspaceSlot?: ReactNode;
   onToggleCollapsed: () => void;
   onSelect: (id: number) => void;
+  /** Mode-aware "New" action (topic / chat / workspace) in the header. */
+  onNew: () => void;
   onCreate: (parentId: number | null) => void;
   onCreateSchedule: () => void;
   onEditSchedule: (topicId: number) => void;
@@ -53,6 +55,7 @@ export function Sidebar({
   workspaceSlot,
   onToggleCollapsed,
   onSelect,
+  onNew,
   onCreate,
   onCreateSchedule,
   onEditSchedule,
@@ -125,6 +128,19 @@ export function Sidebar({
         >
           <FolderGit2 size={18} />
         </button>
+        <div className="my-1 h-px w-6 bg-border" />
+        <button
+          className="p-2 rounded hover:bg-surface"
+          aria-label={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          data-tooltip={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          onClick={onNew}
+        >
+          <Plus size={18} />
+        </button>
         <div className="flex-1" />
         <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </aside>
@@ -147,25 +163,27 @@ export function Sidebar({
           className="rounded-md shrink-0"
         />
         <div className="flex-1 font-semibold tracking-tight">Precursor</div>
+        <button
+          className="p-1.5 rounded hover:bg-surface"
+          aria-label={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          data-tooltip={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          onClick={onNew}
+        >
+          <Plus size={16} />
+        </button>
         {mode === "topics" && (
-          <>
-            <button
-              className="p-1.5 rounded hover:bg-surface"
-              aria-label="New topic"
-              data-tooltip="New topic"
-              onClick={() => onCreate(null)}
-            >
-              <Plus size={16} />
-            </button>
-            <button
-              className="p-1.5 rounded hover:bg-surface"
-              aria-label="New scheduled topic"
-              data-tooltip="New scheduled topic"
-              onClick={onCreateSchedule}
-            >
-              <Clock size={16} />
-            </button>
-          </>
+          <button
+            className="p-1.5 rounded hover:bg-surface"
+            aria-label="New scheduled topic"
+            data-tooltip="New scheduled topic"
+            onClick={onCreateSchedule}
+          >
+            <Clock size={16} />
+          </button>
         )}
         <button
           className="p-1.5 rounded hover:bg-surface"
