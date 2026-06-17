@@ -25,6 +25,58 @@ def test_topics_empty_tree() -> None:
         assert isinstance(r.json(), list)
 
 
+def test_chats_crud_lifecycle() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        # Empty to start.
+        r = client.get("/api/chats")
+        assert r.status_code == 200
+        assert r.json() == []
+
+        # Create a chat.
+        r = client.post("/api/chats", json={"title": "My first chat"})
+        assert r.status_code == 201
+        chat = r.json()
+        assert chat["title"] == "My first chat"
+        assert chat["slug"] == "my-first-chat"
+        assert chat["unread_count"] == 0
+        chat_id = chat["id"]
+
+        # It shows up in the list.
+        r = client.get("/api/chats")
+        assert [c["id"] for c in r.json()] == [chat_id]
+
+        # Messages endpoint exists and is empty.
+        r = client.get(f"/api/chats/{chat_id}/messages")
+        assert r.status_code == 200
+        assert r.json() == []
+
+        # Update it.
+        r = client.patch(f"/api/chats/{chat_id}", json={"title": "Renamed", "pinned": True})
+        assert r.status_code == 200
+        assert r.json()["title"] == "Renamed"
+        assert r.json()["pinned"] is True
+
+        # Archive / unarchive.
+        r = client.post(f"/api/chats/{chat_id}/archive")
+        assert r.status_code == 200
+        assert r.json()["archived_at"] is not None
+        assert client.get("/api/chats").json() == []
+        assert [c["id"] for c in client.get("/api/chats/archived").json()] == [chat_id]
+
+        r = client.post(f"/api/chats/{chat_id}/unarchive")
+        assert r.status_code == 200
+        assert r.json()["archived_at"] is None
+
+        # Mark read.
+        assert client.post(f"/api/chats/{chat_id}/read").status_code == 204
+
+        # Delete.
+        assert client.delete(f"/api/chats/{chat_id}").status_code == 204
+        assert client.get("/api/chats").json() == []
+        assert client.get(f"/api/chats/{chat_id}").status_code == 404
+
+
 def test_log_config_unifies_format() -> None:
     import logging
     import re
