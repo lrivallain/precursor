@@ -32,7 +32,39 @@ export function IssueStatusBadge({ status, onClick, title }: Props) {
       label = "Failed to load issue context";
       break;
     case "no-issue":
-      icon = <Github size={14} />;
+      icon = (
+        <span className="relative inline-flex items-center justify-center">
+          <Github size={14} />
+          <svg
+            className="absolute inset-0 text-red-500"
+            width={14}
+            height={14}
+            viewBox="0 0 14 14"
+            aria-hidden="true"
+          >
+            {/* Halo in the page background colour so the slash reads clearly
+                over the busy GitHub glyph in both light and dark themes. */}
+            <line
+              x1="1.5"
+              y1="1.5"
+              x2="12.5"
+              y2="12.5"
+              stroke="var(--bg)"
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+            <line
+              x1="1.5"
+              y1="1.5"
+              x2="12.5"
+              y2="12.5"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+            />
+          </svg>
+        </span>
+      );
       cls = "text-muted";
       label = "No GitHub issue linked";
       break;
