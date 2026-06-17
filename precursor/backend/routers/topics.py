@@ -129,7 +129,7 @@ async def create_topic(
     base = slugify(requested_slug) if requested_slug else slugify(payload.title)
     if not base:
         base = "topic"
-    data["slug"] = await allocate_unique_slug(session, base)
+    data["slug"] = await allocate_unique_slug(session, base, Topic)
 
     topic = Topic(**data)
     session.add(topic)
@@ -176,7 +176,7 @@ async def update_topic(
                 status.HTTP_400_BAD_REQUEST,
                 "Slug must contain at least one alphanumeric character",
             )
-        data["slug"] = await allocate_unique_slug(session, base, exclude_id=topic_id)
+        data["slug"] = await allocate_unique_slug(session, base, Topic, exclude_id=topic_id)
     for key, value in data.items():
         setattr(topic, key, value)
 

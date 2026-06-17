@@ -29,6 +29,7 @@ from precursor.backend.plugins import discover, get_registry
 from precursor.backend.routers import (
     attachments,
     chat,
+    chats,
     commands,
     events,
     github,
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
     for r in (
         topics.router,
         chat.router,
+        chats.router,
         attachments.router,
         settings.router,
         github.router,

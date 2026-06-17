@@ -2,6 +2,7 @@
 
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
+from precursor.backend.models.chat import Chat
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.memory import Memory
@@ -16,6 +17,7 @@ __all__ = [
     "AppSetting",
     "Attachment",
     "Base",
+    "Chat",
     "IssueContextCache",
     "MCPServer",
     "Memory",
