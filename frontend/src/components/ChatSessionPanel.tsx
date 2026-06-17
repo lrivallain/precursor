@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, Send, StopCircle } from "lucide-react";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
-import { SlashCommandPicker } from "./SlashCommandPicker";
+import { Composer } from "./Composer";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { api } from "../lib/api";
@@ -78,15 +77,11 @@ export function ChatSessionPanel({
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
-  const [pickerIndex, setPickerIndex] = useState(0);
   const [pendingDeletes, setPendingDeletes] = useState<
     { message: Message; timer: number }[]
   >([]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stoppingRef = useRef(false);
-  const historyIndexRef = useRef<number | null>(null);
-  const originalDraftRef = useRef<string>("");
 
   useStreamVersion();
   const settings = useSettings();
@@ -129,7 +124,6 @@ export function ChatSessionPanel({
   const appendFinalChunk = (text: string): void => {
     const chunk = text.trim();
     if (!chunk) return;
-    historyIndexRef.current = null;
     setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
     setInterimText("");
   };
@@ -161,18 +155,11 @@ export function ChatSessionPanel({
     () => matchSlashCommands(draft, skillCommands, CHAT_EXCLUDED_COMMANDS) ?? [],
     [draft, skillCommands],
   );
-  const pickerOpen = suggestions.length > 0;
 
   const userHistory = useMemo(
     () => persisted.filter((m) => m.role === "user").map((m) => m.content),
     [persisted],
   );
-
-  useEffect(() => setPickerIndex(0), [draft]);
-  useEffect(() => {
-    historyIndexRef.current = null;
-    originalDraftRef.current = "";
-  }, [chat.id]);
 
   // Load persisted history when the chat changes.
   useEffect(() => {
@@ -362,7 +349,6 @@ export function ChatSessionPanel({
   async function send(): Promise<void> {
     const content = draft.trim();
     if (!content || streaming) return;
-    historyIndexRef.current = null;
     if (speech.listening) speech.stop();
 
     const cmd = parseSlashCommand(content, skillCommands, CHAT_EXCLUDED_COMMANDS);
@@ -405,35 +391,6 @@ export function ChatSessionPanel({
         onChatUpdated();
       }
     })();
-  }
-
-  function selectCommand(cmd: SlashCommand): void {
-    setDraft(`/${cmd.name} `);
-    textareaRef.current?.focus();
-  }
-
-  function recallHistory(dir: -1 | 1): void {
-    if (userHistory.length === 0) return;
-    const cur = historyIndexRef.current;
-    if (dir === -1) {
-      if (cur === null) {
-        originalDraftRef.current = draft;
-        historyIndexRef.current = userHistory.length - 1;
-      } else if (cur > 0) {
-        historyIndexRef.current = cur - 1;
-      }
-    } else {
-      if (cur === null) return;
-      if (cur < userHistory.length - 1) {
-        historyIndexRef.current = cur + 1;
-      } else {
-        historyIndexRef.current = null;
-        setDraft(originalDraftRef.current);
-        return;
-      }
-    }
-    const idx = historyIndexRef.current;
-    if (idx !== null) setDraft(userHistory[idx]);
   }
 
   return (
@@ -515,114 +472,19 @@ export function ChatSessionPanel({
                 onCancel={() => setPendingNotes(null)}
               />
             )}
-            {speech.listening && (
-              <div className="flex items-start gap-2 text-[11px] text-muted px-1">
-                <span className="inline-block h-2 w-2 mt-1 shrink-0 rounded-full bg-red-500 animate-pulse" />
-                <span className="min-w-0 break-words max-h-20 overflow-y-auto">
-                  Listening… {interimText && <span className="italic">{interimText}</span>}
-                </span>
-              </div>
-            )}
-            {speech.error && (
-              <div className="text-[11px] text-red-500 px-1">Dictation error: {speech.error}</div>
-            )}
-            <div className="relative flex items-end gap-2">
-              <div
-                role="separator"
-                aria-orientation="horizontal"
-                onMouseDown={onComposerResize}
-                title="Drag to resize"
-                className="absolute -top-2 left-0 right-0 h-2 cursor-row-resize group z-10"
-              >
-                <div className="h-px w-12 mx-auto mt-1 bg-border group-hover:bg-accent/60 transition-colors" />
-              </div>
-              {pickerOpen && (
-                <SlashCommandPicker
-                  commands={suggestions}
-                  activeIndex={pickerIndex}
-                  onSelect={selectCommand}
-                  onHover={setPickerIndex}
-                />
-              )}
-              <textarea
-                ref={textareaRef}
-                value={draft}
-                onChange={(e) => {
-                  historyIndexRef.current = null;
-                  setDraft(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  if (pickerOpen) {
-                    if (e.key === "ArrowDown") {
-                      e.preventDefault();
-                      setPickerIndex((i) => (i + 1) % suggestions.length);
-                      return;
-                    }
-                    if (e.key === "ArrowUp") {
-                      e.preventDefault();
-                      setPickerIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
-                      return;
-                    }
-                    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.altKey)) {
-                      e.preventDefault();
-                      selectCommand(suggestions[pickerIndex]);
-                      return;
-                    }
-                  }
-                  if (
-                    (e.key === "ArrowUp" || e.key === "ArrowDown") &&
-                    !e.shiftKey &&
-                    textareaRef.current &&
-                    textareaRef.current.selectionStart === textareaRef.current.selectionEnd &&
-                    (e.key === "ArrowUp"
-                      ? textareaRef.current.selectionStart === 0
-                      : textareaRef.current.selectionStart === draft.length)
-                  ) {
-                    e.preventDefault();
-                    recallHistory(e.key === "ArrowUp" ? -1 : 1);
-                    return;
-                  }
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void send();
-                  }
-                }}
-                rows={1}
-                placeholder={`Message ${chat.title}… (/ for commands)`}
-                className="flex-1 resize-none rounded border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
-                style={{ height: composerHeight }}
-              />
-              {azureReady && (
-                <button
-                  className={`p-2 rounded shrink-0 ${
-                    speech.listening ? "bg-red-500/15 text-red-500" : "hover:bg-surface"
-                  }`}
-                  aria-label={speech.listening ? "Stop dictation" : "Start dictation"}
-                  data-tooltip={speech.listening ? "Stop dictation" : "Dictate"}
-                  onClick={() => (speech.listening ? speech.stop() : speech.start())}
-                >
-                  <Mic size={18} />
-                </button>
-              )}
-              {streaming ? (
-                <button
-                  className="flex items-center gap-1 rounded bg-surface px-3 py-2 text-sm hover:bg-border shrink-0"
-                  onClick={stop}
-                  aria-label="Stop generating"
-                >
-                  <StopCircle size={16} /> Stop
-                </button>
-              ) : (
-                <button
-                  className="flex items-center gap-1 rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50 shrink-0"
-                  onClick={() => void send()}
-                  disabled={!draft.trim()}
-                  aria-label="Send message"
-                >
-                  <Send size={16} /> Send
-                </button>
-              )}
-            </div>
+            <Composer
+              value={draft}
+              onChange={setDraft}
+              onSend={() => void send()}
+              onStop={stop}
+              streaming={streaming}
+              suggestions={suggestions}
+              userHistory={userHistory}
+              speech={speech}
+              interimText={interimText}
+              height={composerHeight}
+              onResizeStart={onComposerResize}
+            />
           </div>
         </div>
       </div>
