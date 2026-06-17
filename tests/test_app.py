@@ -106,6 +106,12 @@ def test_chats_crud_lifecycle() -> None:
         assert chat["unread_count"] == 0
         chat_id = chat["id"]
 
+        # Resolvable by slug for /chats/<slug> deep links.
+        r = client.get("/api/chats/by-slug/my-first-chat")
+        assert r.status_code == 200
+        assert r.json()["id"] == chat_id
+        assert client.get("/api/chats/by-slug/nope").status_code == 404
+
         # It shows up in the list.
         r = client.get("/api/chats")
         assert [c["id"] for c in r.json()] == [chat_id]

@@ -44,6 +44,60 @@ function parseWsRoute(): WsRoute {
   return { open: true, slug, path };
 }
 
+// Path-based routing for every mode:
+//   /topics/<ancestor-slugs…>/<slug>   → topics, item resolved by the last slug
+//   /chats/<slug>                      → chats
+//   /ws/<slug>/<file/path>             → workspaces
+// Slugs are globally unique, so the trailing topic slug alone identifies the
+// item; the ancestor slugs make the URL readable + bookmarkable.
+interface AppRoute {
+  mode: SidebarMode;
+  topicSlug: string | null;
+  chatSlug: string | null;
+}
+
+function parseAppRoute(): AppRoute {
+  const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  if (segs[0] === "ws") return { mode: "workspaces", topicSlug: null, chatSlug: null };
+  if (segs[0] === "chats") {
+    return { mode: "chats", topicSlug: null, chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
+  }
+  if (segs[0] === "topics") {
+    const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
+    return { mode: "topics", topicSlug: last, chatSlug: null };
+  }
+  return { mode: "topics", topicSlug: null, chatSlug: null };
+}
+
+/** Ancestor → self slug chain for a topic, using the loaded tree. */
+function topicSlugPath(tree: TopicNode[], topicId: number): string[] {
+  const byId = new Map<number, TopicNode>();
+  const walk = (nodes: TopicNode[]): void => {
+    for (const n of nodes) {
+      byId.set(n.id, n);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(tree);
+  const path: string[] = [];
+  let cur: TopicNode | undefined = byId.get(topicId);
+  while (cur) {
+    path.unshift(cur.slug);
+    cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined;
+  }
+  return path;
+}
+
+function topicUrl(tree: TopicNode[], topic: Topic): string {
+  const segs = topicSlugPath(tree, topic.id);
+  const chain = segs.length ? segs : [topic.slug];
+  return "/topics/" + chain.map(encodeURIComponent).join("/");
+}
+
+function chatUrl(chat: Chat): string {
+  return "/chats/" + encodeURIComponent(chat.slug);
+}
+
 const BASE_TITLE = "Precursor";
 
 /** Sum unread counts across the whole topic tree (recursively). */
@@ -72,11 +126,9 @@ function findTitle(nodes: TopicNode[], topicId: number): string | null {
 export default function App() {
   const [tree, setTree] = useState<TopicNode[]>([]);
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
-  // The active sidebar mode. Workspaces own the `/ws` URL, so a deep link
-  // (or reload onto `/ws/...`) starts the app directly in workspaces mode.
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() =>
-    parseWsRoute().open ? "workspaces" : "topics",
-  );
+  // The active sidebar mode. The URL path owns the mode + selection, so a deep
+  // link (or reload onto /topics, /chats, /ws) starts the app in that mode.
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => parseAppRoute().mode);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
@@ -122,13 +174,6 @@ export default function App() {
     activeChatRef.current = activeChat;
   }, [activeChat]);
 
-  // Mirror the workspaces overlay state so the topic-hash effect can bail out
-  // without re-subscribing whenever the overlay toggles.
-  const workspacesOpenRef = useRef(wsRoute.open);
-  useEffect(() => {
-    workspacesOpenRef.current = wsRoute.open;
-  }, [wsRoute.open]);
-
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
   }
@@ -169,93 +214,100 @@ export default function App() {
     });
   }
 
-  // ---- URL hash routing ------------------------------------------------
-  // `#<slug>` is the canonical deep link for a topic. We keep it in sync
-  // both ways: clicking a topic updates the hash, and back/forward (or a
-  // pasted link) resolves the slug back to an active topic. The equality
-  // checks below break the feedback loop between the two effects.
-
-  // hash -> activeTopic (initial mount + back/forward + pasted links).
+  // ---- Path-based routing ----------------------------------------------
+  // The URL path is the single source of truth for mode + selection:
+  //   /topics/<ancestor-slugs…>/<slug>   /chats/<slug>   /ws/<slug>/<path>
+  // `syncFromUrl` runs on mount + back/forward; the effects below push the URL
+  // when the active item changes. Equality checks break the feedback loop.
   useEffect(() => {
-    const sync = (): void => {
-      const slug = window.location.hash.replace(/^#/, "").trim();
-      if (!slug) return;
-      if (activeTopicRef.current?.slug === slug) return;
+    const syncFromUrl = (): void => {
+      const r = parseAppRoute();
+      setSidebarMode(r.mode);
+      if (r.mode === "workspaces") {
+        setWsRoute(parseWsRoute());
+        return;
+      }
+      // Left workspaces — clear its route state so a stale slug/path can't leak.
+      setWsRoute({ open: false, slug: null, path: null });
+      if (r.mode === "topics") {
+        const slug = r.topicSlug;
+        if (!slug || activeTopicRef.current?.slug === slug) return;
+        void (async () => {
+          try {
+            const t = await api.getTopicBySlug(slug);
+            setActiveTopic(t);
+            try {
+              await api.markTopicRead(t.id);
+              await refreshTree();
+            } catch {
+              // non-fatal
+            }
+          } catch {
+            // unknown slug — leave the user where they are
+          }
+        })();
+        return;
+      }
+      // chats
+      const slug = r.chatSlug;
+      if (!slug || activeChatRef.current?.slug === slug) return;
       void (async () => {
         try {
-          const t = await api.getTopicBySlug(slug);
-          setActiveTopic(t);
+          const c = await api.getChatBySlug(slug);
+          setActiveChat(c);
           try {
-            await api.markTopicRead(t.id);
-            await refreshTree();
+            await api.markChatRead(c.id);
+            setChatListReloadKey((k) => k + 1);
           } catch {
             // non-fatal
           }
         } catch {
-          // unknown slug — leave the user where they are
+          // unknown slug — ignore
         }
       })();
     };
-    sync();
-    window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
 
-  // activeTopic -> hash. Use replaceState when there's no prior hash so the
-  // initial selection doesn't leave a junk history entry; use a real
-  // assignment otherwise so back/forward walks through topics.
+  // activeTopic -> /topics/<…>/<slug>. pushState for a different item (so
+  // back/forward walks topics); replaceState when only the ancestor chain
+  // changes (e.g. the tree finished loading) to avoid junk history entries.
   useEffect(() => {
-    if (workspacesOpenRef.current) return; // Workspaces own the URL while open
-    if (activeTopic) {
-      const target = `#${activeTopic.slug}`;
-      if (window.location.hash !== target) {
-        if (!window.location.hash) {
-          history.replaceState(
-            null,
-            "",
-            `${window.location.pathname}${window.location.search}${target}`,
-          );
-        } else {
-          window.location.hash = target;
-        }
-      }
-    } else if (window.location.hash) {
-      history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${window.location.search}`,
-      );
-    }
-  }, [activeTopic]);
+    if (sidebarMode !== "topics" || !activeTopic) return;
+    const target = topicUrl(tree, activeTopic);
+    if (window.location.pathname === target) return;
+    const lastSeg = decodeURIComponent(
+      window.location.pathname.replace(/\/+$/, "").split("/").pop() ?? "",
+    );
+    if (lastSeg === activeTopic.slug) history.replaceState(null, "", target);
+    else history.pushState(null, "", target);
+  }, [activeTopic, sidebarMode, tree]);
 
-  // ---- /ws route --------------------------------------------------------
-  // Workspaces are a sidebar mode that owns a real path (not a hash, which
-  // topic deep links already use) so they survive reloads / back-forward and
-  // can be deep-linked down to a file. The path drives both the route state
-  // and the active sidebar mode.
+  // activeChat -> /chats/<slug>.
   useEffect(() => {
-    const sync = (): void => {
-      const r = parseWsRoute();
-      setWsRoute(r);
-      // Back/forward onto (or away from) /ws flips the sidebar mode to match.
-      setSidebarMode((m) => (r.open ? "workspaces" : m === "workspaces" ? "topics" : m));
-    };
-    window.addEventListener("popstate", sync);
-    return () => window.removeEventListener("popstate", sync);
-  }, []);
+    if (sidebarMode !== "chats" || !activeChat) return;
+    const target = chatUrl(activeChat);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
+  }, [activeChat, sidebarMode]);
 
-  // Switch sidebar mode, keeping the URL in sync: entering Workspaces pushes
-  // `/ws`; leaving it restores the root path (+ the active topic hash).
+  // Switch sidebar mode, pushing the URL for that mode (the active item's path
+  // when there is one, else the mode's base path).
   function changeMode(next: SidebarMode): void {
     if (next === sidebarMode) return;
-    if (next === "workspaces") {
-      if (!parseWsRoute().open) history.pushState(null, "", "/ws");
-      setWsRoute(parseWsRoute());
-    } else if (sidebarMode === "workspaces") {
-      const hash = activeTopicRef.current ? `#${activeTopicRef.current.slug}` : "";
-      history.pushState(null, "", `/${hash}`);
-      setWsRoute({ open: false, slug: null, path: null });
+    let target = "/topics";
+    if (next === "topics") {
+      target = activeTopicRef.current
+        ? topicUrl(treeRef.current, activeTopicRef.current)
+        : "/topics";
+    } else if (next === "chats") {
+      target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
+    } else {
+      target = "/ws";
     }
+    history.pushState(null, "", target);
+    setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
   }
 
@@ -698,6 +750,11 @@ export default function App() {
           onCleared={() => {
             setActiveChatReloadKey((k) => k + 1);
             setChatSettingsOpen(false);
+          }}
+          onArchived={() => {
+            setActiveChat(null);
+            setChatSettingsOpen(false);
+            setChatListReloadKey((k) => k + 1);
           }}
           onDeleted={() => {
             setActiveChat(null);

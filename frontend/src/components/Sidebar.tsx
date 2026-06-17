@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsRight,
   Clock,
   FolderGit2,
   MessageSquare,
@@ -195,34 +196,10 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Mode switcher: Topics ⟷ Chats ⟷ Workspaces. Persona + settings stay
-          visible at the bottom of the sidebar across every mode. */}
-      <div className="flex gap-1 px-2 py-2 border-b border-border">
-        <button
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
-            mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
-          }`}
-          onClick={() => onModeChange("topics")}
-        >
-          <MessagesSquare size={14} /> Topics
-        </button>
-        <button
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
-            mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
-          }`}
-          onClick={() => onModeChange("chats")}
-        >
-          <MessageSquare size={14} /> Chats
-        </button>
-        <button
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
-            mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
-          }`}
-          onClick={() => onModeChange("workspaces")}
-        >
-          <FolderGit2 size={14} /> Files
-        </button>
-      </div>
+      {/* Mode switcher: Topics ⟷ Chats ⟷ Files. Persona + settings stay
+          visible at the bottom of the sidebar across every mode. When the
+          sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
+      <ModeSwitcher mode={mode} onModeChange={onModeChange} />
 
       {mode === "chats" ? (
         chatSlot
@@ -621,6 +598,124 @@ function collectScheduled(tree: TopicNode[]): TopicNode[] {
   walk(tree);
   out.sort((a, b) => a.title.localeCompare(b.title));
   return out;
+}
+
+const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
+  { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
+  { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
+  { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
+];
+
+// Responsive mode switcher: shows as many labelled mode buttons as fit, and
+// collapses the rest behind a ">>" popover when the sidebar is too narrow.
+function ModeSwitcher({
+  mode,
+  onModeChange,
+}: {
+  mode: SidebarMode;
+  onModeChange: (mode: SidebarMode) => void;
+}) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(MODES.length);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const MIN_BTN = 78; // px for a labelled mode button
+    const OVERFLOW_BTN = 36;
+    const compute = (): void => {
+      const w = el.clientWidth;
+      if (w <= 0) return;
+      if (Math.floor(w / MIN_BTN) >= MODES.length) {
+        setVisibleCount(MODES.length);
+        return;
+      }
+      const fit = Math.max(1, Math.floor((w - OVERFLOW_BTN) / MIN_BTN));
+      setVisibleCount(Math.min(MODES.length - 1, fit));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Close the overflow popover on outside click / Escape.
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const onDown = (e: MouseEvent): void => {
+      if (rowRef.current && !rowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setOverflowOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [overflowOpen]);
+
+  const visible = MODES.slice(0, visibleCount);
+  const overflow = MODES.slice(visibleCount);
+  const activeHidden = overflow.some((m) => m.mode === mode);
+
+  return (
+    <div ref={rowRef} className="relative flex gap-1 px-2 py-2 border-b border-border">
+      {visible.map((m) => (
+        <button
+          key={m.mode}
+          className={`flex flex-1 min-w-0 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
+            mode === m.mode ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+          }`}
+          onClick={() => onModeChange(m.mode)}
+        >
+          {m.icon} <span className="truncate">{m.label}</span>
+        </button>
+      ))}
+      {overflow.length > 0 && (
+        <>
+          <button
+            className={`flex shrink-0 items-center justify-center rounded px-2 py-1.5 ${
+              activeHidden ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+            }`}
+            aria-label="More modes"
+            data-tooltip="More modes"
+            aria-haspopup="menu"
+            aria-expanded={overflowOpen}
+            onClick={() => setOverflowOpen((v) => !v)}
+          >
+            <ChevronsRight size={16} />
+          </button>
+          {overflowOpen && (
+            <div
+              role="menu"
+              className="absolute right-2 top-full z-40 mt-1 w-40 rounded-md border border-border bg-bg py-1 shadow-lg"
+            >
+              {overflow.map((m) => (
+                <button
+                  key={m.mode}
+                  role="menuitem"
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                    mode === m.mode ? "text-accent" : "hover:bg-surface"
+                  }`}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onModeChange(m.mode);
+                  }}
+                >
+                  {m.icon} {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function SectionHeader({

@@ -87,6 +87,16 @@ async def create_chat(
     return chat
 
 
+@router.get("/by-slug/{slug}", response_model=ChatRead)
+async def get_chat_by_slug(slug: str, session: AsyncSession = Depends(get_session)) -> Chat:
+    """Resolve a chat by its slug (for /chats/<slug> deep links)."""
+    result = await session.execute(select(Chat).where(Chat.slug == slug))
+    chat = result.scalar_one_or_none()
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return chat
+
+
 @router.get("/{chat_id}", response_model=ChatRead)
 async def get_chat(
     chat_id: int,

@@ -88,6 +88,8 @@ export const api = {
     request<Chat[]>(`/api/chats${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   listArchivedChats: () => request<Chat[]>(`/api/chats/archived`),
   getChat: (id: number) => request<Chat>(`/api/chats/${id}`),
+  getChatBySlug: (slug: string) =>
+    request<Chat>(`/api/chats/by-slug/${encodeURIComponent(slug)}`),
   createChat: (data: ChatCreate) =>
     request<Chat>(`/api/chats`, { method: "POST", body: JSON.stringify(data) }),
   updateChat: (id: number, data: ChatUpdate) =>

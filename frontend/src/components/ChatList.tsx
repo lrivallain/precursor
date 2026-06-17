@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Loader2, MessageSquare, Search, Trash2 } from "lucide-react";
+import { Archive, Loader2, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { Chat } from "../lib/types";
 
@@ -128,7 +128,16 @@ export function ChatList({
           <div className="px-2 py-4 text-sm text-muted">No chats yet.</div>
         ) : (
           <>
-            {pinned.length > 0 && <ul className="mb-2 space-y-0.5">{pinned.map(renderItem)}</ul>}
+            {pinned.length > 0 && (
+              <div className="mb-2">
+                <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] uppercase tracking-wide text-muted">
+                  <Pin size={11} />
+                  <span>Pinned</span>
+                </div>
+                <ul className="space-y-0.5">{pinned.map(renderItem)}</ul>
+                <div className="mt-2 border-t border-border" />
+              </div>
+            )}
             <ul className="space-y-0.5">{rest.map(renderItem)}</ul>
           </>
         )}
