@@ -1,6 +1,9 @@
 import type {
   AppVersion,
   Attachment,
+  Chat,
+  ChatCreate,
+  ChatUpdate,
   CommentDraft,
   CommentPostResult,
   GhCloseResult,
@@ -79,6 +82,35 @@ export const api = {
     request<Topic>(`/api/topics/${id}/archive`, { method: "POST" }),
   unarchiveTopic: (id: number) =>
     request<Topic>(`/api/topics/${id}/unarchive`, { method: "POST" }),
+
+  // Chats (flat conversation sessions — no tree, no GitHub link)
+  listChats: (q?: string) =>
+    request<Chat[]>(`/api/chats${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  listArchivedChats: () => request<Chat[]>(`/api/chats/archived`),
+  getChat: (id: number) => request<Chat>(`/api/chats/${id}`),
+  createChat: (data: ChatCreate) =>
+    request<Chat>(`/api/chats`, { method: "POST", body: JSON.stringify(data) }),
+  updateChat: (id: number, data: ChatUpdate) =>
+    request<Chat>(`/api/chats/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteChat: (id: number) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
+  markChatRead: (id: number) => request<void>(`/api/chats/${id}/read`, { method: "POST" }),
+  archiveChat: (id: number) =>
+    request<Chat>(`/api/chats/${id}/archive`, { method: "POST" }),
+  unarchiveChat: (id: number) =>
+    request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
+
+  // Chat messages (mirror topic message endpoints)
+  listChatMessages: (chatId: number) =>
+    request<Message[]>(`/api/chats/${chatId}/messages`),
+  clearChatMessages: (chatId: number) =>
+    request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
+  deleteChatMessage: (chatId: number, messageId: number) =>
+    request<void>(`/api/chats/${chatId}/messages/${messageId}`, { method: "DELETE" }),
+  saveStoppedChatMessage: (chatId: number, content: string) =>
+    request<Message>(`/api/chats/${chatId}/messages/stopped`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
 
   // Schedules (recurring automation topics). Keyed by topic id.
   getSchedule: (topicId: number) =>

@@ -10,10 +10,10 @@
 import { CLIENT_ID } from "./clientId";
 
 export type BusEvent =
-  | { type: "topic.changed"; topic_id: number | null }
-  | { type: "message.changed"; topic_id: number }
-  | { type: "stream.started"; topic_id: number }
-  | { type: "stream.ended"; topic_id: number };
+  | { type: "topic.changed"; topic_id: number | null; chat_id?: number | null }
+  | { type: "message.changed"; topic_id?: number | null; chat_id?: number | null }
+  | { type: "stream.started"; topic_id?: number | null; chat_id?: number | null }
+  | { type: "stream.ended"; topic_id?: number | null; chat_id?: number | null };
 
 type Handler = (event: BusEvent) => void;
 
@@ -23,14 +23,18 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
 function dispatch(type: BusEvent["type"], raw: string): void {
-  let payload: { client_id?: string; topic_id?: number | null };
+  let payload: { client_id?: string; topic_id?: number | null; chat_id?: number | null };
   try {
     payload = JSON.parse(raw);
   } catch {
     return;
   }
   if (payload.client_id && payload.client_id === CLIENT_ID) return;
-  const event = { type, topic_id: payload.topic_id ?? null } as BusEvent;
+  const event = {
+    type,
+    topic_id: payload.topic_id ?? null,
+    chat_id: payload.chat_id ?? null,
+  } as BusEvent;
   for (const h of handlers) {
     try {
       h(event);

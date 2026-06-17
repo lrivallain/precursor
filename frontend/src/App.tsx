@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
+import { ChatList } from "./components/ChatList";
+import { ChatSessionPanel } from "./components/ChatSessionPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TopicCreateModal } from "./components/TopicCreateModal";
 import { ScheduleModal } from "./components/ScheduleModal";
@@ -18,7 +20,7 @@ import { skillsStore } from "./lib/skillsStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
-import type { Schedule, Topic, TopicNode } from "./lib/types";
+import type { Chat, Schedule, Topic, TopicNode } from "./lib/types";
 
 interface WsRoute {
   open: boolean;
@@ -65,6 +67,9 @@ function findTitle(nodes: TopicNode[], topicId: number): string | null {
 export default function App() {
   const [tree, setTree] = useState<TopicNode[]>([]);
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("topics");
+  const [activeChat, setActiveChat] = useState<Chat | null>(null);
+  const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [wsRoute, setWsRoute] = useState<WsRoute>(parseWsRoute);
@@ -94,6 +99,12 @@ export default function App() {
   useEffect(() => {
     activeTopicRef.current = activeTopic;
   }, [activeTopic]);
+
+  // Mirror activeChat into a ref for the (registered-once) event subscription.
+  const activeChatRef = useRef<Chat | null>(activeChat);
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
 
   // Mirror the workspaces overlay state so the topic-hash effect can bail out
   // without re-subscribing whenever the overlay toggles.
@@ -280,6 +291,12 @@ export default function App() {
           })();
         }
       } else if (event.type === "message.changed") {
+        if (event.chat_id != null) {
+          // A chat turn changed — refresh the chat list (badges) and, if the
+          // user is viewing it, the panel reloads via its own activity hook.
+          setChatListReloadKey((k) => k + 1);
+          return;
+        }
         // Sidebar badge tracking depends on the tree, so always refresh.
         void refreshTree();
         if (activeTopicRef.current?.id === event.topic_id) {
@@ -287,13 +304,19 @@ export default function App() {
           setChatReloadKey((k) => k + 1);
         }
       } else if (event.type === "stream.started") {
-        streamStore.setRemoteStreaming(event.topic_id, true);
+        if (event.topic_id != null) streamStore.setRemoteStreaming(event.topic_id, true);
       } else if (event.type === "stream.ended") {
-        streamStore.setRemoteStreaming(event.topic_id, false);
-        // A turn finished elsewhere (another window or a scheduled task). The
-        // driving window's own echo is filtered by client id, so this only
-        // covers background completions — notify if enabled + unfocused.
-        maybeNotify(event.topic_id);
+        if (event.chat_id != null) {
+          setChatListReloadKey((k) => k + 1);
+          return;
+        }
+        if (event.topic_id != null) {
+          streamStore.setRemoteStreaming(event.topic_id, false);
+          // A turn finished elsewhere (another window or a scheduled task). The
+          // driving window's own echo is filtered by client id, so this only
+          // covers background completions — notify if enabled + unfocused.
+          maybeNotify(event.topic_id);
+        }
       }
     });
   }, []);
@@ -303,6 +326,16 @@ export default function App() {
     try {
       await api.markTopicRead(id);
       await refreshTree();
+    } catch {
+      // non-fatal
+    }
+  }
+
+  async function handleSelectChat(chat: Chat): Promise<void> {
+    setActiveChat(chat);
+    try {
+      await api.markChatRead(chat.id);
+      setChatListReloadKey((k) => k + 1);
     } catch {
       // non-fatal
     }
@@ -345,6 +378,16 @@ export default function App() {
         activeId={activeTopic?.id ?? null}
         streamingTopicIds={streamingTopicIds}
         collapsed={sidebarCollapsed}
+        mode={sidebarMode}
+        onModeChange={setSidebarMode}
+        chatSlot={
+          <ChatList
+            activeId={activeChat?.id ?? null}
+            reloadKey={chatListReloadKey}
+            onSelect={handleSelectChat}
+            onChatsChanged={() => setChatListReloadKey((k) => k + 1)}
+          />
+        }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onSelect={handleSelect}
         onCreate={handleCreate}
@@ -357,6 +400,37 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col min-w-0">
+        {sidebarMode === "chats" ? (
+          <>
+            <header className="flex items-center justify-between px-4 h-12 border-b border-border gap-3">
+              <span className="truncate font-medium min-w-0 flex-1">
+                {activeChat ? activeChat.title : "Select or create a chat"}
+              </span>
+            </header>
+            <div className="flex-1 min-h-0">
+              {activeChat ? (
+                <ChatSessionPanel
+                  key={activeChat.id}
+                  chat={activeChat}
+                  onActivity={() => setChatListReloadKey((k) => k + 1)}
+                />
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-muted gap-3">
+                  <img
+                    src="/logo.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={72}
+                    height={72}
+                    className="rounded-2xl opacity-90"
+                  />
+                  <span>No chat selected.</span>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
         <header className="flex items-center justify-between px-4 h-12 border-b border-border gap-3">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <span className="truncate font-medium">
@@ -457,6 +531,8 @@ export default function App() {
             </div>
           )}
         </div>
+          </>
+        )}
       </main>
 
       {globalSettingsOpen && (

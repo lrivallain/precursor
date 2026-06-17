@@ -76,6 +76,36 @@ export async function streamWorkspaceChat(
   await consumeStream(res.body, onEvent);
 }
 
+/**
+ * POST to a flat Chat session's stream endpoint and stream the reply.
+ * Chats persist server-side like topics, but have no GitHub context.
+ */
+export async function streamChatSession(
+  chatId: number,
+  body: {
+    content: string;
+    model?: string;
+    prompt_override?: string;
+  },
+  { signal, onEvent }: StreamChatOptions,
+): Promise<void> {
+  const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      "X-Client-Id": CLIENT_ID,
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
+  }
+
+  await consumeStream(res.body, onEvent);
+}
+
 async function consumeStream(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: SSEEvent) => void,

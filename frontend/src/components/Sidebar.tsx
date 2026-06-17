@@ -1,8 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
   Clock,
+  MessageSquare,
+  MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
@@ -15,11 +18,17 @@ import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
+export type SidebarMode = "topics" | "chats";
+
 interface Props {
   tree: TopicNode[];
   activeId: number | null;
   streamingTopicIds: number[];
   collapsed: boolean;
+  mode: SidebarMode;
+  onModeChange: (mode: SidebarMode) => void;
+  /** Rendered in the body when mode === "chats" (the chat list). */
+  chatSlot?: ReactNode;
   onToggleCollapsed: () => void;
   onSelect: (id: number) => void;
   onCreate: (parentId: number | null) => void;
@@ -36,6 +45,9 @@ export function Sidebar({
   activeId,
   streamingTopicIds,
   collapsed,
+  mode,
+  onModeChange,
+  chatSlot,
   onToggleCollapsed,
   onSelect,
   onCreate,
@@ -116,22 +128,26 @@ export function Sidebar({
           className="rounded-md shrink-0"
         />
         <div className="flex-1 font-semibold tracking-tight">Precursor</div>
-        <button
-          className="p-1.5 rounded hover:bg-surface"
-          aria-label="New topic"
-          data-tooltip="New topic"
-          onClick={() => onCreate(null)}
-        >
-          <Plus size={16} />
-        </button>
-        <button
-          className="p-1.5 rounded hover:bg-surface"
-          aria-label="New scheduled topic"
-          data-tooltip="New scheduled topic"
-          onClick={onCreateSchedule}
-        >
-          <Clock size={16} />
-        </button>
+        {mode === "topics" && (
+          <>
+            <button
+              className="p-1.5 rounded hover:bg-surface"
+              aria-label="New topic"
+              data-tooltip="New topic"
+              onClick={() => onCreate(null)}
+            >
+              <Plus size={16} />
+            </button>
+            <button
+              className="p-1.5 rounded hover:bg-surface"
+              aria-label="New scheduled topic"
+              data-tooltip="New scheduled topic"
+              onClick={onCreateSchedule}
+            >
+              <Clock size={16} />
+            </button>
+          </>
+        )}
         <button
           className="p-1.5 rounded hover:bg-surface"
           aria-label="Collapse sidebar"
@@ -142,25 +158,50 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="px-3 py-2 border-b border-border">
-        <div className="relative">
-          <Search
-            size={14}
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
-          />
-          <input
-            type="search"
-            placeholder="Search topics..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full pl-7 pr-2 py-1.5 text-sm bg-surface border border-border rounded outline-none focus:border-accent"
-          />
-        </div>
+      {/* Mode switcher: Topics ⟷ Chats. Persona + settings stay visible at the
+          bottom of the sidebar across both modes. */}
+      <div className="flex gap-1 px-3 py-2 border-b border-border">
+        <button
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
+            mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+          }`}
+          onClick={() => onModeChange("topics")}
+        >
+          <MessagesSquare size={14} /> Topics
+        </button>
+        <button
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
+            mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+          }`}
+          onClick={() => onModeChange("chats")}
+        >
+          <MessageSquare size={14} /> Chats
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
-        {pinned.length > 0 && (
-          <div className="mb-2">
+      {mode === "chats" ? (
+        chatSlot
+      ) : (
+        <>
+          <div className="px-3 py-2 border-b border-border">
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+              />
+              <input
+                type="search"
+                placeholder="Search topics..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full pl-7 pr-2 py-1.5 text-sm bg-surface border border-border rounded outline-none focus:border-accent"
+              />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2">
+            {pinned.length > 0 && (
+              <div className="mb-2">
             <SectionHeader
               icon={<Pin size={11} />}
               label="Pinned"
@@ -233,6 +274,8 @@ export function Sidebar({
           </ul>
         )}
       </div>
+        </>
+      )}
 
       <div className="border-t border-border px-2 py-2">
         <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} onOpenWorkspaces={onOpenWorkspaces} />
