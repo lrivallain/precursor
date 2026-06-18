@@ -28,6 +28,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   paste), matching topics — uploaded images are bound to the turn and sent to
   vision-capable models. Both message composers were unified into one shared
   `Composer` component, so topics and chats stay in lock-step.
+- **Friendlier startup / multi-instance**: one `--port` now controls everything.
+  In `--dev` the Vite UI runs on the API port **+ 1** and its `/api` proxy
+  follows the backend port, so a single flag spins up a full instance. A busy
+  port **auto-bumps** to the next free one (checked across IPv4 + IPv6) so
+  parallel instances never collide — pass `--strict-port` to fail instead, or
+  `--port 0` for an OS-assigned port. A startup banner prints the URL to open,
+  `--open` launches the browser, and `--dev` auto-allows the Vite origin via
+  CORS. `.env.example` is now fully optional (every setting has a built-in
+  default).
 - Browser notifications when an assistant turn finishes (including scheduled
   tasks) while the Precursor window isn't focused — opt-in via Settings → Chat →
   Notifications (asks for browser permission on enable). The number of unread
