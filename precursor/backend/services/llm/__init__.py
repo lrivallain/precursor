@@ -7,10 +7,17 @@ per request. Providers are declared in :mod:`precursor.backend.services.llm.regi
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.llm.base import LLMProvider
+from precursor.backend.services.llm.base import (
+    ChatMessage,
+    LLMProvider,
+    TextDeltaEvent,
+    UsageEvent,
+)
 from precursor.backend.services.llm.mock import MockProvider
 from precursor.backend.services.llm.registry import PROVIDERS
 
@@ -52,4 +59,27 @@ async def get_llm_provider(
         return MockProvider()
 
 
-__all__ = ["get_llm_provider"]
+__all__ = ["complete_text_with_usage", "get_llm_provider"]
+
+
+async def complete_text_with_usage(
+    provider: LLMProvider,
+    *,
+    model: str,
+    messages: Sequence[ChatMessage],
+) -> tuple[str, UsageEvent | None]:
+    """Run a tool-less completion and return its text plus token usage.
+
+    Utility callers (slash commands, issue-summary refresh) use this instead of
+    ``stream_chat`` so the round-trip's token usage is captured and can be
+    written to the usage ledger. Goes through ``stream_chat_with_tools`` with no
+    tools because that path requests ``include_usage`` and emits a UsageEvent.
+    """
+    chunks: list[str] = []
+    usage: UsageEvent | None = None
+    async for event in provider.stream_chat_with_tools(model=model, messages=messages, tools=[]):
+        if isinstance(event, TextDeltaEvent):
+            chunks.append(event.content)
+        elif isinstance(event, UsageEvent):
+            usage = event
+    return "".join(chunks).strip(), usage

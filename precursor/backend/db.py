@@ -39,6 +39,7 @@ async def init_db() -> None:
         reminder,
         skill,
         topic,
+        usage,
         workspace,
     )
 

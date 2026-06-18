@@ -47,6 +47,7 @@ from precursor.backend.services.llm.base import (
     UsageEvent,
 )
 from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -480,6 +481,17 @@ async def _run_message_stream(
                         await ws.refresh(assistant)
                         await _publish_container_changed(kind, container_id)
                         if round_usage is not None:
+                            async with SessionLocal() as us:
+                                await record_usage(
+                                    us,
+                                    prompt_tokens=round_usage.prompt_tokens,
+                                    completion_tokens=round_usage.completion_tokens,
+                                    total_tokens=round_usage.total_tokens,
+                                    source="chat",
+                                    model=model,
+                                    **_container_message_kwargs(kind, container_id),
+                                )
+                                await us.commit()
                             yield {
                                 "event": "usage",
                                 "data": json.dumps(
@@ -522,6 +534,17 @@ async def _run_message_stream(
                 await _publish_container_changed(kind, container_id)
 
                 if round_usage is not None:
+                    async with SessionLocal() as us:
+                        await record_usage(
+                            us,
+                            prompt_tokens=round_usage.prompt_tokens,
+                            completion_tokens=round_usage.completion_tokens,
+                            total_tokens=round_usage.total_tokens,
+                            source="chat",
+                            model=model,
+                            **_container_message_kwargs(kind, container_id),
+                        )
+                        await us.commit()
                     yield {
                         "event": "usage",
                         "data": json.dumps(

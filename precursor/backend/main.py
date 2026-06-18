@@ -44,6 +44,7 @@ from precursor.backend.routers import (
     schedules,
     settings,
     skills,
+    stats,
     stt,
     summary,
     topics,
@@ -192,6 +193,7 @@ def create_app() -> FastAPI:
         stt.router,
         raw.router,
         version.router,
+        stats.router,
     ):
         app.include_router(r)
 

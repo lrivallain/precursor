@@ -23,6 +23,7 @@ from precursor.backend.schemas.skill import (
     SkillRead,
     SkillUpdate,
 )
+from precursor.backend.schemas.stats import UsageBucket, UsageStats
 from precursor.backend.schemas.topic import (
     TopicCreate,
     TopicNode,
@@ -75,6 +76,8 @@ __all__ = [
     "TopicNode",
     "TopicRead",
     "TopicUpdate",
+    "UsageBucket",
+    "UsageStats",
     "WorkspaceCreate",
     "WorkspaceRead",
 ]

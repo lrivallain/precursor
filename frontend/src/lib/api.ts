@@ -42,6 +42,7 @@ import type {
   SkillUpdate,
   Topic,
   TopicNode,
+  UsageStats,
   Workspace,
   WorkspaceCreate,
   WorkspaceFileContent,
@@ -431,6 +432,9 @@ export const api = {
     ),
   workspaceLocalPath: (workspaceId: number) =>
     request<LocalPath>(`/api/workspaces/${workspaceId}/local-path`),
+
+  // Usage statistics
+  getUsageStats: () => request<UsageStats>(`/api/stats/usage`),
 };
 
 /** URL that serves a workspace file's raw bytes (static-web-server style). */

@@ -21,8 +21,9 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
-from precursor.backend.services.llm import get_llm_provider
+from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.usage_stats import record_usage
 
 router = APIRouter(prefix="/api/topics/{topic_id}/summary", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -177,21 +178,19 @@ async def refresh_issue_context(
 
     provider = await get_llm_provider(session)
     model = await resolve_llm_model(session)
-    chunks: list[str] = []
     try:
-        async for delta in provider.stream_chat(
+        summary_text, usage = await complete_text_with_usage(
+            provider,
             model=model,
             messages=[
                 ChatMessage(role="system", content=system),
                 ChatMessage(role="user", content=user),
             ],
-        ):
-            chunks.append(delta)
+        )
     except Exception as exc:
         logger.warning("Summary generation failed: %s", exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"LLM call failed: {exc}") from exc
 
-    summary_text = "".join(chunks).strip()
     now = datetime.now(UTC)
     labels_json = json.dumps(issue.get("labels", []))
 
@@ -211,6 +210,16 @@ async def refresh_issue_context(
         row.summary = summary_text
         row.model = model
         row.fetched_at = now
+        if usage is not None:
+            await record_usage(
+                write_session,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                source="/summary",
+                model=model,
+                topic_id=topic_id,
+            )
         await write_session.commit()
 
     return IssueSummary(

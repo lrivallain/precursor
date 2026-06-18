@@ -14,6 +14,7 @@ import {
   Brain,
   SlidersHorizontal,
   Mic,
+  BarChart3,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -35,6 +36,7 @@ import type {
 } from "../lib/types";
 import { SkillsTab } from "./SkillsTab";
 import { MemoriesTab } from "./MemoriesTab";
+import { StatsTab } from "./StatsTab";
 
 interface Props {
   onClose: () => void;
@@ -80,6 +82,7 @@ type Category =
   | "mcp"
   | "skills"
   | "memory"
+  | "stats"
   | "system";
 
 const CATEGORIES: ReadonlyArray<{
@@ -96,6 +99,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
+  { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
 ];
 
@@ -983,6 +987,8 @@ export function SettingsPanel({ onClose }: Props) {
             {category === "skills" && <SkillsTab />}
 
             {category === "memory" && <MemoriesTab />}
+
+            {category === "stats" && <StatsTab />}
 
             {category === "system" && sys && (
               <SystemTab
