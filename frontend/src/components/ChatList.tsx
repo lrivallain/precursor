@@ -86,7 +86,9 @@ export function ChatList({
           <InlineTitle
             title={chat.title}
             onRename={(t) => renameChat(chat.id, t)}
-            className="flex-1 truncate"
+            className={`flex-1 truncate ${
+              chat.unread_count > 0 || reminderChatIds?.has(chat.id) ? "font-semibold" : ""
+            }`}
           />
           {reminderChatIds?.has(chat.id) && (
             <AlarmClock

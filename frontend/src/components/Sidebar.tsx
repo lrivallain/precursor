@@ -437,7 +437,9 @@ function TopicItem({
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
-            node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
+            (node.unread_count > 0 || reminderTopicIds?.has(node.id)) && !isStreaming
+              ? "font-semibold"
+              : ""
           } ${scheduleDisabled ? "text-muted" : ""}`}
         />
         {node.pinned && (
@@ -799,7 +801,7 @@ function PinnedItem({
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
-            node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
+            (node.unread_count > 0 || hasReminder) && !isStreaming ? "font-semibold" : ""
           }`}
         />
         {hasReminder && (
