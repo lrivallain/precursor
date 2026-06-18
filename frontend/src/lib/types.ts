@@ -76,9 +76,39 @@ export interface TopicNode extends Topic {
   schedule: ScheduleSummary | null;
 }
 
+// A flat conversation session (no tree hierarchy, no GitHub link). Mirrors the
+// backend ChatRead schema.
+export interface Chat {
+  id: number;
+  slug: string;
+  title: string;
+  description: string | null;
+  pinned: boolean;
+  archived_at: string | null;
+  last_read_at: string | null;
+  unread_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatCreate {
+  title: string;
+  description?: string | null;
+  pinned?: boolean;
+  slug?: string | null;
+}
+
+export interface ChatUpdate {
+  title?: string;
+  description?: string | null;
+  pinned?: boolean;
+  slug?: string | null;
+}
+
 export interface Attachment {
   id: number;
-  topic_id: number;
+  topic_id?: number | null;
+  chat_id?: number | null;
   message_id: number | null;
   mime: string;
   size: number;
@@ -88,7 +118,8 @@ export interface Attachment {
 
 export interface Message {
   id: number;
-  topic_id: number;
+  topic_id: number | null;
+  chat_id?: number | null;
   role: MessageRole;
   content: string;
   tool_calls: string | null;

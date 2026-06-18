@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
@@ -17,7 +16,6 @@ import {
   GitBranch,
   Loader2,
   Pencil,
-  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -46,13 +44,6 @@ import type {
   WorkspaceChatMessage,
   WorkspaceFileNode,
 } from "../lib/types";
-
-interface Props {
-  routeSlug?: string | null;
-  routePath?: string | null;
-  onNavigate: (slug: string | null, filePath: string | null) => void;
-  onClose: () => void;
-}
 
 const TEXT_EXTS = [
   ".md",
@@ -87,149 +78,11 @@ function isHtml(name: string): boolean {
   return lower.endsWith(".html") || lower.endsWith(".htm");
 }
 
-export function WorkspacesPage({
-  routeSlug,
-  routePath,
-  onNavigate,
-  onClose,
-}: Props) {
-  const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
-
-  const loadWorkspaces = useCallback(async (): Promise<Workspace[]> => {
-    const list = await api.listWorkspaces();
-    setWorkspaces(list);
-    return list;
-  }, []);
-
-  useEffect(() => {
-    void loadWorkspaces().then((list) => {
-      if (list.length === 0) return;
-      // Honour a slug from the URL on first load, else fall back to the first.
-      const fromRoute = routeSlug
-        ? list.find((w) => w.slug === routeSlug)
-        : undefined;
-      setActiveWorkspaceId((id) => id ?? fromRoute?.id ?? list[0].id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadWorkspaces]);
-
-  // React to back/forward navigation that changes the slug in the URL.
-  useEffect(() => {
-    if (!routeSlug || !workspaces) return;
-    const match = workspaces.find((w) => w.slug === routeSlug);
-    if (match && match.id !== activeWorkspaceId) setActiveWorkspaceId(match.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeSlug, workspaces]);
-
-  const activeWorkspace = useMemo(
-    () => workspaces?.find((w) => w.id === activeWorkspaceId) ?? null,
-    [workspaces, activeWorkspaceId],
-  );
-
-  function selectWorkspace(id: number): void {
-    setActiveWorkspaceId(id);
-    const ws = workspaces?.find((w) => w.id === id) ?? null;
-    onNavigate(ws?.slug ?? null, null);
-  }
-
-  // The route path only applies to the workspace named in the URL.
-  const initialPath =
-    activeWorkspace && activeWorkspace.slug === routeSlug ? routePath ?? null : null;
-
-  return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-bg text-text">
-      <header className="flex items-center gap-3 px-4 h-12 border-b border-border shrink-0">
-        <button
-          className="p-2 rounded hover:bg-surface"
-          aria-label="Back to chat"
-          data-tooltip="Back to chat"
-          onClick={onClose}
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <span className="font-medium">Workspaces</span>
-        {workspaces && workspaces.length > 0 && (
-          <select
-            className="ml-2 bg-surface border border-border rounded px-2 py-1 text-sm max-w-[16rem]"
-            value={activeWorkspaceId ?? ""}
-            onChange={(e) => selectWorkspace(Number(e.target.value))}
-          >
-            {workspaces.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
-          </select>
-        )}
-        <div className="flex-1" />
-        <button
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-accent text-white text-sm hover:opacity-90"
-          onClick={() => setShowCreate(true)}
-        >
-          <Plus size={16} /> New workspace
-        </button>
-      </header>
-
-      <div className="flex-1 min-h-0">
-        {workspaces === null ? (
-          <div className="h-full flex items-center justify-center text-muted">
-            <Loader2 className="animate-spin" size={20} />
-          </div>
-        ) : activeWorkspace ? (
-          <WorkspaceView
-            key={activeWorkspace.id}
-            workspace={activeWorkspace}
-            initialPath={initialPath}
-            onPathChange={(p) => onNavigate(activeWorkspace.slug, p)}
-            onDeleted={async () => {
-              const list = await loadWorkspaces();
-              const next = list[0] ?? null;
-              setActiveWorkspaceId(next?.id ?? null);
-              onNavigate(next?.slug ?? null, null);
-            }}
-          />
-        ) : (
-          <EmptyState onCreate={() => setShowCreate(true)} />
-        )}
-      </div>
-
-      {showCreate && (
-        <CreateWorkspaceModal
-          onClose={() => setShowCreate(false)}
-          onCreated={async (workspace) => {
-            setShowCreate(false);
-            await loadWorkspaces();
-            setActiveWorkspaceId(workspace.id);
-            onNavigate(workspace.slug, null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function EmptyState({ onCreate }: { onCreate: () => void }) {
-  return (
-    <div className="h-full flex flex-col items-center justify-center gap-3 text-muted">
-      <FileText size={40} className="opacity-60" />
-      <p>No workspaces yet.</p>
-      <button
-        className="inline-flex items-center gap-1.5 px-3 py-2 rounded bg-accent text-white text-sm hover:opacity-90"
-        onClick={onCreate}
-      >
-        <Plus size={16} /> Connect a repository
-      </button>
-    </div>
-  );
-}
-
 // --------------------------------------------------------------------------
 // Workspace: file tree + editor + chat for one workspace
 // --------------------------------------------------------------------------
 
-function WorkspaceView({
+export function WorkspaceView({
   workspace,
   initialPath,
   onPathChange,
@@ -1542,7 +1395,7 @@ function ChatTurn({
 // Create-workspace modal
 // --------------------------------------------------------------------------
 
-function CreateWorkspaceModal({
+export function CreateWorkspaceModal({
   onClose,
   onCreated,
 }: {

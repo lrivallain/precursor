@@ -1,6 +1,9 @@
 import type {
   AppVersion,
   Attachment,
+  Chat,
+  ChatCreate,
+  ChatUpdate,
   CommentDraft,
   CommentPostResult,
   GhCloseResult,
@@ -80,6 +83,51 @@ export const api = {
   unarchiveTopic: (id: number) =>
     request<Topic>(`/api/topics/${id}/unarchive`, { method: "POST" }),
 
+  // Chats (flat conversation sessions — no tree, no GitHub link)
+  listChats: (q?: string) =>
+    request<Chat[]>(`/api/chats${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  listArchivedChats: () => request<Chat[]>(`/api/chats/archived`),
+  getChat: (id: number) => request<Chat>(`/api/chats/${id}`),
+  getChatBySlug: (slug: string) =>
+    request<Chat>(`/api/chats/by-slug/${encodeURIComponent(slug)}`),
+  createChat: (data: ChatCreate) =>
+    request<Chat>(`/api/chats`, { method: "POST", body: JSON.stringify(data) }),
+  updateChat: (id: number, data: ChatUpdate) =>
+    request<Chat>(`/api/chats/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteChat: (id: number) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
+  markChatRead: (id: number) => request<void>(`/api/chats/${id}/read`, { method: "POST" }),
+  archiveChat: (id: number) =>
+    request<Chat>(`/api/chats/${id}/archive`, { method: "POST" }),
+  unarchiveChat: (id: number) =>
+    request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
+  // Promote a flat chat into a full topic (moves the transcript over).
+  promoteChat: (id: number) =>
+    request<Topic>(`/api/chats/${id}/promote`, { method: "POST" }),
+
+  // Chat messages (mirror topic message endpoints)
+  listChatMessages: (chatId: number) =>
+    request<Message[]>(`/api/chats/${chatId}/messages`),
+  clearChatMessages: (chatId: number) =>
+    request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
+  deleteChatMessage: (chatId: number, messageId: number) =>
+    request<void>(`/api/chats/${chatId}/messages/${messageId}`, { method: "DELETE" }),
+  saveStoppedChatMessage: (chatId: number, content: string) =>
+    request<Message>(`/api/chats/${chatId}/messages/stopped`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
+  // /notes for chats (no GitHub comment option)
+  rephraseChatNotes: (chatId: number, text: string, instruction?: string) =>
+    request<{ text: string }>(`/api/chats/${chatId}/messages/notes/rephrase`, {
+      method: "POST",
+      body: JSON.stringify({ text, instruction: instruction ?? null }),
+    }),
+  appendChatNotes: (chatId: number, text: string) =>
+    request<{ message: Message }>(`/api/chats/${chatId}/messages/notes/append`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+
   // Schedules (recurring automation topics). Keyed by topic id.
   getSchedule: (topicId: number) =>
     request<Schedule>(`/api/schedules/${topicId}`),
@@ -119,6 +167,20 @@ export const api = {
     const form = new FormData();
     form.append("file", file, file.name);
     const res = await fetch(`/api/topics/${topicId}/attachments`, {
+      method: "POST",
+      headers: { "X-Client-Id": CLIENT_ID },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return (await res.json()) as Attachment;
+  },
+  uploadChatAttachment: async (chatId: number, file: File): Promise<Attachment> => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`/api/chats/${chatId}/attachments`, {
       method: "POST",
       headers: { "X-Client-Id": CLIENT_ID },
       body: form,

@@ -1,8 +1,13 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsRight,
   Clock,
+  FolderGit2,
+  MessageSquare,
+  MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
@@ -13,22 +18,35 @@ import {
 import type { TopicNode } from "../lib/types";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
+import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
+import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
+
+export type SidebarMode = "topics" | "chats" | "workspaces";
 
 interface Props {
   tree: TopicNode[];
   activeId: number | null;
   streamingTopicIds: number[];
   collapsed: boolean;
+  mode: SidebarMode;
+  onModeChange: (mode: SidebarMode) => void;
+  /** Rendered in the body when mode === "chats" (the chat list). */
+  chatSlot?: ReactNode;
+  /** Rendered in the body when mode === "workspaces" (the workspace list). */
+  workspaceSlot?: ReactNode;
   onToggleCollapsed: () => void;
   onSelect: (id: number) => void;
+  /** Mode-aware "New" action (topic / chat / workspace) in the header. */
+  onNew: () => void;
   onCreate: (parentId: number | null) => void;
+  /** Inline rename of a topic (double-click its name in the tree). */
+  onRename: (id: number, title: string) => void | Promise<void>;
   onCreateSchedule: () => void;
   onEditSchedule: (topicId: number) => void;
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
-  onOpenWorkspaces: () => void;
 }
 
 export function Sidebar({
@@ -36,18 +54,25 @@ export function Sidebar({
   activeId,
   streamingTopicIds,
   collapsed,
+  mode,
+  onModeChange,
+  chatSlot,
+  workspaceSlot,
   onToggleCollapsed,
   onSelect,
+  onNew,
   onCreate,
+  onRename,
   onCreateSchedule,
   onEditSchedule,
   onOpenGlobalSettings,
   onOpenArchive,
-  onOpenWorkspaces,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
-  const { collapsedSections, toggleSection } = useCollapsedSections();
+  const { collapsed: collapsedSections, toggle: toggleSection } = useCollapsedSections(
+    "precursor:sidebar:collapsedSections",
+  );
   const { width, onMouseDown: onResizeStart } = useResizableWidth({
     storageKey: "precursor:sidebar:width",
     defaultWidth: 288,
@@ -86,16 +111,46 @@ export function Sidebar({
         >
           <PanelLeftOpen size={18} />
         </button>
+        <div className="my-1 h-px w-6 bg-border" />
+        <button
+          className={`p-2 rounded ${mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Topics"
+          data-tooltip="Topics"
+          onClick={() => onModeChange("topics")}
+        >
+          <MessagesSquare size={18} />
+        </button>
+        <button
+          className={`p-2 rounded ${mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Chats"
+          data-tooltip="Chats"
+          onClick={() => onModeChange("chats")}
+        >
+          <MessageSquare size={18} />
+        </button>
+        <button
+          className={`p-2 rounded ${mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Workspaces"
+          data-tooltip="Workspaces"
+          onClick={() => onModeChange("workspaces")}
+        >
+          <FolderGit2 size={18} />
+        </button>
+        <div className="my-1 h-px w-6 bg-border" />
         <button
           className="p-2 rounded hover:bg-surface"
-          aria-label="New topic"
-          data-tooltip="New topic"
-          onClick={() => onCreate(null)}
+          aria-label={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          data-tooltip={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          onClick={onNew}
         >
           <Plus size={18} />
         </button>
         <div className="flex-1" />
-        <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} onOpenWorkspaces={onOpenWorkspaces} />
+        <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </aside>
     );
   }
@@ -118,20 +173,26 @@ export function Sidebar({
         <div className="flex-1 font-semibold tracking-tight">Precursor</div>
         <button
           className="p-1.5 rounded hover:bg-surface"
-          aria-label="New topic"
-          data-tooltip="New topic"
-          onClick={() => onCreate(null)}
+          aria-label={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          data-tooltip={
+            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
+          }
+          onClick={onNew}
         >
           <Plus size={16} />
         </button>
-        <button
-          className="p-1.5 rounded hover:bg-surface"
-          aria-label="New scheduled topic"
-          data-tooltip="New scheduled topic"
-          onClick={onCreateSchedule}
-        >
-          <Clock size={16} />
-        </button>
+        {mode === "topics" && (
+          <button
+            className="p-1.5 rounded hover:bg-surface"
+            aria-label="New scheduled topic"
+            data-tooltip="New scheduled topic"
+            onClick={onCreateSchedule}
+          >
+            <Clock size={16} />
+          </button>
+        )}
         <button
           className="p-1.5 rounded hover:bg-surface"
           aria-label="Collapse sidebar"
@@ -142,25 +203,36 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="px-3 py-2 border-b border-border">
-        <div className="relative">
-          <Search
-            size={14}
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
-          />
-          <input
-            type="search"
-            placeholder="Search topics..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full pl-7 pr-2 py-1.5 text-sm bg-surface border border-border rounded outline-none focus:border-accent"
-          />
-        </div>
-      </div>
+      {/* Mode switcher: Topics ⟷ Chats ⟷ Files. Persona + settings stay
+          visible at the bottom of the sidebar across every mode. When the
+          sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
+      <ModeSwitcher mode={mode} onModeChange={onModeChange} />
 
-      <div className="flex-1 overflow-y-auto p-2">
-        {pinned.length > 0 && (
-          <div className="mb-2">
+      {mode === "chats" ? (
+        chatSlot
+      ) : mode === "workspaces" ? (
+        workspaceSlot
+      ) : (
+        <>
+          <div className="px-3 py-2 border-b border-border">
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+              />
+              <input
+                type="search"
+                placeholder="Search topics..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full pl-7 pr-2 py-1.5 text-sm bg-surface border border-border rounded outline-none focus:border-accent"
+              />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2">
+            {pinned.length > 0 && (
+              <div className="mb-2">
             <SectionHeader
               icon={<Pin size={11} />}
               label="Pinned"
@@ -176,6 +248,7 @@ export function Sidebar({
                     activeId={activeId}
                     streamingTopicIds={streamingTopicIds}
                     onSelect={onSelect}
+                    onRename={onRename}
                   />
                 ))}
               </ul>
@@ -205,6 +278,7 @@ export function Sidebar({
                     onSelect={onSelect}
                     onCreate={onCreate}
                     onEditSchedule={onEditSchedule}
+                    onRename={onRename}
                   />
                 ))}
               </ul>
@@ -228,14 +302,17 @@ export function Sidebar({
                 onSelect={onSelect}
                 onCreate={onCreate}
                 onEditSchedule={onEditSchedule}
+                onRename={onRename}
               />
             ))}
           </ul>
         )}
       </div>
+        </>
+      )}
 
       <div className="border-t border-border px-2 py-2">
-        <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} onOpenWorkspaces={onOpenWorkspaces} />
+        <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </div>
     </aside>
   );
@@ -251,6 +328,7 @@ interface ItemProps {
   onSelect: (id: number) => void;
   onCreate: (parentId: number | null) => void;
   onEditSchedule: (topicId: number) => void;
+  onRename: (id: number, title: string) => void | Promise<void>;
 }
 
 function TopicItem({
@@ -263,6 +341,7 @@ function TopicItem({
   onSelect,
   onCreate,
   onEditSchedule,
+  onRename,
 }: ItemProps) {
   const open = !collapsedIds.has(node.id);
   const isActive = node.id === activeId;
@@ -279,6 +358,7 @@ function TopicItem({
           isActive ? "bg-surface text-text" : "hover:bg-surface text-text/90"
         }`}
         style={{ paddingLeft: 6 + depth * 12 }}
+        onClick={() => onSelect(node.id)}
       >
         {isScheduled ? (
           <span
@@ -312,14 +392,13 @@ function TopicItem({
             )}
           </button>
         )}
-        <span
+        <InlineTitle
+          title={node.title}
+          onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
             node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
           } ${scheduleDisabled ? "text-muted" : ""}`}
-          onClick={() => onSelect(node.id)}
-        >
-          {node.title}
-        </span>
+        />
         {node.pinned && (
           <Pin
             size={11}
@@ -381,6 +460,7 @@ function TopicItem({
               onSelect={onSelect}
               onCreate={onCreate}
               onEditSchedule={onEditSchedule}
+              onRename={onRename}
             />
           ))}
         </ul>
@@ -446,51 +526,6 @@ function useCollapsedTopics() {
   return { collapsedIds, toggleCollapsed };
 }
 
-const COLLAPSED_SECTIONS_KEY = "precursor:sidebar:collapsedSections";
-
-type SectionKey = "pinned" | "scheduled";
-
-// Tracks which named sidebar sections (Pinned / Scheduled) are collapsed and
-// persists the collapsed set so the choice survives reloads.
-function useCollapsedSections() {
-  const [collapsed, setCollapsed] = useState<Set<SectionKey>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.localStorage.getItem(COLLAPSED_SECTIONS_KEY);
-      if (!raw) return new Set();
-      const keys = JSON.parse(raw) as unknown;
-      if (!Array.isArray(keys)) return new Set();
-      return new Set(
-        keys.filter(
-          (k): k is SectionKey => k === "pinned" || k === "scheduled",
-        ),
-      );
-    } catch {
-      return new Set();
-    }
-  });
-
-  const toggleSection = useCallback((key: SectionKey) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(
-          COLLAPSED_SECTIONS_KEY,
-          JSON.stringify([...next]),
-        );
-      }
-      return next;
-    });
-  }, []);
-
-  return { collapsedSections: collapsed, toggleSection };
-}
-
 function filterTree(tree: TopicNode[], q: string): TopicNode[] {
   if (!q) return tree;
   const out: TopicNode[] = [];
@@ -533,30 +568,121 @@ function collectScheduled(tree: TopicNode[]): TopicNode[] {
   return out;
 }
 
-function SectionHeader({
-  icon,
-  label,
-  collapsed,
-  onToggle,
+const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
+  { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
+  { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
+  { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
+];
+
+// Responsive mode switcher: shows as many labelled mode buttons as fit, and
+// collapses the rest behind a ">>" popover when the sidebar is too narrow.
+function ModeSwitcher({
+  mode,
+  onModeChange,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  collapsed: boolean;
-  onToggle: () => void;
+  mode: SidebarMode;
+  onModeChange: (mode: SidebarMode) => void;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(MODES.length);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const MIN_BTN = 78; // px for a labelled mode button
+    const OVERFLOW_BTN = 36;
+    const compute = (): void => {
+      const w = el.clientWidth;
+      if (w <= 0) return;
+      if (Math.floor(w / MIN_BTN) >= MODES.length) {
+        setVisibleCount(MODES.length);
+        return;
+      }
+      const fit = Math.max(1, Math.floor((w - OVERFLOW_BTN) / MIN_BTN));
+      setVisibleCount(Math.min(MODES.length - 1, fit));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Close the overflow popover on outside click / Escape.
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const onDown = (e: MouseEvent): void => {
+      if (rowRef.current && !rowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setOverflowOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [overflowOpen]);
+
+  const visible = MODES.slice(0, visibleCount);
+  const overflow = MODES.slice(visibleCount);
+  const activeHidden = overflow.some((m) => m.mode === mode);
+
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={!collapsed}
-      className="group w-full flex items-center gap-1.5 px-2 py-1 text-[11px] uppercase tracking-wide text-muted hover:text-text"
-    >
-      <span className="text-muted group-hover:text-text">
-        {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-      </span>
-      {icon}
-      <span>{label}</span>
-    </button>
+    <div ref={rowRef} className="relative flex gap-1 px-2 py-2 border-b border-border">
+      {visible.map((m) => (
+        <button
+          key={m.mode}
+          className={`flex flex-1 min-w-0 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
+            mode === m.mode ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+          }`}
+          onClick={() => onModeChange(m.mode)}
+        >
+          {m.icon} <span className="truncate">{m.label}</span>
+        </button>
+      ))}
+      {overflow.length > 0 && (
+        <>
+          <button
+            className={`flex shrink-0 items-center justify-center rounded px-2 py-1.5 ${
+              activeHidden ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+            }`}
+            aria-label="More modes"
+            data-tooltip="More modes"
+            aria-haspopup="menu"
+            aria-expanded={overflowOpen}
+            onClick={() => setOverflowOpen((v) => !v)}
+          >
+            <ChevronsRight size={16} />
+          </button>
+          {overflowOpen && (
+            <div
+              role="menu"
+              className="absolute right-2 top-full z-40 mt-1 w-40 rounded-md border border-border bg-bg py-1 shadow-lg"
+            >
+              {overflow.map((m) => (
+                <button
+                  key={m.mode}
+                  role="menuitem"
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                    mode === m.mode ? "text-accent" : "hover:bg-surface"
+                  }`}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onModeChange(m.mode);
+                  }}
+                >
+                  {m.icon} {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -565,7 +691,9 @@ interface PinnedItemProps {
   activeId: number | null;
   streamingTopicIds: number[];
   onSelect: (id: number) => void;
-}function PinnedItem({ node, activeId, streamingTopicIds, onSelect }: PinnedItemProps) {
+  onRename: (id: number, title: string) => void | Promise<void>;
+}
+function PinnedItem({ node, activeId, streamingTopicIds, onSelect, onRename }: PinnedItemProps) {
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
   return (
@@ -577,13 +705,13 @@ interface PinnedItemProps {
         onClick={() => onSelect(node.id)}
       >
         <Pin size={12} className="text-muted shrink-0" />
-        <span
+        <InlineTitle
+          title={node.title}
+          onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
             node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
           }`}
-        >
-          {node.title}
-        </span>
+        />
         {isStreaming ? (
           <StreamingDots />
         ) : node.unread_count > 0 ? (

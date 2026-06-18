@@ -48,7 +48,7 @@ async def ensure_schedule_root(session: AsyncSession) -> Topic:
         return root
     root = Topic(
         title=SCHEDULE_ROOT_TITLE,
-        slug=await allocate_unique_slug(session, SCHEDULE_ROOT_SLUG),
+        slug=await allocate_unique_slug(session, SCHEDULE_ROOT_SLUG, Topic),
         kind="schedule_root",
     )
     session.add(root)
@@ -83,7 +83,7 @@ async def create_schedule(
     base = slugify(payload.title) or "scheduled-topic"
     topic = Topic(
         title=payload.title,
-        slug=await allocate_unique_slug(session, base),
+        slug=await allocate_unique_slug(session, base, Topic),
         kind="scheduled",
         parent_id=root.id,
     )

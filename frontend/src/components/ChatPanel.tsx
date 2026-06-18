@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, Paperclip, Send, StopCircle, X } from "lucide-react";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
-import { SlashCommandPicker } from "./SlashCommandPicker";
+import { Composer } from "./Composer";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { api } from "../lib/api";
 import {
@@ -14,7 +13,7 @@ import {
   type SlashCommand,
 } from "../lib/commands";
 import { skillsStore, useSkills } from "../lib/skillsStore";
-import { streamStore, useStreamVersion } from "../lib/streamStore";
+import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -127,7 +126,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
   const [draft, setDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
-  const [pickerIndex, setPickerIndex] = useState(0);
   // Attachments uploaded by the user but not yet bound to a sent message.
   // They live as orphan rows server-side until either /messages/stream binds
   // them, or the user removes them / leaves the topic (in which case we DELETE
@@ -135,14 +133,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
   // Messages the user removed but can still undo until the grace timer fires.
   // Each entry pairs the soft-deleted Message snapshot with a setTimeout id.
   const [pendingDeletes, setPendingDeletes] = useState<
     { message: Message; timer: number }[]
   >([]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<Attachment[]>([]);
   // Set while we handle a user-initiated Stop so the streaming→done effect
   // skips its own reload and lets stop() own the (post-persist) refresh.
@@ -159,10 +154,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     () => (issueAssociationsEnabled ? new Set<string>() : GITHUB_SLASH_COMMANDS),
     [issueAssociationsEnabled],
   );
-  const streaming = streamStore.isStreaming(topic.id);
-  const pendingContent = streamStore.pendingContent(topic.id);
-  const buffered = streamStore.bufferedMessages(topic.id);
-  const hasSession = streamStore.hasSession(topic.id);
+  const streamKey = convKey("topic", topic.id);
+  const streaming = streamStore.isStreaming(streamKey);
+  const pendingContent = streamStore.pendingContent(streamKey);
+  const buffered = streamStore.bufferedMessages(streamKey);
+  const hasSession = streamStore.hasSession(streamKey);
   const messages = useMemo<Message[]>(
     () => (hasSession ? [...persisted, ...buffered] : persisted),
     [persisted, buffered, hasSession],
@@ -240,11 +236,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     () => matchSlashCommands(draft, skillCommands, excludedCommands) ?? [],
     [draft, skillCommands, excludedCommands],
   );
-  const pickerOpen = suggestions.length > 0;
-
-  useEffect(() => {
-    setPickerIndex(0);
-  }, [draft]);
 
   useEffect(() => {
     historyIndexRef.current = null;
@@ -354,10 +345,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
       // If we just switched into a topic whose session has already finished,
       // drop the buffered copy now that we have the canonical server state.
       if (
-        streamStore.hasSession(topic.id) &&
-        !streamStore.isStreaming(topic.id)
+        streamStore.hasSession(streamKey) &&
+        !streamStore.isStreaming(streamKey)
       ) {
-        streamStore.clear(topic.id);
+        streamStore.clear(streamKey);
       }
     })();
     return () => {
@@ -369,7 +360,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
   // refetch persisted messages and discard the buffered turn.
   const prevStreamingRef = useRef(streaming);
   useEffect(() => {
-    prevStreamingRef.current = streamStore.isStreaming(topic.id);
+    prevStreamingRef.current = streamStore.isStreaming(streamKey);
   }, [topic.id]);
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current;
@@ -385,7 +376,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
       const msgs = await api.listMessages(topic.id);
       if (cancelled) return;
       setPersisted(msgs);
-      streamStore.clear(topic.id);
+      streamStore.clear(streamKey);
       onTopicUpdated();
     })();
     return () => {
@@ -421,7 +412,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         setPendingAttachments([]);
         // Persist the literal slash command as the user message;
         // the LLM receives the expanded prompt for this turn only.
-        void streamStore.start(topic.id, content, expanded, atts);
+        void streamStore.start(streamKey, content, expanded, atts);
         return;
       }
     }
@@ -430,7 +421,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     const atts = pendingAttachments;
     setPendingAttachments([]);
     void streamStore.start(
-      topic.id,
+      streamKey,
       content || "(image attached)",
       undefined,
       atts,
@@ -443,9 +434,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     // once we disconnect — so we save the partial reply ourselves instead of
     // letting it vanish. stoppingRef suppresses the streaming→done effect's
     // reload so this handler owns the post-persist refresh.
-    const partial = streamStore.pendingContent(topic.id).trim();
+    const partial = streamStore.pendingContent(streamKey).trim();
     stoppingRef.current = true;
-    streamStore.stop(topic.id);
+    streamStore.stop(streamKey);
     void (async () => {
       try {
         if (partial) {
@@ -459,7 +450,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         } catch {
           // ignore — the topic may have changed underneath us
         }
-        streamStore.clear(topic.id);
+        streamStore.clear(streamKey);
         onTopicUpdated();
       }
     })();
@@ -601,7 +592,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
         setPendingNotes(null);
       } else if (action === "append-and-ask") {
         setPendingNotes(null);
-        void streamStore.start(topic.id, `**Notes**\n\n${text.trim()}`);
+        void streamStore.start(streamKey, `**Notes**\n\n${text.trim()}`);
       } else if (action === "post-comment") {
         const res = await api.postGhUpdate(topic.id, text);
         setPersisted((prev) => [...prev, res.message]);
@@ -743,13 +734,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     }
   }
 
-  function selectCommand(cmd: SlashCommand): void {
-    // Insert the command name + a trailing space so the picker dismisses
-    // and the user can start typing the argument immediately.
-    setDraft(`/${cmd.name} `);
-    textareaRef.current?.focus();
-  }
-
   return (
     <div className="h-full flex min-h-0">
       <div className="flex-1 flex flex-col min-h-0">
@@ -865,300 +849,30 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
               onCancel={() => setPendingCommand(null)}
             />
           )}
-          {(pendingAttachments.length > 0 ||
-            uploadingCount > 0 ||
-            attachmentError) && (
-            <div className="flex flex-wrap items-center gap-2">
-              {pendingAttachments.map((a) => (
-                <AttachmentChip
-                  key={a.id}
-                  attachment={a}
-                  onRemove={() => void removeAttachment(a.id)}
-                />
-              ))}
-              {uploadingCount > 0 && (
-                <span className="text-[11px] text-muted italic px-2 py-1">
-                  Uploading {uploadingCount}…
-                </span>
-              )}
-              {attachmentError && (
-                <span className="text-[11px] text-red-500 px-2 py-1">
-                  {attachmentError}
-                </span>
-              )}
-            </div>
-          )}
-          {speech.listening && (
-            <div className="flex items-start gap-2 text-[11px] text-muted px-1">
-              <span className="inline-block h-2 w-2 mt-1 shrink-0 rounded-full bg-red-500 animate-pulse" />
-              <span className="min-w-0 break-words max-h-20 overflow-y-auto">
-                Listening… {interimText && <span className="italic">{interimText}</span>}
-              </span>
-            </div>
-          )}
-          {speech.error && (
-            <div className="text-[11px] text-red-500 px-1">Dictation error: {speech.error}</div>
-          )}
-          <div
-            className={`relative flex items-end gap-2 ${
-              isDraggingFile
-                ? "ring-2 ring-accent/60 rounded-md"
-                : ""
-            }`}
-            onDragOver={(e) => {
-              if (e.dataTransfer.types.includes("Files")) {
-                e.preventDefault();
-                setIsDraggingFile(true);
-              }
+          <Composer
+            value={draft}
+            onChange={setDraft}
+            onSend={() => void send()}
+            onStop={stop}
+            streaming={streaming}
+            suggestions={suggestions}
+            userHistory={userHistory}
+            speech={speech}
+            interimText={interimText}
+            height={composerHeight}
+            onResizeStart={onComposerResize}
+            attachments={{
+              pending: pendingAttachments,
+              uploadingCount,
+              error: attachmentError,
+              onFiles: uploadFiles,
+              onRemove: removeAttachment,
             }}
-            onDragLeave={(e) => {
-              // Ignore drag-leave bubbling from inner children.
-              if (
-                !e.currentTarget.contains(e.relatedTarget as Node | null)
-              ) {
-                setIsDraggingFile(false);
-              }
-            }}
-            onDrop={(e) => {
-              if (e.dataTransfer.types.includes("Files")) {
-                e.preventDefault();
-                setIsDraggingFile(false);
-                void uploadFiles(e.dataTransfer.files);
-              }
-            }}
-          >
-            <div
-              role="separator"
-              aria-orientation="horizontal"
-              onMouseDown={onComposerResize}
-              title="Drag to resize"
-              className="absolute -top-2 left-0 right-0 h-2 cursor-row-resize group z-10"
-            >
-              <div className="h-px w-12 mx-auto mt-1 bg-border group-hover:bg-accent/60 transition-colors" />
-            </div>
-            {pickerOpen && (
-              <SlashCommandPicker
-                commands={suggestions}
-                activeIndex={pickerIndex}
-                onSelect={selectCommand}
-                onHover={setPickerIndex}
-              />
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files) void uploadFiles(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(e) => {
-                historyIndexRef.current = null;
-                setDraft(e.target.value);
-              }}
-              onPaste={(e) => {
-                const items = e.clipboardData?.items;
-                if (!items) return;
-                const files: File[] = [];
-                for (const it of items) {
-                  if (it.kind === "file") {
-                    const f = it.getAsFile();
-                    if (f && f.type.startsWith("image/")) files.push(f);
-                  }
-                }
-                if (files.length > 0) {
-                  e.preventDefault();
-                  void uploadFiles(files);
-                }
-              }}
-              onKeyDown={(e) => {
-                if (pickerOpen) {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setPickerIndex((i) => (i + 1) % suggestions.length);
-                    return;
-                  }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setPickerIndex(
-                      (i) => (i - 1 + suggestions.length) % suggestions.length,
-                    );
-                    return;
-                  }
-                  if (
-                    e.key === "Tab" ||
-                    (e.key === "Enter" && !e.shiftKey && !e.altKey)
-                  ) {
-                    e.preventDefault();
-                    selectCommand(suggestions[pickerIndex]);
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setDraft("");
-                    return;
-                  }
-                }
-                if (e.key === "ArrowUp" && userHistory.length > 0) {
-                  const ta = e.currentTarget;
-                  const caretAtTop =
-                    historyIndexRef.current !== null ||
-                    !ta.value.slice(0, ta.selectionStart).includes("\n");
-                  if (caretAtTop) {
-                    e.preventDefault();
-                    if (historyIndexRef.current === null) {
-                      originalDraftRef.current = draft;
-                      historyIndexRef.current = userHistory.length - 1;
-                    } else if (historyIndexRef.current > 0) {
-                      historyIndexRef.current -= 1;
-                    }
-                    setDraft(userHistory[historyIndexRef.current] ?? "");
-                    return;
-                  }
-                }
-                if (e.key === "ArrowDown" && historyIndexRef.current !== null) {
-                  const ta = e.currentTarget;
-                  const caretAtBottom = !ta.value
-                    .slice(ta.selectionStart)
-                    .includes("\n");
-                  if (caretAtBottom) {
-                    e.preventDefault();
-                    const next = historyIndexRef.current + 1;
-                    if (next >= userHistory.length) {
-                      historyIndexRef.current = null;
-                      setDraft(originalDraftRef.current);
-                    } else {
-                      historyIndexRef.current = next;
-                      setDraft(userHistory[next]);
-                    }
-                    return;
-                  }
-                }
-                if (e.key === "Enter") {
-                  if (e.altKey) {
-                    // Option/Alt+Enter inserts a newline at the caret.
-                    // Browsers don't do this natively for textareas, so we
-                    // insert manually and keep history navigation working.
-                    e.preventDefault();
-                    const ta = e.currentTarget;
-                    const start = ta.selectionStart;
-                    const end = ta.selectionEnd;
-                    const next =
-                      ta.value.slice(0, start) + "\n" + ta.value.slice(end);
-                    setDraft(next);
-                    requestAnimationFrame(() => {
-                      ta.selectionStart = ta.selectionEnd = start + 1;
-                    });
-                    historyIndexRef.current = null;
-                    return;
-                  }
-                  if (!e.shiftKey) {
-                    e.preventDefault();
-                    historyIndexRef.current = null;
-                    void send();
-                  }
-                  // Shift+Enter falls through to default textarea newline.
-                }
-              }}
-              placeholder="Type a message or /command... (Shift/Option+Enter for newline, ↑/↓ for history)"
-              style={{ height: composerHeight }}
-              className="flex-1 resize-none bg-surface border border-border rounded p-2 text-sm outline-none focus:border-accent"
-            />
-            <div
-              className={`flex gap-2 ${
-                composerHeight >= 96 ? "flex-col" : "flex-row items-end"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-2 py-2 rounded bg-surface border border-border text-muted hover:text-text hover:bg-bg"
-                aria-label="Attach image"
-                data-tooltip="Attach image (or paste / drop)"
-              >
-                <Paperclip size={18} />
-              </button>
-              {speech.supported && (
-                <button
-                  type="button"
-                  onClick={speech.toggle}
-                  className={`px-2 py-2 rounded border ${
-                    speech.listening
-                      ? "bg-red-600 border-red-600 text-white animate-pulse"
-                      : "bg-surface border-border text-muted hover:text-text hover:bg-bg"
-                  }`}
-                  aria-label={speech.listening ? "Stop dictation" : "Dictate"}
-                  aria-pressed={speech.listening}
-                  data-tooltip={
-                    speech.listening ? "Stop dictation" : "Dictate (Azure Speech)"
-                  }
-                >
-                  <Mic size={18} />
-                </button>
-              )}
-              {streaming ? (
-                <button
-                  onClick={stop}
-                  className="px-3 py-2 rounded bg-surface border border-border hover:bg-bg"
-                  aria-label="Stop generation"
-                  data-tooltip="Stop generation"
-                >
-                  <StopCircle size={18} />
-                </button>
-              ) : (
-                <button
-                  onClick={() => void send()}
-                  disabled={!draft.trim() && pendingAttachments.length === 0}
-                  className="px-3 py-2 rounded bg-accent text-white disabled:opacity-40"
-                  aria-label="Send"
-                  data-tooltip="Send (Enter)"
-                >
-                  <Send size={18} />
-                </button>
-              )}
-            </div>
-          </div>
+          />
         </div>
       </div>
       </div>
-      {showStats && <ChatStatsPanel topicId={topic.id} messages={messages} />}
-    </div>
-  );
-}
-
-function AttachmentChip({
-  attachment,
-  onRemove,
-}: {
-  attachment: Attachment;
-  onRemove: () => void;
-}) {
-  const label = attachment.original_filename || `image-${attachment.id}`;
-  return (
-    <div className="flex items-center gap-2 pl-1 pr-2 py-1 rounded border border-border bg-surface text-xs max-w-[14rem]">
-      <img
-        src={api.attachmentUrl(attachment.id)}
-        alt=""
-        className="w-8 h-8 rounded object-cover border border-border shrink-0"
-      />
-      <span className="truncate" title={label}>
-        {label}
-      </span>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="p-0.5 rounded text-muted hover:text-text hover:bg-bg shrink-0"
-        aria-label={`Remove ${label}`}
-        data-tooltip="Remove"
-      >
-        <X size={12} />
-      </button>
+      {showStats && <ChatStatsPanel streamKey={streamKey} messages={messages} />}
     </div>
   );
 }

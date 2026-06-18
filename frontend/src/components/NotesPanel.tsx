@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, MessageSquarePlus, NotebookPen, Send, Sparkles } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CommandPanel } from "./CommandPanel";
@@ -11,6 +11,8 @@ export type NotesAction =
 interface Props {
   /** True when the topic is linked to a GitHub issue (controls the post button). */
   hasIssue: boolean;
+  /** When false, the "Post as comment" (GitHub) action is hidden entirely (chats). */
+  allowPostComment?: boolean;
   /** True while a rephrase round-trip is in flight. */
   rephrasing: boolean;
   /** True while one of the terminal actions is in flight. */
@@ -29,6 +31,7 @@ interface Props {
 
 export function NotesPanel({
   hasIssue,
+  allowPostComment = true,
   rephrasing,
   acting,
   error,
@@ -39,12 +42,19 @@ export function NotesPanel({
 }: Props) {
   const [text, setText] = useState("");
 
-  // When the parent gives us a rebuilt version, swap it in.
-  if (rephrasedText !== undefined && rephrasedText !== text && !acting) {
-    // Setting state during render is fine here because the check above
-    // breaks the loop on the next render.
-    setText(rephrasedText);
-  }
+  // Apply an AI rephrase result exactly when a rephrase round-trip finishes
+  // (rephrasing: true → false), not on every render. Keying on that lifecycle
+  // instead of comparing against the live text means the user can freely edit
+  // the suggestion afterwards without their keystrokes snapping back to the
+  // AI version on the next render.
+  const prevRephrasingRef = useRef(rephrasing);
+  useEffect(() => {
+    const justFinished = prevRephrasingRef.current && !rephrasing;
+    prevRephrasingRef.current = rephrasing;
+    if (justFinished && !error && rephrasedText !== undefined) {
+      setText(rephrasedText);
+    }
+  }, [rephrasing, error, rephrasedText]);
 
   const empty = !text.trim();
   const busy = rephrasing || acting;
@@ -94,19 +104,21 @@ export function NotesPanel({
             <Send size={14} />
             Add &amp; ask AI
           </button>
-          <button
-            onClick={() => void onAction("post-comment", text)}
-            disabled={empty || busy || !hasIssue}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-accent text-white text-xs disabled:opacity-40"
-            title={
-              hasIssue
-                ? "Post the notes as a comment on the linked GitHub issue."
-                : "Link a GitHub issue to this topic to enable posting."
-            }
-          >
-            <Github size={14} />
-            Post as comment
-          </button>
+          {allowPostComment && (
+            <button
+              onClick={() => void onAction("post-comment", text)}
+              disabled={empty || busy || !hasIssue}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-accent text-white text-xs disabled:opacity-40"
+              title={
+                hasIssue
+                  ? "Post the notes as a comment on the linked GitHub issue."
+                  : "Link a GitHub issue to this topic to enable posting."
+              }
+            >
+              <Github size={14} />
+              Post as comment
+            </button>
+          )}
         </>
       }
     />

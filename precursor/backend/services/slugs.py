@@ -1,14 +1,18 @@
-"""Topic slug generation and uniqueness."""
+"""Topic and Chat slug generation and uniqueness."""
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import Topic
+
+if TYPE_CHECKING:
+    from precursor.backend.models import Chat
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _MAX_LEN = 80
@@ -28,24 +32,25 @@ def slugify(text: str) -> str:
     return s[:_MAX_LEN]
 
 
-async def allocate_unique_slug(
+async def allocate_unique_slug[T: (Topic, "Chat")](
     session: AsyncSession,
     base: str,
+    model: type[T],
     *,
     exclude_id: int | None = None,
 ) -> str:
     """Return a slug equal to `base`, or `base-2`, `base-3`, … if taken.
 
-    `exclude_id` lets a topic keep its current slug during an update.
+    `exclude_id` lets the model keep its current slug during an update.
     """
     if not base:
-        base = "topic"
+        base = "item"
     candidate = base
     n = 2
     while True:
-        stmt = select(Topic.id).where(Topic.slug == candidate)
+        stmt = select(model.id).where(model.slug == candidate)
         if exclude_id is not None:
-            stmt = stmt.where(Topic.id != exclude_id)
+            stmt = stmt.where(model.id != exclude_id)
         existing = (await session.execute(stmt)).first()
         if existing is None:
             return candidate

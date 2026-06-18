@@ -1,5 +1,10 @@
 """Pydantic request/response schemas."""
 
+from precursor.backend.schemas.chat import (
+    ChatCreate,
+    ChatRead,
+    ChatUpdate,
+)
 from precursor.backend.schemas.memory import (
     MemoryCreate,
     MemoryRead,
@@ -41,7 +46,10 @@ from precursor.backend.schemas.workspace import (
 
 __all__ = [
     "AttachmentRead",
+    "ChatCreate",
+    "ChatRead",
     "ChatRequest",
+    "ChatUpdate",
     "CommitRequest",
     "FileContent",
     "FileCreate",

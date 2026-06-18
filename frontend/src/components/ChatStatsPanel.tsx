@@ -6,7 +6,7 @@ import { modelsStore, useCurrentModel } from "../lib/modelsStore";
 import type { Message } from "../lib/types";
 
 interface ChatStatsPanelProps {
-  topicId: number;
+  streamKey: string;
   messages: Message[];
 }
 
@@ -81,7 +81,7 @@ function chars(messages: Message[]): number {
 
 const STORAGE_KEY = "precursor:chat-stats:collapsed";
 
-export function ChatStatsPanel({ topicId, messages }: ChatStatsPanelProps) {
+export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(STORAGE_KEY) === "1";
@@ -115,7 +115,7 @@ export function ChatStatsPanel({ topicId, messages }: ChatStatsPanelProps) {
   const totals = useMemo(() => computeTotals(messages), [messages]);
   const roles = useMemo(() => countByRole(messages), [messages]);
   const charCount = useMemo(() => chars(messages), [messages]);
-  const liveUsage = streamStore.lastUsage(topicId);
+  const liveUsage = streamStore.lastUsage(streamKey);
   const lastInput = liveUsage?.prompt_tokens ?? totals.lastPrompt;
   const lastOutput = liveUsage?.completion_tokens ?? totals.lastCompletion;
 

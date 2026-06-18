@@ -32,6 +32,7 @@ async def init_db() -> None:
     # Import models so they register with the metadata before create_all runs.
     from precursor.backend.models import (  # noqa: F401
         attachment,
+        chat,
         mcp_server,
         memory,
         message,
@@ -96,12 +97,105 @@ def _ensure_dev_columns(sync_conn: Connection) -> None:
             sync_conn.execute(
                 text("CREATE UNIQUE INDEX IF NOT EXISTS ix_topics_slug ON topics(slug)")
             )
-    if "messages" in inspector.get_table_names():
+    tables = set(inspector.get_table_names())
+    if "messages" in tables:
         cols = {c["name"] for c in inspector.get_columns("messages")}
-        if "prompt_tokens" not in cols:
-            sync_conn.execute(text("ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER"))
-        if "completion_tokens" not in cols:
-            sync_conn.execute(text("ALTER TABLE messages ADD COLUMN completion_tokens INTEGER"))
+        if "chat_id" not in cols:
+            # Chats reuse the messages table via a nullable chat_id (exactly one
+            # of topic_id / chat_id is set). Adding chat_id, dropping topic_id's
+            # NOT NULL, and adding the container CHECK all require recreating the
+            # table on SQLite — ALTER can't do them. Rebuild + copy existing rows.
+            _rebuild_messages_table(sync_conn, source="messages")
+        elif "_messages_old" in tables:
+            # Finish a rebuild that was interrupted (e.g. an index-name clash on
+            # a prior boot): the live rows are still stranded in _messages_old.
+            _rebuild_messages_table(sync_conn, source="_messages_old")
+        else:
+            if "prompt_tokens" not in cols:
+                sync_conn.execute(text("ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER"))
+            if "completion_tokens" not in cols:
+                sync_conn.execute(text("ALTER TABLE messages ADD COLUMN completion_tokens INTEGER"))
+
+    tables = set(inspector.get_table_names())
+    if "attachments" in tables:
+        cols = {c["name"] for c in inspector.get_columns("attachments")}
+        if "chat_id" not in cols:
+            # Attachments gained chat support the same way messages did: a
+            # nullable chat_id, topic_id relaxed to nullable, and a container
+            # CHECK. SQLite can't ALTER those in place, so rebuild + copy.
+            _rebuild_attachments_table(sync_conn, source="attachments")
+        elif "_attachments_old" in tables:
+            _rebuild_attachments_table(sync_conn, source="_attachments_old")
+
+
+def _rebuild_messages_table(sync_conn: Connection, *, source: str) -> None:
+    """Recreate ``messages`` with the current model schema, copying rows over.
+
+    Dev-only. SQLite can't ALTER a column's nullability or add a CHECK in place,
+    so we rebuild the table. ``source`` is the table holding the live rows —
+    ``messages`` for a first run, or ``_messages_old`` when resuming a rebuild
+    that a previous boot left half-finished. Renamed tables keep their old index
+    names, so we drop those first to avoid a clash when the fresh table and its
+    indexes are created.
+    """
+    from precursor.backend.models.message import Message
+
+    _rebuild_table(sync_conn, Message.__table__, source=source)
+
+
+def _rebuild_attachments_table(sync_conn: Connection, *, source: str) -> None:
+    """Recreate ``attachments`` with the current model schema, copying rows over.
+
+    Dev-only twin of :func:`_rebuild_messages_table` — see its docstring for the
+    rebuild rationale. ``source`` is ``attachments`` on a first run or
+    ``_attachments_old`` when resuming an interrupted rebuild.
+    """
+    from precursor.backend.models.attachment import Attachment
+
+    _rebuild_table(sync_conn, Attachment.__table__, source=source)
+
+
+def _rebuild_table(sync_conn: Connection, model_table: object, *, source: str) -> None:
+    """Rebuild ``model_table``'s table from ``source``, carrying common columns."""
+    from sqlalchemy import Table, inspect, text
+
+    assert isinstance(model_table, Table)
+    table = model_table.name
+    old = f"_{table}_old"
+
+    sync_conn.execute(text("PRAGMA foreign_keys=OFF"))
+    if source == table:
+        sync_conn.execute(text(f"ALTER TABLE {table} RENAME TO {old}"))
+    else:
+        # Resuming: drop the empty half-built table so create() can run clean.
+        sync_conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+
+    _drop_user_indexes(sync_conn, old)
+    model_table.create(sync_conn)
+
+    old_cols = {c["name"] for c in inspect(sync_conn).get_columns(old)}
+    new_cols = {c.name for c in model_table.columns}
+    carry = ", ".join(c for c in old_cols if c in new_cols)
+    sync_conn.execute(text(f"INSERT INTO {table} ({carry}) SELECT {carry} FROM {old}"))
+    sync_conn.execute(text(f"DROP TABLE {old}"))
+    sync_conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _drop_user_indexes(sync_conn: Connection, table: str) -> None:
+    """Drop the explicit (non-constraint) indexes attached to ``table``."""
+    from sqlalchemy import text
+
+    # ``sql IS NOT NULL`` skips auto indexes backing UNIQUE/PK constraints,
+    # which can't be dropped directly.
+    rows = sync_conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'index' AND tbl_name = :t AND sql IS NOT NULL"
+        ),
+        {"t": table},
+    ).fetchall()
+    for (name,) in rows:
+        sync_conn.execute(text(f'DROP INDEX IF EXISTS "{name}"'))
 
 
 @asynccontextmanager

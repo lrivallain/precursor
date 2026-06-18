@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Attachment, Topic
+from precursor.backend.models import Attachment, Chat, Topic
 from precursor.backend.schemas import AttachmentRead
 
 logger = logging.getLogger(__name__)
@@ -26,19 +26,8 @@ MAX_BYTES = 8 * 1024 * 1024  # 8 MB
 ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
 
 
-@router.post(
-    "/api/topics/{topic_id}/attachments",
-    response_model=AttachmentRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def upload_attachment(
-    topic_id: int,
-    file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_session),
-) -> Attachment:
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-
+async def _read_validated_image(file: UploadFile) -> tuple[str, bytes]:
+    """Validate an uploaded image's MIME + size and return ``(mime, data)``."""
     mime = (file.content_type or "").lower().split(";", 1)[0].strip()
     if mime not in ALLOWED_MIMES:
         raise HTTPException(
@@ -54,9 +43,55 @@ async def upload_attachment(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             f"File too large (max {MAX_BYTES // (1024 * 1024)} MB).",
         )
+    return mime, data
+
+
+@router.post(
+    "/api/topics/{topic_id}/attachments",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_attachment(
+    topic_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> Attachment:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+
+    mime, data = await _read_validated_image(file)
 
     att = Attachment(
         topic_id=topic_id,
+        message_id=None,
+        mime=mime,
+        size=len(data),
+        original_filename=(file.filename or "")[:255],
+        data=data,
+    )
+    session.add(att)
+    await session.commit()
+    await session.refresh(att)
+    return att
+
+
+@router.post(
+    "/api/chats/{chat_id}/attachments",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_chat_attachment(
+    chat_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> Attachment:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+
+    mime, data = await _read_validated_image(file)
+
+    att = Attachment(
+        chat_id=chat_id,
         message_id=None,
         mime=mime,
         size=len(data),
