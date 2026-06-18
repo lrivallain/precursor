@@ -24,6 +24,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   endpoints under `/api/chats/*`, `/api/chats/{id}/messages/*` (incl. `/notes`
   and `/promote`); the topic streaming generator and the stream store were both
   refactored to be container-agnostic so chats and topics share one code path.
+- Chats now support **image attachments** as well (paperclip, drag-and-drop, or
+  paste), matching topics — uploaded images are bound to the turn and sent to
+  vision-capable models. Both message composers were unified into one shared
+  `Composer` component, so topics and chats stay in lock-step.
 - Browser notifications when an assistant turn finishes (including scheduled
   tasks) while the Precursor window isn't focused — opt-in via Settings → Chat →
   Notifications (asks for browser permission on enable). The number of unread
@@ -116,6 +120,8 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   apply the same config in their entrypoints, so their `mcp.server` logs share
   the format instead of FastMCP's timestamp-less default; routine `mcp.client`
   connection chatter (session IDs, protocol negotiation) is quieted to WARNING.
+- The topic header's GitHub status icon is now struck through with a red
+  diagonal when no issue is linked, so the unlinked state reads at a glance.
 
 ### Fixed
 
@@ -123,6 +129,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   Speech SDK's `close()` alone left the OS mic indicator on; Precursor now owns
   the mic `MediaStream` (via `getUserMedia` + `fromStreamInput`) and stops its
   tracks on teardown.
+- The `/notes` panel no longer reverts your manual edits after **Rephrase with
+  AI**. The rebuilt text was re-applied on every render, so each keystroke
+  snapped back to the AI version and the field looked frozen; the suggestion is
+  now applied once, when the rephrase returns, leaving it editable.
 - Chat errors (provider rejections, the tool-round cap, …) now **stay in the
   transcript** instead of flashing for a few seconds and vanishing. They were
   only added to the transient stream buffer, which was discarded when the
