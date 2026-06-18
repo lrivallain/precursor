@@ -21,7 +21,6 @@ import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ResizeHandle } from "./ResizeHandle";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
-import { formatDateTime } from "../lib/datetime";
 import type { Attachment, Message, Reminder, Topic } from "../lib/types";
 
 interface ChatPanelProps {
@@ -528,16 +527,21 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
   }
 
-  // Apply a modal save: update local state and confirm in the transcript so
-  // the user sees the scheduled date/time (or that it was cleared).
+  // Re-fetch the persisted transcript (the backend records reminder set/clear
+  // confirmations as system messages, and our own SSE echo is suppressed).
+  async function reloadPersisted(): Promise<void> {
+    try {
+      setPersisted(await api.listMessages(topic.id));
+    } catch {
+      // keep what we have
+    }
+  }
+
+  // Apply a modal save: update local state and pull in the confirmation the
+  // backend just appended to the transcript.
   function handleReminderSaved(saved: Reminder | null): void {
     setReminder(saved);
-    if (saved) {
-      const note = (saved.note ?? "").trim();
-      systemNote(
-        `⏰ Reminder set for ${formatDateTime(saved.remind_at)}${note ? ` — ${note}` : ""}.`,
-      );
-    }
+    void reloadPersisted();
     onRemindersChanged?.();
   }
 
@@ -556,7 +560,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     try {
       await api.clearReminder("topic", topic.id);
       setReminder(null);
-      systemNote(requireFired ? "✅ Reminder marked done." : "🗑️ Reminder cancelled.");
+      await reloadPersisted();
       onRemindersChanged?.();
     } catch (err) {
       systemNote(`Reminder update failed: ${(err as Error).message}`);

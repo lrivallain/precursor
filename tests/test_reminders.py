@@ -45,6 +45,13 @@ def test_reminder_lifecycle_shared_across_containers(container: str) -> None:
         assert r.status_code == 200
         assert r.json()["status"] == "scheduled"
 
+        def messages() -> list[dict[str, object]]:
+            path = f"/api/topics/{cid}/messages" if container == "topic" else f"/api/chats/{cid}/messages"
+            return client.get(path).json()
+
+        # Setting persists a confirmation in the transcript (survives reloads).
+        assert any("Reminder set for" in m["content"] for m in messages())
+
         # Setting again replaces (still one reminder per container).
         r = client.put(
             f"/api/reminders/{container}/{cid}",
@@ -63,12 +70,8 @@ def test_reminder_lifecycle_shared_across_containers(container: str) -> None:
         assert item["status"] == "fired"
         assert item["title"].startswith("Remind me")
 
-        # A system message was posted to the discussion.
-        if container == "topic":
-            msgs = client.get(f"/api/topics/{cid}/messages").json()
-        else:
-            msgs = client.get(f"/api/chats/{cid}/messages").json()
-        assert any("Reminder" in m["content"] for m in msgs)
+        # The fired reminder posted its own system message.
+        assert any(m["content"].startswith("⏰ Reminder:") for m in messages())
 
         # Firing marks the conversation unread, even though it was never opened.
         if container == "topic":
@@ -80,8 +83,9 @@ def test_reminder_lifecycle_shared_across_containers(container: str) -> None:
             chat = next(c for c in chats if c["id"] == cid)
             assert chat["unread_count"] >= 1
 
-        # Acknowledge ("/done") — removes it.
+        # Acknowledge ("/done") — removes it and records a "done" note.
         assert client.delete(f"/api/reminders/{container}/{cid}").status_code == 204
+        assert any("marked done" in m["content"] for m in messages())
         assert client.get("/api/reminders").json() == []
         # Acknowledging again is a 404 (nothing left).
         assert client.delete(f"/api/reminders/{container}/{cid}").status_code == 404

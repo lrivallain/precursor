@@ -40,6 +40,40 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _container_ids(container: ContainerKind, container_id: int) -> tuple[int | None, int | None]:
+    """Map (container, id) onto the (topic_id, chat_id) pair used by the models."""
+    return (
+        container_id if container == "topic" else None,
+        container_id if container == "chat" else None,
+    )
+
+
+def _format_when(remind_at: datetime) -> str:
+    """Render a reminder time in the server's local zone (local-first app)."""
+    local = remind_at.astimezone()
+    return local.strftime("%a %b %d, %Y %H:%M")
+
+
+def _post_system_message(
+    session: AsyncSession, *, topic_id: int | None, chat_id: int | None, content: str
+) -> None:
+    session.add(
+        Message(
+            topic_id=topic_id,
+            chat_id=chat_id,
+            role=MessageRole.SYSTEM,
+            content=content,
+        )
+    )
+
+
+async def _publish_message_changed(topic_id: int | None, chat_id: int | None) -> None:
+    if topic_id is not None:
+        await publish_message_changed(topic_id)
+    elif chat_id is not None:
+        await publish_message_changed_chat(chat_id)
+
+
 def _filter(container: ContainerKind, container_id: int):  # type: ignore[no-untyped-def]
     col = Reminder.topic_id if container == "topic" else Reminder.chat_id
     return col == container_id
@@ -70,17 +104,24 @@ async def set_reminder(
     """Create or replace the reminder for a container, then schedule it."""
     reminder = await get_reminder(session, container, container_id)
     if reminder is None:
-        reminder = Reminder(
-            topic_id=container_id if container == "topic" else None,
-            chat_id=container_id if container == "chat" else None,
-        )
+        topic_id, chat_id = _container_ids(container, container_id)
+        reminder = Reminder(topic_id=topic_id, chat_id=chat_id)
         session.add(reminder)
     reminder.remind_at = remind_at
     reminder.note = note
     reminder.status = "scheduled"
     reminder.fired_at = None
+    # Persist a confirmation in the transcript so it survives reloads.
+    body = (note or "").strip()
+    confirmation = f"⏰ Reminder set for {_format_when(remind_at)}"
+    if body:
+        confirmation += f" — {body}"
+    _post_system_message(
+        session, topic_id=reminder.topic_id, chat_id=reminder.chat_id, content=confirmation
+    )
     await session.commit()
     await session.refresh(reminder)
+    await _publish_message_changed(reminder.topic_id, reminder.chat_id)
     await publish_reminder_changed(
         topic_id=reminder.topic_id, chat_id=reminder.chat_id
     )
@@ -95,8 +136,13 @@ async def delete_reminder(
     if reminder is None:
         return False
     topic_id, chat_id = reminder.topic_id, reminder.chat_id
+    # The same DELETE backs both /done (a fired reminder) and /reminder-cancel
+    # (a pending one); word the persisted note to match.
+    note = "✅ Reminder marked done." if reminder.status == "fired" else "🗑️ Reminder cancelled."
     await session.delete(reminder)
+    _post_system_message(session, topic_id=topic_id, chat_id=chat_id, content=note)
     await session.commit()
+    await _publish_message_changed(topic_id, chat_id)
     await publish_reminder_changed(topic_id=topic_id, chat_id=chat_id)
     return True
 
