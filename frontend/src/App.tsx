@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
@@ -156,6 +156,21 @@ export default function App() {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   // Ids already seen as fired, so we only notify on newly-fired ones.
   const seenFiredRef = useRef<Set<number>>(new Set());
+  // Conversations with a fired reminder, so their list rows can flag it.
+  const reminderTopicIds = useMemo(
+    () =>
+      new Set(
+        reminders.filter((r) => r.container === "topic" && r.topic_id != null).map((r) => r.topic_id!),
+      ),
+    [reminders],
+  );
+  const reminderChatIds = useMemo(
+    () =>
+      new Set(
+        reminders.filter((r) => r.container === "chat" && r.chat_id != null).map((r) => r.chat_id!),
+      ),
+    [reminders],
+  );
 
   useStreamVersion();
   const streamingTopicIds = streamStore.streamingIds("topic");
@@ -641,6 +656,7 @@ export default function App() {
             activeId={activeChat?.id ?? null}
             reloadKey={chatListReloadKey}
             streamingIds={streamingChatIds}
+            reminderChatIds={reminderChatIds}
             onSelect={handleSelectChat}
             onOpenSettings={(chat) => {
               setActiveChat(chat);
@@ -664,6 +680,7 @@ export default function App() {
         onCreateSchedule={() => setScheduleModal(null)}
         onEditSchedule={handleEditSchedule}
         reminders={reminders}
+        reminderTopicIds={reminderTopicIds}
         onReminderSelect={handleReminderSelect}
         onReminderDone={handleReminderDone}
         onRefresh={refreshTree}

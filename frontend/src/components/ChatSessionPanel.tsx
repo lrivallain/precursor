@@ -20,6 +20,7 @@ import { useResizableHeight } from "../lib/useResizableHeight";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
+import { formatDateTime } from "../lib/datetime";
 import type { Attachment, Chat, Message, Reminder } from "../lib/types";
 
 interface ChatSessionPanelProps {
@@ -407,6 +408,19 @@ export function ChatSessionPanel({
     }
   }
 
+  // Apply a modal save: update local state and confirm in the transcript so
+  // the user sees the scheduled date/time (or that it was cleared).
+  function handleReminderSaved(saved: Reminder | null): void {
+    setReminder(saved);
+    if (saved) {
+      const note = (saved.note ?? "").trim();
+      systemNote(
+        `⏰ Reminder set for ${formatDateTime(saved.remind_at)}${note ? ` — ${note}` : ""}.`,
+      );
+    }
+    onRemindersChanged?.();
+  }
+
   // Shared by /reminder-cancel (any reminder) and /done (a fired one). The
   // backend DELETE is the same operation; the messages differ.
   async function runReminderClear(requireFired: boolean): Promise<void> {
@@ -422,6 +436,7 @@ export function ChatSessionPanel({
     try {
       await api.clearReminder("chat", chat.id);
       setReminder(null);
+      systemNote(requireFired ? "✅ Reminder marked done." : "🗑️ Reminder cancelled.");
       onRemindersChanged?.();
     } catch (err) {
       systemNote(`Reminder update failed: ${(err as Error).message}`);
@@ -641,10 +656,9 @@ export function ChatSessionPanel({
           existing={reminder}
           initialNote={reminderModal.note}
           onClose={() => setReminderModal(null)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setReminderModal(null);
-            void refreshReminder();
-            onRemindersChanged?.();
+            handleReminderSaved(saved);
           }}
         />
       )}

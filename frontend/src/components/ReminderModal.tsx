@@ -11,7 +11,7 @@ interface Props {
   /** Optional note prefilled from the slash-command argument. */
   initialNote?: string;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (reminder: Reminder | null) => void;
 }
 
 // <input type="datetime-local"> wants a local "YYYY-MM-DDTHH:mm" value (no tz).
@@ -54,11 +54,11 @@ export function ReminderModal({
     setSubmitting(true);
     setError(null);
     try {
-      await api.setReminder(container, containerId, {
+      const saved = await api.setReminder(container, containerId, {
         remind_at: at.toISOString(),
         note: note.trim() || null,
       });
-      onSaved();
+      onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -72,7 +72,7 @@ export function ReminderModal({
     setError(null);
     try {
       await api.clearReminder(container, containerId);
-      onSaved();
+      onSaved(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

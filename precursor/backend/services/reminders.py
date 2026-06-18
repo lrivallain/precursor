@@ -18,7 +18,7 @@ Lifecycle:
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from sqlalchemy import select
@@ -132,16 +132,32 @@ async def fire_due(session: AsyncSession) -> list[Reminder]:
     if not due:
         return []
 
+    # Keep the fired message strictly newer than any last_read_at we touch, so
+    # the unread badge lights up reliably.
+    read_threshold = now - timedelta(seconds=1)
     for reminder in due:
         message = Message(
             topic_id=reminder.topic_id,
             chat_id=reminder.chat_id,
             role=MessageRole.SYSTEM,
             content=_reminder_message(reminder.note),
+            created_at=now,
         )
         session.add(message)
         reminder.status = "fired"
         reminder.fired_at = now
+        # Ensure the conversation reads as unread. A conversation that was never
+        # opened has last_read_at = NULL (treated as fully read), so the system
+        # message wouldn't count; pin last_read_at just before the message in
+        # that case (and if somehow stamped in the future) without masking other
+        # genuinely-unread history.
+        container = await _load_container(session, reminder)
+        if container is not None:
+            last_read = container.last_read_at
+            if last_read is not None and last_read.tzinfo is None:
+                last_read = last_read.replace(tzinfo=UTC)
+            if last_read is None or last_read > read_threshold:
+                container.last_read_at = read_threshold
     await session.commit()
 
     for reminder in due:
@@ -153,3 +169,11 @@ async def fire_due(session: AsyncSession) -> list[Reminder]:
             topic_id=reminder.topic_id, chat_id=reminder.chat_id
         )
     return due
+
+
+async def _load_container(session: AsyncSession, reminder: Reminder) -> Topic | Chat | None:
+    if reminder.topic_id is not None:
+        return await session.get(Topic, reminder.topic_id)
+    if reminder.chat_id is not None:
+        return await session.get(Chat, reminder.chat_id)
+    return None

@@ -70,6 +70,16 @@ def test_reminder_lifecycle_shared_across_containers(container: str) -> None:
             msgs = client.get(f"/api/chats/{cid}/messages").json()
         assert any("Reminder" in m["content"] for m in msgs)
 
+        # Firing marks the conversation unread, even though it was never opened.
+        if container == "topic":
+            tree = client.get("/api/topics/tree").json()
+            node = next(n for n in tree if n["id"] == cid)
+            assert node["unread_count"] >= 1
+        else:
+            chats = client.get("/api/chats").json()
+            chat = next(c for c in chats if c["id"] == cid)
+            assert chat["unread_count"] >= 1
+
         # Acknowledge ("/done") — removes it.
         assert client.delete(f"/api/reminders/{container}/{cid}").status_code == 204
         assert client.get("/api/reminders").json() == []

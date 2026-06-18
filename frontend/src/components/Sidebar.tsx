@@ -48,6 +48,8 @@ interface Props {
   onEditSchedule: (topicId: number) => void;
   /** Fired reminders, shown in a dedicated section across topics & chats. */
   reminders: ReminderItem[];
+  /** Topic ids with a fired reminder, flagged with an alarm icon in the tree. */
+  reminderTopicIds?: Set<number>;
   onReminderSelect: (item: ReminderItem) => void;
   onReminderDone: (item: ReminderItem) => void;
   onRefresh: () => Promise<void> | void;
@@ -72,6 +74,7 @@ export function Sidebar({
   onCreateSchedule,
   onEditSchedule,
   reminders,
+  reminderTopicIds,
   onReminderSelect,
   onReminderDone,
   onOpenGlobalSettings,
@@ -282,6 +285,7 @@ export function Sidebar({
                     streamingTopicIds={streamingTopicIds}
                     onSelect={onSelect}
                     onRename={onRename}
+                    hasReminder={reminderTopicIds?.has(node.id)}
                   />
                 ))}
               </ul>
@@ -312,6 +316,7 @@ export function Sidebar({
                     onCreate={onCreate}
                     onEditSchedule={onEditSchedule}
                     onRename={onRename}
+                    reminderTopicIds={reminderTopicIds}
                   />
                 ))}
               </ul>
@@ -336,6 +341,7 @@ export function Sidebar({
                 onCreate={onCreate}
                 onEditSchedule={onEditSchedule}
                 onRename={onRename}
+                reminderTopicIds={reminderTopicIds}
               />
             ))}
           </ul>
@@ -362,6 +368,7 @@ interface ItemProps {
   onCreate: (parentId: number | null) => void;
   onEditSchedule: (topicId: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  reminderTopicIds?: Set<number>;
 }
 
 function TopicItem({
@@ -375,6 +382,7 @@ function TopicItem({
   onCreate,
   onEditSchedule,
   onRename,
+  reminderTopicIds,
 }: ItemProps) {
   const open = !collapsedIds.has(node.id);
   const isActive = node.id === activeId;
@@ -439,6 +447,13 @@ function TopicItem({
             aria-label="Pinned"
           />
         )}
+        {reminderTopicIds?.has(node.id) && (
+          <AlarmClock
+            size={12}
+            className="text-accent shrink-0"
+            aria-label="Reminder waiting"
+          />
+        )}
         {isStreaming ? (
           <StreamingDots />
         ) : scheduleError ? (
@@ -494,6 +509,7 @@ function TopicItem({
               onCreate={onCreate}
               onEditSchedule={onEditSchedule}
               onRename={onRename}
+              reminderTopicIds={reminderTopicIds}
             />
           ))}
         </ul>
@@ -758,8 +774,16 @@ interface PinnedItemProps {
   streamingTopicIds: number[];
   onSelect: (id: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  hasReminder?: boolean;
 }
-function PinnedItem({ node, activeId, streamingTopicIds, onSelect, onRename }: PinnedItemProps) {
+function PinnedItem({
+  node,
+  activeId,
+  streamingTopicIds,
+  onSelect,
+  onRename,
+  hasReminder,
+}: PinnedItemProps) {
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
   return (
@@ -778,6 +802,9 @@ function PinnedItem({ node, activeId, streamingTopicIds, onSelect, onRename }: P
             node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
           }`}
         />
+        {hasReminder && (
+          <AlarmClock size={12} className="text-accent shrink-0" aria-label="Reminder waiting" />
+        )}
         {isStreaming ? (
           <StreamingDots />
         ) : node.unread_count > 0 ? (
