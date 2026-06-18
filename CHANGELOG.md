@@ -106,6 +106,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- Speech-to-text now releases the microphone when dictation stops. The Azure
+  Speech SDK's `close()` alone left the OS mic indicator on; Precursor now owns
+  the mic `MediaStream` (via `getUserMedia` + `fromStreamInput`) and stops its
+  tracks on teardown.
 - Chat errors (provider rejections, the tool-round cap, …) now **stay in the
   transcript** instead of flashing for a few seconds and vanishing. They were
   only added to the transient stream buffer, which was discarded when the
