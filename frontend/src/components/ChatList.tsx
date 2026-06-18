@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, MessageSquare, Pin, Search, Settings2 } from "lucide-react";
+import { AlarmClock, Loader2, MessageSquare, Pin, Search, Settings2 } from "lucide-react";
 import { api } from "../lib/api";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
@@ -9,6 +9,8 @@ interface ChatListProps {
   activeId: number | null;
   reloadKey: number;
   streamingIds: number[];
+  /** Chat ids with a fired reminder, flagged with an alarm icon. */
+  reminderChatIds?: Set<number>;
   onSelect: (chat: Chat) => void;
   /** Open the chat settings drawer (archive/delete/rename/promote live there). */
   onOpenSettings: (chat: Chat) => void;
@@ -19,6 +21,7 @@ export function ChatList({
   activeId,
   reloadKey,
   streamingIds,
+  reminderChatIds,
   onSelect,
   onOpenSettings,
   onChatsChanged,
@@ -83,8 +86,17 @@ export function ChatList({
           <InlineTitle
             title={chat.title}
             onRename={(t) => renameChat(chat.id, t)}
-            className="flex-1 truncate"
+            className={`flex-1 truncate ${
+              chat.unread_count > 0 || reminderChatIds?.has(chat.id) ? "font-semibold" : ""
+            }`}
           />
+          {reminderChatIds?.has(chat.id) && (
+            <AlarmClock
+              size={13}
+              className="shrink-0 text-accent"
+              aria-label="Reminder waiting"
+            />
+          )}
           {chat.unread_count > 0 && !isActive && (
             <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-white">
               {chat.unread_count}

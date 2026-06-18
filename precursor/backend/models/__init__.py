@@ -7,6 +7,7 @@ from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.memory import Memory
 from precursor.backend.models.message import Message, MessageRole
+from precursor.backend.models.reminder import Reminder
 from precursor.backend.models.settings import AppSetting
 from precursor.backend.models.skill import Skill
 from precursor.backend.models.topic import Topic
@@ -23,6 +24,7 @@ __all__ = [
     "Memory",
     "Message",
     "MessageRole",
+    "Reminder",
     "Skill",
     "Topic",
     "TopicSchedule",

@@ -58,6 +58,7 @@ class EventBus:
         payload: Event = {
             "type": event["type"],
             "topic_id": event.get("topic_id"),
+            "chat_id": event.get("chat_id"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         # Snapshot to avoid mutation during iteration.
@@ -101,3 +102,14 @@ async def publish_stream_ended(topic_id: int) -> None:
 
 async def publish_stream_ended_chat(chat_id: int) -> None:
     await _bus.publish({"type": "stream.ended", "chat_id": chat_id})
+
+
+async def publish_reminder_changed(
+    *, topic_id: int | None = None, chat_id: int | None = None
+) -> None:
+    """Signal that the set of reminders changed (created / fired / cleared).
+
+    Carries the affected container id so a window viewing it can react; the
+    sidebar Reminders section reloads regardless.
+    """
+    await _bus.publish({"type": "reminder.changed", "topic_id": topic_id, "chat_id": chat_id})

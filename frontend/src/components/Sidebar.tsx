@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
+  AlarmClock,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronsRight,
@@ -15,7 +17,7 @@ import {
   Search,
   Settings2,
 } from "lucide-react";
-import type { TopicNode } from "../lib/types";
+import type { ReminderItem, TopicNode } from "../lib/types";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
@@ -44,6 +46,12 @@ interface Props {
   onRename: (id: number, title: string) => void | Promise<void>;
   onCreateSchedule: () => void;
   onEditSchedule: (topicId: number) => void;
+  /** Fired reminders, shown in a dedicated section across topics & chats. */
+  reminders: ReminderItem[];
+  /** Topic ids with a fired reminder, flagged with an alarm icon in the tree. */
+  reminderTopicIds?: Set<number>;
+  onReminderSelect: (item: ReminderItem) => void;
+  onReminderDone: (item: ReminderItem) => void;
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
@@ -65,6 +73,10 @@ export function Sidebar({
   onRename,
   onCreateSchedule,
   onEditSchedule,
+  reminders,
+  reminderTopicIds,
+  onReminderSelect,
+  onReminderDone,
   onOpenGlobalSettings,
   onOpenArchive,
 }: Props) {
@@ -208,6 +220,30 @@ export function Sidebar({
           sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
       <ModeSwitcher mode={mode} onModeChange={onModeChange} />
 
+      {/* Fired reminders surface here across every mode until acknowledged. */}
+      {reminders.length > 0 && (
+        <div className="px-2 pt-2 border-b border-border">
+          <SectionHeader
+            icon={<AlarmClock size={11} />}
+            label="Reminders"
+            collapsed={collapsedSections.has("reminders")}
+            onToggle={() => toggleSection("reminders")}
+          />
+          {!collapsedSections.has("reminders") && (
+            <ul className="space-y-0.5 pb-2">
+              {reminders.map((item) => (
+                <ReminderRow
+                  key={`reminder-${item.id}`}
+                  item={item}
+                  onSelect={onReminderSelect}
+                  onDone={onReminderDone}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {mode === "chats" ? (
         chatSlot
       ) : mode === "workspaces" ? (
@@ -249,6 +285,7 @@ export function Sidebar({
                     streamingTopicIds={streamingTopicIds}
                     onSelect={onSelect}
                     onRename={onRename}
+                    hasReminder={reminderTopicIds?.has(node.id)}
                   />
                 ))}
               </ul>
@@ -279,6 +316,7 @@ export function Sidebar({
                     onCreate={onCreate}
                     onEditSchedule={onEditSchedule}
                     onRename={onRename}
+                    reminderTopicIds={reminderTopicIds}
                   />
                 ))}
               </ul>
@@ -303,6 +341,7 @@ export function Sidebar({
                 onCreate={onCreate}
                 onEditSchedule={onEditSchedule}
                 onRename={onRename}
+                reminderTopicIds={reminderTopicIds}
               />
             ))}
           </ul>
@@ -329,6 +368,7 @@ interface ItemProps {
   onCreate: (parentId: number | null) => void;
   onEditSchedule: (topicId: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  reminderTopicIds?: Set<number>;
 }
 
 function TopicItem({
@@ -342,6 +382,7 @@ function TopicItem({
   onCreate,
   onEditSchedule,
   onRename,
+  reminderTopicIds,
 }: ItemProps) {
   const open = !collapsedIds.has(node.id);
   const isActive = node.id === activeId;
@@ -396,7 +437,9 @@ function TopicItem({
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
-            node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
+            (node.unread_count > 0 || reminderTopicIds?.has(node.id)) && !isStreaming
+              ? "font-semibold"
+              : ""
           } ${scheduleDisabled ? "text-muted" : ""}`}
         />
         {node.pinned && (
@@ -404,6 +447,13 @@ function TopicItem({
             size={11}
             className="text-muted shrink-0"
             aria-label="Pinned"
+          />
+        )}
+        {reminderTopicIds?.has(node.id) && (
+          <AlarmClock
+            size={12}
+            className="text-accent shrink-0"
+            aria-label="Reminder waiting"
           />
         )}
         {isStreaming ? (
@@ -461,6 +511,7 @@ function TopicItem({
               onCreate={onCreate}
               onEditSchedule={onEditSchedule}
               onRename={onRename}
+              reminderTopicIds={reminderTopicIds}
             />
           ))}
         </ul>
@@ -686,14 +737,55 @@ function ModeSwitcher({
   );
 }
 
+interface ReminderRowProps {
+  item: ReminderItem;
+  onSelect: (item: ReminderItem) => void;
+  onDone: (item: ReminderItem) => void;
+}
+function ReminderRow({ item, onSelect, onDone }: ReminderRowProps) {
+  const Icon = item.container === "chat" ? MessageSquare : MessagesSquare;
+  return (
+    <li>
+      <div
+        className="group flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm hover:bg-surface text-text/90"
+        onClick={() => onSelect(item)}
+        title={item.note?.trim() || "Reminder"}
+      >
+        <Icon size={12} className="text-accent shrink-0" />
+        <span className="flex-1 truncate font-semibold">{item.title}</span>
+        <button
+          type="button"
+          className="shrink-0 p-0.5 rounded text-muted hover:text-text hover:bg-border opacity-0 group-hover:opacity-100"
+          aria-label="Mark reminder done"
+          title="Done"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDone(item);
+          }}
+        >
+          <Check size={13} />
+        </button>
+      </div>
+    </li>
+  );
+}
+
 interface PinnedItemProps {
   node: TopicNode;
   activeId: number | null;
   streamingTopicIds: number[];
   onSelect: (id: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  hasReminder?: boolean;
 }
-function PinnedItem({ node, activeId, streamingTopicIds, onSelect, onRename }: PinnedItemProps) {
+function PinnedItem({
+  node,
+  activeId,
+  streamingTopicIds,
+  onSelect,
+  onRename,
+  hasReminder,
+}: PinnedItemProps) {
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
   return (
@@ -709,9 +801,12 @@ function PinnedItem({ node, activeId, streamingTopicIds, onSelect, onRename }: P
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
           className={`flex-1 truncate ${
-            node.unread_count > 0 && !isStreaming ? "font-semibold" : ""
+            (node.unread_count > 0 || hasReminder) && !isStreaming ? "font-semibold" : ""
           }`}
         />
+        {hasReminder && (
+          <AlarmClock size={12} className="text-accent shrink-0" aria-label="Reminder waiting" />
+        )}
         {isStreaming ? (
           <StreamingDots />
         ) : node.unread_count > 0 ? (

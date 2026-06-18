@@ -40,6 +40,7 @@ from precursor.backend.routers import (
     me,
     memories,
     raw,
+    reminders,
     schedules,
     settings,
     skills,
@@ -64,6 +65,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scheduler = get_scheduler()
     await scheduler.start()
+    from precursor.backend.services.reminder_ticker import get_reminder_ticker
+
+    reminder_ticker = get_reminder_ticker()
+    await reminder_ticker.start()
     try:
         # The mounted streamable-HTTP MCP app needs its session manager's task group
         # running for the lifetime of the server (the mount itself doesn't start it).
@@ -75,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
     finally:
         await scheduler.stop()
+        await reminder_ticker.stop()
 
 
 class _McpHttpGate:
@@ -182,6 +188,7 @@ def create_app() -> FastAPI:
         events.router,
         workspaces.router,
         schedules.router,
+        reminders.router,
         stt.router,
         raw.router,
         version.router,

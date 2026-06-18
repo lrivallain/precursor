@@ -12,6 +12,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.message import Message
+    from precursor.backend.models.reminder import Reminder
     from precursor.backend.models.topic_schedule import TopicSchedule
 
 
@@ -81,6 +82,14 @@ class Topic(Base, TimestampMixin):
     # for standard topics. Deleting the topic cascades to its schedule.
     schedule: Mapped[TopicSchedule | None] = relationship(
         "TopicSchedule",
+        back_populates="topic",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    # Optional one-shot reminder. One-to-one; deleting the topic cascades to it.
+    reminder: Mapped[Reminder | None] = relationship(
+        "Reminder",
         back_populates="topic",
         cascade="all, delete-orphan",
         uselist=False,

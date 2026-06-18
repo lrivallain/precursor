@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
@@ -26,7 +26,7 @@ import { skillsStore } from "./lib/skillsStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
-import type { Chat, Schedule, Topic, TopicNode, Workspace } from "./lib/types";
+import type { Chat, ReminderItem, Schedule, Topic, TopicNode, Workspace } from "./lib/types";
 
 interface WsRoute {
   open: boolean;
@@ -152,6 +152,25 @@ export default function App() {
   const [scheduleModal, setScheduleModal] = useState<Schedule | null | undefined>(
     undefined,
   );
+  // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
+  const [reminders, setReminders] = useState<ReminderItem[]>([]);
+  // Ids already seen as fired, so we only notify on newly-fired ones.
+  const seenFiredRef = useRef<Set<number>>(new Set());
+  // Conversations with a fired reminder, so their list rows can flag it.
+  const reminderTopicIds = useMemo(
+    () =>
+      new Set(
+        reminders.filter((r) => r.container === "topic" && r.topic_id != null).map((r) => r.topic_id!),
+      ),
+    [reminders],
+  );
+  const reminderChatIds = useMemo(
+    () =>
+      new Set(
+        reminders.filter((r) => r.container === "chat" && r.chat_id != null).map((r) => r.chat_id!),
+      ),
+    [reminders],
+  );
 
   useStreamVersion();
   const streamingTopicIds = streamStore.streamingIds("topic");
@@ -178,6 +197,35 @@ export default function App() {
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
   }
+
+  // Reload fired reminders and fire a browser notification for any that became
+  // fired since the last load (when enabled + window unfocused).
+  async function loadReminders(): Promise<void> {
+    let items: ReminderItem[];
+    try {
+      items = await api.listReminders();
+    } catch {
+      return; // transient — keep the previous list
+    }
+    if (notificationsEnabledRef.current) {
+      for (const item of items) {
+        if (!seenFiredRef.current.has(item.id)) {
+          notifyIfUnfocused({
+            title: item.title,
+            body: item.note?.trim() ? `⏰ ${item.note.trim()}` : "⏰ Reminder",
+            tag: `precursor-reminder-${item.id}`,
+          });
+        }
+      }
+    }
+    seenFiredRef.current = new Set(items.map((i) => i.id));
+    setReminders(items);
+  }
+
+  useEffect(() => {
+    void loadReminders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     void refreshTree();
@@ -423,6 +471,11 @@ export default function App() {
           // covers background completions — notify if enabled + unfocused.
           maybeNotify(event.topic_id);
         }
+      } else if (event.type === "reminder.changed") {
+        // A reminder was set, fired, or cleared (possibly by the background
+        // ticker). Reload the sidebar section; loadReminders also notifies for
+        // any newly-fired ones.
+        void loadReminders();
       }
     });
   }, []);
@@ -451,6 +504,40 @@ export default function App() {
       setChatListReloadKey((k) => k + 1);
     } catch {
       // non-fatal
+    }
+  }
+
+  // Open the conversation behind a fired reminder, switching mode if needed.
+  async function handleReminderSelect(item: ReminderItem): Promise<void> {
+    try {
+      if (item.container === "topic" && item.topic_id != null) {
+        changeMode("topics");
+        await handleSelect(item.topic_id);
+      } else if (item.container === "chat" && item.chat_id != null) {
+        changeMode("chats");
+        await handleSelectChat(await api.getChat(item.chat_id));
+      }
+    } catch {
+      // conversation may have been deleted — refresh the list to drop it
+      void loadReminders();
+    }
+  }
+
+  // Acknowledge a fired reminder ("Done"): clear it and refresh the section.
+  async function handleReminderDone(item: ReminderItem): Promise<void> {
+    const id = item.container === "topic" ? item.topic_id : item.chat_id;
+    if (id == null) return;
+    try {
+      await api.clearReminder(item.container, id);
+    } catch {
+      // already gone — fall through to reload
+    }
+    await loadReminders();
+    // Remount the active panel so its banner clears if it was the one acked.
+    if (item.container === "topic" && activeTopicRef.current?.id === item.topic_id) {
+      setChatReloadKey((k) => k + 1);
+    } else if (item.container === "chat" && activeChatRef.current?.id === item.chat_id) {
+      setActiveChatReloadKey((k) => k + 1);
     }
   }
 
@@ -569,6 +656,7 @@ export default function App() {
             activeId={activeChat?.id ?? null}
             reloadKey={chatListReloadKey}
             streamingIds={streamingChatIds}
+            reminderChatIds={reminderChatIds}
             onSelect={handleSelectChat}
             onOpenSettings={(chat) => {
               setActiveChat(chat);
@@ -591,6 +679,10 @@ export default function App() {
         onRename={handleRenameTopic}
         onCreateSchedule={() => setScheduleModal(null)}
         onEditSchedule={handleEditSchedule}
+        reminders={reminders}
+        reminderTopicIds={reminderTopicIds}
+        onReminderSelect={handleReminderSelect}
+        onReminderDone={handleReminderDone}
         onRefresh={refreshTree}
         onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
         onOpenArchive={() => setArchiveOpen(true)}
@@ -739,6 +831,7 @@ export default function App() {
                   setActiveTopic(topic);
                   await refreshTree();
                 }}
+                onRemindersChanged={loadReminders}
               />
             ) : (
               <EmptyHero label="No topic selected." />
@@ -753,6 +846,7 @@ export default function App() {
                   setActiveChat(null);
                   setChatListReloadKey((k) => k + 1);
                 }}
+                onRemindersChanged={loadReminders}
               />
             ) : (
               <EmptyHero label="No chat selected." />

@@ -18,7 +18,9 @@ import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
-import type { Attachment, Chat, Message } from "../lib/types";
+import { ReminderModal } from "./ReminderModal";
+import { ReminderBanner } from "./ReminderBanner";
+import type { Attachment, Chat, Message, Reminder } from "../lib/types";
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -26,6 +28,8 @@ interface ChatSessionPanelProps {
   onChatUpdated: () => void;
   /** The chat was archived via /archive — drop the selection. */
   onArchived: () => void;
+  /** Refresh the sidebar Reminders section after a set / cancel / done. */
+  onRemindersChanged?: () => void;
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands and the
@@ -42,6 +46,9 @@ const HANDLED_COMMANDS = new Set<string>([
   "unpin",
   "clear",
   "archive",
+  "reminder",
+  "reminder-cancel",
+  "done",
 ]);
 
 interface ParsedToolMeta {
@@ -73,10 +80,15 @@ export function ChatSessionPanel({
   chat,
   onChatUpdated,
   onArchived,
+  onRemindersChanged,
 }: ChatSessionPanelProps) {
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
+  // One-shot reminder state for this chat (null = none set).
+  const [reminder, setReminder] = useState<Reminder | null>(null);
+  const [reminderModal, setReminderModal] = useState<{ note: string } | null>(null);
+  const [reminderBusy, setReminderBusy] = useState(false);
   const [pendingDeletes, setPendingDeletes] = useState<
     { message: Message; timer: number }[]
   >([]);
@@ -188,7 +200,21 @@ export function ChatSessionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.id]);
 
-  // When THIS chat's stream finishes, reload persisted and drop the buffer.
+  // Load this chat's reminder (if any) so we can show the fired banner and
+  // prefill the edit modal. Re-runs when the panel remounts after a fire.
+  const refreshReminder = useMemo(
+    () => async () => {
+      try {
+        setReminder(await api.getReminder("chat", chat.id));
+      } catch {
+        setReminder(null); // 404 => no reminder
+      }
+    },
+    [chat.id],
+  );
+  useEffect(() => {
+    void refreshReminder();
+  }, [refreshReminder]);
   const prevStreamingRef = useRef(streaming);
   useEffect(() => {
     prevStreamingRef.current = streamStore.isStreaming(streamKey);
@@ -366,6 +392,60 @@ export function ChatSessionPanel({
       } catch (err) {
         systemNote(`Archive failed: ${(err as Error).message}`);
       }
+      return;
+    }
+    if (name === "reminder") {
+      setReminderModal({ note: argument });
+      return;
+    }
+    if (name === "reminder-cancel") {
+      await runReminderClear(false);
+      return;
+    }
+    if (name === "done") {
+      await runReminderClear(true);
+    }
+  }
+
+  // Re-fetch the persisted transcript (the backend records reminder set/clear
+  // confirmations as system messages, and our own SSE echo is suppressed).
+  async function reloadPersisted(): Promise<void> {
+    try {
+      setPersisted(await api.listChatMessages(chat.id));
+    } catch {
+      // keep what we have
+    }
+  }
+
+  // Apply a modal save: update local state and pull in the confirmation the
+  // backend just appended to the transcript.
+  function handleReminderSaved(saved: Reminder | null): void {
+    setReminder(saved);
+    void reloadPersisted();
+    onRemindersChanged?.();
+  }
+
+  // Shared by /reminder-cancel (any reminder) and /done (a fired one). The
+  // backend DELETE is the same operation; the messages differ.
+  async function runReminderClear(requireFired: boolean): Promise<void> {
+    if (!reminder) {
+      systemNote(requireFired ? "No active reminder to mark done." : "No reminder set.");
+      return;
+    }
+    if (requireFired && reminder.status !== "fired") {
+      systemNote("This reminder hasn't fired yet. Use `/reminder-cancel` to remove it.");
+      return;
+    }
+    setReminderBusy(true);
+    try {
+      await api.clearReminder("chat", chat.id);
+      setReminder(null);
+      await reloadPersisted();
+      onRemindersChanged?.();
+    } catch (err) {
+      systemNote(`Reminder update failed: ${(err as Error).message}`);
+    } finally {
+      setReminderBusy(false);
     }
   }
 
@@ -465,6 +545,13 @@ export function ChatSessionPanel({
   return (
     <div className="h-full flex min-h-0">
       <div className="flex-1 flex flex-col min-h-0">
+        {reminder && reminder.status === "fired" && (
+          <ReminderBanner
+            reminder={reminder}
+            busy={reminderBusy}
+            onDone={() => void runReminderClear(true)}
+          />
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
           <div className="relative mx-auto space-y-3" style={{ maxWidth: chatWidth }}>
             <ResizeHandle onMouseDown={onChatResize} />
@@ -566,6 +653,19 @@ export function ChatSessionPanel({
       </div>
 
       {showStats && <ChatStatsPanel streamKey={streamKey} messages={messages} />}
+      {reminderModal && (
+        <ReminderModal
+          container="chat"
+          containerId={chat.id}
+          existing={reminder}
+          initialNote={reminderModal.note}
+          onClose={() => setReminderModal(null)}
+          onSaved={(saved) => {
+            setReminderModal(null);
+            handleReminderSaved(saved);
+          }}
+        />
+      )}
     </div>
   );
 }

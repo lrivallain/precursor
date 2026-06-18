@@ -105,6 +105,33 @@ export interface ChatUpdate {
   slug?: string | null;
 }
 
+// One-shot date/time reminder for a topic or chat. Datetimes are ISO-8601 UTC.
+export type ReminderContainer = "topic" | "chat";
+
+export interface Reminder {
+  id: number;
+  topic_id: number | null;
+  chat_id: number | null;
+  remind_at: string;
+  note: string | null;
+  status: "scheduled" | "fired";
+  fired_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A fired reminder enriched with its container's identity (sidebar list).
+export interface ReminderItem extends Reminder {
+  container: ReminderContainer;
+  title: string;
+  slug: string;
+}
+
+export interface ReminderCreate {
+  remind_at: string;
+  note?: string | null;
+}
+
 export interface Attachment {
   id: number;
   topic_id?: number | null;

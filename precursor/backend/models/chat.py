@@ -12,6 +12,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.message import Message
+    from precursor.backend.models.reminder import Reminder
 
 
 class Chat(Base, TimestampMixin):
@@ -40,4 +41,12 @@ class Chat(Base, TimestampMixin):
         back_populates="chat",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+    )
+
+    # Optional one-shot reminder. One-to-one; deleting the chat cascades to it.
+    reminder: Mapped[Reminder | None] = relationship(
+        "Reminder",
+        back_populates="chat",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
