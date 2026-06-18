@@ -46,7 +46,11 @@ def test_reminder_lifecycle_shared_across_containers(container: str) -> None:
         assert r.json()["status"] == "scheduled"
 
         def messages() -> list[dict[str, object]]:
-            path = f"/api/topics/{cid}/messages" if container == "topic" else f"/api/chats/{cid}/messages"
+            path = (
+                f"/api/topics/{cid}/messages"
+                if container == "topic"
+                else f"/api/chats/{cid}/messages"
+            )
             return client.get(path).json()
 
         # Setting persists a confirmation in the transcript (survives reloads).

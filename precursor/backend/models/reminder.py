@@ -58,9 +58,7 @@ class Reminder(Base, TimestampMixin):
 
     # When to resurface the discussion (stored UTC). Indexed: the ticker selects
     # rows with remind_at <= now.
-    remind_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     # Optional free-text shown in the posted message and the sidebar entry.
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 

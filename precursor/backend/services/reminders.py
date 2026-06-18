@@ -122,9 +122,7 @@ async def set_reminder(
     await session.commit()
     await session.refresh(reminder)
     await _publish_message_changed(reminder.topic_id, reminder.chat_id)
-    await publish_reminder_changed(
-        topic_id=reminder.topic_id, chat_id=reminder.chat_id
-    )
+    await publish_reminder_changed(topic_id=reminder.topic_id, chat_id=reminder.chat_id)
     return reminder
 
 
@@ -211,9 +209,7 @@ async def fire_due(session: AsyncSession) -> list[Reminder]:
             await publish_message_changed(reminder.topic_id)
         elif reminder.chat_id is not None:
             await publish_message_changed_chat(reminder.chat_id)
-        await publish_reminder_changed(
-            topic_id=reminder.topic_id, chat_id=reminder.chat_id
-        )
+        await publish_reminder_changed(topic_id=reminder.topic_id, chat_id=reminder.chat_id)
     return due
 
 
