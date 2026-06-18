@@ -134,6 +134,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- The favicon (and any other top-level file in the SPA build, e.g. assets Vite
+  copies from `public/`) is now served in the single-process production build.
+  The SPA fallback previously returned `index.html` for everything except
+  `/assets/*`, so `/logo.svg` came back as HTML and the browser showed no icon;
+  the fallback now serves a real file when the path maps to one inside `dist/`
+  (with a traversal guard) and only returns `index.html` for client-side routes.
 - Speech-to-text now releases the microphone when dictation stops. The Azure
   Speech SDK's `close()` alone left the OS mic indicator on; Precursor now owns
   the mic `MediaStream` (via `getUserMedia` + `fromStreamInput`) and stops its

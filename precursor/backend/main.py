@@ -250,9 +250,18 @@ def create_app() -> FastAPI:
         if assets_dir.is_dir():
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
         index_file = dist / "index.html"
+        dist_root = dist.resolve()
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str) -> FileResponse:
+            # Serve a real file from the dist root (e.g. /logo.svg and anything
+            # Vite copied from public/) when the path maps to one; otherwise
+            # return index.html so the SPA can handle client-side routes. The
+            # containment check guards against path traversal (../).
+            if full_path:
+                candidate = (dist_root / full_path).resolve()
+                if candidate.is_relative_to(dist_root) and candidate.is_file():
+                    return FileResponse(candidate)
             return FileResponse(index_file)
     else:
         logger.warning(
