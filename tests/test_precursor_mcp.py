@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.services.app_settings import (
@@ -110,16 +111,28 @@ _INIT = {
 }
 
 
+def _base_url() -> str:
+    """The app's own loopback origin, honouring a custom PRECURSOR_PORT/HOST.
+
+    The MCP HTTP transport's Host allowlist is bound to the configured
+    host:port, so a request must present a matching Host header. Deriving the
+    base URL from settings keeps these tests green when a dev ``.env`` sets a
+    non-default port, instead of hardcoding :8000.
+    """
+    cfg = get_settings()
+    return f"http://{cfg.host}:{cfg.port}"
+
+
 def test_http_transport_404_when_disabled() -> None:
     app = create_app()
-    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+    with TestClient(app, base_url=_base_url()) as client:
         r = _mcp_post(client, _INIT)
         assert r.status_code == 404
 
 
 def test_http_transport_handshake_when_enabled() -> None:
     app = create_app()
-    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+    with TestClient(app, base_url=_base_url()) as client:
         client.put("/api/settings", json={"mcp_http_enabled": True})
         r = _mcp_post(client, _INIT)
         assert r.status_code == 200
@@ -142,7 +155,7 @@ def test_http_transport_handshake_when_enabled() -> None:
 
 def test_http_transport_rejects_foreign_host() -> None:
     app = create_app()
-    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+    with TestClient(app, base_url=_base_url()) as client:
         client.put("/api/settings", json={"mcp_http_enabled": True})
         headers = {
             "Accept": "application/json, text/event-stream",
@@ -158,7 +171,7 @@ def test_http_transport_bare_path_not_405() -> None:
     # Regression: the bare /mcp URL (no trailing slash) must reach the MCP
     # handler, not get shadowed by the SPA catch-all (which produced 405).
     app = create_app()
-    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+    with TestClient(app, base_url=_base_url()) as client:
         client.put("/api/settings", json={"mcp_http_enabled": True})
         r = client.post(
             "/mcp",
@@ -174,10 +187,10 @@ def test_http_transport_bare_path_not_405() -> None:
 
 def test_settings_expose_http_fields() -> None:
     app = create_app()
-    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+    with TestClient(app, base_url=_base_url()) as client:
         # Reset to the default so this test is independent of other tests' writes.
         client.put("/api/settings", json={"mcp_http_enabled": False})
         s = client.get("/api/settings").json()
         assert s["mcp_http_enabled"] is False
         assert s["mcp_http_loopback_ok"] is True
-        assert s["mcp_http_url"] == "http://127.0.0.1:8000/mcp"
+        assert s["mcp_http_url"] == f"{_base_url()}/mcp"

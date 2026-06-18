@@ -40,9 +40,15 @@ environment, running, building, and releasing. Install it once
 ([instructions](https://docs.astral.sh/uv/getting-started/installation/)), then:
 
 ```bash
-uv sync --extra dev          # create .venv + install (uv manages the interpreter)
+uv sync --extra dev           # backend: .venv + Python deps (uv manages the interpreter)
+npm --prefix frontend install # frontend: Vite + React toolchain (needs Node.js)
 cp .env.example .env
 ```
+
+> [!NOTE]
+> The dev server (`precursor --dev`) and the SPA build (`make build`) need
+> **Node.js + npm**; the production runtime does not. `make sync` runs both
+> install steps (`uv sync` + `npm install`) in one go.
 
 **GitHub credentials (optional).** Precursor resolves a GitHub token in this
 order: (1) a token saved in **Settings → GitHub**, then (2) your **GitHub
@@ -58,6 +64,20 @@ so the chat flow stays usable offline.
 uv run precursor --dev        # uvicorn --reload + Vite HMR (Ctrl-C stops both)
 # or:  make dev
 ```
+
+On startup Precursor prints a banner with the URL to open. In `--dev` the UI
+runs on the **API port + 1** (Vite proxies `/api` to the backend), so a single
+`--port` controls everything:
+
+```bash
+uv run precursor --dev --port 9000   # UI on :9001, API on :9000
+uv run precursor --port 8100 --open  # prod-style, opens the browser when ready
+```
+
+**Running several instances at once?** Just pick a different `--port` per
+instance — or don't: a busy port automatically bumps to the next free one (pass
+`--strict-port` to fail instead, or `--port 0` to grab any free port). The
+banner always tells you where the UI landed.
 
 `uv run` resolves the project's environment on the fly — no manual activation.
 Other entry points:
