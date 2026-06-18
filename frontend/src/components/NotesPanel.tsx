@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, MessageSquarePlus, NotebookPen, Send, Sparkles } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CommandPanel } from "./CommandPanel";
@@ -42,12 +42,19 @@ export function NotesPanel({
 }: Props) {
   const [text, setText] = useState("");
 
-  // When the parent gives us a rebuilt version, swap it in.
-  if (rephrasedText !== undefined && rephrasedText !== text && !acting) {
-    // Setting state during render is fine here because the check above
-    // breaks the loop on the next render.
-    setText(rephrasedText);
-  }
+  // Apply an AI rephrase result exactly when a rephrase round-trip finishes
+  // (rephrasing: true → false), not on every render. Keying on that lifecycle
+  // instead of comparing against the live text means the user can freely edit
+  // the suggestion afterwards without their keystrokes snapping back to the
+  // AI version on the next render.
+  const prevRephrasingRef = useRef(rephrasing);
+  useEffect(() => {
+    const justFinished = prevRephrasingRef.current && !rephrasing;
+    prevRephrasingRef.current = rephrasing;
+    if (justFinished && !error && rephrasedText !== undefined) {
+      setText(rephrasedText);
+    }
+  }, [rephrasing, error, rephrasedText]);
 
   const empty = !text.trim();
   const busy = rephrasing || acting;
