@@ -38,6 +38,7 @@ async def init_db() -> None:
         message,
         skill,
         topic,
+        usage,
         workspace,
     )
 

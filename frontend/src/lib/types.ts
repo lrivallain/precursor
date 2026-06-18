@@ -476,6 +476,21 @@ export interface LocalPath {
   path: string;
 }
 
+export interface UsageBucket {
+  period: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  message_count: number;
+}
+
+export interface UsageStats {
+  totals: UsageBucket;
+  weekly: UsageBucket[];
+  monthly: UsageBucket[];
+  yearly: UsageBucket[];
+}
+
 export interface WorkspaceChatMessage {
   role: "user" | "assistant";
   content: string;
