@@ -21,15 +21,18 @@ function toDateValue(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// The time <select> options are local "HH:mm" strings.
-function toTimeValue(d: Date): string {
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// Combine the picked date + hour/minute into a local Date (interpreted in the
+// user's own timezone, then sent to the backend as UTC on submit). Empty
+// hour/minute fields count as 0.
+function combine(dateStr: string, hh: string, mm: string): Date {
+  return new Date(`${dateStr}T${pad(Number(hh) || 0)}:${pad(Number(mm) || 0)}`);
 }
 
-// Combine the picked date + time into a local Date (interpreted in the user's
-// own timezone, then sent to the backend as UTC on submit).
-function combine(dateStr: string, timeStr: string): Date {
-  return new Date(`${dateStr}T${timeStr}`);
+// Keep an "HH"/"MM" field within [0, max], tolerating mid-edit empty values.
+function clampTime(raw: string, max: number): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 2);
+  if (digits === "") return "";
+  return String(Math.min(Number(digits), max));
 }
 
 function defaultWhen(): Date {
@@ -86,30 +89,6 @@ const PRESETS: { label: string; make: () => Date }[] = [
   },
 ];
 
-// 15-minute time grid, labelled in the user's locale (value stays "HH:mm").
-function buildTimeOptions(extra: string): { value: string; label: string }[] {
-  const fmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-  const opts: { value: string; label: string }[] = [];
-  const seen = new Set<string>();
-  const add = (value: string) => {
-    if (seen.has(value)) return;
-    seen.add(value);
-    const [h, m] = value.split(":").map(Number);
-    opts.push({ value, label: fmt.format(new Date(2000, 0, 1, h, m)) });
-  };
-  // Keep an off-grid value (preset like "in 1 hour" or an edited reminder)
-  // selectable by prepending it.
-  if (extra && Number(extra.slice(3)) % 15 !== 0) {
-    add(extra);
-  }
-  for (let h = 0; h < 24; h += 1) {
-    for (let m = 0; m < 60; m += 15) {
-      add(`${pad(h)}:${pad(m)}`);
-    }
-  }
-  return opts;
-}
-
 export function ReminderModal({
   container,
   containerId,
@@ -120,25 +99,26 @@ export function ReminderModal({
 }: Props) {
   const initial = existing ? new Date(existing.remind_at) : defaultWhen();
   const [date, setDate] = useState<string>(toDateValue(initial));
-  const [time, setTime] = useState<string>(toTimeValue(initial));
+  const [hh, setHh] = useState<string>(pad(initial.getHours()));
+  const [mm, setMm] = useState<string>(pad(initial.getMinutes()));
   const [note, setNote] = useState<string>(existing?.note ?? initialNote ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const timeOptions = useMemo(() => buildTimeOptions(time), [time]);
   const isPast = useMemo(() => {
-    const at = combine(date, time);
+    const at = combine(date, hh, mm);
     return !Number.isNaN(at.getTime()) && at.getTime() <= Date.now();
-  }, [date, time]);
+  }, [date, hh, mm]);
 
   function applyPreset(d: Date): void {
     setDate(toDateValue(d));
-    setTime(toTimeValue(d));
+    setHh(pad(d.getHours()));
+    setMm(pad(d.getMinutes()));
   }
 
   async function submit(): Promise<void> {
     if (submitting) return;
-    const at = combine(date, time);
+    const at = combine(date, hh, mm);
     if (Number.isNaN(at.getTime())) {
       setError("Pick a valid date and time.");
       return;
@@ -223,19 +203,35 @@ export function ReminderModal({
                 className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
               />
             </div>
-            <div className="w-32">
+            <div className="w-36">
               <label className="block text-xs text-muted mb-1">Time</label>
-              <select
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-                className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-              >
-                {timeOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={23}
+                  step={1}
+                  value={hh}
+                  aria-label="Hours"
+                  onChange={(e) => setHh(clampTime(e.target.value, 23))}
+                  onBlur={() => setHh((v) => pad(Number(v) || 0))}
+                  className="w-14 bg-surface border border-border rounded px-2 py-1.5 text-sm text-center tabular-nums outline-none focus:border-accent"
+                />
+                <span className="text-muted">:</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={59}
+                  step={1}
+                  value={mm}
+                  aria-label="Minutes"
+                  onChange={(e) => setMm(clampTime(e.target.value, 59))}
+                  onBlur={() => setMm((v) => pad(Number(v) || 0))}
+                  className="w-14 bg-surface border border-border rounded px-2 py-1.5 text-sm text-center tabular-nums outline-none focus:border-accent"
+                />
+              </div>
             </div>
           </div>
 
