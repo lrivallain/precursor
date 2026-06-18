@@ -19,7 +19,9 @@ import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ResizeHandle } from "./ResizeHandle";
-import type { Attachment, Message, Topic } from "../lib/types";
+import { ReminderModal } from "./ReminderModal";
+import { ReminderBanner } from "./ReminderBanner";
+import type { Attachment, Message, Reminder, Topic } from "../lib/types";
 
 interface ChatPanelProps {
   topic: Topic;
@@ -28,6 +30,8 @@ interface ChatPanelProps {
   onArchived?: () => void;
   /** Switch the active topic (used by the /new command after creating one). */
   onNavigateTopic?: (topic: Topic) => void;
+  /** Refresh the sidebar Reminders section after a set / cancel / done. */
+  onRemindersChanged?: () => void;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -55,6 +59,9 @@ const HANDLED_COMMANDS = new Set<string>([
   "unpin",
   "clear",
   "archive",
+  "reminder",
+  "reminder-cancel",
+  "done",
 ]);
 
 function cardTitle(p: PendingCommand): string {
@@ -121,11 +128,15 @@ interface PendingNotes {
   rephrasedText?: string;
 }
 
-export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }: ChatPanelProps) {
+export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged }: ChatPanelProps) {
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
+  // One-shot reminder state for this topic (null = none set).
+  const [reminder, setReminder] = useState<Reminder | null>(null);
+  const [reminderModal, setReminderModal] = useState<{ note: string } | null>(null);
+  const [reminderBusy, setReminderBusy] = useState(false);
   // Attachments uploaded by the user but not yet bound to a sent message.
   // They live as orphan rows server-side until either /messages/stream binds
   // them, or the user removes them / leaves the topic (in which case we DELETE
@@ -356,7 +367,21 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
     };
   }, [topic.id]);
 
-  // When the stream for THIS topic transitions from streaming to done,
+  // Load this topic's reminder (if any) so we can show the fired banner and
+  // prefill the edit modal. Re-runs when the panel remounts after a fire.
+  const refreshReminder = useMemo(
+    () => async () => {
+      try {
+        setReminder(await api.getReminder("topic", topic.id));
+      } catch {
+        setReminder(null); // 404 => no reminder
+      }
+    },
+    [topic.id],
+  );
+  useEffect(() => {
+    void refreshReminder();
+  }, [refreshReminder]);
   // refetch persisted messages and discard the buffered turn.
   const prevStreamingRef = useRef(streaming);
   useEffect(() => {
@@ -485,8 +510,43 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
       await runArchive();
       return;
     }
+    if (name === "reminder") {
+      setReminderModal({ note: argument });
+      return;
+    }
+    if (name === "reminder-cancel") {
+      await runReminderClear(false);
+      return;
+    }
+    if (name === "done") {
+      await runReminderClear(true);
+      return;
+    }
     if (name === "gh-update" || name === "gh-create" || name === "gh-close") {
       await startDraft(name, argument);
+    }
+  }
+
+  // Shared by /reminder-cancel (any reminder) and /done (a fired one). The
+  // backend DELETE is the same operation; the messages differ.
+  async function runReminderClear(requireFired: boolean): Promise<void> {
+    if (!reminder) {
+      systemNote(requireFired ? "No active reminder to mark done." : "No reminder set.");
+      return;
+    }
+    if (requireFired && reminder.status !== "fired") {
+      systemNote("This reminder hasn't fired yet. Use `/reminder-cancel` to remove it.");
+      return;
+    }
+    setReminderBusy(true);
+    try {
+      await api.clearReminder("topic", topic.id);
+      setReminder(null);
+      onRemindersChanged?.();
+    } catch (err) {
+      systemNote(`Reminder update failed: ${(err as Error).message}`);
+    } finally {
+      setReminderBusy(false);
     }
   }
 
@@ -737,6 +797,13 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
   return (
     <div className="h-full flex min-h-0">
       <div className="flex-1 flex flex-col min-h-0">
+        {reminder && reminder.status === "fired" && (
+          <ReminderBanner
+            reminder={reminder}
+            busy={reminderBusy}
+            onDone={() => void runReminderClear(true)}
+          />
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
           <div
             className="relative mx-auto space-y-3"
@@ -873,6 +940,20 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic }
       </div>
       </div>
       {showStats && <ChatStatsPanel streamKey={streamKey} messages={messages} />}
+      {reminderModal && (
+        <ReminderModal
+          container="topic"
+          containerId={topic.id}
+          existing={reminder}
+          initialNote={reminderModal.note}
+          onClose={() => setReminderModal(null)}
+          onSaved={() => {
+            setReminderModal(null);
+            void refreshReminder();
+            onRemindersChanged?.();
+          }}
+        />
+      )}
     </div>
   );
 }

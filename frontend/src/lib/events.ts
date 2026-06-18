@@ -13,7 +13,8 @@ export type BusEvent =
   | { type: "topic.changed"; topic_id: number | null; chat_id?: number | null }
   | { type: "message.changed"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.started"; topic_id?: number | null; chat_id?: number | null }
-  | { type: "stream.ended"; topic_id?: number | null; chat_id?: number | null };
+  | { type: "stream.ended"; topic_id?: number | null; chat_id?: number | null }
+  | { type: "reminder.changed"; topic_id?: number | null; chat_id?: number | null };
 
 type Handler = (event: BusEvent) => void;
 
@@ -58,6 +59,9 @@ function connect(): void {
   );
   source.addEventListener("stream.ended", (e) =>
     dispatch("stream.ended", (e as MessageEvent).data),
+  );
+  source.addEventListener("reminder.changed", (e) =>
+    dispatch("reminder.changed", (e as MessageEvent).data),
   );
   source.onerror = () => {
     source?.close();

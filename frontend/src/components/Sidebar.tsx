@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
+  AlarmClock,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronsRight,
@@ -15,7 +17,7 @@ import {
   Search,
   Settings2,
 } from "lucide-react";
-import type { TopicNode } from "../lib/types";
+import type { ReminderItem, TopicNode } from "../lib/types";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
@@ -44,6 +46,10 @@ interface Props {
   onRename: (id: number, title: string) => void | Promise<void>;
   onCreateSchedule: () => void;
   onEditSchedule: (topicId: number) => void;
+  /** Fired reminders, shown in a dedicated section across topics & chats. */
+  reminders: ReminderItem[];
+  onReminderSelect: (item: ReminderItem) => void;
+  onReminderDone: (item: ReminderItem) => void;
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
@@ -65,6 +71,9 @@ export function Sidebar({
   onRename,
   onCreateSchedule,
   onEditSchedule,
+  reminders,
+  onReminderSelect,
+  onReminderDone,
   onOpenGlobalSettings,
   onOpenArchive,
 }: Props) {
@@ -207,6 +216,30 @@ export function Sidebar({
           visible at the bottom of the sidebar across every mode. When the
           sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
       <ModeSwitcher mode={mode} onModeChange={onModeChange} />
+
+      {/* Fired reminders surface here across every mode until acknowledged. */}
+      {reminders.length > 0 && (
+        <div className="px-2 pt-2 border-b border-border">
+          <SectionHeader
+            icon={<AlarmClock size={11} />}
+            label="Reminders"
+            collapsed={collapsedSections.has("reminders")}
+            onToggle={() => toggleSection("reminders")}
+          />
+          {!collapsedSections.has("reminders") && (
+            <ul className="space-y-0.5 pb-2">
+              {reminders.map((item) => (
+                <ReminderRow
+                  key={`reminder-${item.id}`}
+                  item={item}
+                  onSelect={onReminderSelect}
+                  onDone={onReminderDone}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {mode === "chats" ? (
         chatSlot
@@ -683,6 +716,39 @@ function ModeSwitcher({
         </>
       )}
     </div>
+  );
+}
+
+interface ReminderRowProps {
+  item: ReminderItem;
+  onSelect: (item: ReminderItem) => void;
+  onDone: (item: ReminderItem) => void;
+}
+function ReminderRow({ item, onSelect, onDone }: ReminderRowProps) {
+  const Icon = item.container === "chat" ? MessageSquare : MessagesSquare;
+  return (
+    <li>
+      <div
+        className="group flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm hover:bg-surface text-text/90"
+        onClick={() => onSelect(item)}
+        title={item.note?.trim() || "Reminder"}
+      >
+        <Icon size={12} className="text-accent shrink-0" />
+        <span className="flex-1 truncate font-semibold">{item.title}</span>
+        <button
+          type="button"
+          className="shrink-0 p-0.5 rounded text-muted hover:text-text hover:bg-border opacity-0 group-hover:opacity-100"
+          aria-label="Mark reminder done"
+          title="Done"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDone(item);
+          }}
+        >
+          <Check size={13} />
+        </button>
+      </div>
+    </li>
   );
 }
 

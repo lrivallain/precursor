@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     scheduler_poll_seconds: int = 30
     scheduler_concurrency: int = 2
     scheduled_run_timeout_seconds: int = 600
+    # One-shot reminders (services/reminder_ticker.py) — how often to poll for
+    # due reminders. Gated by the same ``scheduler_enabled`` flag.
+    reminder_poll_seconds: int = 30
 
     # Command runner (cmd-runner MCP) — runs bash/python/node either inside a
     # throwaway Docker "jail" (default) or, when the jail is disabled, directly

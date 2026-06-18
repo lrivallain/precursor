@@ -28,6 +28,10 @@ import type {
   MemoryUpdate,
   Message,
   PluginDescriptor,
+  Reminder,
+  ReminderContainer,
+  ReminderCreate,
+  ReminderItem,
   Schedule,
   ScheduleCreate,
   ScheduleUpdate,
@@ -145,6 +149,20 @@ export const api = {
     request<void>(`/api/schedules/${topicId}`, { method: "DELETE" }),
   runScheduleNow: (topicId: number) =>
     request<Schedule>(`/api/schedules/${topicId}/run`, { method: "POST" }),
+
+  // Reminders (one-shot date/time). Keyed by container kind + id; shared by
+  // topics and chats. listReminders returns only fired (awaiting acknowledgment).
+  listReminders: () => request<ReminderItem[]>(`/api/reminders`),
+  getReminder: (container: ReminderContainer, id: number) =>
+    request<Reminder>(`/api/reminders/${container}/${id}`),
+  setReminder: (container: ReminderContainer, id: number, data: ReminderCreate) =>
+    request<Reminder>(`/api/reminders/${container}/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  // Used for both /reminder-cancel (pending) and /done (fired) — both delete.
+  clearReminder: (container: ReminderContainer, id: number) =>
+    request<void>(`/api/reminders/${container}/${id}`, { method: "DELETE" }),
 
   // Messages
   listMessages: (topicId: number) =>

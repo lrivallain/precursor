@@ -83,6 +83,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     kind: "builtin",
   },
   {
+    name: "reminder",
+    label: "/reminder",
+    description:
+      "Schedule a reminder that resurfaces this conversation at a chosen date and time. One per conversation — setting a new one replaces it.",
+    argumentHint: "note (optional)",
+    kind: "builtin",
+  },
+  {
+    name: "reminder-cancel",
+    label: "/reminder-cancel",
+    description: "Cancel the pending reminder on this conversation.",
+    kind: "builtin",
+  },
+  {
+    name: "done",
+    label: "/done",
+    description:
+      "Mark a fired reminder as handled, removing it from the Reminders section.",
+    kind: "builtin",
+  },
+  {
     name: "clear",
     label: "/clear",
     description:

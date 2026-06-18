@@ -36,6 +36,7 @@ async def init_db() -> None:
         mcp_server,
         memory,
         message,
+        reminder,
         skill,
         topic,
         workspace,
