@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ClipboardEventHandler, type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import { Eye, Loader2, Pencil, X } from "lucide-react";
 import { Markdown } from "./Markdown";
@@ -25,7 +25,10 @@ interface Props {
   titleField?: TitleField;
   body: string;
   onBodyChange: (value: string) => void;
+  onBodyPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   bodyPlaceholder?: string;
+  bodyTop?: ReactNode;
+  previewBottom?: ReactNode;
   /** Extra classes for the textarea (e.g. ``font-mono``). */
   bodyClassName?: string;
   /** Distinct key so each usage remembers its own window position + size. */
@@ -64,7 +67,10 @@ export function CommandPanel({
   titleField,
   body,
   onBodyChange,
+  onBodyPaste,
   bodyPlaceholder = "Write in GitHub-Flavored Markdown…",
+  bodyTop,
+  previewBottom,
   bodyClassName = "",
   windowStorageKey,
   previewEmptyHint = "Nothing to preview.",
@@ -140,6 +146,7 @@ export function CommandPanel({
           </div>
         ) : mode === "edit" ? (
           <>
+            {bodyTop}
             {titleField && (
               <label className="block">
                 <span className="block text-[11px] text-muted mb-1">
@@ -158,6 +165,7 @@ export function CommandPanel({
             <textarea
               value={body}
               onChange={(e) => onBodyChange(e.target.value)}
+              onPaste={onBodyPaste}
               placeholder={bodyPlaceholder}
               disabled={disabled}
               aria-label={`${title} body`}
@@ -174,6 +182,7 @@ export function CommandPanel({
             ) : (
               <span className="text-muted italic">{previewEmptyHint}</span>
             )}
+            {previewBottom}
           </div>
         )}
       </div>

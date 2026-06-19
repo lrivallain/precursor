@@ -13,16 +13,23 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
-from precursor.backend.models import IssueContextCache, Message, MessageRole, NoteDraft, Topic
+from precursor.backend.models import (
+    IssueContextCache,
+    Message,
+    MessageRole,
+    NoteDraft,
+    NoteDraftAttachment,
+    Topic,
+)
 from precursor.backend.routers.summary import refresh_issue_context
-from precursor.backend.schemas import MessageRead
+from precursor.backend.schemas import MessageRead, NoteDraftAttachmentRead
 from precursor.backend.services.app_settings import (
     resolve_global_github_repo,
     resolve_issue_associations_enabled,
@@ -34,8 +41,15 @@ from precursor.backend.services.events import (
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
+from precursor.backend.services.image_uploads import read_validated_image
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.note_drafts import (
+    consume_note_draft_attachments_to_message,
+    get_note_draft,
+    get_or_create_note_draft,
+    load_note_draft_attachments,
+)
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -62,7 +76,8 @@ class CommentDraftResponse(BaseModel):
 
 
 class CommentPostRequest(BaseModel):
-    body: str = Field(min_length=1)
+    body: str = ""
+    note_attachment_ids: list[int] = Field(default_factory=list)
 
 
 class CommentPostResponse(BaseModel):
@@ -70,6 +85,8 @@ class CommentPostResponse(BaseModel):
     issue_number: int
     comment_url: str | None
     message: MessageRead
+    note_upload_failures: list[str] = Field(default_factory=list)
+    local_note_message: MessageRead | None = None
 
 
 async def _require_repo(session: AsyncSession, topic_id: int) -> tuple[Topic, str]:
@@ -246,13 +263,40 @@ async def gh_update_post(
 ) -> CommentPostResponse:
     topic, repo, issue_number = await _require_linked_issue(session, topic_id)
     token = await _require_token(session)
+    raw_body = payload.body.strip()
+    if not raw_body and not payload.note_attachment_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Comment body is required")
 
     gh = GitHubClient(token=token)
+    note_upload_failures: list[str] = []
+    local_note_message: MessageRead | None = None
+    kept_image_names: list[str] = []
     try:
+        body = raw_body
+        if payload.note_attachment_ids:
+            draft_attachments = await load_note_draft_attachments(
+                session,
+                kind="topic",
+                container_id=topic_id,
+                attachment_ids=payload.note_attachment_ids,
+            )
+            if not draft_attachments:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "No matching note attachments found for this topic.",
+                )
+            for att in draft_attachments:
+                filename = att.original_filename or f"note-image-{att.id}"
+                body = body.replace(
+                    f"/api/notes/attachments/{att.id}",
+                    f"(image kept in chat: {filename})",
+                )
+                kept_image_names.append(filename)
+
         comment = await gh.add_issue_comment(
             repo,
             issue_number,
-            payload.body,
+            body,
         )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Failed to post comment: {exc}") from exc
@@ -261,9 +305,38 @@ async def gh_update_post(
 
     await _invalidate_cache(session, topic_id)
     receipt_body = (
-        f"**Posted comment to [{repo}#{topic.github_issue_number}]({comment['url']})**\n\n"
-        f"{payload.body}"
+        f"**Posted comment to [{repo}#{topic.github_issue_number}]({comment['url']})**\n\n{body}"
     )
+    if payload.note_attachment_ids:
+        kept_rendered = ", ".join(f"`{name}`" for name in kept_image_names) or "note image(s)"
+        receipt_body = (
+            f"{receipt_body}\n\n"
+            "> [!WARNING]\n"
+            "> Notes images couldn't be included in the GitHub comment from this app.\n"
+            f"> Images were kept in this chat: {kept_rendered}."
+        )
+        async with SessionLocal() as write_session:
+            fallback = Message(
+                topic_id=topic_id,
+                role=MessageRole.USER,
+                content=(
+                    "**Notes images kept in chat**\n\n"
+                    "GitHub comments are text-only, so note images were kept in this chat."
+                ),
+            )
+            write_session.add(fallback)
+            await write_session.flush()
+            await consume_note_draft_attachments_to_message(
+                write_session,
+                kind="topic",
+                container_id=topic_id,
+                message_id=fallback.id,
+                attachment_ids=payload.note_attachment_ids,
+            )
+            await write_session.commit()
+            await write_session.refresh(fallback, attribute_names=["attachments"])
+            local_note_message = MessageRead.model_validate(fallback, from_attributes=True)
+        await publish_message_changed(topic_id)
     message_read = await _persist_receipt(topic_id, receipt_body)
     await session.commit()
 
@@ -272,6 +345,8 @@ async def gh_update_post(
         issue_number=issue_number,
         comment_url=comment.get("url"),
         message=message_read,
+        note_upload_failures=note_upload_failures,
+        local_note_message=local_note_message,
     )
 
 
@@ -590,7 +665,8 @@ class NotesRephraseResponse(BaseModel):
 
 
 class NotesAppendRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = ""
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class NotesAppendResponse(BaseModel):
@@ -598,12 +674,13 @@ class NotesAppendResponse(BaseModel):
 
 
 class NotesDraftSaveRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = ""
 
 
 class NotesDraftResponse(BaseModel):
     text: str | None
     updated_at: str | None
+    attachments: list[NoteDraftAttachmentRead] = Field(default_factory=list)
 
 
 @router.post("/notes/rephrase", response_model=NotesRephraseResponse)
@@ -644,8 +721,11 @@ async def notes_append(
     topic = await session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    trimmed = payload.text.strip()
+    if not trimmed and not payload.attachment_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or images are required")
 
-    body = f"**Notes**\n\n{payload.text.strip()}"
+    body = "**Notes**" if not trimmed else f"**Notes**\n\n{trimmed}"
     async with SessionLocal() as write_session:
         msg = Message(
             topic_id=topic_id,
@@ -653,6 +733,14 @@ async def notes_append(
             content=body,
         )
         write_session.add(msg)
+        await write_session.flush()
+        await consume_note_draft_attachments_to_message(
+            write_session,
+            kind="topic",
+            container_id=topic_id,
+            message_id=msg.id,
+            attachment_ids=payload.attachment_ids,
+        )
         await write_session.commit()
         await write_session.refresh(msg, attribute_names=["attachments"])
         message_read = MessageRead.model_validate(msg, from_attributes=True)
@@ -670,10 +758,12 @@ async def notes_draft_get(
     result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
     draft = result.scalar_one_or_none()
     if draft is None:
-        return NotesDraftResponse(text=None, updated_at=None)
+        return NotesDraftResponse(text=None, updated_at=None, attachments=[])
+    await session.refresh(draft, attribute_names=["attachments"])
     return NotesDraftResponse(
         text=draft.text,
         updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
     )
 
 
@@ -693,10 +783,11 @@ async def notes_draft_save(
     else:
         draft.text = payload.text
     await session.commit()
-    await session.refresh(draft)
+    await session.refresh(draft, attribute_names=["attachments"])
     return NotesDraftResponse(
         text=draft.text,
         updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
     )
 
 
@@ -712,4 +803,63 @@ async def notes_draft_delete(
     if draft is None:
         return
     await session.delete(draft)
+    await session.commit()
+
+
+@router.get("/notes/attachments", response_model=list[NoteDraftAttachmentRead])
+async def notes_attachments_list(
+    topic_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[NoteDraftAttachment]:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    draft = await get_note_draft(session, kind="topic", container_id=topic_id)
+    if draft is None:
+        return []
+    await session.refresh(draft, attribute_names=["attachments"])
+    return list(draft.attachments)
+
+
+@router.post(
+    "/notes/attachments",
+    response_model=NoteDraftAttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def notes_attachments_upload(
+    topic_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> NoteDraftAttachment:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    mime, data = await read_validated_image(file)
+    draft = await get_or_create_note_draft(session, kind="topic", container_id=topic_id)
+    att = NoteDraftAttachment(
+        note_draft_id=draft.id,
+        mime=mime,
+        size=len(data),
+        original_filename=(file.filename or "")[:255],
+        data=data,
+    )
+    session.add(att)
+    await session.commit()
+    await session.refresh(att)
+    return att
+
+
+@router.delete("/notes/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def notes_attachments_delete(
+    topic_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    draft = await get_note_draft(session, kind="topic", container_id=topic_id)
+    if draft is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    att = await session.get(NoteDraftAttachment, attachment_id)
+    if att is None or att.note_draft_id != draft.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    await session.delete(att)
     await session.commit()

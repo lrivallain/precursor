@@ -14,36 +14,13 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Attachment, Chat, Topic
+from precursor.backend.models import Attachment, Chat, NoteDraftAttachment, Topic
 from precursor.backend.schemas import AttachmentRead
+from precursor.backend.services.image_uploads import read_validated_image
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["attachments"])
-
-# Keep limits conservative — images sent to vision models, not file storage.
-MAX_BYTES = 8 * 1024 * 1024  # 8 MB
-ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
-
-
-async def _read_validated_image(file: UploadFile) -> tuple[str, bytes]:
-    """Validate an uploaded image's MIME + size and return ``(mime, data)``."""
-    mime = (file.content_type or "").lower().split(";", 1)[0].strip()
-    if mime not in ALLOWED_MIMES:
-        raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            f"Only image uploads are supported (got '{mime or 'unknown'}').",
-        )
-
-    data = await file.read()
-    if not data:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty upload")
-    if len(data) > MAX_BYTES:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"File too large (max {MAX_BYTES // (1024 * 1024)} MB).",
-        )
-    return mime, data
 
 
 @router.post(
@@ -59,7 +36,7 @@ async def upload_attachment(
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
 
-    mime, data = await _read_validated_image(file)
+    mime, data = await read_validated_image(file)
 
     att = Attachment(
         topic_id=topic_id,
@@ -88,7 +65,7 @@ async def upload_chat_attachment(
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
 
-    mime, data = await _read_validated_image(file)
+    mime, data = await read_validated_image(file)
 
     att = Attachment(
         chat_id=chat_id,
@@ -110,6 +87,24 @@ async def get_attachment(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     att = await session.get(Attachment, attachment_id)
+    if att is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    return Response(
+        content=att.data,
+        media_type=att.mime,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Length": str(att.size),
+        },
+    )
+
+
+@router.get("/api/notes/attachments/{attachment_id}")
+async def get_note_draft_attachment(
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    att = await session.get(NoteDraftAttachment, attachment_id)
     if att is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
     return Response(

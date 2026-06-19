@@ -23,7 +23,13 @@ import { ResizeHandle } from "./ResizeHandle";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
-import type { Attachment, Message, Reminder, Topic } from "../lib/types";
+import type {
+  Attachment,
+  Message,
+  NoteDraftAttachment,
+  Reminder,
+  Topic,
+} from "../lib/types";
 
 interface ChatPanelProps {
   topic: Topic;
@@ -130,6 +136,9 @@ function parseToolMeta(raw: string | null): ParsedToolMeta | null {
 
 interface PendingNotes {
   initialText: string;
+  attachments: NoteDraftAttachment[];
+  uploadingAttachments: number;
+  attachmentsError: string | null;
   loadingDraft: boolean;
   savingDraft: boolean;
   rephrasing: boolean;
@@ -149,7 +158,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const [draft, setDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
-  const [savedNotesDraft, setSavedNotesDraft] = useState<string | null>(null);
+  const [savedNotesDraft, setSavedNotesDraft] = useState<{
+    text: string;
+    attachmentCount: number;
+  } | null>(null);
   const [notesConfirm, setNotesConfirm] = useState<NotesConfirmState | null>(null);
   // One-shot reminder state for this topic (null = none set).
   const [reminder, setReminder] = useState<Reminder | null>(null);
@@ -391,7 +403,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       const res = await api.getNotesDraft(topic.id).catch(() => null);
       if (cancelled) return;
       const text = (res?.text ?? "").trim();
-      setSavedNotesDraft(text ? text : null);
+      setSavedNotesDraft(
+        text || (res?.attachments.length ?? 0)
+          ? { text, attachmentCount: res?.attachments.length ?? 0 }
+          : null,
+      );
     })();
     return () => {
       cancelled = true;
@@ -520,6 +536,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     if (name === "notes") {
       setPendingNotes({
         initialText: "",
+        attachments: [],
+        uploadingAttachments: 0,
+        attachmentsError: null,
         loadingDraft: true,
         savingDraft: false,
         rephrasing: false,
@@ -529,12 +548,17 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       try {
         const draftRes = await api.getNotesDraft(topic.id);
         const loaded = (draftRes.text ?? "").trim();
-        setSavedNotesDraft(loaded ? loaded : null);
+        setSavedNotesDraft(
+          loaded || draftRes.attachments.length
+            ? { text: loaded, attachmentCount: draftRes.attachments.length }
+            : null,
+        );
         setPendingNotes((p) =>
           p
             ? {
                 ...p,
                 initialText: draftRes.text ?? "",
+                attachments: draftRes.attachments,
                 loadingDraft: false,
               }
             : p,
@@ -738,6 +762,57 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
   }
 
+  async function uploadNoteAttachments(files: Iterable<File>): Promise<void> {
+    if (!pendingNotes) return;
+    const images: File[] = [];
+    for (const f of files) {
+      if (f && f.type && f.type.startsWith("image/")) images.push(f);
+    }
+    if (images.length === 0) return;
+    setPendingNotes((p) =>
+      p
+        ? {
+            ...p,
+            attachmentsError: null,
+            uploadingAttachments: p.uploadingAttachments + images.length,
+          }
+        : p,
+    );
+    try {
+      for (const file of images) {
+        try {
+          const att = await api.uploadNoteAttachment(topic.id, file);
+          setPendingNotes((p) => (p ? { ...p, attachments: [...p.attachments, att] } : p));
+        } catch (err) {
+          setPendingNotes((p) =>
+            p ? { ...p, attachmentsError: (err as Error).message || "Upload failed" } : p,
+          );
+        }
+      }
+    } finally {
+      setPendingNotes((p) =>
+        p
+          ? {
+              ...p,
+              uploadingAttachments: Math.max(0, p.uploadingAttachments - images.length),
+            }
+          : p,
+      );
+    }
+  }
+
+  async function removeNoteAttachment(id: number): Promise<void> {
+    if (!pendingNotes) return;
+    setPendingNotes((p) =>
+      p ? { ...p, attachments: p.attachments.filter((a) => a.id !== id) } : p,
+    );
+    try {
+      await api.deleteNoteAttachment(topic.id, id);
+    } catch {
+      // ignore stale/deleted ids
+    }
+  }
+
   async function rephraseNotes(text: string): Promise<void> {
     if (!pendingNotes || !text.trim()) return;
     setPendingNotes((p) => (p ? { ...p, rephrasing: true, error: null } : p));
@@ -754,13 +829,18 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   }
 
   async function saveNotesDraft(text: string): Promise<void> {
-    if (!pendingNotes || !text.trim()) return;
+    if (!pendingNotes) return;
+    if (!text.trim() && pendingNotes.attachments.length === 0) return;
     if (!(await askNotesConfirm("Save notes as draft and close the pad?"))) return;
     setPendingNotes((p) => (p ? { ...p, savingDraft: true, error: null } : p));
     try {
       const res = await api.saveNotesDraft(topic.id, text.trim());
       const saved = (res.text ?? "").trim();
-      setSavedNotesDraft(saved ? saved : null);
+      setSavedNotesDraft(
+        saved || res.attachments.length
+          ? { text: saved, attachmentCount: res.attachments.length }
+          : null,
+      );
       setPendingNotes(null);
     } catch (err) {
       setPendingNotes((p) =>
@@ -770,26 +850,33 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   }
 
   async function runNotesAction(action: NotesAction, text: string): Promise<void> {
-    if (!pendingNotes || !text.trim()) return;
+    if (!pendingNotes) return;
+    const trimmed = text.trim();
+    const attachmentIds = pendingNotes.attachments.map((a) => a.id);
+    if (!trimmed && attachmentIds.length === 0) return;
     setPendingNotes((p) => (p ? { ...p, acting: true, error: null } : p));
     try {
       if (action === "append") {
-        const res = await api.appendNotes(topic.id, text);
+        const res = await api.appendNotes(topic.id, trimmed, attachmentIds);
         await api.clearNotesDraft(topic.id).catch(() => {});
         setSavedNotesDraft(null);
         setPersisted((prev) => [...prev, res.message]);
         onTopicUpdated();
         setPendingNotes(null);
       } else if (action === "append-and-ask") {
-        await api.clearNotesDraft(topic.id).catch(() => {});
         setSavedNotesDraft(null);
         setPendingNotes(null);
-        void streamStore.start(streamKey, `**Notes**\n\n${text.trim()}`);
+        const body = trimmed ? `**Notes**\n\n${trimmed}` : "**Notes**";
+        void streamStore.start(streamKey, body, undefined, undefined, attachmentIds);
       } else if (action === "post-comment") {
-        const res = await api.postGhUpdate(topic.id, text);
+        const res = await api.postGhUpdate(topic.id, trimmed, attachmentIds);
         await api.clearNotesDraft(topic.id).catch(() => {});
         setSavedNotesDraft(null);
-        setPersisted((prev) => [...prev, res.message]);
+        setPersisted((prev) => [
+          ...prev,
+          ...(res.local_note_message ? [res.local_note_message] : []),
+          res.message,
+        ]);
         onTopicUpdated();
         setPendingNotes(null);
       }
@@ -810,15 +897,35 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
   }
 
-  function resumeSavedNotesDraft(): void {
+  async function resumeSavedNotesDraft(): Promise<void> {
     setPendingNotes({
-      initialText: savedNotesDraft ?? "",
-      loadingDraft: false,
+      initialText: "",
+      attachments: [],
+      uploadingAttachments: 0,
+      attachmentsError: null,
+      loadingDraft: true,
       savingDraft: false,
       rephrasing: false,
       acting: false,
       error: null,
     });
+    try {
+      const draftRes = await api.getNotesDraft(topic.id);
+      setPendingNotes((p) =>
+        p
+          ? {
+              ...p,
+              initialText: draftRes.text ?? "",
+              attachments: draftRes.attachments,
+              loadingDraft: false,
+            }
+          : p,
+      );
+    } catch (err) {
+      setPendingNotes((p) =>
+        p ? { ...p, loadingDraft: false, error: (err as Error).message } : p,
+      );
+    }
   }
 
   async function askNotesConfirm(message: string): Promise<boolean> {
@@ -828,7 +935,16 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   }
 
   async function closeNotesPad(text: string): Promise<void> {
-    if (text.trim() && !(await askNotesConfirm("Discard current notes in the pad?"))) return;
+    if (
+      pendingNotes &&
+      (text.trim() || pendingNotes.attachments.length > 0) &&
+      !(await askNotesConfirm("Discard current notes in the pad?"))
+    )
+      return;
+    if (pendingNotes && (text.trim() || pendingNotes.attachments.length > 0)) {
+      await api.clearNotesDraft(topic.id).catch(() => {});
+      setSavedNotesDraft(null);
+    }
     setPendingNotes(null);
   }
 
@@ -1040,12 +1156,18 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           {!pendingNotes && savedNotesDraft && (
             <div className="flex items-center justify-between gap-2 rounded border border-border bg-surface px-3 py-1.5 text-xs">
               <span className="min-w-0 flex-1 truncate text-muted">
-                Saved notes draft: {savedNotesDraft}
+                Saved notes draft:
+                {savedNotesDraft.text ? ` ${savedNotesDraft.text}` : ""}
+                {savedNotesDraft.attachmentCount > 0
+                  ? ` (${savedNotesDraft.attachmentCount} image${
+                      savedNotesDraft.attachmentCount > 1 ? "s" : ""
+                    })`
+                  : ""}
               </span>
               <div className="flex items-center gap-1">
                 <button
                   className="shrink-0 rounded px-2 py-0.5 text-accent hover:bg-border"
-                  onClick={resumeSavedNotesDraft}
+                  onClick={() => void resumeSavedNotesDraft()}
                 >
                   Resume
                 </button>
@@ -1069,10 +1191,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               rephrasing={pendingNotes.rephrasing}
               acting={pendingNotes.acting}
               error={pendingNotes.error}
+              attachments={pendingNotes.attachments}
+              uploadingAttachments={pendingNotes.uploadingAttachments}
+              attachmentsError={pendingNotes.attachmentsError}
               rephrasedText={pendingNotes.rephrasedText}
               onRephrase={rephraseNotes}
               onSaveDraft={saveNotesDraft}
               onAction={runNotesAction}
+              onAttachFiles={uploadNoteAttachments}
+              onRemoveAttachment={removeNoteAttachment}
               onCancel={closeNotesPad}
             />
           )}

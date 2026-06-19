@@ -28,6 +28,7 @@ import type {
   MemoryUpdate,
   Message,
   NotesDraft,
+  NoteDraftAttachment,
   PluginDescriptor,
   Reminder,
   ReminderContainer,
@@ -132,10 +133,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, instruction: instruction ?? null }),
     }),
-  appendChatNotes: (chatId: number, text: string) =>
+  appendChatNotes: (chatId: number, text: string, attachmentIds: number[] = []) =>
     request<{ message: Message }>(`/api/chats/${chatId}/messages/notes/append`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, attachment_ids: attachmentIds }),
     }),
   getChatNotesDraft: (chatId: number) =>
     request<NotesDraft>(`/api/chats/${chatId}/messages/notes/draft`),
@@ -146,6 +147,29 @@ export const api = {
     }),
   clearChatNotesDraft: (chatId: number) =>
     request<void>(`/api/chats/${chatId}/messages/notes/draft`, { method: "DELETE" }),
+  listChatNoteAttachments: (chatId: number) =>
+    request<NoteDraftAttachment[]>(`/api/chats/${chatId}/messages/notes/attachments`),
+  uploadChatNoteAttachment: async (
+    chatId: number,
+    file: File,
+  ): Promise<NoteDraftAttachment> => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`/api/chats/${chatId}/messages/notes/attachments`, {
+      method: "POST",
+      headers: { "X-Client-Id": CLIENT_ID },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return (await res.json()) as NoteDraftAttachment;
+  },
+  deleteChatNoteAttachment: (chatId: number, attachmentId: number) =>
+    request<void>(`/api/chats/${chatId}/messages/notes/attachments/${attachmentId}`, {
+      method: "DELETE",
+    }),
 
   // Schedules (recurring automation topics). Keyed by topic id.
   getSchedule: (topicId: number) =>
@@ -302,10 +326,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text: text ?? null }),
     }),
-  postGhUpdate: (topicId: number, body: string) =>
+  postGhUpdate: (topicId: number, body: string, noteAttachmentIds: number[] = []) =>
     request<CommentPostResult>(`/api/topics/${topicId}/commands/gh-update/post`, {
       method: "POST",
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body, note_attachment_ids: noteAttachmentIds }),
     }),
   syncGh: (topicId: number) =>
     request<GhSyncResult>(`/api/topics/${topicId}/commands/gh-sync`, {
@@ -345,10 +369,10 @@ export const api = {
         body: JSON.stringify({ text, instruction: instruction ?? null }),
       },
     ),
-  appendNotes: (topicId: number, text: string) =>
+  appendNotes: (topicId: number, text: string, attachmentIds: number[] = []) =>
     request<{ message: Message }>(
       `/api/topics/${topicId}/commands/notes/append`,
-      { method: "POST", body: JSON.stringify({ text }) },
+      { method: "POST", body: JSON.stringify({ text, attachment_ids: attachmentIds }) },
     ),
   getNotesDraft: (topicId: number) =>
     request<NotesDraft>(`/api/topics/${topicId}/commands/notes/draft`),
@@ -359,6 +383,27 @@ export const api = {
     }),
   clearNotesDraft: (topicId: number) =>
     request<void>(`/api/topics/${topicId}/commands/notes/draft`, { method: "DELETE" }),
+  listNoteAttachments: (topicId: number) =>
+    request<NoteDraftAttachment[]>(`/api/topics/${topicId}/commands/notes/attachments`),
+  uploadNoteAttachment: async (topicId: number, file: File): Promise<NoteDraftAttachment> => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`/api/topics/${topicId}/commands/notes/attachments`, {
+      method: "POST",
+      headers: { "X-Client-Id": CLIENT_ID },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return (await res.json()) as NoteDraftAttachment;
+  },
+  deleteNoteAttachment: (topicId: number, attachmentId: number) =>
+    request<void>(`/api/topics/${topicId}/commands/notes/attachments/${attachmentId}`, {
+      method: "DELETE",
+    }),
+  noteAttachmentUrl: (attachmentId: number) => `/api/notes/attachments/${attachmentId}`,
 
   // Plugins
   listPlugins: () => request<PluginDescriptor[]>(`/api/plugins`),

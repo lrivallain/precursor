@@ -125,7 +125,7 @@ def test_topic_notes_draft_lifecycle() -> None:
 
         r = client.get(f"/api/topics/{tid}/commands/notes/draft")
         assert r.status_code == 200
-        assert r.json() == {"text": None, "updated_at": None}
+        assert r.json() == {"text": None, "updated_at": None, "attachments": []}
 
         r = client.put(
             f"/api/topics/{tid}/commands/notes/draft",
@@ -139,13 +139,14 @@ def test_topic_notes_draft_lifecycle() -> None:
         r = client.get(f"/api/topics/{tid}/commands/notes/draft")
         assert r.status_code == 200
         assert r.json()["text"] == "meeting rough notes"
+        assert r.json()["attachments"] == []
 
         r = client.delete(f"/api/topics/{tid}/commands/notes/draft")
         assert r.status_code == 204
 
         r = client.get(f"/api/topics/{tid}/commands/notes/draft")
         assert r.status_code == 200
-        assert r.json() == {"text": None, "updated_at": None}
+        assert r.json() == {"text": None, "updated_at": None, "attachments": []}
 
 
 def test_chat_notes_draft_lifecycle() -> None:
@@ -155,7 +156,7 @@ def test_chat_notes_draft_lifecycle() -> None:
 
         r = client.get(f"/api/chats/{cid}/messages/notes/draft")
         assert r.status_code == 200
-        assert r.json() == {"text": None, "updated_at": None}
+        assert r.json() == {"text": None, "updated_at": None, "attachments": []}
 
         r = client.put(
             f"/api/chats/{cid}/messages/notes/draft",
@@ -169,13 +170,229 @@ def test_chat_notes_draft_lifecycle() -> None:
         r = client.get(f"/api/chats/{cid}/messages/notes/draft")
         assert r.status_code == 200
         assert r.json()["text"] == "capture this before sending"
+        assert r.json()["attachments"] == []
 
         r = client.delete(f"/api/chats/{cid}/messages/notes/draft")
         assert r.status_code == 204
 
         r = client.get(f"/api/chats/{cid}/messages/notes/draft")
         assert r.status_code == 200
-        assert r.json() == {"text": None, "updated_at": None}
+        assert r.json() == {"text": None, "updated_at": None, "attachments": []}
+
+
+def test_topic_notes_attachments_crud_and_append() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Topic notes images"}).json()["id"]
+
+        upload = client.post(
+            f"/api/topics/{tid}/commands/notes/attachments",
+            files={"file": ("shot.png", b"fake-image", "image/png")},
+        )
+        assert upload.status_code == 201
+        att = upload.json()
+        assert att["mime"] == "image/png"
+        assert isinstance(att["id"], int)
+
+        listed = client.get(f"/api/topics/{tid}/commands/notes/attachments")
+        assert listed.status_code == 200
+        assert [row["id"] for row in listed.json()] == [att["id"]]
+
+        notes = client.get(f"/api/topics/{tid}/commands/notes/draft").json()
+        assert len(notes["attachments"]) == 1
+        assert notes["attachments"][0]["id"] == att["id"]
+
+        appended = client.post(
+            f"/api/topics/{tid}/commands/notes/append",
+            json={"text": "", "attachment_ids": [att["id"]]},
+        )
+        assert appended.status_code == 200
+        message = appended.json()["message"]
+        assert message["content"] == "**Notes**"
+        assert len(message["attachments"]) == 1
+        assert message["attachments"][0]["message_id"] == message["id"]
+
+        listed_after = client.get(f"/api/topics/{tid}/commands/notes/attachments")
+        assert listed_after.status_code == 200
+        assert listed_after.json() == []
+
+
+def test_chat_notes_attachments_delete_and_draft_cleanup() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        cid = client.post("/api/chats", json={"title": "Chat notes images"}).json()["id"]
+
+        upload = client.post(
+            f"/api/chats/{cid}/messages/notes/attachments",
+            files={"file": ("shot.png", b"fake-image", "image/png")},
+        )
+        assert upload.status_code == 201
+        att = upload.json()
+
+        # The attachment bytes are served from the dedicated note endpoint.
+        served = client.get(f"/api/notes/attachments/{att['id']}")
+        assert served.status_code == 200
+        assert served.content == b"fake-image"
+
+        removed = client.delete(f"/api/chats/{cid}/messages/notes/attachments/{att['id']}")
+        assert removed.status_code == 204
+        assert client.get(f"/api/chats/{cid}/messages/notes/attachments").json() == []
+
+        # Re-upload and verify deleting the draft cascades the draft attachment.
+        reupload = client.post(
+            f"/api/chats/{cid}/messages/notes/attachments",
+            files={"file": ("shot2.png", b"fake-image-2", "image/png")},
+        )
+        assert reupload.status_code == 201
+        att2 = reupload.json()["id"]
+        assert client.delete(f"/api/chats/{cid}/messages/notes/draft").status_code == 204
+        assert client.get(f"/api/notes/attachments/{att2}").status_code == 404
+
+
+def test_topic_notes_add_and_ask_stream_binds_note_attachments() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Notes stream bind"}).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/commands/notes/attachments",
+            files={"file": ("shot.png", b"stream-image", "image/png")},
+        )
+        assert upload.status_code == 201
+        aid = upload.json()["id"]
+
+        stream = client.post(
+            f"/api/topics/{tid}/messages/stream",
+            json={"content": "**Notes**", "note_attachment_ids": [aid]},
+            headers={"Accept": "text/event-stream"},
+        )
+        assert stream.status_code == 200
+
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        user_msgs = [m for m in msgs if m["role"] == "user"]
+        assert user_msgs
+        assert len(user_msgs[-1]["attachments"]) == 1
+        assert user_msgs[-1]["attachments"][0]["mime"] == "image/png"
+
+
+def test_notes_post_comment_uploads_images_and_rewrites_body(monkeypatch) -> None:
+    from precursor.backend.routers import commands as commands_router
+
+    posted: dict[str, str] = {}
+
+    async def _fake_require_token(_session) -> str:
+        return "test-token"
+
+    async def _fake_upload(self, repo, number, *, filename, content, mime) -> str:
+        raise AssertionError("image upload should not be attempted for GitHub comments")
+
+    async def _fake_add_comment(self, repo, number, body) -> dict[str, object]:
+        posted["body"] = body
+        return {
+            "id": 7,
+            "url": "https://github.com/octo/example/issues/40#issuecomment-7",
+            "body": body,
+        }
+
+    async def _fake_aclose(self) -> None:
+        return None
+
+    monkeypatch.setattr(commands_router, "_require_token", _fake_require_token)
+    monkeypatch.setattr(
+        commands_router.GitHubClient, "upload_issue_comment_attachment", _fake_upload
+    )
+    monkeypatch.setattr(commands_router.GitHubClient, "add_issue_comment", _fake_add_comment)
+    monkeypatch.setattr(commands_router.GitHubClient, "aclose", _fake_aclose)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post(
+            "/api/topics",
+            json={"title": "GH notes", "github_repo": "octo/example", "github_issue_number": 40},
+        ).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/commands/notes/attachments",
+            files={"file": ("proof.png", b"evidence", "image/png")},
+        )
+        assert upload.status_code == 201
+        aid = upload.json()["id"]
+
+        r = client.post(
+            f"/api/topics/{tid}/commands/gh-update/post",
+            json={
+                "body": f"See image: ![proof](/api/notes/attachments/{aid})",
+                "note_attachment_ids": [aid],
+            },
+        )
+        assert r.status_code == 200
+        assert "(image kept in chat: proof.png)" in posted["body"]
+        assert f"/api/notes/attachments/{aid}" not in posted["body"]
+        payload = r.json()
+        assert payload["note_upload_failures"] == []
+        local = payload["local_note_message"]
+        assert local is not None
+        assert local["role"] == "user"
+        assert len(local["attachments"]) == 1
+        assert local["attachments"][0]["original_filename"] == "proof.png"
+
+
+def test_notes_post_comment_continues_when_image_upload_fails(monkeypatch) -> None:
+    from precursor.backend.routers import commands as commands_router
+
+    posted: dict[str, str] = {}
+
+    async def _fake_require_token(_session) -> str:
+        return "test-token"
+
+    async def _fake_upload(self, repo, number, *, filename, content, mime) -> str:
+        raise AssertionError("image upload should not be attempted for GitHub comments")
+
+    async def _fake_add_comment(self, repo, number, body) -> dict[str, object]:
+        posted["body"] = body
+        return {
+            "id": 8,
+            "url": "https://github.com/octo/example/issues/40#issuecomment-8",
+            "body": body,
+        }
+
+    async def _fake_aclose(self) -> None:
+        return None
+
+    monkeypatch.setattr(commands_router, "_require_token", _fake_require_token)
+    monkeypatch.setattr(
+        commands_router.GitHubClient, "upload_issue_comment_attachment", _fake_upload
+    )
+    monkeypatch.setattr(commands_router.GitHubClient, "add_issue_comment", _fake_add_comment)
+    monkeypatch.setattr(commands_router.GitHubClient, "aclose", _fake_aclose)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post(
+            "/api/topics",
+            json={"title": "GH notes", "github_repo": "octo/example", "github_issue_number": 40},
+        ).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/commands/notes/attachments",
+            files={"file": ("proof.png", b"evidence", "image/png")},
+        )
+        assert upload.status_code == 201
+        aid = upload.json()["id"]
+
+        r = client.post(
+            f"/api/topics/{tid}/commands/gh-update/post",
+            json={
+                "body": f"See image: ![proof](/api/notes/attachments/{aid})",
+                "note_attachment_ids": [aid],
+            },
+        )
+        assert r.status_code == 200
+        assert "(image kept in chat: proof.png)" in posted["body"]
+        payload = r.json()
+        assert payload["note_upload_failures"] == []
+        local = payload["local_note_message"]
+        assert local is not None
+        assert local["role"] == "user"
+        assert len(local["attachments"]) == 1
+        assert local["attachments"][0]["original_filename"] == "proof.png"
 
 
 def test_chat_promote_to_topic_moves_messages() -> None:

@@ -8,6 +8,7 @@ from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.memory import Memory
 from precursor.backend.models.message import Message, MessageRole
 from precursor.backend.models.note_draft import NoteDraft
+from precursor.backend.models.note_draft_attachment import NoteDraftAttachment
 from precursor.backend.models.reminder import Reminder
 from precursor.backend.models.role import Role
 from precursor.backend.models.settings import AppSetting
@@ -28,6 +29,7 @@ __all__ = [
     "Message",
     "MessageRole",
     "NoteDraft",
+    "NoteDraftAttachment",
     "Reminder",
     "Role",
     "Skill",
