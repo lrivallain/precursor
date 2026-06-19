@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import httpx
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
@@ -32,6 +32,7 @@ async def _ledger_count() -> int:
 
 async def _seed_ledger() -> None:
     async with SessionLocal() as session:
+        await session.execute(delete(UsageRecord))
         session.add_all(
             [
                 UsageRecord(
