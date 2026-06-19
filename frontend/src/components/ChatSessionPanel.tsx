@@ -76,10 +76,18 @@ function parseToolMeta(raw: string | null): ParsedToolMeta | null {
 }
 
 interface PendingNotes {
+  initialText: string;
+  loadingDraft: boolean;
+  savingDraft: boolean;
   rephrasing: boolean;
   acting: boolean;
   error: string | null;
   rephrasedText?: string;
+}
+
+interface NotesConfirmState {
+  message: string;
+  resolve: (ok: boolean) => void;
 }
 
 export function ChatSessionPanel({
@@ -93,6 +101,8 @@ export function ChatSessionPanel({
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
+  const [savedNotesDraft, setSavedNotesDraft] = useState<string | null>(null);
+  const [notesConfirm, setNotesConfirm] = useState<NotesConfirmState | null>(null);
   // One-shot reminder state for this chat (null = none set).
   const [reminder, setReminder] = useState<Reminder | null>(null);
   const [reminderModal, setReminderModal] = useState<{ note: string } | null>(null);
@@ -206,6 +216,19 @@ export function ChatSessionPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await api.getChatNotesDraft(chat.id).catch(() => null);
+      if (cancelled) return;
+      const text = (res?.text ?? "").trim();
+      setSavedNotesDraft(text ? text : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [chat.id]);
 
   // Load this chat's reminder (if any) so we can show the fired banner and
@@ -356,7 +379,38 @@ export function ChatSessionPanel({
 
   async function dispatchCommand(name: string, argument: string): Promise<void> {
     if (name === "notes") {
-      setPendingNotes({ rephrasing: false, acting: false, error: null });
+      setPendingNotes({
+        initialText: "",
+        loadingDraft: true,
+        savingDraft: false,
+        rephrasing: false,
+        acting: false,
+        error: null,
+      });
+      try {
+        const draftRes = await api.getChatNotesDraft(chat.id);
+        const loaded = (draftRes.text ?? "").trim();
+        setSavedNotesDraft(loaded ? loaded : null);
+        setPendingNotes((p) =>
+          p
+            ? {
+                ...p,
+                initialText: draftRes.text ?? "",
+                loadingDraft: false,
+              }
+            : p,
+        );
+      } catch (err) {
+        setPendingNotes((p) =>
+          p
+            ? {
+                ...p,
+                loadingDraft: false,
+                error: (err as Error).message,
+              }
+            : p,
+        );
+      }
       return;
     }
     if (name === "rename") {
@@ -496,10 +550,14 @@ export function ChatSessionPanel({
     try {
       if (action === "append") {
         const res = await api.appendChatNotes(chat.id, text);
+        await api.clearChatNotesDraft(chat.id).catch(() => {});
+        setSavedNotesDraft(null);
         setPersisted((prev) => [...prev, res.message]);
         onChatUpdated();
         setPendingNotes(null);
       } else if (action === "append-and-ask") {
+        await api.clearChatNotesDraft(chat.id).catch(() => {});
+        setSavedNotesDraft(null);
         setPendingNotes(null);
         void streamStore.start(streamKey, `**Notes**\n\n${text.trim()}`);
       }
@@ -509,6 +567,54 @@ export function ChatSessionPanel({
         p ? { ...p, acting: false, error: (err as Error).message } : p,
       );
     }
+  }
+
+  async function saveNotesDraft(text: string): Promise<void> {
+    if (!pendingNotes || !text.trim()) return;
+    if (!(await askNotesConfirm("Save notes as draft and close the pad?"))) return;
+    setPendingNotes((p) => (p ? { ...p, savingDraft: true, error: null } : p));
+    try {
+      const res = await api.saveChatNotesDraft(chat.id, text.trim());
+      const saved = (res.text ?? "").trim();
+      setSavedNotesDraft(saved ? saved : null);
+      setPendingNotes(null);
+    } catch (err) {
+      setPendingNotes((p) =>
+        p ? { ...p, savingDraft: false, error: (err as Error).message } : p,
+      );
+    }
+  }
+
+  async function discardSavedNotesDraft(): Promise<void> {
+    if (!(await askNotesConfirm("Discard the saved notes draft?"))) return;
+    try {
+      await api.clearChatNotesDraft(chat.id);
+      setSavedNotesDraft(null);
+    } catch (err) {
+      systemNote(`Draft discard failed: ${(err as Error).message}`);
+    }
+  }
+
+  function resumeSavedNotesDraft(): void {
+    setPendingNotes({
+      initialText: savedNotesDraft ?? "",
+      loadingDraft: false,
+      savingDraft: false,
+      rephrasing: false,
+      acting: false,
+      error: null,
+    });
+  }
+
+  async function askNotesConfirm(message: string): Promise<boolean> {
+    return await new Promise<boolean>((resolve) => {
+      setNotesConfirm({ message, resolve });
+    });
+  }
+
+  async function closeNotesPad(text: string): Promise<void> {
+    if (text.trim() && !(await askNotesConfirm("Discard current notes in the pad?"))) return;
+    setPendingNotes(null);
   }
 
   async function send(): Promise<void> {
@@ -643,17 +749,42 @@ export function ChatSessionPanel({
                 ))}
               </div>
             )}
+            {!pendingNotes && savedNotesDraft && (
+              <div className="flex items-center justify-between gap-2 rounded border border-border bg-surface px-3 py-1.5 text-xs">
+                <span className="min-w-0 flex-1 truncate text-muted">
+                  Saved notes draft: {savedNotesDraft}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    className="shrink-0 rounded px-2 py-0.5 text-accent hover:bg-border"
+                    onClick={resumeSavedNotesDraft}
+                  >
+                    Resume
+                  </button>
+                  <button
+                    className="shrink-0 rounded px-2 py-0.5 text-muted hover:bg-border"
+                    onClick={() => void discardSavedNotesDraft()}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
             {pendingNotes && (
               <NotesPanel
                 hasIssue={false}
                 allowPostComment={false}
+                initialText={pendingNotes.initialText}
+                loadingDraft={pendingNotes.loadingDraft}
+                savingDraft={pendingNotes.savingDraft}
                 rephrasing={pendingNotes.rephrasing}
                 acting={pendingNotes.acting}
                 error={pendingNotes.error}
                 rephrasedText={pendingNotes.rephrasedText}
                 onRephrase={rephraseNotes}
+                onSaveDraft={saveNotesDraft}
                 onAction={runNotesAction}
-                onCancel={() => setPendingNotes(null)}
+                onCancel={closeNotesPad}
               />
             )}
             <Composer
@@ -693,6 +824,33 @@ export function ChatSessionPanel({
             handleReminderSaved(saved);
           }}
         />
+      )}
+      {notesConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-2xl">
+            <div className="text-sm">{notesConfirm.message}</div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded border border-border px-3 py-1.5 text-xs hover:bg-bg"
+                onClick={() => {
+                  notesConfirm.resolve(false);
+                  setNotesConfirm(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded bg-accent px-3 py-1.5 text-xs text-white"
+                onClick={() => {
+                  notesConfirm.resolve(true);
+                  setNotesConfirm(null);
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

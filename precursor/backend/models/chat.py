@@ -12,6 +12,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.message import Message
+    from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
 
 
@@ -59,6 +60,14 @@ class Chat(Base, TimestampMixin):
     # Optional one-shot reminder. One-to-one; deleting the chat cascades to it.
     reminder: Mapped[Reminder | None] = relationship(
         "Reminder",
+        back_populates="chat",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    # Optional persisted scratchpad text used by the /notes command.
+    note_draft: Mapped[NoteDraft | None] = relationship(
+        "NoteDraft",
         back_populates="chat",
         cascade="all, delete-orphan",
         uselist=False,

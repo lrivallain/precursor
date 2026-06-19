@@ -162,6 +162,11 @@ export interface Message {
   attachments?: Attachment[];
 }
 
+export interface NotesDraft {
+  text: string | null;
+  updated_at: string | null;
+}
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   llm_model: string;

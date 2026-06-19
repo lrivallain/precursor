@@ -118,6 +118,66 @@ def test_chat_message_serialization_handles_null_topic_id() -> None:
         assert msgs[0]["chat_id"] == cid
 
 
+def test_topic_notes_draft_lifecycle() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Drafts"}).json()["id"]
+
+        r = client.get(f"/api/topics/{tid}/commands/notes/draft")
+        assert r.status_code == 200
+        assert r.json() == {"text": None, "updated_at": None}
+
+        r = client.put(
+            f"/api/topics/{tid}/commands/notes/draft",
+            json={"text": "meeting rough notes"},
+        )
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["text"] == "meeting rough notes"
+        assert isinstance(payload["updated_at"], str)
+
+        r = client.get(f"/api/topics/{tid}/commands/notes/draft")
+        assert r.status_code == 200
+        assert r.json()["text"] == "meeting rough notes"
+
+        r = client.delete(f"/api/topics/{tid}/commands/notes/draft")
+        assert r.status_code == 204
+
+        r = client.get(f"/api/topics/{tid}/commands/notes/draft")
+        assert r.status_code == 200
+        assert r.json() == {"text": None, "updated_at": None}
+
+
+def test_chat_notes_draft_lifecycle() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        cid = client.post("/api/chats", json={"title": "Drafts chat"}).json()["id"]
+
+        r = client.get(f"/api/chats/{cid}/messages/notes/draft")
+        assert r.status_code == 200
+        assert r.json() == {"text": None, "updated_at": None}
+
+        r = client.put(
+            f"/api/chats/{cid}/messages/notes/draft",
+            json={"text": "capture this before sending"},
+        )
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["text"] == "capture this before sending"
+        assert isinstance(payload["updated_at"], str)
+
+        r = client.get(f"/api/chats/{cid}/messages/notes/draft")
+        assert r.status_code == 200
+        assert r.json()["text"] == "capture this before sending"
+
+        r = client.delete(f"/api/chats/{cid}/messages/notes/draft")
+        assert r.status_code == 204
+
+        r = client.get(f"/api/chats/{cid}/messages/notes/draft")
+        assert r.status_code == 200
+        assert r.json() == {"text": None, "updated_at": None}
+
+
 def test_chat_promote_to_topic_moves_messages() -> None:
     """Promoting a chat creates a topic, moves the transcript, drops the chat."""
     app = create_app()
