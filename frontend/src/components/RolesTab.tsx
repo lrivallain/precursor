@@ -3,8 +3,10 @@ import { Drama, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { rolesStore, useRoles } from "../lib/rolesStore";
 import type { Role } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 
 export function RolesTab() {
+  const confirmAction = useConfirm();
   const roles = useRoles();
   const [editing, setEditing] = useState<Role | "new" | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -15,7 +17,13 @@ export function RolesTab() {
   }, []);
 
   async function handleDelete(role: Role): Promise<void> {
-    if (!confirm(`Delete role "${role.name}"? Discussions using it revert to default.`))
+    if (
+      !(await confirmAction({
+        message: `Delete role "${role.name}"? Discussions using it revert to default.`,
+        confirmLabel: "Delete role",
+        variant: "danger",
+      }))
+    )
       return;
     setBusyId(role.id);
     setError(null);

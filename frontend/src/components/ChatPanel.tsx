@@ -20,6 +20,7 @@ import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ResizeHandle } from "./ResizeHandle";
+import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type { Attachment, Message, Reminder, Topic } from "../lib/types";
@@ -143,6 +144,7 @@ interface NotesConfirmState {
 }
 
 export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, onOpenRoleSelector }: ChatPanelProps) {
+  const confirmAction = useConfirm();
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
@@ -710,7 +712,14 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   }
 
   async function runClear(): Promise<void> {
-    if (!window.confirm("Erase the entire chat transcript for this topic?")) return;
+    if (
+      !(await confirmAction({
+        message: "Erase the entire chat transcript for this topic?",
+        confirmLabel: "Erase transcript",
+        variant: "danger",
+      }))
+    )
+      return;
     try {
       await api.clearMessages(topic.id);
       setPersisted([]);

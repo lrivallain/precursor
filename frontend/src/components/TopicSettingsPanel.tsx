@@ -18,6 +18,7 @@ import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
 import type { Schedule, Topic, TopicNode } from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
+import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import {
   defaultRecurrence,
@@ -50,6 +51,7 @@ export function TopicSettingsPanel({
   onCleared,
   initialTab = "settings",
 }: Props) {
+  const confirmAction = useConfirm();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [title, setTitle] = useState(topic.title);
   const [slug, setSlug] = useState(topic.slug);
@@ -172,7 +174,14 @@ export function TopicSettingsPanel({
   }
 
   async function remove(): Promise<void> {
-    if (!window.confirm(`Delete "${topic.title}" and all its messages?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Delete "${topic.title}" and all its messages?`,
+        confirmLabel: "Delete topic",
+        variant: "danger",
+      }))
+    )
+      return;
     setDeleting(true);
     setError(null);
     try {
@@ -185,7 +194,14 @@ export function TopicSettingsPanel({
   }
 
   async function clearChat(): Promise<void> {
-    if (!window.confirm("Erase the entire chat transcript for this topic?")) return;
+    if (
+      !(await confirmAction({
+        message: "Erase the entire chat transcript for this topic?",
+        confirmLabel: "Erase transcript",
+        variant: "danger",
+      }))
+    )
+      return;
     setClearing(true);
     setError(null);
     try {

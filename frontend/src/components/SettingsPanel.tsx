@@ -35,6 +35,7 @@ import type {
   Me,
   Settings,
 } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
@@ -125,6 +126,7 @@ const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
 ];
 
 export function SettingsPanel({ onClose }: Props) {
+  const confirmAction = useConfirm();
   const [category, setCategory] = useState<Category>("appearance");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mcp, setMcp] = useState<MCPServerStatus[]>([]);
@@ -967,7 +969,14 @@ export function SettingsPanel({ onClose }: Props) {
                         onEdit={() => setMcpEditing(s)}
                         onDelete={async () => {
                           if (s.id == null) return;
-                          if (!confirm(`Delete MCP server "${s.name}"?`)) return;
+                          if (
+                            !(await confirmAction({
+                              message: `Delete MCP server "${s.name}"?`,
+                              confirmLabel: "Delete MCP server",
+                              variant: "danger",
+                            }))
+                          )
+                            return;
                           await api.deleteMcpServer(s.id);
                           await refreshMcp();
                         }}

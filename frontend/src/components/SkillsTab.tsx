@@ -3,8 +3,10 @@ import { Download, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import type { Skill } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 
 export function SkillsTab() {
+  const confirmAction = useConfirm();
   const skills = useSkills();
   const [editing, setEditing] = useState<Skill | "new" | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -15,7 +17,14 @@ export function SkillsTab() {
   }, []);
 
   async function handleDelete(skill: Skill): Promise<void> {
-    if (!confirm(`Delete skill "/${skill.name}"?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Delete skill "/${skill.name}"?`,
+        confirmLabel: "Delete skill",
+        variant: "danger",
+      }))
+    )
+      return;
     setBusyId(skill.id);
     setError(null);
     try {

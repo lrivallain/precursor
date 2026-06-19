@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Archive, ArrowUpRight, Eraser, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Chat, Topic } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
   chat: Chat;
@@ -26,6 +27,7 @@ export function ChatSettingsPanel({
   onCleared,
   onPromoted,
 }: Props) {
+  const confirmAction = useConfirm();
   const [title, setTitle] = useState(chat.title);
   const [slug, setSlug] = useState(chat.slug);
   const [description, setDescription] = useState(chat.description ?? "");
@@ -59,10 +61,12 @@ export function ChatSettingsPanel({
 
   async function promote(): Promise<void> {
     if (
-      !window.confirm(
-        "Promote this chat to a full topic? It moves out of Chats and gains the " +
-          "topic tree + GitHub features. The transcript is kept.",
-      )
+      !(await confirmAction({
+        message:
+          "Promote this chat to a full topic? It moves out of Chats and gains the topic tree + GitHub features. The transcript is kept.",
+        confirmLabel: "Promote chat",
+        variant: "warning",
+      }))
     )
       return;
     setPromoting(true);
@@ -76,7 +80,14 @@ export function ChatSettingsPanel({
   }
 
   async function clearChat(): Promise<void> {
-    if (!window.confirm("Erase the entire transcript for this chat?")) return;
+    if (
+      !(await confirmAction({
+        message: "Erase the entire transcript for this chat?",
+        confirmLabel: "Erase transcript",
+        variant: "danger",
+      }))
+    )
+      return;
     setClearing(true);
     setError(null);
     try {
@@ -102,7 +113,14 @@ export function ChatSettingsPanel({
   }
 
   async function remove(): Promise<void> {
-    if (!window.confirm(`Delete "${chat.title}" and all its messages?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Delete "${chat.title}" and all its messages?`,
+        confirmLabel: "Delete chat",
+        variant: "danger",
+      }))
+    )
+      return;
     setDeleting(true);
     setError(null);
     try {

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { Chat, Topic } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
   onClose: () => void;
@@ -31,6 +32,7 @@ export function ArchivePanel({
   onChatRestored,
   onChatDeleted,
 }: Props) {
+  const confirmAction = useConfirm();
   const [tab, setTab] = useState<Tab>("topics");
   const [topics, setTopics] = useState<Topic[] | null>(null);
   const [chats, setChats] = useState<Chat[] | null>(null);
@@ -69,7 +71,14 @@ export function ArchivePanel({
   }
 
   async function deleteTopic(t: Topic): Promise<void> {
-    if (!window.confirm(`Permanently delete "${t.title}" and all its messages?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Permanently delete "${t.title}" and all its messages?`,
+        confirmLabel: "Delete topic",
+        variant: "danger",
+      }))
+    )
+      return;
     setBusy(`t${t.id}`);
     setError(null);
     try {
@@ -98,7 +107,14 @@ export function ArchivePanel({
   }
 
   async function deleteChat(c: Chat): Promise<void> {
-    if (!window.confirm(`Permanently delete "${c.title}" and all its messages?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Permanently delete "${c.title}" and all its messages?`,
+        confirmLabel: "Delete chat",
+        variant: "danger",
+      }))
+    )
+      return;
     setBusy(`c${c.id}`);
     setError(null);
     try {
