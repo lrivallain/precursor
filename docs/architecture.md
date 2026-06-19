@@ -96,9 +96,12 @@ Scheduled topics run the *same* turn logic off the request path via
 - `AppSetting` — JSON key/value store for runtime-editable settings (theme,
   model, MCP toggles, `mcp_expose`, jail config, **secrets that are never echoed
   back** — only `*_present` booleans are returned).
-- Dev startup runs `Base.metadata.create_all` plus a `_ensure_dev_columns`
-  backfill shim (SQLite ALTER/rebuild); **production uses Alembic migrations**
-  (`alembic upgrade head`), which mirror the dev shim.
+- Schema is managed entirely by **Alembic**: `init_db` runs `alembic upgrade
+  head` on startup, which both builds a fresh database from migrations and
+  migrates an existing one (dev and prod alike — no `create_all`). Generate a
+  migration from model changes with `make migration m="…"` (autogenerate). A
+  database stamped at a squashed-away revision is auto-adopted to the current
+  baseline on next startup (a version-row update only — no schema/data change).
 
 Runtime settings layer over env defaults: `services/app_settings.py` resolves
 each setting as "env/`.env` default, overridden by an `AppSetting` row if

@@ -58,8 +58,10 @@ plus a frontend extension registry.
 
 1. Update both the Pydantic schema **and** the TS `types.ts` for any API
    change.
-2. Add or update an Alembic migration when models change (dev uses
-   `create_all`, prod uses migrations).
+2. When models change, generate a migration with `make migration m="…"`
+   (Alembic autogenerate), review it, and commit it. Alembic is the single
+   source of truth: `init_db` runs `alembic upgrade head` on startup for dev and
+   prod alike — there is no `create_all` or hand-written dev backfill.
 3. Keep comments to "why", not "what". Don't add docstrings to code you didn't
    touch.
 4. Run the quality gates (`make check`, listed in `CONTRIBUTING.md`).

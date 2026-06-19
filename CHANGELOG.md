@@ -94,6 +94,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Database schema is now managed entirely by Alembic** instead of a parallel
+  hand-written backfill. `init_db` runs `alembic upgrade head` on startup, which
+  both builds a fresh database and migrates an existing one (additive only —
+  existing tables are never rebuilt or dropped). The dev-only column backfill /
+  table-rebuild path (`_ensure_dev_columns` and friends) is gone, and the prior
+  incremental migrations were squashed into a single `0001_baseline` (verified
+  to reproduce the old `create_all` schema exactly). A schema change is now one
+  Alembic migration that applies to dev and prod alike, and you can generate it
+  from your model edits with `make migration m="…"` (autogenerate) → review →
+  commit. A database stamped at a now-squashed revision is re-adopted to the
+  baseline automatically on next startup (a version-row update only; no schema
+  or data change), so no manual step is needed.
 - **Breaking (dev/config):** the LLM provider and GitHub token are no longer
   read from the environment (`PRECURSOR_LLM_PROVIDER`, `GITHUB_TOKEN`). They now
   live in the app settings and are configured in the UI, so they can change at

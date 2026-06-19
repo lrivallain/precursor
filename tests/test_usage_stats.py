@@ -20,7 +20,7 @@ from precursor.backend.services.usage_stats import compute_usage_stats, record_u
 
 
 def _init_db() -> None:
-    # Lifespan runs init_db / create_all before we touch the tables.
+    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
     with TestClient(create_app()):
         pass
 

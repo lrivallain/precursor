@@ -1,4 +1,4 @@
-.PHONY: help sync dev backend frontend build wheel check test
+.PHONY: help sync dev backend frontend build wheel check test migration migrate
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -40,3 +40,14 @@ check:  ## Run all backend + frontend quality gates
 
 test:  ## Run the backend test suite (uv)
 	uv run pytest -q
+
+# Autogenerate a migration from model changes (brings the local DB to head
+# first so the diff is correct). Usage: make migration m="add foo to chats".
+migration:  ## Autogenerate a migration from model changes (m="description")
+	@test -n "$(m)" || { echo 'usage: make migration m="description"'; exit 1; }
+	uv run alembic upgrade head
+	uv run alembic revision --autogenerate -m "$(m)"
+
+# Apply pending migrations to the configured database.
+migrate:  ## Apply pending migrations (alembic upgrade head)
+	uv run alembic upgrade head

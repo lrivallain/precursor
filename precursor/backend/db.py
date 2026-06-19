@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from precursor.backend.config import get_settings
-from precursor.backend.models.base import Base
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 _settings = get_settings()
 
@@ -28,118 +33,90 @@ SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Create tables on startup when no migrations are present (dev convenience)."""
-    # Import models so they register with the metadata before create_all runs.
-    from precursor.backend.models import (  # noqa: F401
-        attachment,
-        chat,
-        mcp_server,
-        memory,
-        message,
-        reminder,
-        role,
-        skill,
-        topic,
-        usage,
-        workspace,
-    )
+    """Bring the database schema to head on startup.
+
+    Alembic migrations are the single source of truth: ``upgrade head`` both
+    builds a fresh database and migrates an existing one (additive only —
+    existing tables are never dropped or rebuilt). Cases:
+
+    * **Managed at a known revision** → ``upgrade head`` (a no-op when already at
+      head; otherwise it applies the pending migrations). The production path.
+    * **Managed at an *unknown* revision** → the stored revision was squashed
+      away by a baseline reset. Managed databases were already at head, so the
+      live schema matches the new baseline — re-adopt it with ``stamp head`` (a
+      version-row write only; no schema or data change).
+    * **Unmanaged** → a fresh database (``upgrade head`` builds it) or a legacy
+      ``create_all`` one that has tables but no version row (``stamp head``
+      adopts it). Told apart by whether any application table already exists.
+
+    Either way the protected default Assistant Role is seeded (idempotent).
+    """
+    async with engine.connect() as conn:
+        has_version, has_tables, stored = await conn.run_sync(_inspect_alembic_state)
+
+    if not has_version:
+        # Fresh DB → build from migrations; legacy create_all DB → adopt it.
+        action, purge = ("stamp", False) if has_tables else ("upgrade", False)
+    elif stored in _known_revisions():
+        action, purge = ("upgrade", False)
+    else:
+        # Stored revision was squashed away by a baseline reset. The live schema
+        # already matches the baseline, so re-adopt it — purging the stale
+        # version row first, since stamp can't resolve the orphaned revision.
+        action, purge = ("stamp", True)
+    # env.py drives its own asyncio loop, so run Alembic off this one.
+    await asyncio.to_thread(_run_alembic, action, "head", purge)
 
     async with engine.begin() as conn:
-        # Dev-only: rename legacy tables before create_all so existing data is
-        # preserved instead of a fresh empty table being created alongside it.
-        # Production should use the equivalent Alembic migration.
-        await conn.run_sync(_rename_legacy_tables)
-        await conn.run_sync(Base.metadata.create_all)
-        # Dev-only: backfill columns added after the DB was first created.
-        # create_all does not ALTER existing tables. Production should use Alembic.
-        await conn.run_sync(_ensure_dev_columns)
-        # Seed the protected default Assistant Role so discussions always have a
-        # fallback persona.
         await conn.run_sync(ensure_default_role)
 
 
-def _rename_legacy_tables(sync_conn: Connection) -> None:
+def _inspect_alembic_state(sync_conn: Connection) -> tuple[bool, bool, str | None]:
+    """Return ``(has_alembic_version, has_app_tables, stored_revision)``."""
     from sqlalchemy import inspect, text
 
-    tables = set(inspect(sync_conn).get_table_names())
-    if "knowledge_areas" in tables and "workspaces" not in tables:
-        sync_conn.execute(text("ALTER TABLE knowledge_areas RENAME TO workspaces"))
+    names = set(inspect(sync_conn).get_table_names())
+    has_version = "alembic_version" in names
+    has_tables = bool(names - {"alembic_version"})
+    stored = None
+    if has_version:
+        stored = sync_conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    return has_version, has_tables, stored
 
 
-def _ensure_dev_columns(sync_conn: Connection) -> None:
-    from sqlalchemy import inspect, text
+def _alembic_config() -> Config:
+    from alembic.config import Config
 
-    from precursor.backend.services.slugs import slugify
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(repo_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(repo_root / "precursor" / "backend" / "alembic"))
+    return cfg
 
-    inspector = inspect(sync_conn)
-    if "topics" in inspector.get_table_names():
-        cols = {c["name"] for c in inspector.get_columns("topics")}
-        if "last_read_at" not in cols:
-            sync_conn.execute(text("ALTER TABLE topics ADD COLUMN last_read_at TIMESTAMP"))
-        if "pinned" not in cols:
-            sync_conn.execute(
-                text("ALTER TABLE topics ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0")
-            )
-        if "archived_at" not in cols:
-            sync_conn.execute(text("ALTER TABLE topics ADD COLUMN archived_at TIMESTAMP"))
-        if "slug" not in cols:
-            sync_conn.execute(text("ALTER TABLE topics ADD COLUMN slug VARCHAR(255)"))
-            # Backfill: assign each existing row a unique slug derived from its
-            # title (fall back to `topic-<id>` for empty/non-ASCII-only titles).
-            rows = sync_conn.execute(text("SELECT id, title FROM topics ORDER BY id")).fetchall()
-            used: set[str] = set()
-            for row in rows:
-                base = slugify(row.title) or f"topic-{row.id}"
-                candidate = base
-                n = 2
-                while candidate in used:
-                    candidate = f"{base}-{n}"
-                    n += 1
-                used.add(candidate)
-                sync_conn.execute(
-                    text("UPDATE topics SET slug = :s WHERE id = :i"),
-                    {"s": candidate, "i": row.id},
-                )
-            sync_conn.execute(
-                text("CREATE UNIQUE INDEX IF NOT EXISTS ix_topics_slug ON topics(slug)")
-            )
-    tables = set(inspector.get_table_names())
-    if "messages" in tables:
-        cols = {c["name"] for c in inspector.get_columns("messages")}
-        if "chat_id" not in cols:
-            # Chats reuse the messages table via a nullable chat_id (exactly one
-            # of topic_id / chat_id is set). Adding chat_id, dropping topic_id's
-            # NOT NULL, and adding the container CHECK all require recreating the
-            # table on SQLite — ALTER can't do them. Rebuild + copy existing rows.
-            _rebuild_messages_table(sync_conn, source="messages")
-        elif "_messages_old" in tables:
-            # Finish a rebuild that was interrupted (e.g. an index-name clash on
-            # a prior boot): the live rows are still stranded in _messages_old.
-            _rebuild_messages_table(sync_conn, source="_messages_old")
-        else:
-            if "prompt_tokens" not in cols:
-                sync_conn.execute(text("ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER"))
-            if "completion_tokens" not in cols:
-                sync_conn.execute(text("ALTER TABLE messages ADD COLUMN completion_tokens INTEGER"))
 
-    tables = set(inspector.get_table_names())
-    if "attachments" in tables:
-        cols = {c["name"] for c in inspector.get_columns("attachments")}
-        if "chat_id" not in cols:
-            # Attachments gained chat support the same way messages did: a
-            # nullable chat_id, topic_id relaxed to nullable, and a container
-            # CHECK. SQLite can't ALTER those in place, so rebuild + copy.
-            _rebuild_attachments_table(sync_conn, source="attachments")
-        elif "_attachments_old" in tables:
-            _rebuild_attachments_table(sync_conn, source="_attachments_old")
+def _known_revisions() -> set[str]:
+    from alembic.script import ScriptDirectory
 
-    # Assistant Roles: add the nullable role_id FK to each discussion container.
-    # A plain nullable column is an in-place ALTER on SQLite, no rebuild needed.
-    for table in ("topics", "chats", "workspaces"):
-        if table in inspector.get_table_names():
-            cols = {c["name"] for c in inspector.get_columns(table)}
-            if "role_id" not in cols:
-                sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN role_id INTEGER"))
+    script = ScriptDirectory.from_config(_alembic_config())
+    return {rev.revision for rev in script.walk_revisions()}
+
+
+def _run_alembic(action: str, revision: str, purge: bool = False) -> None:
+    """Run an Alembic command against the configured database.
+
+    Executed in a worker thread because Alembic's ``env.py`` calls
+    ``asyncio.run``, which can't nest inside the app's running event loop.
+    ``purge`` (stamp only) clears the version table first, so a stale/orphaned
+    revision left by a baseline reset can be re-adopted.
+    """
+    from alembic import command
+
+    cfg = _alembic_config()
+    if action == "upgrade":
+        command.upgrade(cfg, revision)
+    elif action == "stamp":
+        command.stamp(cfg, revision, purge=purge)
+    else:  # pragma: no cover - guard
+        raise ValueError(f"Unknown alembic action: {action}")
 
 
 def ensure_default_role(sync_conn: Connection) -> None:
@@ -161,76 +138,6 @@ def ensure_default_role(sync_conn: Connection) -> None:
             "VALUES ('default', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
     )
-
-
-def _rebuild_messages_table(sync_conn: Connection, *, source: str) -> None:
-    """Recreate ``messages`` with the current model schema, copying rows over.
-
-    Dev-only. SQLite can't ALTER a column's nullability or add a CHECK in place,
-    so we rebuild the table. ``source`` is the table holding the live rows —
-    ``messages`` for a first run, or ``_messages_old`` when resuming a rebuild
-    that a previous boot left half-finished. Renamed tables keep their old index
-    names, so we drop those first to avoid a clash when the fresh table and its
-    indexes are created.
-    """
-    from precursor.backend.models.message import Message
-
-    _rebuild_table(sync_conn, Message.__table__, source=source)
-
-
-def _rebuild_attachments_table(sync_conn: Connection, *, source: str) -> None:
-    """Recreate ``attachments`` with the current model schema, copying rows over.
-
-    Dev-only twin of :func:`_rebuild_messages_table` — see its docstring for the
-    rebuild rationale. ``source`` is ``attachments`` on a first run or
-    ``_attachments_old`` when resuming an interrupted rebuild.
-    """
-    from precursor.backend.models.attachment import Attachment
-
-    _rebuild_table(sync_conn, Attachment.__table__, source=source)
-
-
-def _rebuild_table(sync_conn: Connection, model_table: object, *, source: str) -> None:
-    """Rebuild ``model_table``'s table from ``source``, carrying common columns."""
-    from sqlalchemy import Table, inspect, text
-
-    assert isinstance(model_table, Table)
-    table = model_table.name
-    old = f"_{table}_old"
-
-    sync_conn.execute(text("PRAGMA foreign_keys=OFF"))
-    if source == table:
-        sync_conn.execute(text(f"ALTER TABLE {table} RENAME TO {old}"))
-    else:
-        # Resuming: drop the empty half-built table so create() can run clean.
-        sync_conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
-
-    _drop_user_indexes(sync_conn, old)
-    model_table.create(sync_conn)
-
-    old_cols = {c["name"] for c in inspect(sync_conn).get_columns(old)}
-    new_cols = {c.name for c in model_table.columns}
-    carry = ", ".join(c for c in old_cols if c in new_cols)
-    sync_conn.execute(text(f"INSERT INTO {table} ({carry}) SELECT {carry} FROM {old}"))
-    sync_conn.execute(text(f"DROP TABLE {old}"))
-    sync_conn.execute(text("PRAGMA foreign_keys=ON"))
-
-
-def _drop_user_indexes(sync_conn: Connection, table: str) -> None:
-    """Drop the explicit (non-constraint) indexes attached to ``table``."""
-    from sqlalchemy import text
-
-    # ``sql IS NOT NULL`` skips auto indexes backing UNIQUE/PK constraints,
-    # which can't be dropped directly.
-    rows = sync_conn.execute(
-        text(
-            "SELECT name FROM sqlite_master "
-            "WHERE type = 'index' AND tbl_name = :t AND sql IS NOT NULL"
-        ),
-        {"t": table},
-    ).fetchall()
-    for (name,) in rows:
-        sync_conn.execute(text(f'DROP INDEX IF EXISTS "{name}"'))
 
 
 @asynccontextmanager

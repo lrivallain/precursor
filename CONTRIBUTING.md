@@ -70,6 +70,26 @@ npm --prefix frontend run build
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
 
+## Database migrations
+
+Alembic migrations are the single source of truth for the schema. On startup the
+app brings the database to `head` automatically (`alembic upgrade head`), so a
+fresh database is built from migrations and an existing one is migrated in place
+— there is no manual step and no separate dev backfill.
+
+After changing a model, generate the matching migration from the diff and review
+it:
+
+```bash
+make migration m="add foo to chats"   # autogenerate from the model change
+# review the new file under precursor/backend/alembic/versions/, then commit it
+make migrate                          # (optional) apply it to your local DB now
+```
+
+The migration then applies to dev and prod alike on the next startup. Keep one
+migration per change. Autogenerate covers most cases — double-check column type
+changes, server defaults, and any data migrations by hand.
+
 ## Versioning & releases
 
 Precursor uses **CalVer** (`YYYY.M.MICRO`). The version is derived from git
