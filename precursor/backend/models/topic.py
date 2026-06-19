@@ -29,8 +29,7 @@ class Topic(Base, TimestampMixin):
         String(32), nullable=False, default="standard", server_default="standard"
     )
     # URL-friendly identifier. Stable across title edits unless the user
-    # explicitly changes it via the settings panel. The migration in
-    # `db._ensure_dev_columns` backfills legacy rows.
+    # explicitly changes it via the settings panel.
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
