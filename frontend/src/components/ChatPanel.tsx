@@ -7,6 +7,10 @@ import { Composer } from "./Composer";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { api } from "../lib/api";
 import {
+  splitSupportedAttachmentFiles,
+  unsupportedAttachmentMessage,
+} from "../lib/attachments";
+import {
   GITHUB_SLASH_COMMANDS,
   matchSlashCommands,
   parseSlashCommand,
@@ -345,15 +349,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   }
 
   async function uploadFiles(files: Iterable<File>): Promise<void> {
-    const images: File[] = [];
-    for (const f of files) {
-      if (f && f.type && f.type.startsWith("image/")) images.push(f);
+    const { supported, unsupported } = splitSupportedAttachmentFiles(files);
+    if (unsupported.length > 0) {
+      setAttachmentError(unsupportedAttachmentMessage(unsupported));
     }
-    if (images.length === 0) return;
-    setAttachmentError(null);
-    setUploadingCount((n) => n + images.length);
+    if (supported.length === 0) return;
+    if (unsupported.length === 0) setAttachmentError(null);
+    setUploadingCount((n) => n + supported.length);
     try {
-      for (const file of images) {
+      for (const file of supported) {
         try {
           const att = await api.uploadAttachment(topic.id, file);
           setPendingAttachments((prev) => [...prev, att]);
@@ -364,7 +368,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         }
       }
     } finally {
-      setUploadingCount((n) => Math.max(0, n - images.length));
+      setUploadingCount((n) => Math.max(0, n - supported.length));
     }
   }
 
@@ -494,7 +498,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     setPendingAttachments([]);
     void streamStore.start(
       streamKey,
-      content || "(image attached)",
+      content || "(attachment attached)",
       undefined,
       atts,
     );
@@ -764,22 +768,27 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   async function uploadNoteAttachments(files: Iterable<File>): Promise<void> {
     if (!pendingNotes) return;
-    const images: File[] = [];
-    for (const f of files) {
-      if (f && f.type && f.type.startsWith("image/")) images.push(f);
+    const { supported, unsupported } = splitSupportedAttachmentFiles(files);
+    if (supported.length === 0) {
+      if (unsupported.length > 0) {
+        setPendingNotes((p) =>
+          p ? { ...p, attachmentsError: unsupportedAttachmentMessage(unsupported) } : p,
+        );
+      }
+      return;
     }
-    if (images.length === 0) return;
     setPendingNotes((p) =>
       p
         ? {
             ...p,
-            attachmentsError: null,
-            uploadingAttachments: p.uploadingAttachments + images.length,
+            attachmentsError:
+              unsupported.length > 0 ? unsupportedAttachmentMessage(unsupported) : null,
+            uploadingAttachments: p.uploadingAttachments + supported.length,
           }
         : p,
     );
     try {
-      for (const file of images) {
+      for (const file of supported) {
         try {
           const att = await api.uploadNoteAttachment(topic.id, file);
           setPendingNotes((p) => (p ? { ...p, attachments: [...p.attachments, att] } : p));
@@ -794,7 +803,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         p
           ? {
               ...p,
-              uploadingAttachments: Math.max(0, p.uploadingAttachments - images.length),
+              uploadingAttachments: Math.max(0, p.uploadingAttachments - supported.length),
             }
           : p,
       );
@@ -1159,7 +1168,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 Saved notes draft:
                 {savedNotesDraft.text ? ` ${savedNotesDraft.text}` : ""}
                 {savedNotesDraft.attachmentCount > 0
-                  ? ` (${savedNotesDraft.attachmentCount} image${
+                  ? ` (${savedNotesDraft.attachmentCount} attachment${
                       savedNotesDraft.attachmentCount > 1 ? "s" : ""
                     })`
                   : ""}

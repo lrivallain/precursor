@@ -10,7 +10,7 @@ from precursor.backend.models.message import MessageRole
 
 
 class AttachmentRead(BaseModel):
-    """Image attached to a user message (currently the only supported kind)."""
+    """Attachment linked to a user message."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -29,7 +29,7 @@ class AttachmentRead(BaseModel):
 
 
 class NoteDraftAttachmentRead(BaseModel):
-    """Image attached to a note draft before it is published."""
+    """Attachment linked to a note draft before it is published."""
 
     model_config = ConfigDict(from_attributes=True)
 

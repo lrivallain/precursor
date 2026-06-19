@@ -41,7 +41,7 @@ from precursor.backend.services.events import (
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
-from precursor.backend.services.image_uploads import read_validated_image
+from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.note_drafts import (
@@ -270,7 +270,7 @@ async def gh_update_post(
     gh = GitHubClient(token=token)
     note_upload_failures: list[str] = []
     local_note_message: MessageRead | None = None
-    kept_image_names: list[str] = []
+    kept_attachment_names: list[str] = []
     try:
         body = raw_body
         if payload.note_attachment_ids:
@@ -291,7 +291,7 @@ async def gh_update_post(
                     f"/api/notes/attachments/{att.id}",
                     f"(image kept in chat: {filename})",
                 )
-                kept_image_names.append(filename)
+                kept_attachment_names.append(filename)
 
         comment = await gh.add_issue_comment(
             repo,
@@ -308,20 +308,22 @@ async def gh_update_post(
         f"**Posted comment to [{repo}#{topic.github_issue_number}]({comment['url']})**\n\n{body}"
     )
     if payload.note_attachment_ids:
-        kept_rendered = ", ".join(f"`{name}`" for name in kept_image_names) or "note image(s)"
+        kept_rendered = (
+            ", ".join(f"`{name}`" for name in kept_attachment_names) or "note attachment(s)"
+        )
         receipt_body = (
             f"{receipt_body}\n\n"
             "> [!WARNING]\n"
-            "> Notes images couldn't be included in the GitHub comment from this app.\n"
-            f"> Images were kept in this chat: {kept_rendered}."
+            "> Notes attachments couldn't be included in the GitHub comment from this app.\n"
+            f"> Attachments were kept in this chat: {kept_rendered}."
         )
         async with SessionLocal() as write_session:
             fallback = Message(
                 topic_id=topic_id,
                 role=MessageRole.USER,
                 content=(
-                    "**Notes images kept in chat**\n\n"
-                    "GitHub comments are text-only, so note images were kept in this chat."
+                    "**Notes attachments kept in chat**\n\n"
+                    "GitHub comments are text-only, so note attachments were kept in this chat."
                 ),
             )
             write_session.add(fallback)
@@ -723,7 +725,7 @@ async def notes_append(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     trimmed = payload.text.strip()
     if not trimmed and not payload.attachment_ids:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or images are required")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or attachments are required")
 
     body = "**Notes**" if not trimmed else f"**Notes**\n\n{trimmed}"
     async with SessionLocal() as write_session:
@@ -832,7 +834,7 @@ async def notes_attachments_upload(
 ) -> NoteDraftAttachment:
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    mime, data = await read_validated_image(file)
+    mime, data = await read_validated_attachment(file)
     draft = await get_or_create_note_draft(session, kind="topic", container_id=topic_id)
     att = NoteDraftAttachment(
         note_draft_id=draft.id,

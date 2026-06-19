@@ -219,7 +219,7 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
-  // Attachments (currently images only — sent as content-parts to vision models)
+  // Attachments (images + selected documents)
   uploadAttachment: async (topicId: number, file: File): Promise<Attachment> => {
     const form = new FormData();
     form.append("file", file, file.name);

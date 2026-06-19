@@ -1,8 +1,8 @@
-"""Attachments router — upload, serve, and (pre-commit) delete image blobs.
+"""Attachments router — upload, serve, and (pre-commit) delete attachment blobs.
 
-Currently scoped to images only. Files are stored as BLOBs in the main
-database so the single-process deployment story stays intact (one SQLite
-file, no separate object store to back up).
+Files are stored as BLOBs in the main database so the single-process
+deployment story stays intact (one SQLite file, no separate object store
+to back up).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.db import get_session
 from precursor.backend.models import Attachment, Chat, NoteDraftAttachment, Topic
 from precursor.backend.schemas import AttachmentRead
-from precursor.backend.services.image_uploads import read_validated_image
+from precursor.backend.services.image_uploads import read_validated_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def upload_attachment(
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
 
-    mime, data = await read_validated_image(file)
+    mime, data = await read_validated_attachment(file)
 
     att = Attachment(
         topic_id=topic_id,
@@ -65,7 +65,7 @@ async def upload_chat_attachment(
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
 
-    mime, data = await read_validated_image(file)
+    mime, data = await read_validated_attachment(file)
 
     att = Attachment(
         chat_id=chat_id,

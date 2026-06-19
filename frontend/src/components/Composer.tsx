@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, Paperclip, Send, StopCircle, X } from "lucide-react";
 import { api } from "../lib/api";
+import { ATTACHMENT_ACCEPT } from "../lib/attachments";
 import type { SlashCommand } from "../lib/commands";
 import type { Attachment } from "../lib/types";
 import { SlashCommandPicker } from "./SlashCommandPicker";
@@ -35,7 +36,7 @@ interface Props {
   interimText: string;
   height: number;
   onResizeStart: (e: React.MouseEvent) => void;
-  /** When provided, the composer supports image attachments (paperclip / paste / drop). */
+  /** When provided, the composer supports attachments (paperclip / paste / drop). */
   attachments?: ComposerAttachments;
   placeholder?: string;
 }
@@ -46,7 +47,7 @@ const DEFAULT_PLACEHOLDER =
 /**
  * The single shared message composer used by both topics and chats: textarea
  * with slash-command autocomplete, ↑/↓ history recall, dictation, optional
- * image attachments, a resize handle, and the send/stop button.
+ * attachments, a resize handle, and the send/stop button.
  */
 export function Composer({
   value,
@@ -165,7 +166,7 @@ export function Composer({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={ATTACHMENT_ACCEPT}
             multiple
             className="hidden"
             onChange={(e) => {
@@ -189,7 +190,7 @@ export function Composer({
             for (const it of items) {
               if (it.kind === "file") {
                 const f = it.getAsFile();
-                if (f && f.type.startsWith("image/")) files.push(f);
+                if (f) files.push(f);
               }
             }
             if (files.length > 0) {
@@ -285,8 +286,8 @@ export function Composer({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="px-2 py-2 rounded bg-surface border border-border text-muted hover:text-text hover:bg-bg"
-              aria-label="Attach image"
-              data-tooltip="Attach image (or paste / drop)"
+              aria-label="Attach file"
+              data-tooltip="Attach file (image/pdf/docx/pptx)"
             >
               <Paperclip size={18} />
             </button>
@@ -340,14 +341,27 @@ function AttachmentChip({
   attachment: Attachment;
   onRemove: () => void;
 }) {
-  const label = attachment.original_filename || `image-${attachment.id}`;
+  const label = attachment.original_filename || `attachment-${attachment.id}`;
+  const isImage = attachment.mime.startsWith("image/");
   return (
     <div className="flex items-center gap-2 pl-1 pr-2 py-1 rounded border border-border bg-surface text-xs max-w-[14rem]">
-      <img
-        src={api.attachmentUrl(attachment.id)}
-        alt=""
-        className="w-8 h-8 rounded object-cover border border-border shrink-0"
-      />
+      {isImage ? (
+        <img
+          src={api.attachmentUrl(attachment.id)}
+          alt=""
+          className="w-8 h-8 rounded object-cover border border-border shrink-0"
+        />
+      ) : (
+        <a
+          href={api.attachmentUrl(attachment.id)}
+          target="_blank"
+          rel="noreferrer"
+          className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"
+          title={label}
+        >
+          <Paperclip size={14} />
+        </a>
+      )}
       <span className="truncate" title={label}>
         {label}
       </span>

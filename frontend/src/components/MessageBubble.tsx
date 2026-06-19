@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Code2,
   Copy,
+  Paperclip,
   StopCircle,
   Trash2,
 } from "lucide-react";
@@ -56,9 +57,8 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const skillInvocation =
     isUser && !pending ? matchSkillInvocation(content, skills) : null;
   const showThinking = pending && !content;
-  const imageAttachments = (attachments ?? []).filter((a) =>
-    a.mime.startsWith("image/"),
-  );
+  const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
+  const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
   const [hover, setHover] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState<null | "text" | "md">(null);
@@ -259,6 +259,25 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
                       alt={a.original_filename || ""}
                       className="max-w-[18rem] max-h-64 rounded border border-border object-contain bg-bg"
                     />
+                  </a>
+                ))}
+              </div>
+            )}
+            {fileAttachments.length > 0 && (
+              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                {fileAttachments.map((a) => (
+                  <a
+                    key={a.id}
+                    href={api.attachmentUrl(a.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={a.original_filename || `attachment-${a.id}`}
+                    className="inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2 py-1 text-xs hover:bg-surface"
+                  >
+                    <Paperclip size={12} />
+                    <span className="max-w-[16rem] truncate">
+                      {a.original_filename || `attachment-${a.id}`}
+                    </span>
                   </a>
                 ))}
               </div>
