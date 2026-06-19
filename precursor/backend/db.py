@@ -141,6 +141,18 @@ def _ensure_dev_columns(sync_conn: Connection) -> None:
             if "role_id" not in cols:
                 sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN role_id INTEGER"))
 
+    # Chat description-as-system-prompt flag (mirrors Alembic 0010). A plain
+    # boolean default is an in-place ALTER on SQLite.
+    if "chats" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("chats")}
+        if "description_as_system_prompt" not in cols:
+            sync_conn.execute(
+                text(
+                    "ALTER TABLE chats ADD COLUMN description_as_system_prompt "
+                    "BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+
 
 def ensure_default_role(sync_conn: Connection) -> None:
     """Seed the protected ``default`` role (empty prompt) if it is missing.
