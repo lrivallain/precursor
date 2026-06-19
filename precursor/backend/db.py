@@ -6,12 +6,15 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from precursor.backend.config import get_settings
-from precursor.backend.models.base import Base
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 _settings = get_settings()
 
@@ -30,61 +33,88 @@ SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Bring the database schema up to date on startup.
+    """Bring the database schema to head on startup.
 
-    Alembic migrations are the single source of truth. Two cases:
+    Alembic migrations are the single source of truth: ``upgrade head`` both
+    builds a fresh database and migrates an existing one (additive only —
+    existing tables are never dropped or rebuilt). Cases:
 
-    * **Already Alembic-managed** (an ``alembic_version`` row exists) — run
-      ``upgrade head``. A no-op when already at head; otherwise it applies the
-      pending migrations (additive ALTERs). This is the production path, and it
-      never drops or rebuilds existing tables.
-    * **Not yet managed** (a fresh DB, or a legacy ``create_all`` one) — build
-      the current schema with ``create_all`` and ``stamp`` it at head so future
-      migrations apply incrementally. Stamping only writes the version row; it
-      never touches table data.
+    * **Managed at a known revision** → ``upgrade head`` (a no-op when already at
+      head; otherwise it applies the pending migrations). The production path.
+    * **Managed at an *unknown* revision** → the stored revision was squashed
+      away by a baseline reset. Managed databases were already at head, so the
+      live schema matches the new baseline — re-adopt it with ``stamp head`` (a
+      version-row write only; no schema or data change).
+    * **Unmanaged** → a fresh database (``upgrade head`` builds it) or a legacy
+      ``create_all`` one that has tables but no version row (``stamp head``
+      adopts it). Told apart by whether any application table already exists.
 
     Either way the protected default Assistant Role is seeded (idempotent).
     """
-    # Importing the models package registers every table on ``Base.metadata``.
-    from precursor.backend import models  # noqa: F401
-
     async with engine.connect() as conn:
-        managed = await conn.run_sync(_has_alembic_version)
+        has_version, has_tables, stored = await conn.run_sync(_inspect_alembic_state)
 
-    if managed:
-        # env.py drives its own asyncio loop, so run Alembic off this one.
-        await asyncio.to_thread(_run_alembic, "upgrade", "head")
+    if not has_version:
+        # Fresh DB → build from migrations; legacy create_all DB → adopt it.
+        action, purge = ("stamp", False) if has_tables else ("upgrade", False)
+    elif stored in _known_revisions():
+        action, purge = ("upgrade", False)
     else:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await asyncio.to_thread(_run_alembic, "stamp", "head")
+        # Stored revision was squashed away by a baseline reset. The live schema
+        # already matches the baseline, so re-adopt it — purging the stale
+        # version row first, since stamp can't resolve the orphaned revision.
+        action, purge = ("stamp", True)
+    # env.py drives its own asyncio loop, so run Alembic off this one.
+    await asyncio.to_thread(_run_alembic, action, "head", purge)
 
     async with engine.begin() as conn:
         await conn.run_sync(ensure_default_role)
 
 
-def _has_alembic_version(sync_conn: Connection) -> bool:
-    from sqlalchemy import inspect
+def _inspect_alembic_state(sync_conn: Connection) -> tuple[bool, bool, str | None]:
+    """Return ``(has_alembic_version, has_app_tables, stored_revision)``."""
+    from sqlalchemy import inspect, text
 
-    return "alembic_version" in inspect(sync_conn).get_table_names()
+    names = set(inspect(sync_conn).get_table_names())
+    has_version = "alembic_version" in names
+    has_tables = bool(names - {"alembic_version"})
+    stored = None
+    if has_version:
+        stored = sync_conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    return has_version, has_tables, stored
 
 
-def _run_alembic(action: str, revision: str) -> None:
-    """Run an Alembic command against the configured database.
-
-    Executed in a worker thread because Alembic's ``env.py`` calls
-    ``asyncio.run``, which can't nest inside the app's running event loop.
-    """
-    from alembic import command
+def _alembic_config() -> Config:
     from alembic.config import Config
 
     repo_root = Path(__file__).resolve().parents[2]
     cfg = Config(str(repo_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(repo_root / "precursor" / "backend" / "alembic"))
+    return cfg
+
+
+def _known_revisions() -> set[str]:
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(_alembic_config())
+    return {rev.revision for rev in script.walk_revisions()}
+
+
+def _run_alembic(action: str, revision: str, purge: bool = False) -> None:
+    """Run an Alembic command against the configured database.
+
+    Executed in a worker thread because Alembic's ``env.py`` calls
+    ``asyncio.run``, which can't nest inside the app's running event loop.
+    ``purge`` (stamp only) clears the version table first, so a stale/orphaned
+    revision left by a baseline reset can be re-adopted.
+    """
+    from alembic import command
+
+    cfg = _alembic_config()
     if action == "upgrade":
         command.upgrade(cfg, revision)
     elif action == "stamp":
-        command.stamp(cfg, revision)
+        command.stamp(cfg, revision, purge=purge)
     else:  # pragma: no cover - guard
         raise ValueError(f"Unknown alembic action: {action}")
 
