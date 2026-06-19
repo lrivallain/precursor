@@ -84,6 +84,7 @@ export interface Chat {
   slug: string;
   title: string;
   description: string | null;
+  description_as_system_prompt: boolean;
   pinned: boolean;
   archived_at: string | null;
   last_read_at: string | null;
@@ -96,6 +97,7 @@ export interface Chat {
 export interface ChatCreate {
   title: string;
   description?: string | null;
+  description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
 }
@@ -103,6 +105,7 @@ export interface ChatCreate {
 export interface ChatUpdate {
   title?: string;
   description?: string | null;
+  description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
   role_id?: number | null;

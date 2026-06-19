@@ -29,6 +29,7 @@ export function ChatSettingsPanel({
   const [title, setTitle] = useState(chat.title);
   const [slug, setSlug] = useState(chat.slug);
   const [description, setDescription] = useState(chat.description ?? "");
+  const [asSystemPrompt, setAsSystemPrompt] = useState(chat.description_as_system_prompt);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -46,6 +47,7 @@ export function ChatSettingsPanel({
         title: trimmed,
         slug: slug.trim() && slug.trim() !== chat.slug ? slug.trim() : undefined,
         description: description.trim() ? description.trim() : null,
+        description_as_system_prompt: asSystemPrompt,
       });
       onSaved(updated);
     } catch (e) {
@@ -169,6 +171,21 @@ export function ChatSettingsPanel({
                 placeholder="Optional — steers the assistant's system context."
                 className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
               />
+              <label className="flex items-start gap-2 mt-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={asSystemPrompt}
+                  disabled={!description.trim()}
+                  onChange={(e) => setAsSystemPrompt(e.target.checked)}
+                  className="mt-0.5 disabled:opacity-50"
+                />
+                <span className="text-xs text-muted">
+                  Use as system prompt
+                  <span className="block text-[11px]">
+                    Enforce the description on every turn instead of adding it once as context.
+                  </span>
+                </span>
+              </label>
             </section>
 
             {error && <p className="text-xs text-red-500">{error}</p>}

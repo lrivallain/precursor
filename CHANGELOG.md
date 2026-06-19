@@ -11,6 +11,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Chat description as context or system prompt**: a chat's description now
+  feeds the model. By default it's injected once as discussion-level context; a
+  new **"Use as system prompt"** checkbox next to the description (in chat
+  settings) instead enforces it as an instruction prepended to every user turn.
+  Empty descriptions are a no-op and the checkbox is disabled until you type one.
+  The flag persists with the chat (`description_as_system_prompt`); a Role and a
+  system-prompt description coexist deterministically (role persona in the system
+  message, description enforced per turn).
 - **Chats**: flat conversation sessions alongside the topic tree, reachable from
   a sidebar mode switcher (**Topics · Chats · Files**) while the persona/settings
   menu stays visible across every mode. Chats are "a topic without the tree or

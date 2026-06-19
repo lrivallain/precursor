@@ -92,6 +92,7 @@ async def create_chat(
         title=payload.title,
         slug=slug,
         description=payload.description,
+        description_as_system_prompt=payload.description_as_system_prompt,
         pinned=payload.pinned,
     )
     session.add(chat)
@@ -136,6 +137,8 @@ async def update_chat(
         chat.title = payload.title
     if payload.description is not None:
         chat.description = payload.description
+    if payload.description_as_system_prompt is not None:
+        chat.description_as_system_prompt = payload.description_as_system_prompt
     if payload.pinned is not None:
         chat.pinned = payload.pinned
     if "role_id" in payload.model_fields_set:
