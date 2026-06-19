@@ -24,6 +24,7 @@ export async function streamChat(
     model?: string;
     prompt_override?: string;
     attachment_ids?: number[];
+    note_attachment_ids?: number[];
   },
   { signal, onEvent }: StreamChatOptions,
 ): Promise<void> {
@@ -87,6 +88,7 @@ export async function streamChatSession(
     model?: string;
     prompt_override?: string;
     attachment_ids?: number[];
+    note_attachment_ids?: number[];
   },
   { signal, onEvent }: StreamChatOptions,
 ): Promise<void> {

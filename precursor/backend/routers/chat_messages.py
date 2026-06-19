@@ -9,14 +9,21 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import SessionLocal, get_session
-from precursor.backend.models import Attachment, Chat, Message, MessageRole, NoteDraft
+from precursor.backend.models import (
+    Attachment,
+    Chat,
+    Message,
+    MessageRole,
+    NoteDraft,
+    NoteDraftAttachment,
+)
 from precursor.backend.routers.chat import (
     _apply_chat_system_prompt,
     _build_chat_system_context,
@@ -34,7 +41,7 @@ from precursor.backend.routers.commands import (
     NotesRephraseResponse,
     _stream_llm,
 )
-from precursor.backend.schemas import ChatRequest, MessageRead, StoppedTurn
+from precursor.backend.schemas import ChatRequest, MessageRead, NoteDraftAttachmentRead, StoppedTurn
 from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
@@ -43,8 +50,14 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.github_auth import resolve_github_token
+from precursor.backend.services.image_uploads import read_validated_image
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.note_drafts import (
+    consume_note_draft_attachments_to_message,
+    get_note_draft,
+    get_or_create_note_draft,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +170,17 @@ async def stream_chat(
             await session.commit()
             for a in bound_attachments:
                 a.message_id = user_msg.id
+    if payload.note_attachment_ids:
+        note_bound = await consume_note_draft_attachments_to_message(
+            session,
+            kind="chat",
+            container_id=chat_id,
+            message_id=user_msg.id,
+            attachment_ids=payload.note_attachment_ids,
+        )
+        if note_bound:
+            await session.commit()
+            bound_attachments.extend(note_bound)
 
     # Snapshot history + system context now, before the session closes.
     system_prompt = await _build_chat_system_context(session, chat)
@@ -263,11 +287,22 @@ async def notes_append(
     """Persist freeform notes verbatim as a user message in the chat."""
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    trimmed = payload.text.strip()
+    if not trimmed and not payload.attachment_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or images are required")
 
-    body = f"**Notes**\n\n{payload.text.strip()}"
+    body = "**Notes**" if not trimmed else f"**Notes**\n\n{trimmed}"
     async with SessionLocal() as write_session:
         msg = Message(chat_id=chat_id, role=MessageRole.USER, content=body)
         write_session.add(msg)
+        await write_session.flush()
+        await consume_note_draft_attachments_to_message(
+            write_session,
+            kind="chat",
+            container_id=chat_id,
+            message_id=msg.id,
+            attachment_ids=payload.attachment_ids,
+        )
         await write_session.commit()
         await write_session.refresh(msg, attribute_names=["attachments"])
         message_read = MessageRead.model_validate(msg, from_attributes=True)
@@ -285,10 +320,12 @@ async def notes_draft_get(
     result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
     draft = result.scalar_one_or_none()
     if draft is None:
-        return NotesDraftResponse(text=None, updated_at=None)
+        return NotesDraftResponse(text=None, updated_at=None, attachments=[])
+    await session.refresh(draft, attribute_names=["attachments"])
     return NotesDraftResponse(
         text=draft.text,
         updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
     )
 
 
@@ -308,10 +345,11 @@ async def notes_draft_save(
     else:
         draft.text = payload.text
     await session.commit()
-    await session.refresh(draft)
+    await session.refresh(draft, attribute_names=["attachments"])
     return NotesDraftResponse(
         text=draft.text,
         updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
     )
 
 
@@ -327,4 +365,63 @@ async def notes_draft_delete(
     if draft is None:
         return
     await session.delete(draft)
+    await session.commit()
+
+
+@router.get("/notes/attachments", response_model=list[NoteDraftAttachmentRead])
+async def notes_attachments_list(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[NoteDraftAttachment]:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    draft = await get_note_draft(session, kind="chat", container_id=chat_id)
+    if draft is None:
+        return []
+    await session.refresh(draft, attribute_names=["attachments"])
+    return list(draft.attachments)
+
+
+@router.post(
+    "/notes/attachments",
+    response_model=NoteDraftAttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def notes_attachments_upload(
+    chat_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> NoteDraftAttachment:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    mime, data = await read_validated_image(file)
+    draft = await get_or_create_note_draft(session, kind="chat", container_id=chat_id)
+    att = NoteDraftAttachment(
+        note_draft_id=draft.id,
+        mime=mime,
+        size=len(data),
+        original_filename=(file.filename or "")[:255],
+        data=data,
+    )
+    session.add(att)
+    await session.commit()
+    await session.refresh(att)
+    return att
+
+
+@router.delete("/notes/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def notes_attachments_delete(
+    chat_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    draft = await get_note_draft(session, kind="chat", container_id=chat_id)
+    if draft is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    att = await session.get(NoteDraftAttachment, attachment_id)
+    if att is None or att.note_draft_id != draft.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    await session.delete(att)
     await session.commit()

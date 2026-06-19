@@ -36,6 +36,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   paste), matching topics — uploaded images are bound to the turn and sent to
   vision-capable models. Both message composers were unified into one shared
   `Composer` component, so topics and chats stay in lock-step.
+- **`/notes` image support (topics + chats)**: Notes now accept pasted/uploaded
+  images, persist them in the note draft, and show inline previews in the Notes
+  pad. "Add to chat" and "Add & ask AI" both carry those images into the created
+  user turn, and "Post as comment" uploads note images to GitHub attachments and
+  rewrites the comment markdown to use GitHub-hosted image URLs.
 - **Friendlier startup / multi-instance**: one `--port` now controls everything.
   In `--dev` the Vite UI runs on the API port **+ 1** and its `/api` proxy
   follows the backend port, so a single flag spins up a full instance. A busy

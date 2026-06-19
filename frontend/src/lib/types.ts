@@ -165,6 +165,16 @@ export interface Message {
 export interface NotesDraft {
   text: string | null;
   updated_at: string | null;
+  attachments: NoteDraftAttachment[];
+}
+
+export interface NoteDraftAttachment {
+  id: number;
+  note_draft_id: number;
+  mime: string;
+  size: number;
+  original_filename: string;
+  created_at: string;
 }
 
 export interface Settings {
@@ -355,6 +365,8 @@ export interface CommentPostResult {
   issue_number: number;
   comment_url: string | null;
   message: Message;
+  note_upload_failures: string[];
+  local_note_message: Message | null;
 }
 
 export interface GhSyncResult {

@@ -136,6 +136,7 @@ class StreamStore {
     content: string,
     promptOverride?: string,
     attachments?: Attachment[],
+    noteAttachmentIds?: number[],
   ): Promise<void> {
     if (this.sessions.get(key)?.streaming) return;
     const { kind, id } = parseKey(key);
@@ -177,6 +178,9 @@ class StreamStore {
             ...(attachments && attachments.length
               ? { attachment_ids: attachments.map((a) => a.id) }
               : {}),
+            ...(noteAttachmentIds && noteAttachmentIds.length
+              ? { note_attachment_ids: noteAttachmentIds }
+              : {}),
           },
           { signal: controller.signal, onEvent },
         );
@@ -188,6 +192,9 @@ class StreamStore {
             ...(promptOverride ? { prompt_override: promptOverride } : {}),
             ...(attachments && attachments.length
               ? { attachment_ids: attachments.map((a) => a.id) }
+              : {}),
+            ...(noteAttachmentIds && noteAttachmentIds.length
+              ? { note_attachment_ids: noteAttachmentIds }
               : {}),
           },
           { signal: controller.signal, onEvent },

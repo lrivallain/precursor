@@ -47,6 +47,7 @@ from precursor.backend.services.llm.base import (
     UsageEvent,
 )
 from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.usage_stats import record_usage
 
@@ -776,6 +777,17 @@ async def stream_chat(
             await session.commit()
             for a in bound_attachments:
                 a.message_id = user_msg.id
+    if payload.note_attachment_ids:
+        note_bound = await consume_note_draft_attachments_to_message(
+            session,
+            kind="topic",
+            container_id=topic_id,
+            message_id=user_msg.id,
+            attachment_ids=payload.note_attachment_ids,
+        )
+        if note_bound:
+            await session.commit()
+            bound_attachments.extend(note_bound)
 
     # Snapshot history + system context now, before the session closes.
     system_prompt = await _build_system_context(session, topic)

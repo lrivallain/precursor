@@ -15,6 +15,7 @@ from precursor.backend.schemas.message import (
     ChatRequest,
     MessageCreate,
     MessageRead,
+    NoteDraftAttachmentRead,
     StoppedTurn,
 )
 from precursor.backend.schemas.role import (
@@ -72,6 +73,7 @@ __all__ = [
     "MemoryUpdate",
     "MessageCreate",
     "MessageRead",
+    "NoteDraftAttachmentRead",
     "RoleCreate",
     "RoleRead",
     "RoleUpdate",

@@ -11,6 +11,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.chat import Chat
+    from precursor.backend.models.note_draft_attachment import NoteDraftAttachment
     from precursor.backend.models.topic import Topic
 
 
@@ -41,3 +42,9 @@ class NoteDraft(Base, TimestampMixin):
 
     topic: Mapped[Topic | None] = relationship("Topic", back_populates="note_draft")
     chat: Mapped[Chat | None] = relationship("Chat", back_populates="note_draft")
+    attachments: Mapped[list[NoteDraftAttachment]] = relationship(
+        "NoteDraftAttachment",
+        back_populates="note_draft",
+        cascade="all, delete-orphan",
+        order_by="NoteDraftAttachment.id",
+    )

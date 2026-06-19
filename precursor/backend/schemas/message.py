@@ -28,6 +28,23 @@ class AttachmentRead(BaseModel):
         return f"/api/attachments/{self.id}"
 
 
+class NoteDraftAttachmentRead(BaseModel):
+    """Image attached to a note draft before it is published."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    note_draft_id: int
+    mime: str
+    size: int
+    original_filename: str
+    created_at: datetime
+
+    @property
+    def url(self) -> str:  # pragma: no cover — convenience for clients
+        return f"/api/notes/attachments/{self.id}"
+
+
 class MessageCreate(BaseModel):
     role: MessageRole = MessageRole.USER
     content: str = Field(min_length=1)
@@ -65,3 +82,5 @@ class ChatRequest(BaseModel):
     # IDs of previously uploaded attachments (POST /api/topics/{id}/attachments)
     # to bind to this user turn. Ignored when empty.
     attachment_ids: list[int] = Field(default_factory=list)
+    # IDs of note-draft attachments selected in /notes "add & ask AI".
+    note_attachment_ids: list[int] = Field(default_factory=list)
