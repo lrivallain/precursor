@@ -1,4 +1,4 @@
-"""Attachment model — a binary blob (currently images only) linked to a user message."""
+"""Attachment model — a binary blob linked to a user message."""
 
 from __future__ import annotations
 

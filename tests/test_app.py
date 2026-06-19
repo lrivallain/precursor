@@ -2,11 +2,82 @@
 
 from __future__ import annotations
 
+import io
 import re
+import zipfile
 
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
+from precursor.backend.routers import chat as chat_router
+from precursor.backend.services.llm.base import TextDeltaEvent, TurnDoneEvent, UsageEvent
+
+
+def _build_docx_bytes(text: str, *, header_text: str | None = None) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "word/document.xml",
+            (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                "<w:body><w:p><w:r><w:t>"
+                f"{text}"
+                "</w:t></w:r></w:p></w:body></w:document>"
+            ),
+        )
+        if header_text:
+            zf.writestr(
+                "word/header1.xml",
+                (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                    '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:p><w:r><w:t>"
+                    f"{header_text}"
+                    "</w:t></w:r></w:p></w:hdr>"
+                ),
+            )
+    return buf.getvalue()
+
+
+def _build_pptx_bytes(text: str, *, notes_text: str | None = None) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "ppt/slides/slide1.xml",
+            (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+                '<p:cSld><p:spTree><p:sp><p:txBody><a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                f"<a:r><a:t>{text}</a:t></a:r>"
+                "</a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+            ),
+        )
+        if notes_text:
+            zf.writestr(
+                "ppt/notesSlides/notesSlide1.xml",
+                (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                    '<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+                    '<p:cSld><p:spTree><p:sp><p:txBody><a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                    f"<a:r><a:t>{notes_text}</a:t></a:r>"
+                    "</a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>"
+                ),
+            )
+    return buf.getvalue()
+
+
+def _build_pdf_bytes(text: str) -> bytes:
+    return (
+        b"%PDF-1.4\n"
+        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n"
+        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R>>endobj\n"
+        b"4 0 obj<</Length 64>>stream\nBT /F1 12 Tf 72 72 Td ("
+        + text.encode("latin-1", errors="ignore")
+        + b") Tj ET\nendstream endobj\nxref\n0 5\n0000000000 65535 f \n"
+        b"trailer<</Root 1 0 R/Size 5>>\nstartxref\n0\n%%EOF\n"
+    )
 
 
 def test_create_app_and_health() -> None:
@@ -247,6 +318,202 @@ def test_chat_notes_attachments_delete_and_draft_cleanup() -> None:
         att2 = reupload.json()["id"]
         assert client.delete(f"/api/chats/{cid}/messages/notes/draft").status_code == 204
         assert client.get(f"/api/notes/attachments/{att2}").status_code == 404
+
+
+def test_topic_attachment_upload_accepts_additional_document_types() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Doc attachments"}).json()["id"]
+        cases = [
+            ("doc.pdf", _build_pdf_bytes("pdf-text"), "application/pdf"),
+            (
+                "doc.docx",
+                _build_docx_bytes("docx-text"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            (
+                "deck.pptx",
+                _build_pptx_bytes("pptx-text"),
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ),
+        ]
+        for filename, payload, mime in cases:
+            upload = client.post(
+                f"/api/topics/{tid}/attachments",
+                files={"file": (filename, payload, mime)},
+            )
+            assert upload.status_code == 201
+            att = upload.json()
+            assert att["mime"] == mime
+            served = client.get(f"/api/attachments/{att['id']}")
+            assert served.status_code == 200
+            assert served.content == payload
+
+
+def test_topic_attachment_upload_rejects_unsupported_type() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Bad attachments"}).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/attachments",
+            files={"file": ("notes.txt", b"plain-text", "text/plain")},
+        )
+        assert upload.status_code == 415
+        assert "Supported types" in upload.text
+
+
+def test_topic_notes_attachments_accept_docx_and_append() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Notes docs"}).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/commands/notes/attachments",
+            files={
+                "file": (
+                    "notes.docx",
+                    _build_docx_bytes("notes-body"),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        assert upload.status_code == 201
+        aid = upload.json()["id"]
+        appended = client.post(
+            f"/api/topics/{tid}/commands/notes/append",
+            json={"text": "", "attachment_ids": [aid]},
+        )
+        assert appended.status_code == 200
+        message = appended.json()["message"]
+        assert len(message["attachments"]) == 1
+        assert (
+            message["attachments"][0]["mime"]
+            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+
+def test_topic_stream_passes_non_image_attachment_context_to_llm(monkeypatch) -> None:
+    class EchoUserPromptProvider:
+        name = "echo"
+
+        async def stream_chat(self, *, model, messages):
+            yield ""
+
+        async def stream_chat_with_tools(self, *, model, messages, tools):
+            _ = model, tools
+            last_user = next((m for m in reversed(messages) if m.role == "user"), None)
+            yield TextDeltaEvent(content=last_user.content if last_user else "")
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+            yield TurnDoneEvent(finish_reason="stop")
+
+        async def list_models(self):
+            return []
+
+    async def _fake_get_llm_provider(_session):
+        return EchoUserPromptProvider()
+
+    async def _fake_record_usage(*args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(chat_router, "record_usage", _fake_record_usage)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Doc context"}).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/attachments",
+            files={
+                "file": (
+                    "brief.docx",
+                    _build_docx_bytes("hello from docx attachment"),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        assert upload.status_code == 201
+        aid = upload.json()["id"]
+
+        stream = client.post(
+            f"/api/topics/{tid}/messages/stream",
+            json={"content": "please summarize", "attachment_ids": [aid]},
+            headers={"Accept": "text/event-stream"},
+        )
+        assert stream.status_code == 200
+
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        assistant = [m for m in msgs if m["role"] == "assistant"][-1]
+        assert "Attached documents:" in assistant["content"]
+        assert "hello from docx attachment" in assistant["content"]
+
+
+def test_topic_stream_extracts_ooxml_header_and_notes_text(monkeypatch) -> None:
+    class EchoUserPromptProvider:
+        name = "echo"
+
+        async def stream_chat(self, *, model, messages):
+            yield ""
+
+        async def stream_chat_with_tools(self, *, model, messages, tools):
+            _ = model, tools
+            last_user = next((m for m in reversed(messages) if m.role == "user"), None)
+            yield TextDeltaEvent(content=last_user.content if last_user else "")
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+            yield TurnDoneEvent(finish_reason="stop")
+
+        async def list_models(self):
+            return []
+
+    async def _fake_get_llm_provider(_session):
+        return EchoUserPromptProvider()
+
+    async def _fake_record_usage(*args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(chat_router, "record_usage", _fake_record_usage)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "OOXML context"}).json()["id"]
+        doc_upload = client.post(
+            f"/api/topics/{tid}/attachments",
+            files={
+                "file": (
+                    "brief.docx",
+                    _build_docx_bytes("", header_text="header extracted"),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        assert doc_upload.status_code == 201
+        ppt_upload = client.post(
+            f"/api/topics/{tid}/attachments",
+            files={
+                "file": (
+                    "deck.pptx",
+                    _build_pptx_bytes("", notes_text="speaker notes extracted"),
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                )
+            },
+        )
+        assert ppt_upload.status_code == 201
+
+        stream = client.post(
+            f"/api/topics/{tid}/messages/stream",
+            json={
+                "content": "summarize attached docs",
+                "attachment_ids": [doc_upload.json()["id"], ppt_upload.json()["id"]],
+            },
+            headers={"Accept": "text/event-stream"},
+        )
+        assert stream.status_code == 200
+
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        assistant = [m for m in msgs if m["role"] == "assistant"][-1]
+        assert "header extracted" in assistant["content"]
+        assert "speaker notes extracted" in assistant["content"]
 
 
 def test_topic_notes_add_and_ask_stream_binds_note_attachments() -> None:

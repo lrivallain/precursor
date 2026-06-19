@@ -1,7 +1,7 @@
 """Chat message endpoints — list, delete, and stream turns for flat chat sessions.
 
 Mirrors the topic chat router but targets ``Chat`` containers (no GitHub issue
-context, no attachments). The heavy streaming logic is shared via
+context). The heavy streaming logic is shared via
 ``_run_message_stream`` in :mod:`precursor.backend.routers.chat`.
 """
 
@@ -50,7 +50,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.image_uploads import read_validated_image
+from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.note_drafts import (
@@ -289,7 +289,7 @@ async def notes_append(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
     trimmed = payload.text.strip()
     if not trimmed and not payload.attachment_ids:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or images are required")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or attachments are required")
 
     body = "**Notes**" if not trimmed else f"**Notes**\n\n{trimmed}"
     async with SessionLocal() as write_session:
@@ -394,7 +394,7 @@ async def notes_attachments_upload(
 ) -> NoteDraftAttachment:
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    mime, data = await read_validated_image(file)
+    mime, data = await read_validated_attachment(file)
     draft = await get_or_create_note_draft(session, kind="chat", container_id=chat_id)
     att = NoteDraftAttachment(
         note_draft_id=draft.id,
