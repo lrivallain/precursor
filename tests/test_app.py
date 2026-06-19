@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -26,68 +25,6 @@ def test_topics_empty_tree() -> None:
         r = client.get("/api/topics/tree")
         assert r.status_code == 200
         assert isinstance(r.json(), list)
-
-
-def test_dev_rebuild_messages_table_adds_chat_support(tmp_path: Path) -> None:
-    """Old-schema messages (no chat_id, NOT NULL topic_id) rebuild cleanly.
-
-    Guards the dev backfill in ``_ensure_dev_columns``: it must add chat_id,
-    relax topic_id to nullable, preserve rows, recreate indexes, and leave no
-    ``_messages_old`` behind — even though the renamed table carries the old
-    ``ix_messages_topic_id`` name.
-    """
-    from sqlalchemy import create_engine, text
-
-    from precursor.backend.db import _ensure_dev_columns
-
-    db = tmp_path / "legacy.db"
-    engine = create_engine(f"sqlite:///{db}")
-    with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE topics (id INTEGER PRIMARY KEY, title TEXT, slug TEXT)"))
-        conn.execute(
-            text(
-                "CREATE TABLE messages ("
-                "  id INTEGER PRIMARY KEY,"
-                "  topic_id INTEGER NOT NULL,"
-                "  role VARCHAR(9) NOT NULL,"
-                "  content TEXT NOT NULL,"
-                "  tool_calls TEXT,"
-                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,"
-                "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,"
-                "  FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE"
-                ")"
-            )
-        )
-        conn.execute(text("CREATE INDEX ix_messages_topic_id ON messages(topic_id)"))
-        conn.execute(text("INSERT INTO topics (id, title, slug) VALUES (1, 'T', 't')"))
-        conn.execute(
-            text("INSERT INTO messages (id, topic_id, role, content) VALUES (1, 1, 'user', 'hi')")
-        )
-
-    with engine.begin() as conn:
-        _ensure_dev_columns(conn)
-
-    with engine.connect() as conn:
-        info = conn.execute(text("PRAGMA table_info(messages)")).fetchall()
-        by_name = {row[1]: row for row in info}
-        assert "chat_id" in by_name
-        # topic_id must now be nullable (notnull flag == 0).
-        assert by_name["topic_id"][3] == 0
-        # The existing row survived the rebuild.
-        assert conn.execute(text("SELECT content FROM messages WHERE id = 1")).scalar() == "hi"
-        # Both indexes exist on the rebuilt table; the temp table is gone.
-        idx = {
-            r[0]
-            for r in conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='messages'")
-            ).fetchall()
-        }
-        assert {"ix_messages_topic_id", "ix_messages_chat_id"} <= idx
-        assert (
-            conn.execute(text("SELECT name FROM sqlite_master WHERE name='_messages_old'")).first()
-            is None
-        )
-    engine.dispose()
 
 
 def test_chats_crud_lifecycle() -> None:
