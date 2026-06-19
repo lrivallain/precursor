@@ -47,6 +47,7 @@ from precursor.backend.services.llm.base import (
     UsageEvent,
 )
 from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -129,7 +130,7 @@ async def save_stopped_turn(
 
 
 async def _build_system_context(session: AsyncSession, topic: Topic) -> str:
-    """Compose system prompt: long-term memory + topic context + GitHub issue + labels (newest comments first)."""
+    """Compose system prompt: role persona + long-term memory + topic context + GitHub issue + labels (newest comments first)."""
     parts: list[str] = [
         "You are Precursor, a focused assistant for the topic below. "
         "Use the linked GitHub issue context (when present) as authoritative; "
@@ -137,6 +138,10 @@ async def _build_system_context(session: AsyncSession, topic: Topic) -> str:
         "When tools are available, prefer fresh tool calls over stale context for "
         "anything that may have changed.",
     ]
+
+    role_prompt = await resolve_role_prompt(session, topic.role_id)
+    if role_prompt:
+        parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
     memories_result = await session.execute(select(Memory).order_by(Memory.kind, Memory.created_at))
     memories = list(memories_result.scalars().all())
@@ -190,6 +195,10 @@ async def _build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
         "for the chat session below. When tools are available, prefer fresh "
         "tool calls over stale context for anything that may have changed.",
     ]
+
+    role_prompt = await resolve_role_prompt(session, chat.role_id)
+    if role_prompt:
+        parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
     memories_result = await session.execute(select(Memory).order_by(Memory.kind, Memory.created_at))
     memories = list(memories_result.scalars().all())

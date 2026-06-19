@@ -138,6 +138,8 @@ async def update_chat(
         chat.description = payload.description
     if payload.pinned is not None:
         chat.pinned = payload.pinned
+    if "role_id" in payload.model_fields_set:
+        chat.role_id = payload.role_id
     if payload.slug is not None:
         slug = await allocate_unique_slug(session, payload.slug, Chat, exclude_id=chat.id)
         chat.slug = slug

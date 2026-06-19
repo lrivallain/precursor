@@ -32,6 +32,9 @@ import type {
   ReminderContainer,
   ReminderCreate,
   ReminderItem,
+  Role,
+  RoleCreate,
+  RoleUpdate,
   Schedule,
   ScheduleCreate,
   ScheduleUpdate,
@@ -47,6 +50,7 @@ import type {
   WorkspaceCreate,
   WorkspaceFileContent,
   WorkspaceFileNode,
+  WorkspaceUpdate,
 } from "./types";
 import { CLIENT_ID } from "./clientId";
 
@@ -353,6 +357,18 @@ export const api = {
     request<void>(`/api/skills/${id}`, { method: "DELETE" }),
   skillExportUrl: (id: number) => `/api/skills/${id}/export`,
 
+  // Roles (Assistant personas)
+  listRoles: () => request<Role[]>(`/api/roles`),
+  createRole: (data: RoleCreate) =>
+    request<Role>(`/api/roles`, { method: "POST", body: JSON.stringify(data) }),
+  updateRole: (id: number, data: RoleUpdate) =>
+    request<Role>(`/api/roles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteRole: (id: number) =>
+    request<void>(`/api/roles/${id}`, { method: "DELETE" }),
+
   // Memories
   listMemories: () => request<Memory[]>(`/api/memories`),
   createMemory: (data: MemoryCreate) =>
@@ -380,6 +396,11 @@ export const api = {
     }),
   deleteWorkspace: (id: number) =>
     request<void>(`/api/workspaces/${id}`, { method: "DELETE" }),
+  updateWorkspace: (id: number, data: WorkspaceUpdate) =>
+    request<Workspace>(`/api/workspaces/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   listWorkspaceFiles: (workspaceId: number) =>
     request<WorkspaceFileNode[]>(`/api/workspaces/${workspaceId}/files`),
   readWorkspaceFile: (workspaceId: number, path: string) =>

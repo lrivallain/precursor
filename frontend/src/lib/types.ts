@@ -20,6 +20,7 @@ export interface Topic {
   pinned: boolean;
   kind: TopicKind;
   archived_at: string | null;
+  role_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +88,7 @@ export interface Chat {
   archived_at: string | null;
   last_read_at: string | null;
   unread_count: number;
+  role_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -103,6 +105,7 @@ export interface ChatUpdate {
   description?: string | null;
   pinned?: boolean;
   slug?: string | null;
+  role_id?: number | null;
 }
 
 // One-shot date/time reminder for a topic or chat. Datetimes are ISO-8601 UTC.
@@ -418,6 +421,27 @@ export interface SkillUpdate {
   instructions?: string;
 }
 
+// Assistant Role — a persistent persona (system prompt) attached to a
+// discussion. Mirrors the backend RoleRead schema.
+export interface Role {
+  id: number;
+  name: string;
+  system_prompt: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoleCreate {
+  name: string;
+  system_prompt?: string;
+}
+
+export interface RoleUpdate {
+  name?: string;
+  system_prompt?: string;
+}
+
 export interface Memory {
   id: number;
   kind: string;
@@ -448,6 +472,7 @@ export interface Workspace {
   subdir: string | null;
   cloned_at: string | null;
   last_synced_at: string | null;
+  role_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -459,6 +484,10 @@ export interface WorkspaceCreate {
   branch?: string;
   subdir?: string | null;
   slug?: string | null;
+}
+
+export interface WorkspaceUpdate {
+  role_id?: number | null;
 }
 
 export interface WorkspaceFileNode {

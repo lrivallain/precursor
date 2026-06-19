@@ -13,6 +13,7 @@ import {
   type SlashCommand,
 } from "../lib/commands";
 import { skillsStore, useSkills } from "../lib/skillsStore";
+import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -32,6 +33,10 @@ interface ChatPanelProps {
   onNavigateTopic?: (topic: Topic) => void;
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
+  /** Persist a role change for this topic (null = default). */
+  onSetRole?: (roleId: number | null) => Promise<void>;
+  /** Open the header role selector (used by bare `/role`). */
+  onOpenRoleSelector?: () => void;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -62,6 +67,7 @@ const HANDLED_COMMANDS = new Set<string>([
   "reminder",
   "reminder-cancel",
   "done",
+  "role",
 ]);
 
 function cardTitle(p: PendingCommand): string {
@@ -128,7 +134,7 @@ interface PendingNotes {
   rephrasedText?: string;
 }
 
-export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged }: ChatPanelProps) {
+export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, onOpenRoleSelector }: ChatPanelProps) {
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
@@ -522,6 +528,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runReminderClear(true);
       return;
     }
+    if (name === "role") {
+      await runRole(argument);
+      return;
+    }
     if (name === "gh-update" || name === "gh-create" || name === "gh-close") {
       await startDraft(name, argument);
     }
@@ -582,6 +592,26 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         created_at: new Date().toISOString(),
       },
     ]);
+  }
+
+  async function runRole(argument: string): Promise<void> {
+    const arg = argument.trim();
+    if (!arg) {
+      onOpenRoleSelector?.();
+      return;
+    }
+    await rolesStore.ensureLoaded();
+    const role = rolesStore.byName(arg);
+    if (!role) {
+      systemNote(`Unknown role "${arg}". Manage roles in Settings → Roles.`);
+      return;
+    }
+    try {
+      await onSetRole?.(role.is_default ? null : role.id);
+      systemNote(`Assistant role set to "${role.name}".`);
+    } catch (err) {
+      systemNote(`Role change failed: ${(err as Error).message}`);
+    }
   }
 
   async function runRename(argument: string): Promise<void> {

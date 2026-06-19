@@ -16,6 +16,7 @@ class TopicBase(BaseModel):
     github_repo: str | None = None
     github_issue_number: int | None = None
     pinned: bool = False
+    role_id: int | None = None
 
 
 class TopicCreate(TopicBase):
@@ -30,6 +31,7 @@ class TopicUpdate(BaseModel):
     github_repo: str | None = None
     github_issue_number: int | None = None
     pinned: bool | None = None
+    role_id: int | None = None
     # When present, the router normalizes and uniquifies it before storing.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 

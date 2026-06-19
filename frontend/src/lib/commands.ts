@@ -111,6 +111,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     kind: "builtin",
   },
   {
+    name: "role",
+    label: "/role",
+    description:
+      "Set the assistant role (persona) for this conversation. Pass a role name to switch directly, or run it bare to open the role picker.",
+    argumentHint: "role name (optional)",
+    kind: "builtin",
+  },
+  {
     name: "archive",
     label: "/archive",
     description:

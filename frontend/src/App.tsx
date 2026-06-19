@@ -18,11 +18,13 @@ import {
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
 import { InlineTitle } from "./components/InlineTitle";
+import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { api } from "./lib/api";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
+import { rolesStore } from "./lib/rolesStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
@@ -135,6 +137,7 @@ export default function App() {
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
+  const [roleSelectorOpen, setRoleSelectorOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [wsRoute, setWsRoute] = useState<WsRoute>(parseWsRoute);
   // Workspaces are loaded lazily when the user first enters workspaces mode.
@@ -230,6 +233,7 @@ export default function App() {
   useEffect(() => {
     void refreshTree();
     void skillsStore.load();
+    void rolesStore.load();
   }, []);
 
   // Reflect the unread count in the tab title (always, independent of the
@@ -587,6 +591,39 @@ export default function App() {
   const workspaceInitialPath =
     activeWorkspace && activeWorkspace.slug === wsRoute.slug ? wsRoute.path : null;
 
+  // ---- Assistant roles --------------------------------------------------
+  // The header role selector and the `/role` command both funnel through here.
+  // Selecting the default role persists null (which resolves to default
+  // server-side). Updates are persisted per-discussion and reflected locally.
+  async function setRoleForActive(roleId: number | null): Promise<void> {
+    if (sidebarMode === "topics" && activeTopic) {
+      const updated = await api.updateTopic(activeTopic.id, { role_id: roleId });
+      if (activeTopicRef.current?.id === activeTopic.id) setActiveTopic(updated);
+    } else if (sidebarMode === "chats" && activeChat) {
+      const updated = await api.updateChat(activeChat.id, { role_id: roleId });
+      if (activeChatRef.current?.id === activeChat.id) setActiveChat(updated);
+    } else if (sidebarMode === "workspaces" && activeWorkspace) {
+      const updated = await api.updateWorkspace(activeWorkspace.id, {
+        role_id: roleId,
+      });
+      setWorkspaces((prev) =>
+        prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
+      );
+    }
+  }
+
+  const activeRoleId =
+    sidebarMode === "topics"
+      ? (activeTopic?.role_id ?? null)
+      : sidebarMode === "chats"
+        ? (activeChat?.role_id ?? null)
+        : (activeWorkspace?.role_id ?? null);
+
+  const hasActiveDiscussion =
+    (sidebarMode === "topics" && !!activeTopic) ||
+    (sidebarMode === "chats" && !!activeChat) ||
+    (sidebarMode === "workspaces" && !!activeWorkspace);
+
   async function loadWorkspaces(): Promise<Workspace[]> {
     const list = await api.listWorkspaces();
     setWorkspaces(list);
@@ -792,6 +829,14 @@ export default function App() {
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
             </span>
           )}
+          {hasActiveDiscussion && (
+            <RoleSelector
+              value={activeRoleId}
+              onChange={(roleId) => void setRoleForActive(roleId)}
+              open={roleSelectorOpen}
+              onOpenChange={setRoleSelectorOpen}
+            />
+          )}
         </header>
 
         <div className="flex-1 min-h-0">
@@ -832,6 +877,8 @@ export default function App() {
                   await refreshTree();
                 }}
                 onRemindersChanged={loadReminders}
+                onSetRole={setRoleForActive}
+                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
               <EmptyHero label="No topic selected." />
@@ -847,6 +894,8 @@ export default function App() {
                   setChatListReloadKey((k) => k + 1);
                 }}
                 onRemindersChanged={loadReminders}
+                onSetRole={setRoleForActive}
+                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
               <EmptyHero label="No chat selected." />
@@ -865,6 +914,8 @@ export default function App() {
                 setActiveWorkspaceId(next?.id ?? null);
                 navigateWorkspace(next?.slug ?? null, null);
               }}
+              onSetRole={setRoleForActive}
+              onOpenRoleSelector={() => setRoleSelectorOpen(true)}
             />
           ) : (
             <EmptyHero label="No workspaces yet." />

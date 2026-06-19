@@ -17,6 +17,11 @@ from precursor.backend.schemas.message import (
     MessageRead,
     StoppedTurn,
 )
+from precursor.backend.schemas.role import (
+    RoleCreate,
+    RoleRead,
+    RoleUpdate,
+)
 from precursor.backend.schemas.settings import SettingsPayload, SettingsRead
 from precursor.backend.schemas.skill import (
     SkillCreate,
@@ -43,6 +48,7 @@ from precursor.backend.schemas.workspace import (
     LocalPath,
     WorkspaceCreate,
     WorkspaceRead,
+    WorkspaceUpdate,
 )
 
 __all__ = [
@@ -66,6 +72,9 @@ __all__ = [
     "MemoryUpdate",
     "MessageCreate",
     "MessageRead",
+    "RoleCreate",
+    "RoleRead",
+    "RoleUpdate",
     "SettingsPayload",
     "SettingsRead",
     "SkillCreate",
@@ -80,4 +89,5 @@ __all__ = [
     "UsageStats",
     "WorkspaceCreate",
     "WorkspaceRead",
+    "WorkspaceUpdate",
 ]

@@ -31,8 +31,14 @@ class WorkspaceRead(BaseModel):
     subdir: str | None = None
     cloned_at: datetime | None = None
     last_synced_at: datetime | None = None
+    role_id: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class WorkspaceUpdate(BaseModel):
+    # Currently only the assigned Assistant Role is mutable post-creation.
+    role_id: int | None = None
 
 
 class FileNode(BaseModel):
