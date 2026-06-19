@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
-from precursor.backend.models import IssueContextCache, Message, MessageRole, Topic
+from precursor.backend.models import IssueContextCache, Message, MessageRole, NoteDraft, Topic
 from precursor.backend.routers.summary import refresh_issue_context
 from precursor.backend.schemas import MessageRead
 from precursor.backend.services.app_settings import (
@@ -597,6 +597,15 @@ class NotesAppendResponse(BaseModel):
     message: MessageRead
 
 
+class NotesDraftSaveRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class NotesDraftResponse(BaseModel):
+    text: str | None
+    updated_at: str | None
+
+
 @router.post("/notes/rephrase", response_model=NotesRephraseResponse)
 async def notes_rephrase(
     topic_id: int,
@@ -649,3 +658,58 @@ async def notes_append(
         message_read = MessageRead.model_validate(msg, from_attributes=True)
     await publish_message_changed(topic_id)
     return NotesAppendResponse(message=message_read)
+
+
+@router.get("/notes/draft", response_model=NotesDraftResponse)
+async def notes_draft_get(
+    topic_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> NotesDraftResponse:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        return NotesDraftResponse(text=None, updated_at=None)
+    return NotesDraftResponse(
+        text=draft.text,
+        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+    )
+
+
+@router.put("/notes/draft", response_model=NotesDraftResponse)
+async def notes_draft_save(
+    topic_id: int,
+    payload: NotesDraftSaveRequest,
+    session: AsyncSession = Depends(get_session),
+) -> NotesDraftResponse:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        draft = NoteDraft(topic_id=topic_id, text=payload.text)
+        session.add(draft)
+    else:
+        draft.text = payload.text
+    await session.commit()
+    await session.refresh(draft)
+    return NotesDraftResponse(
+        text=draft.text,
+        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+    )
+
+
+@router.delete("/notes/draft", status_code=status.HTTP_204_NO_CONTENT)
+async def notes_draft_delete(
+    topic_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if await session.get(Topic, topic_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        return
+    await session.delete(draft)
+    await session.commit()

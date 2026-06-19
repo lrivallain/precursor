@@ -27,6 +27,7 @@ import type {
   MemoryCreate,
   MemoryUpdate,
   Message,
+  NotesDraft,
   PluginDescriptor,
   Reminder,
   ReminderContainer,
@@ -136,6 +137,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
+  getChatNotesDraft: (chatId: number) =>
+    request<NotesDraft>(`/api/chats/${chatId}/messages/notes/draft`),
+  saveChatNotesDraft: (chatId: number, text: string) =>
+    request<NotesDraft>(`/api/chats/${chatId}/messages/notes/draft`, {
+      method: "PUT",
+      body: JSON.stringify({ text }),
+    }),
+  clearChatNotesDraft: (chatId: number) =>
+    request<void>(`/api/chats/${chatId}/messages/notes/draft`, { method: "DELETE" }),
 
   // Schedules (recurring automation topics). Keyed by topic id.
   getSchedule: (topicId: number) =>
@@ -340,6 +350,15 @@ export const api = {
       `/api/topics/${topicId}/commands/notes/append`,
       { method: "POST", body: JSON.stringify({ text }) },
     ),
+  getNotesDraft: (topicId: number) =>
+    request<NotesDraft>(`/api/topics/${topicId}/commands/notes/draft`),
+  saveNotesDraft: (topicId: number, text: string) =>
+    request<NotesDraft>(`/api/topics/${topicId}/commands/notes/draft`, {
+      method: "PUT",
+      body: JSON.stringify({ text }),
+    }),
+  clearNotesDraft: (topicId: number) =>
+    request<void>(`/api/topics/${topicId}/commands/notes/draft`, { method: "DELETE" }),
 
   // Plugins
   listPlugins: () => request<PluginDescriptor[]>(`/api/plugins`),

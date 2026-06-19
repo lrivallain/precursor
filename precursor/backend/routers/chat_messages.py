@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import SessionLocal, get_session
-from precursor.backend.models import Attachment, Chat, Message, MessageRole
+from precursor.backend.models import Attachment, Chat, Message, MessageRole, NoteDraft
 from precursor.backend.routers.chat import (
     _apply_chat_system_prompt,
     _build_chat_system_context,
@@ -28,6 +28,8 @@ from precursor.backend.routers.chat import (
 from precursor.backend.routers.commands import (
     NotesAppendRequest,
     NotesAppendResponse,
+    NotesDraftResponse,
+    NotesDraftSaveRequest,
     NotesRephraseRequest,
     NotesRephraseResponse,
     _stream_llm,
@@ -271,3 +273,58 @@ async def notes_append(
         message_read = MessageRead.model_validate(msg, from_attributes=True)
     await publish_message_changed_chat(chat_id)
     return NotesAppendResponse(message=message_read)
+
+
+@router.get("/notes/draft", response_model=NotesDraftResponse)
+async def notes_draft_get(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> NotesDraftResponse:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        return NotesDraftResponse(text=None, updated_at=None)
+    return NotesDraftResponse(
+        text=draft.text,
+        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+    )
+
+
+@router.put("/notes/draft", response_model=NotesDraftResponse)
+async def notes_draft_save(
+    chat_id: int,
+    payload: NotesDraftSaveRequest,
+    session: AsyncSession = Depends(get_session),
+) -> NotesDraftResponse:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        draft = NoteDraft(chat_id=chat_id, text=payload.text)
+        session.add(draft)
+    else:
+        draft.text = payload.text
+    await session.commit()
+    await session.refresh(draft)
+    return NotesDraftResponse(
+        text=draft.text,
+        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
+    )
+
+
+@router.delete("/notes/draft", status_code=status.HTTP_204_NO_CONTENT)
+async def notes_draft_delete(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if await session.get(Chat, chat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        return
+    await session.delete(draft)
+    await session.commit()

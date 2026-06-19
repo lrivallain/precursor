@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, MessageSquarePlus, NotebookPen, Send, Sparkles } from "lucide-react";
+import { Loader2, MessageSquarePlus, NotebookPen, Save, Send, Sparkles } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CommandPanel } from "./CommandPanel";
 
@@ -17,10 +17,17 @@ interface Props {
   rephrasing: boolean;
   /** True while one of the terminal actions is in flight. */
   acting: boolean;
+  /** True while loading a previously saved draft. */
+  loadingDraft?: boolean;
+  /** True while persisting the current draft. */
+  savingDraft?: boolean;
   error: string | null;
   onRephrase: (text: string) => void | Promise<void>;
+  onSaveDraft?: (text: string) => void | Promise<void>;
   onAction: (action: NotesAction, text: string) => void | Promise<void>;
-  onCancel: () => void;
+  onCancel: (text: string) => void | Promise<void>;
+  /** Seed text loaded from the server-side draft store. */
+  initialText?: string;
   /**
    * When the parent receives a rephrased text, it pushes it back here so the
    * textarea is updated in place. We use a controlled-ish pattern: the parent
@@ -34,13 +41,21 @@ export function NotesPanel({
   allowPostComment = true,
   rephrasing,
   acting,
+  loadingDraft = false,
+  savingDraft = false,
   error,
   onRephrase,
+  onSaveDraft,
   onAction,
   onCancel,
+  initialText,
   rephrasedText,
 }: Props) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
+
+  useEffect(() => {
+    setText(initialText ?? "");
+  }, [initialText]);
 
   // Apply an AI rephrase result exactly when a rephrase round-trip finishes
   // (rephrasing: true → false), not on every render. Keying on that lifecycle
@@ -57,14 +72,14 @@ export function NotesPanel({
   }, [rephrasing, error, rephrasedText]);
 
   const empty = !text.trim();
-  const busy = rephrasing || acting;
+  const busy = rephrasing || acting || loadingDraft || savingDraft;
 
   return (
     <CommandPanel
       icon={<NotebookPen size={14} className="text-accent" />}
       title="Notes"
       subtitle="scratch pad — not posted until you choose an action"
-      onClose={onCancel}
+      onClose={() => void onCancel(text)}
       closeLabel="Discard notes"
       body={text}
       onBodyChange={setText}
@@ -83,6 +98,16 @@ export function NotesPanel({
             {rephrasing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
             {rephrasing ? "Rephrasing…" : "Rephrase with AI"}
           </button>
+          {onSaveDraft && (
+            <button
+              onClick={() => void onSaveDraft(text)}
+              disabled={empty || busy}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border text-xs hover:bg-bg disabled:opacity-40"
+            >
+              {savingDraft ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              {savingDraft ? "Saving…" : "Save draft"}
+            </button>
+          )}
 
           <div className="flex-1" />
 
@@ -124,4 +149,3 @@ export function NotesPanel({
     />
   );
 }
-
