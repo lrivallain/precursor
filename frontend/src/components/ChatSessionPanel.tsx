@@ -19,6 +19,7 @@ import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type { Attachment, Chat, Message, Reminder } from "../lib/types";
@@ -98,6 +99,7 @@ export function ChatSessionPanel({
   onSetRole,
   onOpenRoleSelector,
 }: ChatSessionPanelProps) {
+  const confirmAction = useConfirm();
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
@@ -436,7 +438,14 @@ export function ChatSessionPanel({
       return;
     }
     if (name === "clear") {
-      if (!window.confirm("Erase the entire transcript for this chat?")) return;
+      if (
+        !(await confirmAction({
+          message: "Erase the entire transcript for this chat?",
+          confirmLabel: "Erase transcript",
+          variant: "danger",
+        }))
+      )
+        return;
       try {
         await api.clearChatMessages(chat.id);
         setPersisted([]);

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Schedule, ScheduleSummary } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 import {
   defaultRecurrence,
   recurrenceFromSchedule,
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function ScheduleModal({ schedule, onClose, onSaved }: Props) {
+  const confirmAction = useConfirm();
   const editing = schedule !== null;
 
   const [title, setTitle] = useState(""); // only used on create
@@ -91,7 +93,14 @@ export function ScheduleModal({ schedule, onClose, onSaved }: Props) {
 
   async function remove(): Promise<void> {
     if (!schedule || submitting) return;
-    if (!window.confirm("Delete this scheduled topic and its history?")) return;
+    if (
+      !(await confirmAction({
+        message: "Delete this scheduled topic and its history?",
+        confirmLabel: "Delete topic",
+        variant: "danger",
+      }))
+    )
+      return;
     setSubmitting(true);
     setError(null);
     try {

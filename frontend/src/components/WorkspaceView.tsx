@@ -33,6 +33,7 @@ import { rolesStore } from "../lib/rolesStore";
 import { streamWorkspaceChat } from "../lib/sse";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useResizableWidth } from "../lib/useResizableWidth";
+import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { ToolCallBubble } from "./ToolCallBubble";
@@ -98,6 +99,7 @@ export function WorkspaceView({
   onSetRole?: (roleId: number | null) => Promise<void>;
   onOpenRoleSelector?: () => void;
 }) {
+  const confirmAction = useConfirm();
   const area = workspace;
   const [files, setFiles] = useState<WorkspaceFileNode[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -154,7 +156,15 @@ export function WorkspaceView({
   }, [files, initialPath]);
 
   async function openFile(path: string): Promise<void> {
-    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+    if (
+      dirty &&
+      !(await confirmAction({
+        message: "Discard unsaved changes?",
+        confirmLabel: "Discard changes",
+        variant: "warning",
+      }))
+    )
+      return;
     setLoadingFile(true);
     setError(null);
     try {
@@ -231,8 +241,15 @@ export function WorkspaceView({
   }
 
   async function deleteFile(path: string): Promise<void> {
-    if (!window.confirm(`Delete "${path}"? It will be removed on the next push.`))
-      return;    setError(null);
+    if (
+      !(await confirmAction({
+        message: `Delete "${path}"? It will be removed on the next push.`,
+        confirmLabel: "Delete file",
+        variant: "danger",
+      }))
+    )
+      return;
+    setError(null);
     try {
       await api.deleteWorkspaceFile(area.id, path);
       if (activePath === path) {
@@ -463,6 +480,7 @@ function LocalWorkspaceBar({
   onDeleted: () => void;
   onError: (msg: string | null) => void;
 }) {
+  const confirmAction = useConfirm();
   const [copied, setCopied] = useState(false);
 
   async function copyLocalPath(): Promise<void> {
@@ -479,9 +497,11 @@ function LocalWorkspaceBar({
 
   async function removeArea(): Promise<void> {
     if (
-      !window.confirm(
-        `Remove "${area.name}"? This deletes the local folder and its files.`,
-      )
+      !(await confirmAction({
+        message: `Remove "${area.name}"? This deletes the local folder and its files.`,
+        confirmLabel: "Remove workspace",
+        variant: "danger",
+      }))
     )
       return;
     try {
@@ -544,6 +564,7 @@ function GitBar({
   onDeleted: () => void;
   onError: (msg: string | null) => void;
 }) {
+  const confirmAction = useConfirm();
   const [busy, setBusy] = useState<"pull" | "push" | null>(null);
   const [conflict, setConflict] = useState<{ detail: string; path: string } | null>(
     null,
@@ -612,9 +633,12 @@ function GitBar({
 
   async function removeArea(): Promise<void> {
     if (
-      !window.confirm(
-        `Remove "${area.name}"? This deletes the local working copy (the remote repo is untouched).`,
-      )
+      !(await confirmAction({
+        message:
+          `Remove "${area.name}"? This deletes the local working copy (the remote repo is untouched).`,
+        confirmLabel: "Remove workspace",
+        variant: "danger",
+      }))
     )
       return;
     try {
@@ -754,6 +778,7 @@ function ChangesModal({
   onCommitPush: (message: string, paths: string[]) => Promise<GitActionResult>;
   onDiscard: (path: string) => Promise<void>;
 }) {
+  const confirmAction = useConfirm();
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(files.map((f) => f.path)),
   );
@@ -809,7 +834,14 @@ function ChangesModal({
   }
 
   async function discard(path: string): Promise<void> {
-    if (!window.confirm(`Discard local changes to "${path}"?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Discard local changes to "${path}"?`,
+        confirmLabel: "Discard changes",
+        variant: "warning",
+      }))
+    )
+      return;
     await onDiscard(path);
     setSelected((prev) => {
       const next = new Set(prev);

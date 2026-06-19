@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Memory } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
 
 const KIND_SUGGESTIONS = ["context", "preference", "fact", "note"];
 
 export function MemoriesTab() {
+  const confirmAction = useConfirm();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Memory | "new" | null>(null);
@@ -27,7 +29,14 @@ export function MemoriesTab() {
   }, []);
 
   async function handleDelete(memory: Memory): Promise<void> {
-    if (!confirm(`Delete this ${memory.kind} memory?`)) return;
+    if (
+      !(await confirmAction({
+        message: `Delete this ${memory.kind} memory?`,
+        confirmLabel: "Delete memory",
+        variant: "danger",
+      }))
+    )
+      return;
     setBusyId(memory.id);
     setError(null);
     try {
