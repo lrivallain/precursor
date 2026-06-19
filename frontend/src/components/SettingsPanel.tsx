@@ -11,6 +11,7 @@ import {
   Pencil,
   Trash2,
   Sparkles,
+  Drama,
   Brain,
   SlidersHorizontal,
   Mic,
@@ -35,6 +36,7 @@ import type {
   Settings,
 } from "../lib/types";
 import { SkillsTab } from "./SkillsTab";
+import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
 
@@ -81,6 +83,7 @@ type Category =
   | "speech"
   | "mcp"
   | "skills"
+  | "roles"
   | "memory"
   | "stats"
   | "system";
@@ -98,6 +101,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
+  { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
@@ -985,6 +989,8 @@ export function SettingsPanel({ onClose }: Props) {
             )}
 
             {category === "skills" && <SkillsTab />}
+
+            {category === "roles" && <RolesTab />}
 
             {category === "memory" && <MemoriesTab />}
 

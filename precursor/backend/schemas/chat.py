@@ -11,6 +11,7 @@ class ChatBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     pinned: bool = False
+    role_id: int | None = None
 
 
 class ChatCreate(ChatBase):
@@ -22,6 +23,7 @@ class ChatUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     pinned: bool | None = None
+    role_id: int | None = None
     # When present, the router normalizes and uniquifies it before storing.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 

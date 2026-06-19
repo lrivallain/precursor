@@ -29,6 +29,7 @@ import {
 import { api, workspaceRawUrl } from "../lib/api";
 import { parseSlashCommand } from "../lib/commands";
 import { skillsStore } from "../lib/skillsStore";
+import { rolesStore } from "../lib/rolesStore";
 import { streamWorkspaceChat } from "../lib/sse";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -87,11 +88,15 @@ export function WorkspaceView({
   initialPath,
   onPathChange,
   onDeleted,
+  onSetRole,
+  onOpenRoleSelector,
 }: {
   workspace: Workspace;
   initialPath: string | null;
   onPathChange: (path: string | null) => void;
   onDeleted: () => void;
+  onSetRole?: (roleId: number | null) => Promise<void>;
+  onOpenRoleSelector?: () => void;
 }) {
   const area = workspace;
   const [files, setFiles] = useState<WorkspaceFileNode[]>([]);
@@ -428,7 +433,12 @@ export function WorkspaceView({
           )}
         </section>
 
-        <WorkspaceChat area={area} activePath={activePath} />
+        <WorkspaceChat
+          area={area}
+          activePath={activePath}
+          onSetRole={onSetRole}
+          onOpenRoleSelector={onOpenRoleSelector}
+        />
       </div>
     </div>
   );
@@ -1125,9 +1135,13 @@ type WorkspaceChatItem =
 function WorkspaceChat({
   area,
   activePath,
+  onSetRole,
+  onOpenRoleSelector,
 }: {
   area: Workspace;
   activePath: string | null;
+  onSetRole?: (roleId: number | null) => Promise<void>;
+  onOpenRoleSelector?: () => void;
 }) {
   const [messages, setMessages] = useState<WorkspaceChatItem[]>([]);
   const [input, setInput] = useState("");
@@ -1175,6 +1189,25 @@ function WorkspaceChat({
         kind: "skill" as const,
       })),
     );
+    if (cmd && cmd.name === "role") {
+      const arg = cmd.argument.trim();
+      if (!arg) {
+        onOpenRoleSelector?.();
+        return;
+      }
+      await rolesStore.ensureLoaded();
+      const role = rolesStore.byName(arg);
+      if (!role) {
+        setError(`Unknown role "${arg}". Manage roles in Settings → Roles.`);
+        return;
+      }
+      try {
+        await onSetRole?.(role.is_default ? null : role.id);
+      } catch (err) {
+        setError(`Role change failed: ${(err as Error).message}`);
+      }
+      return;
+    }
     if (cmd) {
       const skill = skillsStore.byName(cmd.name);
       if (skill) {

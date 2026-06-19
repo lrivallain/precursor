@@ -8,6 +8,7 @@ from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.memory import Memory
 from precursor.backend.models.message import Message, MessageRole
 from precursor.backend.models.reminder import Reminder
+from precursor.backend.models.role import Role
 from precursor.backend.models.settings import AppSetting
 from precursor.backend.models.skill import Skill
 from precursor.backend.models.topic import Topic
@@ -26,6 +27,7 @@ __all__ = [
     "Message",
     "MessageRole",
     "Reminder",
+    "Role",
     "Skill",
     "Topic",
     "TopicSchedule",

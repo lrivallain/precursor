@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -22,6 +22,12 @@ class Chat(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Assistant Role assigned to this chat. Null resolves to the default role
+    # (no persona injected). SET NULL on delete reverts to default.
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Timestamp of the last time the user opened this chat. Used to compute
     # unread badge (non-user messages newer than this are unread).

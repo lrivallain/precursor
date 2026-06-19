@@ -56,6 +56,13 @@ class Topic(Base, TimestampMixin):
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
     github_issue_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Assistant Role assigned to this topic. Null resolves to the default role
+    # (no persona injected). SET NULL on delete so removing a role reverts every
+    # topic that used it back to the default.
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Timestamp of the last time the user opened this topic. Used to compute
     # the sidebar unread badge (non-user messages newer than this are unread).
     # Null means "never explicitly opened" — treated as fully read so old topics

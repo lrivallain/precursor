@@ -13,6 +13,7 @@ import {
   type SlashCommand,
 } from "../lib/commands";
 import { skillsStore, useSkills } from "../lib/skillsStore";
+import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -30,6 +31,10 @@ interface ChatSessionPanelProps {
   onArchived: () => void;
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
+  /** Persist a role change for this chat (null = default). */
+  onSetRole?: (roleId: number | null) => Promise<void>;
+  /** Open the header role selector (used by bare `/role`). */
+  onOpenRoleSelector?: () => void;
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands and the
@@ -49,6 +54,7 @@ const HANDLED_COMMANDS = new Set<string>([
   "reminder",
   "reminder-cancel",
   "done",
+  "role",
 ]);
 
 interface ParsedToolMeta {
@@ -81,6 +87,8 @@ export function ChatSessionPanel({
   onChatUpdated,
   onArchived,
   onRemindersChanged,
+  onSetRole,
+  onOpenRoleSelector,
 }: ChatSessionPanelProps) {
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -404,6 +412,26 @@ export function ChatSessionPanel({
     }
     if (name === "done") {
       await runReminderClear(true);
+      return;
+    }
+    if (name === "role") {
+      const arg = argument.trim();
+      if (!arg) {
+        onOpenRoleSelector?.();
+        return;
+      }
+      await rolesStore.ensureLoaded();
+      const role = rolesStore.byName(arg);
+      if (!role) {
+        systemNote(`Unknown role "${arg}". Manage roles in Settings → Roles.`);
+        return;
+      }
+      try {
+        await onSetRole?.(role.is_default ? null : role.id);
+        systemNote(`Assistant role set to "${role.name}".`);
+      } catch (err) {
+        systemNote(`Role change failed: ${(err as Error).message}`);
+      }
     }
   }
 

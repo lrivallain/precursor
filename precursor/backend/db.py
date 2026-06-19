@@ -37,6 +37,7 @@ async def init_db() -> None:
         memory,
         message,
         reminder,
+        role,
         skill,
         topic,
         usage,
@@ -52,6 +53,9 @@ async def init_db() -> None:
         # Dev-only: backfill columns added after the DB was first created.
         # create_all does not ALTER existing tables. Production should use Alembic.
         await conn.run_sync(_ensure_dev_columns)
+        # Seed the protected default Assistant Role so discussions always have a
+        # fallback persona.
+        await conn.run_sync(ensure_default_role)
 
 
 def _rename_legacy_tables(sync_conn: Connection) -> None:
@@ -128,6 +132,35 @@ def _ensure_dev_columns(sync_conn: Connection) -> None:
             _rebuild_attachments_table(sync_conn, source="attachments")
         elif "_attachments_old" in tables:
             _rebuild_attachments_table(sync_conn, source="_attachments_old")
+
+    # Assistant Roles: add the nullable role_id FK to each discussion container.
+    # A plain nullable column is an in-place ALTER on SQLite, no rebuild needed.
+    for table in ("topics", "chats", "workspaces"):
+        if table in inspector.get_table_names():
+            cols = {c["name"] for c in inspector.get_columns(table)}
+            if "role_id" not in cols:
+                sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN role_id INTEGER"))
+
+
+def ensure_default_role(sync_conn: Connection) -> None:
+    """Seed the protected ``default`` role (empty prompt) if it is missing.
+
+    Idempotent: runs on every startup so a fresh DB — or one created before the
+    Roles feature — always has a default to fall back to.
+    """
+    from sqlalchemy import inspect, text
+
+    if "roles" not in inspect(sync_conn).get_table_names():
+        return
+    exists = sync_conn.execute(text("SELECT 1 FROM roles WHERE is_default = 1 LIMIT 1")).first()
+    if exists:
+        return
+    sync_conn.execute(
+        text(
+            "INSERT INTO roles (name, system_prompt, is_default, created_at, updated_at) "
+            "VALUES ('default', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        )
+    )
 
 
 def _rebuild_messages_table(sync_conn: Connection, *, source: str) -> None:

@@ -40,6 +40,7 @@ from precursor.backend.schemas import (
     LocalPath,
     WorkspaceCreate,
     WorkspaceRead,
+    WorkspaceUpdate,
 )
 from precursor.backend.schemas.workspace import WorkspaceChatRequest
 from precursor.backend.services import workspace_fs as fs
@@ -59,6 +60,7 @@ from precursor.backend.services.llm.base import (
     UsageEvent,
 )
 from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.roles import resolve_role_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +187,22 @@ async def create_workspace(
 
     ws.cloned_at = datetime.now(UTC)
     ws.last_synced_at = ws.cloned_at
+    await session.commit()
+    await session.refresh(ws)
+    return ws
+
+
+@router.patch("/{workspace_id}", response_model=WorkspaceRead)
+async def update_workspace(
+    workspace_id: int,
+    payload: WorkspaceUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> Workspace:
+    """Update mutable workspace fields (currently the assigned Assistant Role)."""
+    ws = await _get_workspace(workspace_id, session)
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(ws, key, value)
     await session.commit()
     await session.refresh(ws)
     return ws
@@ -487,6 +505,11 @@ async def chat_stream(
     manager = get_mcp_client_manager()
 
     system_prompt = _SYSTEM_PROMPT + file_context + _workspace_tool_context(ws, payload.path)
+    role_prompt = await resolve_role_prompt(session, ws.role_id)
+    if role_prompt:
+        system_prompt += (
+            f"\n\nActive assistant role — adopt this persona for every reply:\n{role_prompt}"
+        )
 
     base_messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
