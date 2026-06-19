@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import Attachment, Chat, Message, MessageRole
 from precursor.backend.routers.chat import (
+    _apply_chat_system_prompt,
     _build_chat_system_context,
     _hydrate_history,
     _lifecycle_stream,
@@ -176,6 +177,10 @@ async def stream_chat(
                     image_urls=history[idx].image_urls,
                 )
                 break
+
+    # When the chat opts into system-prompt mode, reassert the description as a
+    # mandatory instruction on every user turn (no-op otherwise).
+    history = _apply_chat_system_prompt(chat, history)
 
     enabled_servers = await _load_enabled_mcp_servers(session)
     model = payload.model or await resolve_llm_model(session)

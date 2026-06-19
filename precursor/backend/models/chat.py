@@ -23,6 +23,13 @@ class Chat(Base, TimestampMixin):
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # When True and a description is set, the description is enforced as a
+    # system instruction prepended to every user turn rather than injected once
+    # as soft discussion-level context. No-op when the description is empty.
+    description_as_system_prompt: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+
     # Assistant Role assigned to this chat. Null resolves to the default role
     # (no persona injected). SET NULL on delete reverts to default.
     role_id: Mapped[int | None] = mapped_column(

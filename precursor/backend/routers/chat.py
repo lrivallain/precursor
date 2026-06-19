@@ -209,9 +209,36 @@ async def _build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
         parts.append("\n".join(lines))
 
     parts.append(f"Chat title: {chat.title}")
-    if chat.description:
+    # In system-prompt mode the description is enforced per user turn (see
+    # _apply_chat_system_prompt), so we omit the soft context line here to avoid
+    # duplicating it. In context mode (default) it rides along as standing
+    # discussion-level context.
+    if chat.description and not chat.description_as_system_prompt:
         parts.append(f"Chat description: {chat.description}")
     return "\n\n".join(parts)
+
+
+def _apply_chat_system_prompt(chat: Chat, history: list[ChatMessage]) -> list[ChatMessage]:
+    """Enforce a chat's description as a system instruction on every user turn.
+
+    When ``description_as_system_prompt`` is set and the description is non-empty,
+    prepend it to each user message sent to the LLM so the instruction is
+    reasserted every turn rather than injected once. Empty description is a
+    no-op. Returns a new list; the persisted messages are untouched.
+    """
+    description = (chat.description or "").strip()
+    if not (chat.description_as_system_prompt and description):
+        return history
+
+    instruction = f"System instruction (must be followed at all times):\n{description}"
+    out: list[ChatMessage] = []
+    for m in history:
+        if m.role == "user":
+            prefixed = f"{instruction}\n\n{m.content}" if m.content else instruction
+            out.append(ChatMessage(role="user", content=prefixed, image_urls=m.image_urls))
+        else:
+            out.append(m)
+    return out
 
 
 def _attachments_to_image_urls(atts: list[Attachment]) -> list[str]:
