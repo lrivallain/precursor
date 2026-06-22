@@ -18,7 +18,7 @@ jobs:
     name: Build wheel + GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history + tags so hatch-vcs resolves the exact tagged version.
           fetch-depth: 0

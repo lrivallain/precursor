@@ -18,7 +18,7 @@ jobs:
     name: Backend (lint · types · tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history + tags so hatch-vcs can resolve the CalVer version.
           fetch-depth: 0
@@ -53,7 +53,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v6
