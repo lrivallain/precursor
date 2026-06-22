@@ -39,7 +39,7 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.31.0"]
 dev = [
-    "ruff>=0.15.17",
+    "ruff>=0.15.18",
     "mypy>=2.1.0",
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
