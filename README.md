@@ -104,6 +104,22 @@ uvx precursor                 # run the latest published wheel, zero setup
 # or pin it:  uv tool install precursor && precursor
 ```
 
+### Automatic upgrades on startup
+
+When you pull new code or upgrade Precursor, both the **frontend** and
+**database** are automatically upgraded when the app starts — no manual build
+or migration steps needed:
+
+- **Frontend**: Built automatically if `frontend/dist` is missing or stale
+- **Database**: Migrations applied during app startup via Alembic
+
+Just start Precursor and it handles the rest:
+
+```bash
+git pull
+uv run precursor              # frontend built + DB migrated automatically
+```
+
 ## Project layout
 
 ```

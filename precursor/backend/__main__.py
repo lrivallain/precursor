@@ -85,6 +85,54 @@ def _port_free(host: str, port: int) -> bool:
     return True
 
 
+def _ensure_frontend_built() -> bool:
+    """Ensure the frontend is built; build it if necessary.
+
+    Returns True if the frontend dist exists or was successfully built;
+    returns False if npm is unavailable (non-fatal in production).
+    """
+    repo_root = _repo_root()
+    frontend_dir = repo_root / "frontend"
+    dist_dir = repo_root / "frontend" / "dist"
+
+    if dist_dir.is_dir():
+        logger.info("Frontend dist already built.")
+        return True
+
+    if not (frontend_dir / "package.json").is_file():
+        logger.warning(
+            "frontend/ not found or incomplete — cannot build frontend. "
+            "Running from a source checkout requires a complete frontend setup."
+        )
+        return False
+
+    logger.info("Building frontend...")
+    try:
+        result = subprocess.run(
+            ["npm", "--prefix", str(frontend_dir), "run", "build"],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+        if result.returncode != 0:
+            logger.warning("Frontend build failed: %s", result.stderr)
+            return False
+        logger.info("Frontend build succeeded.")
+        return True
+    except FileNotFoundError:
+        logger.warning(
+            "npm not found — cannot build frontend. "
+            "Install Node.js and npm, or pre-build the frontend with `npm --prefix frontend run build`."
+        )
+        return False
+    except subprocess.TimeoutExpired:
+        logger.warning("Frontend build timed out after 5 minutes.")
+        return False
+    except Exception as exc:  # pragma: no cover - catch-all for unexpected errors
+        logger.warning("Frontend build failed: %s", exc)
+        return False
+
+
 def _resolve_port(
     host: str, preferred: int, *, strict: bool, avoid: frozenset[int] = frozenset()
 ) -> int:
@@ -158,6 +206,7 @@ def _announce_when_ready(
 def _run_prod(
     host: str, port: int, log_level: str, *, strict_port: bool, open_browser: bool
 ) -> None:
+    _ensure_frontend_built()
     resolved = _resolve_port(host, port, strict=strict_port)
     connect_host = _loopback(host)
     url = f"http://{connect_host}:{resolved}/"
@@ -226,6 +275,8 @@ def _run_dev(
         frontend = False
 
     if frontend:
+        # Ensure frontend is available for Vite to run
+        _ensure_frontend_built()
         # One knob: the Vite port follows the (resolved) backend port unless the
         # user pinned --frontend-port. Resolve it too so parallel instances and
         # a busy 5173/legacy port never collide.
@@ -275,6 +326,9 @@ def _run_dev(
         vite_thread = threading.Thread(target=_start_vite_when_ready, daemon=True)
         vite_thread.start()
         threads.append(vite_thread)
+    else:
+        # No frontend dev server, ensure frontend is built for backend to serve
+        _ensure_frontend_built()
 
     ready_port = resolved_frontend if (frontend and resolved_frontend is not None) else backend_port
     # Probe/advertise via "localhost" for the UI so the readiness check matches
