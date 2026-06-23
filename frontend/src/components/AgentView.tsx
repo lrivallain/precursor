@@ -170,9 +170,9 @@ function HookBubble({ event }: { event: AgentEvent }) {
 function Connector() {
   return (
     <div className="flex flex-col items-center" aria-hidden>
-      <span className="h-3 w-[3px] rounded-full bg-muted" />
-      <ChevronDown size={20} strokeWidth={3} className="-my-1 text-muted" />
-      <span className="h-3 w-[3px] rounded-full bg-muted" />
+      <span className="h-3 w-0.5 bg-muted/50" />
+      <ChevronDown size={16} strokeWidth={2.5} className="-my-1 text-muted/70" />
+      <span className="h-3 w-0.5 bg-muted/50" />
     </div>
   );
 }
@@ -188,9 +188,9 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
         className="absolute inset-y-0 left-1/2 flex -translate-x-1/2 flex-col items-center"
         aria-hidden
       >
-        <span className="w-[3px] flex-1 rounded-full bg-muted" />
-        <ChevronDown size={20} strokeWidth={3} className="-my-0.5 shrink-0 text-muted" />
-        <span className="w-[3px] flex-1 rounded-full bg-muted" />
+        <span className="w-0.5 flex-1 bg-muted/50" />
+        <ChevronDown size={16} strokeWidth={2.5} className="-my-0.5 shrink-0 text-muted/70" />
+        <span className="w-0.5 flex-1 bg-muted/50" />
       </div>
       <div className="relative flex flex-col items-end gap-0.5">
         {hooks.map((ev, i) => (
@@ -1098,11 +1098,12 @@ export function AgentView({
 
         {(() => {
           const rows = buildRows(events);
-          // Each completed turn's *final* assistant message is an "answer" — the
-          // real reply to a prompt (not interim chatter like "I'll run that").
-          // We mark the last assistant of every turn (flushed at turn_end); the
-          // still-running turn only counts once the agent reaches a terminal
-          // state so we don't highlight a half-finished line.
+          // A single prompt can emit several SDK turns (assistant says "I'll do
+          // X" → tool → assistant reports the result), so only the *last*
+          // assistant before the session goes idle is the real answer — interim
+          // turn_end lines are just chatter. We flush at each idle (one answer
+          // per prompt) and, while the agent is still running, flush the trailing
+          // assistant only once it reaches a terminal state.
           const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
             selected.status,
           );
@@ -1111,7 +1112,7 @@ export function AgentView({
           for (const r of rows) {
             if (r.type === "node" && r.cat === "assistant") {
               lastAssistant = r;
-            } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("turn_end")) {
+            } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("idle")) {
               if (lastAssistant) answerRows.add(lastAssistant);
               lastAssistant = null;
             }
