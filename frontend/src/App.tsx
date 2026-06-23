@@ -17,6 +17,8 @@ import {
   WorkspaceView,
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
+import { AgentList } from "./components/AgentList";
+import { AgentView } from "./components/AgentView";
 import { InlineTitle } from "./components/InlineTitle";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
@@ -28,7 +30,15 @@ import { rolesStore } from "./lib/rolesStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
-import type { Chat, ReminderItem, Schedule, Topic, TopicNode, Workspace } from "./lib/types";
+import type {
+  AgentSession,
+  Chat,
+  ReminderItem,
+  Schedule,
+  Topic,
+  TopicNode,
+  Workspace,
+} from "./lib/types";
 
 interface WsRoute {
   open: boolean;
@@ -57,19 +67,35 @@ interface AppRoute {
   mode: SidebarMode;
   topicSlug: string | null;
   chatSlug: string | null;
+  agentId: number | null;
 }
 
 function parseAppRoute(): AppRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-  if (segs[0] === "ws") return { mode: "workspaces", topicSlug: null, chatSlug: null };
+  if (segs[0] === "ws")
+    return { mode: "workspaces", topicSlug: null, chatSlug: null, agentId: null };
+  if (segs[0] === "agents") {
+    const id = segs[1] ? Number(decodeURIComponent(segs[1])) : NaN;
+    return {
+      mode: "agents",
+      topicSlug: null,
+      chatSlug: null,
+      agentId: Number.isFinite(id) ? id : null,
+    };
+  }
   if (segs[0] === "chats") {
-    return { mode: "chats", topicSlug: null, chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
+    return {
+      mode: "chats",
+      topicSlug: null,
+      chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
+      agentId: null,
+    };
   }
   if (segs[0] === "topics") {
     const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
-    return { mode: "topics", topicSlug: last, chatSlug: null };
+    return { mode: "topics", topicSlug: last, chatSlug: null, agentId: null };
   }
-  return { mode: "topics", topicSlug: null, chatSlug: null };
+  return { mode: "topics", topicSlug: null, chatSlug: null, agentId: null };
 }
 
 /** Ancestor → self slug chain for a topic, using the loaded tree. */
@@ -99,6 +125,10 @@ function topicUrl(tree: TopicNode[], topic: Topic): string {
 
 function chatUrl(chat: Chat): string {
   return "/chats/" + encodeURIComponent(chat.slug);
+}
+
+function agentUrl(agentId: number | null): string {
+  return agentId != null ? `/agents/${agentId}` : "/agents";
 }
 
 const BASE_TITLE = "Precursor";
@@ -143,6 +173,11 @@ export default function App() {
   // Workspaces are loaded lazily when the user first enters workspaces mode.
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
+  // Agents are loaded lazily when the user first enters agents mode.
+  const [agents, setAgents] = useState<AgentSession[] | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<number | null>(
+    () => parseAppRoute().agentId,
+  );
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -181,6 +216,9 @@ export default function App() {
 
   const settings = useSettings();
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
+  const agentsEnabled = settings?.agents_enabled ?? false;
+  const agentsAvailable = settings?.agents_available ?? false;
+  const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
 
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
 
@@ -196,6 +234,12 @@ export default function App() {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
+
+  // Mirror activeAgentId into a ref so changeMode can build the agents URL.
+  const activeAgentIdRef = useRef<number | null>(activeAgentId);
+  useEffect(() => {
+    activeAgentIdRef.current = activeAgentId;
+  }, [activeAgentId]);
 
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
@@ -282,6 +326,10 @@ export default function App() {
       }
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
+      if (r.mode === "agents") {
+        setActiveAgentId(r.agentId);
+        return;
+      }
       if (r.mode === "topics") {
         const slug = r.topicSlug;
         if (!slug || activeTopicRef.current?.slug === slug) return;
@@ -353,6 +401,13 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeChat, sidebarMode]);
 
+  // activeAgentId -> /agents/<id> (or /agents when nothing is selected).
+  useEffect(() => {
+    if (sidebarMode !== "agents") return;
+    const target = agentUrl(activeAgentId);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
+  }, [activeAgentId, sidebarMode]);
+
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
   function changeMode(next: SidebarMode): void {
@@ -364,6 +419,8 @@ export default function App() {
         : "/topics";
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
+    } else if (next === "agents") {
+      target = agentUrl(activeAgentIdRef.current);
     } else {
       target = "/ws";
     }
@@ -480,6 +537,11 @@ export default function App() {
         // ticker). Reload the sidebar section; loadReminders also notifies for
         // any newly-fired ones.
         void loadReminders();
+      } else if (event.type === "agent.changed") {
+        // An agent session was created, advanced, or finished (possibly in the
+        // background). Refresh the list so statuses/badges stay current; the
+        // AgentView refreshes its own timeline.
+        void loadAgents();
       }
     });
   }, []);
@@ -581,6 +643,7 @@ export default function App() {
   function handleNew(): void {
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") void handleCreateChat();
+    else if (sidebarMode === "agents") setActiveAgentId(null);
     else setCreateWorkspaceOpen(true);
   }
 
@@ -649,6 +712,26 @@ export default function App() {
     navigateWorkspace(ws.slug, null);
   }
 
+  // ---- Agents -----------------------------------------------------------
+  async function loadAgents(): Promise<AgentSession[]> {
+    try {
+      const list = await api.listAgents();
+      setAgents(list);
+      return list;
+    } catch {
+      setAgents([]);
+      return [];
+    }
+  }
+
+  // Lazily load agent sessions the first time the user enters agents mode
+  // (only when the feature is enabled).
+  useEffect(() => {
+    if (sidebarMode !== "agents" || agents !== null || !agentsEnabled) return;
+    void loadAgents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarMode, agentsEnabled]);
+
   function handleCreate(parentId: number | null): void {
     // Top-level "+ create" passes null; in that case, if a topic is currently
     // selected, nest the new one under it. Per-node "+ child" buttons pass
@@ -707,6 +790,14 @@ export default function App() {
             workspaces={workspaces}
             activeId={activeWorkspaceId}
             onSelect={handleSelectWorkspace}
+          />
+        }
+        agentSlot={
+          <AgentList
+            agents={agents ?? []}
+            activeId={activeAgentId}
+            enabled={agentsEnabled}
+            onSelect={(id) => setActiveAgentId(id)}
           />
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -824,10 +915,12 @@ export default function App() {
                 </button>
               )}
             </>
-          ) : (
+          ) : sidebarMode === "workspaces" ? (
             <span className="truncate font-medium min-w-0 flex-1">
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
             </span>
+          ) : (
+            <span className="truncate font-medium min-w-0 flex-1">Agents</span>
           )}
           {hasActiveDiscussion && (
             <RoleSelector
@@ -900,25 +993,38 @@ export default function App() {
             ) : (
               <EmptyHero label="No chat selected." />
             )
-          ) : workspaces === null ? (
-            <EmptyHero label="Loading workspaces…" />
-          ) : activeWorkspace ? (
-            <WorkspaceView
-              key={activeWorkspace.id}
-              workspace={activeWorkspace}
-              initialPath={workspaceInitialPath}
-              onPathChange={(p) => navigateWorkspace(activeWorkspace.slug, p)}
-              onDeleted={async () => {
-                const list = await loadWorkspaces();
-                const next = list[0] ?? null;
-                setActiveWorkspaceId(next?.id ?? null);
-                navigateWorkspace(next?.slug ?? null, null);
-              }}
-              onSetRole={setRoleForActive}
-              onOpenRoleSelector={() => setRoleSelectorOpen(true)}
-            />
+          ) : sidebarMode === "workspaces" ? (
+            workspaces === null ? (
+              <EmptyHero label="Loading workspaces…" />
+            ) : activeWorkspace ? (
+              <WorkspaceView
+                key={activeWorkspace.id}
+                workspace={activeWorkspace}
+                initialPath={workspaceInitialPath}
+                onPathChange={(p) => navigateWorkspace(activeWorkspace.slug, p)}
+                onDeleted={async () => {
+                  const list = await loadWorkspaces();
+                  const next = list[0] ?? null;
+                  setActiveWorkspaceId(next?.id ?? null);
+                  navigateWorkspace(next?.slug ?? null, null);
+                }}
+                onSetRole={setRoleForActive}
+                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
+              />
+            ) : (
+              <EmptyHero label="No workspaces yet." />
+            )
           ) : (
-            <EmptyHero label="No workspaces yet." />
+            <AgentView
+              agents={agents ?? []}
+              agentId={activeAgentId}
+              enabled={agentsEnabled}
+              available={agentsAvailable}
+              unavailableReason={agentsUnavailableReason}
+              onReload={() => void loadAgents()}
+              onSelect={(id) => setActiveAgentId(id)}
+              onOpenSettings={() => setGlobalSettingsOpen(true)}
+            />
           )}
         </div>
       </main>

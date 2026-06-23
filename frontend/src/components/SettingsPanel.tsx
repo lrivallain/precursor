@@ -41,7 +41,7 @@ import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
-import { AgentsTab } from "./AgentsTab";
+import { AgentsSettings } from "./AgentsSettings";
 
 interface Props {
   onClose: () => void;
@@ -1006,7 +1006,7 @@ export function SettingsPanel({ onClose }: Props) {
             {category === "roles" && <RolesTab />}
 
             {category === "memory" && <MemoriesTab />}
-            {category === "agents" && <AgentsTab />}
+            {category === "agents" && <AgentsSettings />}
 
             {category === "stats" && <StatsTab />}
 
