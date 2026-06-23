@@ -228,7 +228,7 @@ async def link_agent(
 async def delete_agent(agent_id: int, session: AsyncSession = Depends(get_session)) -> None:
     agent = await _get_or_404(session, agent_id)
     topic_id, chat_id = agent.topic_id, agent.chat_id
-    await get_agent_manager().teardown_session(agent_id)
+    await get_agent_manager().teardown_session(agent_id, forget=True)
     await session.delete(agent)
     await session.commit()
     await publish_agent_changed(agent_session_id=agent_id, topic_id=topic_id, chat_id=chat_id)

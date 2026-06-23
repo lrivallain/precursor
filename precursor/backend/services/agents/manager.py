@@ -78,6 +78,13 @@ class AgentManager:
         self._client: Any | None = None
         self._ready = False
         self._live: dict[int, _LiveSession] = {}
+        # Durable per-agent timeline. The SDK's ``get_events`` is per-connection
+        # (a resumed session only replays ``SessionStartData``), so we archive
+        # every streamed event here. This survives ``teardown_session`` — e.g.
+        # when a topic is linked — so the workflow view isn't wiped. Cleared only
+        # when the agent is deleted, or lost on process restart (acceptable: the
+        # plan keeps history out of the DB).
+        self._events: dict[int, list[AgentEvent]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
 
@@ -356,37 +363,49 @@ class AgentManager:
     async def get_events(self, agent_id: int) -> list[AgentEvent]:
         """Return the normalised event history for the workflow timeline."""
         live = self._live.get(agent_id)
-        if live is None:
-            agent = await self._load(agent_id)
-            if agent is None or not agent.copilot_session_id:
-                return []
-            live = await self._ensure_live(agent)
-        try:
-            raw = await live.sdk_session.get_events()
-        except Exception:
-            logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
-            raw = []
-        events = [self._normalise(ev) for ev in raw or []]
+        events = list(self._events.get(agent_id, []))
+        if not events:
+            # No archived stream yet (e.g. first load after a resume). Fall back
+            # to whatever the live session can replay.
+            if live is None:
+                agent = await self._load(agent_id)
+                if agent is None or not agent.copilot_session_id:
+                    return []
+                live = await self._ensure_live(agent)
+            try:
+                raw = await live.sdk_session.get_events()
+            except Exception:
+                logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
+                raw = []
+            events = [self._normalise(ev) for ev in raw or []]
         # Append any unresolved permission requests as inline workflow steps so
         # the approval card renders in-place (with details of what's requested)
         # rather than floating detached from the timeline.
-        for info in live.pending_info.values():
-            events.append(
-                AgentEvent(
-                    kind="permission_request",
-                    text=info.get("title"),
-                    request_id=info.get("request_id"),
-                    data=info,
+        if live is not None:
+            for info in live.pending_info.values():
+                events.append(
+                    AgentEvent(
+                        kind="permission_request",
+                        text=info.get("title"),
+                        request_id=info.get("request_id"),
+                        data=info,
+                    )
                 )
-            )
         return events
 
-    async def teardown_session(self, agent_id: int) -> None:
-        """Disconnect a live session (e.g. before deleting the row)."""
+    async def teardown_session(self, agent_id: int, *, forget: bool = False) -> None:
+        """Disconnect a live session (e.g. before deleting the row).
+
+        The archived timeline is kept by default so linking a topic — which
+        recreates the session to re-inject context — doesn't wipe the workflow
+        view. Pass ``forget=True`` when the agent is being deleted.
+        """
         live = self._live.pop(agent_id, None)
         if live is not None:
             with contextlib.suppress(Exception):
                 await live.sdk_session.disconnect()
+        if forget:
+            self._events.pop(agent_id, None)
 
     async def list_models(self) -> list[dict[str, str]]:
         """Return the runtime's available models (``id``/``name``), or empty.
@@ -540,6 +559,10 @@ class AgentManager:
     # ------------------------------------------------------------------ events
 
     async def _handle_event(self, agent_id: int, event: Any) -> None:
+        # Archive every event so the timeline persists across session teardown
+        # (e.g. on topic link) and resume, where the SDK would otherwise drop it.
+        self._events.setdefault(agent_id, []).append(self._normalise(event))
+
         data = getattr(event, "data", event)
         name = type(data).__name__
         now = datetime.now(UTC)
