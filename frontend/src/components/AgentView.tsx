@@ -890,17 +890,6 @@ export function AgentView({
     }
   }
 
-  async function relink(topicId: number | null): Promise<void> {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      await api.linkAgent(selected.id, { topic_id: topicId, chat_id: null });
-      onReload();
-    } finally {
-      setBusy(false);
-    }
-  }
-
   // Disabled: send the user to Settings to turn the feature on.
   if (!enabled) {
     return (
@@ -972,24 +961,10 @@ export function AgentView({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      {/* Slim sub-toolbar: topic association + workflow display toggles. The
-          agent title and stop/delete controls live in the shared app header. */}
+      {/* Slim sub-toolbar: workflow display toggles. The agent title, topic
+          association and stop/delete controls live in the header / settings. */}
       <div className="shrink-0 border-b border-border px-5 pb-2.5 pt-3">
-        {selected.task_prompt && (
-          <p className="mb-2 line-clamp-2 whitespace-pre-wrap text-[11px] text-muted">
-            {selected.task_prompt}
-          </p>
-        )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted">Topic</span>
-            <TopicPicker
-              topics={topics}
-              value={selected.topic_id}
-              onChange={(id) => void relink(id)}
-              disabled={busy}
-            />
-          </div>
           <div className="flex items-center gap-1">
             <span className="text-muted">Show</span>
             <ToggleChip active={showSystem} onClick={() => setShowSystem((v) => !v)} label="System" />
