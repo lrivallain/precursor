@@ -156,7 +156,6 @@ export interface AgentSession {
   title: string;
   task_prompt: string;
   active_prompt: string | null;
-  streaming: boolean;
   status: AgentStatus;
   result_summary: string | null;
   error: string | null;
@@ -173,7 +172,6 @@ export interface AgentSessionCreate {
   task: string;
   title?: string | null;
   model?: string | null;
-  streaming?: boolean;
   topic_id?: number | null;
   chat_id?: number | null;
 }

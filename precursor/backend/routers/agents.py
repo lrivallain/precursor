@@ -139,7 +139,6 @@ async def create_agent(
         title=title,
         task_prompt=payload.task,
         model=payload.model,
-        streaming=payload.streaming,
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
         status="pending",
@@ -179,7 +178,7 @@ async def send_to_agent(
     await _require_runtime(session)
     agent = await _get_or_404(session, agent_id)
     mgr = get_agent_manager()
-    mgr.enqueue(mgr.send_message(agent.id, payload.message, streaming=payload.streaming))
+    mgr.enqueue(mgr.send_message(agent.id, payload.message))
     return agent
 
 

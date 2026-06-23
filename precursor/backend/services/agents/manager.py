@@ -88,21 +88,11 @@ class _LiveSession:
     # SQLite lock there would otherwise raise and the SDK turns a raising handler
     # into an opaque, detail-less denial (even in autonomous mode).
     approval_policy: str | None = None
-    # Whether this live SDK session was created in streaming mode. Tracked so a
-    # follow-up that flips the toggle can detect the mismatch and recreate the
-    # session (streaming is fixed at SDK-session creation time).
-    streaming: bool = False
     # The prompt for the turn currently in flight, set when we send a task or a
     # follow-up and cleared once posted to the linked container. Lets us post
     # *every* turn's exchange to the topic/chat (not just the first), keyed to
     # the right prompt rather than always the initial ``task_prompt``.
     pending_prompt: str | None = None
-    # Streamed assistant text accumulated from AssistantMessageDeltaData for the
-    # in-flight turn. Used to salvage an answer when the SDK's streaming path
-    # ends without emitting a final AssistantMessageData (it sometimes errors
-    # with "stream ended without producing a Message"). Cleared once a final
-    # message lands or the turn is finalised.
-    stream_parts: list[str] = field(default_factory=list)
 
 
 class AgentManager:
@@ -364,7 +354,6 @@ class AgentManager:
         kwargs: dict[str, Any] = {
             "model": agent.model or get_settings().agents_default_model,
             "on_permission_request": self._make_permission_handler(agent.id),
-            "streaming": bool(agent.streaming),
         }
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
@@ -378,7 +367,7 @@ class AgentManager:
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
         sdk_session = await self._client.create_session(**kwargs)
-        live = _LiveSession(sdk_session=sdk_session, streaming=bool(agent.streaming))
+        live = _LiveSession(sdk_session=sdk_session)
         self._live[agent.id] = live
 
         # Wire the event stream. The SDK invokes this synchronously; defer the
@@ -405,19 +394,10 @@ class AgentManager:
         )
         await live.sdk_session.send(agent.task_prompt)
 
-    async def send_message(
-        self, agent_id: int, text: str, *, streaming: bool | None = None
-    ) -> None:
+    async def send_message(self, agent_id: int, text: str) -> None:
         agent = await self._load(agent_id)
         if agent is None:
             return
-        if streaming is not None and bool(agent.streaming) != streaming:
-            # Streaming is baked into the SDK session at creation, so persist the
-            # new preference and drop any live session — _ensure_live resumes the
-            # same copilot session (context preserved) with the new mode.
-            await self._patch(agent_id, streaming=streaming)
-            agent.streaming = streaming
-            await self.teardown_session(agent_id)
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
         prompt = text.strip() or None
@@ -865,21 +845,10 @@ class AgentManager:
         now = datetime.now(UTC)
         patch: dict[str, Any] = {"last_activity_at": now}
 
-        if name == "AssistantMessageDeltaData":
-            # Streaming mode delivers the answer as deltas (field ``delta_content``);
-            # buffer them so we can salvage the text if no final message arrives.
-            live = self._live.get(agent_id)
-            delta = getattr(data, "delta_content", None)
-            if live is not None and delta:
-                live.stream_parts.append(str(delta))
-        elif name == "AssistantMessageData":
+        if name == "AssistantMessageData":
             content = getattr(data, "content", None)
             if content:
                 patch["result_summary"] = str(content)[:2000]
-            # A final message superseded the stream — drop the buffer.
-            live = self._live.get(agent_id)
-            if live is not None:
-                live.stream_parts.clear()
         elif name == "AssistantUsageData":
             await self._record_usage(agent_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
@@ -892,11 +861,6 @@ class AgentManager:
                 "cancelled",
                 "failed",
             ):
-                if not (agent.result_summary or "").strip():
-                    salvaged = await self._salvage_stream(agent_id)
-                    if salvaged:
-                        patch["result_summary"] = salvaged
-                        agent.result_summary = salvaged  # so _notify_back posts it
                 patch["status"] = "idle"
                 # The turn has finished — drop the durable in-flight prompt so a
                 # later resume can't re-run an already-completed turn.
@@ -907,13 +871,6 @@ class AgentManager:
         elif name in ("ErrorData", "SessionErrorData"):
             patch["status"] = "failed"
             patch["error"] = str(getattr(data, "message", name))[:2000]
-            # Surface whatever streamed before the failure so the partial answer
-            # isn't lost (the SDK's streaming path can die mid-answer).
-            agent = await self._load(agent_id)
-            if agent is None or not (agent.result_summary or "").strip():
-                salvaged = await self._salvage_stream(agent_id)
-                if salvaged:
-                    patch["result_summary"] = salvaged
 
         await self._patch(agent_id, **patch)
         agent = await self._load(agent_id)
@@ -922,28 +879,6 @@ class AgentManager:
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
         )
-
-    async def _salvage_stream(self, agent_id: int) -> str | None:
-        """Assemble buffered streamed deltas into an answer node.
-
-        Streaming sometimes ends without a final ``AssistantMessageData`` (the
-        SDK errors with "stream ended without producing a Message"). Rather than
-        lose what already streamed, join the buffered ``delta_content`` into one
-        synthetic assistant message so the timeline shows the (partial) answer.
-        Returns the trimmed summary text, or ``None`` when nothing streamed.
-        """
-        live = self._live.get(agent_id)
-        if live is None or not live.stream_parts:
-            return None
-        text = "".join(live.stream_parts).strip()
-        live.stream_parts.clear()
-        if not text:
-            return None
-        synthetic = AgentEvent(kind="assistant_message", text=text[:8000])
-        synthetic.at = datetime.now(UTC)
-        self._events.setdefault(agent_id, []).append(synthetic)
-        await self._archive_event(agent_id, synthetic)
-        return text[:2000]
 
     async def _record_usage(self, agent_id: int, data: Any) -> None:
         """Meter an ``AssistantUsageData`` round into the shared usage ledger.

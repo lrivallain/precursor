@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -89,13 +88,6 @@ class AgentSession(Base, TimestampMixin):
     # in-memory ``_LiveSession.pending_prompt`` this survives a restart, so a
     # turn interrupted mid-flight can be re-sent on resume and still notify back.
     active_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # When true this agent runs with SDK token streaming on, so the timeline
-    # fills in live (deltas) rather than landing whole at turn end. Chosen
-    # per-agent when the task is started.
-    streaming: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="0"
-    )
 
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", server_default="pending", index=True

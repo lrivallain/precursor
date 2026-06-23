@@ -29,7 +29,6 @@ class AgentSessionRead(BaseModel):
     title: str
     task_prompt: str
     active_prompt: str | None = None
-    streaming: bool = False
     status: AgentStatus
     result_summary: str | None = None
     error: str | None = None
@@ -48,7 +47,6 @@ class AgentSessionCreate(BaseModel):
     task: str = Field(min_length=1)
     title: str | None = Field(default=None, max_length=200)
     model: str | None = None
-    streaming: bool = False
     topic_id: int | None = None
     chat_id: int | None = None
 
@@ -57,10 +55,6 @@ class AgentSendRequest(BaseModel):
     """Send a follow-up message into a running/idle agent session."""
 
     message: str = Field(min_length=1)
-    # Optional per-turn streaming override. When set and different from the
-    # session's current mode, the live session is recreated so the next turn
-    # streams (or stops streaming).
-    streaming: bool | None = None
 
 
 class AgentUpdateRequest(BaseModel):
