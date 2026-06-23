@@ -76,6 +76,12 @@ class _LiveSession:
     # returning the SDK's approve-for-session decision, whose ``approval`` object
     # is mandatory for command/write prompts and easy to get wrong.
     session_approvals: set[tuple[str, str | None]] = field(default_factory=set)
+    # Approval policy resolved once per turn (in ``start_task``/``send_message``)
+    # and read by the permission handler. We deliberately do NOT hit the DB from
+    # inside the SDK's permission callback — under concurrent writes a transient
+    # SQLite lock there would otherwise raise and the SDK turns a raising handler
+    # into an opaque, detail-less denial (even in autonomous mode).
+    approval_policy: str | None = None
 
 
 class AgentManager:
@@ -291,6 +297,7 @@ class AgentManager:
         if agent is None:
             return
         live = await self._ensure_live(agent)
+        live.approval_policy = await self._approval_policy()
         await self._patch(agent_id, status="running", error=None)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -302,6 +309,7 @@ class AgentManager:
         if agent is None:
             return
         live = await self._ensure_live(agent)
+        live.approval_policy = await self._approval_policy()
         await self._patch(agent_id, status="running")
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -455,23 +463,53 @@ class AgentManager:
             # intents (reads, URL fetches, read-only MCP) and our own precursor
             # MCP calls; ``manual`` asks for everything. Anything not auto-approved
             # is parked for explicit user approval.
-            policy = await self._approval_policy()
-            if policy == "autonomous":
-                return self._approve_once()
-            if policy != "manual" and self._should_auto_approve(request):
-                return self._approve_once()
-            info = self._describe_permission(request)
-            live = self._live.get(agent_id)
-            # Honour a prior "approve for session" for the same action.
-            if live is not None and self._signature(info) in live.session_approvals:
-                return self._approve_once()
-            return await self._park_permission(agent_id, request, info)
+            #
+            # Read the policy cached on the live session (resolved once per turn);
+            # never touch the DB here. If anything in the body raises, fall back to
+            # the in-memory settings policy instead of letting the exception become
+            # a silent, detail-less SDK denial.
+            try:
+                live = self._live.get(agent_id)
+                policy = (live.approval_policy if live else None) or get_settings().agents_approval_policy
+                if policy == "autonomous":
+                    return self._approve_once()
+                if policy != "manual" and self._should_auto_approve(request):
+                    return self._approve_once()
+                info = self._describe_permission(request)
+                # Honour a prior "approve for session" for the same action.
+                if live is not None and self._signature(info) in live.session_approvals:
+                    return self._approve_once()
+                return await self._park_permission(agent_id, request, info)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                fallback = get_settings().agents_approval_policy
+                logger.exception(
+                    "agent %s: permission handler failed; falling back to %r policy",
+                    agent_id,
+                    fallback,
+                )
+                # Don't silently deny in unattended modes — that's the bug we're
+                # guarding against. Manual mode can't safely auto-approve, so emit
+                # an explicit rejection the UI can show rather than a crash.
+                if fallback != "manual":
+                    return self._approve_once()
+                return self._reject("permission handler error")
 
         return handler
 
     async def _approval_policy(self) -> str:
-        async with SessionLocal() as session:
-            return await resolve_agents_approval_policy(session)
+        try:
+            async with SessionLocal() as session:
+                return await resolve_agents_approval_policy(session)
+        except Exception:
+            fallback = get_settings().agents_approval_policy
+            logger.warning(
+                "agent: approval-policy DB read failed; using in-memory default %r",
+                fallback,
+                exc_info=True,
+            )
+            return fallback
 
     @staticmethod
     def _signature(info: dict[str, Any]) -> tuple[str, str | None]:

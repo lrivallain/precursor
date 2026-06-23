@@ -608,6 +608,14 @@ type WorkflowRow =
 function buildRows(events: AgentEvent[]): WorkflowRow[] {
   const rows: WorkflowRow[] = [];
   const toolIndex = new Map<string, ToolStep>();
+  // A tool box is placed in the flow at its *start*, not at whatever event for
+  // it arrives first. Interrupted/resumed turns can stream a tool's completion
+  // before its start (out of order); without this, the box floats above the
+  // assistant message that requested it. Steps seen completion-first are held
+  // here until their start/partial arrives, then appended at the end as a
+  // fallback if a start never comes.
+  const placed = new Set<ToolStep>();
+  const unplaced: ToolStep[] = [];
 
   const pick = (data: Record<string, unknown> | null, ...keys: string[]): string | undefined => {
     if (!data) return undefined;
@@ -629,19 +637,30 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     if (isToolish) {
       const groupKey = ev.request_id ?? `tool-${rows.length}`;
       let step = ev.request_id ? toolIndex.get(groupKey) : undefined;
-      if (!step) {
-        step = { key: groupKey, toolName: ev.tool_name };
-        if (ev.request_id) toolIndex.set(groupKey, step);
-        rows.push({ type: "tool", step });
-      }
-      if (ev.tool_name) step.toolName = ev.tool_name;
-      const input = pick(ev.data, "arguments", "input");
-      if (input) step.input = input;
       // A tool is "done" when its completion event arrives — independent of
       // whether it carried any output text (many tools complete silently).
       // Partial-result events stream interim output but don't finish the tool.
       const isComplete = kind.includes("complete");
       const isFinalResult = kind.includes("result") && !kind.includes("partial");
+      const isTerminal = isComplete || isFinalResult;
+      if (!step) {
+        step = { key: groupKey, toolName: ev.tool_name };
+        if (ev.request_id) toolIndex.set(groupKey, step);
+        if (isTerminal) {
+          // Completion before start → defer placement until the start arrives.
+          unplaced.push(step);
+        } else {
+          rows.push({ type: "tool", step });
+          placed.add(step);
+        }
+      } else if (!placed.has(step) && !isTerminal) {
+        // The (late) start/partial for a deferred step — place it in order now.
+        rows.push({ type: "tool", step });
+        placed.add(step);
+      }
+      if (ev.tool_name) step.toolName = ev.tool_name;
+      const input = pick(ev.data, "arguments", "input");
+      if (input) step.input = input;
       if (isComplete || isFinalResult) {
         const output = pick(ev.data, "result", "output") ?? ev.text ?? undefined;
         if (output) step.output = output;
@@ -669,6 +688,14 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
       }
     } else {
       rows.push({ type: "node", ev, cat });
+    }
+  }
+  // Fallback: tools whose start never arrived (truly broken turn) still render,
+  // appended in creation order rather than vanishing.
+  for (const step of unplaced) {
+    if (!placed.has(step)) {
+      rows.push({ type: "tool", step });
+      placed.add(step);
     }
   }
   return rows;
