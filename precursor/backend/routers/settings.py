@@ -25,6 +25,7 @@ from precursor.backend.services.app_settings import (
     MAX_TOOL_ROUNDS_CEILING,
     azure_stt_ready,
     redact_llm_providers,
+    resolve_agents_approval_policy,
     resolve_agents_default_model,
     resolve_agents_enabled,
     resolve_azure_speech_endpoint,
@@ -133,6 +134,7 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_available": ok,
         "agents_unavailable_reason": None if ok else detail,
         "agents_default_model": await resolve_agents_default_model(session),
+        "agents_approval_policy": await resolve_agents_approval_policy(session),
     }
 
 

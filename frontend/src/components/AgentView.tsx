@@ -27,6 +27,7 @@ import type {
   AgentEvent,
   AgentPermissionDecisionValue,
   AgentSession,
+  Me,
   Topic,
 } from "../lib/types";
 
@@ -352,10 +353,12 @@ function MessageNode({
   event,
   category,
   isLastAnswer,
+  user,
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
   isLastAnswer: boolean;
+  user?: { name: string; avatarUrl: string | null };
 }) {
   const style = CATEGORY_STYLE[category];
   const box = isLastAnswer
@@ -364,13 +367,29 @@ function MessageNode({
   const marker = isLastAnswer
     ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-600 dark:text-emerald-300"
     : style.marker;
+  // For the user's own prompt, show their GitHub persona (avatar + name) rather
+  // than a generic icon/label.
+  const isUser = category === "user";
+  const label = isUser && user ? user.name : style.label;
   return (
     <div className={`w-full max-w-xl rounded-lg border p-2.5 ${box}`}>
       <div className="flex items-center gap-2">
-        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}>
-          {style.icon}
+        {isUser && user?.avatarUrl ? (
+          <img
+            src={user.avatarUrl}
+            alt={user.name}
+            className="h-6 w-6 shrink-0 rounded-full border border-sky-500/40 object-cover"
+          />
+        ) : (
+          <span
+            className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}
+          >
+            {style.icon}
+          </span>
+        )}
+        <span className={`text-[11px] font-semibold ${isUser && user ? "" : "capitalize"}`}>
+          {label}
         </span>
-        <span className="text-[11px] font-semibold capitalize">{style.label}</span>
         {isLastAnswer && (
           <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
             Answer
@@ -653,6 +672,7 @@ export function AgentView({
 }: AgentViewProps) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [me, setMe] = useState<Me | null>(null);
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
   const [followUp, setFollowUp] = useState("");
@@ -689,7 +709,18 @@ export function AgentView({
   useEffect(() => {
     if (!enabled) return;
     void api.listTopics().then(setTopics).catch(() => setTopics([]));
+    void api.getMe().then(setMe).catch(() => setMe(null));
   }, [enabled]);
+
+  // The user's GitHub persona (name + avatar) for the user-prompt node, with a
+  // sensible fallback when not signed in.
+  const userPersona = useMemo(
+    () => ({
+      name: me?.github?.name || me?.github?.login || "You",
+      avatarUrl: me?.github?.avatar_url ?? null,
+    }),
+    [me],
+  );
 
   // Load the selected session's timeline, and keep it live on agent.changed.
   useEffect(() => {
@@ -987,6 +1018,7 @@ export function AgentView({
                       event={seg.row.ev}
                       category={seg.row.cat}
                       isLastAnswer={seg.row === answerRow}
+                      user={userPersona}
                     />
                   ) : null}
                 </Fragment>

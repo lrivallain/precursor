@@ -246,6 +246,12 @@ export interface NoteDraftAttachment {
   created_at: string;
 }
 
+// Default approval policy gating agent actions:
+//  - "manual":     ask before every action
+//  - "balanced":   auto-approve read-only actions, ask for the rest
+//  - "autonomous": auto-approve everything
+export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   llm_model: string;
@@ -294,6 +300,7 @@ export interface Settings {
   agents_available: boolean;
   agents_unavailable_reason: string | null;
   agents_default_model: string;
+  agents_approval_policy: AgentApprovalPolicy;
 }
 
 export interface SettingsUpdate {
@@ -327,6 +334,7 @@ export interface SettingsUpdate {
   cmd_runner_cpus?: string;
   agents_enabled?: boolean;
   agents_default_model?: string;
+  agents_approval_policy?: AgentApprovalPolicy;
 }
 
 export interface IssueLabel {

@@ -65,6 +65,7 @@ class SettingsPayload(BaseModel):
     # Agents mode (Copilot SDK). Opt-in; download/runtime gated by availability.
     agents_enabled: bool | None = None
     agents_default_model: str | None = None
+    agents_approval_policy: str | None = None
 
 
 class SettingsRead(BaseModel):
@@ -121,3 +122,5 @@ class SettingsRead(BaseModel):
     agents_available: bool = False
     agents_unavailable_reason: str | None = None
     agents_default_model: str = "claude-sonnet-4.5"
+    # Default approval policy for agent actions: manual | balanced | autonomous.
+    agents_approval_policy: str = "balanced"

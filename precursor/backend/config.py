@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     agents_enabled: bool = False
     # Model used for new agent sessions when the caller doesn't specify one.
     agents_default_model: str = "claude-sonnet-4.5"
+    # Default approval policy gating an agent's actions. One of:
+    #   "manual"     — ask before every action (most cautious)
+    #   "balanced"   — auto-approve read-only actions, ask for writes/shell/etc.
+    #   "autonomous" — auto-approve everything (no prompts)
+    agents_approval_policy: str = "balanced"
 
     @cached_property
     def agents_home(self) -> str:

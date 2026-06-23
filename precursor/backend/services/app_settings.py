@@ -331,3 +331,19 @@ async def resolve_agents_default_model(session: AsyncSession) -> str:
     if isinstance(db_value, str) and db_value.strip():
         return db_value
     return get_settings().agents_default_model
+
+
+AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+
+
+async def resolve_agents_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy gating agent actions (DB override on env default).
+
+    See ``Settings.agents_approval_policy``: ``manual`` asks for everything,
+    ``balanced`` auto-approves read-only actions, ``autonomous`` approves all.
+    """
+    db_value = await _get_db_value(session, "agents_approval_policy")
+    if isinstance(db_value, str) and db_value in AGENTS_APPROVAL_POLICIES:
+        return db_value
+    default = get_settings().agents_approval_policy
+    return default if default in AGENTS_APPROVAL_POLICIES else "balanced"

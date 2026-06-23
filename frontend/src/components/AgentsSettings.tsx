@@ -3,7 +3,30 @@ import { Bot, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 import { useConfirm } from "./ConfirmDialog";
-import type { AgentModelInfo, AgentPermissionGrant } from "../lib/types";
+import type { AgentApprovalPolicy, AgentModelInfo, AgentPermissionGrant } from "../lib/types";
+
+// Approval policies, ordered most → least cautious, for the settings dropdown.
+const APPROVAL_POLICIES: {
+  value: AgentApprovalPolicy;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "manual",
+    label: "Manual — ask before every action",
+    hint: "Most cautious. The agent pauses for your approval on every tool call, including reads.",
+  },
+  {
+    value: "balanced",
+    label: "Balanced — auto-approve read-only (recommended)",
+    hint: "Reads, URL fetches and read-only tools run automatically; writes, shell commands and other changes still need approval.",
+  },
+  {
+    value: "autonomous",
+    label: "Autonomous — auto-approve everything",
+    hint: "No prompts: the agent runs every action on its own. Use only for trusted tasks.",
+  },
+];
 
 // Settings-only controls for Agents mode. The actual agent UI (session list and
 // workflow) lives in the top-level "Agents" sidebar mode, not here.
@@ -19,6 +42,7 @@ export function AgentsSettings() {
   const available = settings?.agents_available ?? false;
   const reason = settings?.agents_unavailable_reason ?? null;
   const defaultModel = settings?.agents_default_model ?? "";
+  const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
 
   const loadGrants = useCallback(() => {
     if (!enabled) {
@@ -72,6 +96,7 @@ export function AgentsSettings() {
   async function patch(update: {
     agents_enabled?: boolean;
     agents_default_model?: string;
+    agents_approval_policy?: AgentApprovalPolicy;
   }): Promise<void> {
     setBusy(true);
     setError(null);
@@ -167,6 +192,29 @@ export function AgentsSettings() {
           )}
           <span className="block text-[11px] text-muted">
             Model used for new agent sessions when none is specified.
+          </span>
+        </label>
+      )}
+
+      {enabled && (
+        <label className="block space-y-1">
+          <span className="block text-sm">Default approval policy</span>
+          <select
+            value={approvalPolicy}
+            disabled={busy}
+            onChange={(e) =>
+              void patch({ agents_approval_policy: e.target.value as AgentApprovalPolicy })
+            }
+            className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
+          >
+            {APPROVAL_POLICIES.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <span className="block text-[11px] text-muted">
+            {APPROVAL_POLICIES.find((p) => p.value === approvalPolicy)?.hint}
           </span>
         </label>
       )}

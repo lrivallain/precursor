@@ -39,7 +39,10 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentSession, Message, MessageRole, Topic
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import runtime
-from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.app_settings import (
+    resolve_agents_approval_policy,
+    resolve_agents_enabled,
+)
 from precursor.backend.services.events import (
     publish_agent_changed,
     publish_message_changed,
@@ -430,10 +433,15 @@ class AgentManager:
 
     def _make_permission_handler(self, agent_id: int) -> Any:
         async def handler(request: Any, invocation: Any) -> Any:
-            # Always allow read-only intents (reads, URL fetches, read-only MCP)
-            # and our own precursor MCP calls (the notify-back path); gate the
-            # rest (writes, shell, memory, custom tools) behind explicit approval.
-            if self._should_auto_approve(request):
+            # The default approval policy decides how much we gate. ``autonomous``
+            # approves everything; ``balanced`` (default) auto-approves read-only
+            # intents (reads, URL fetches, read-only MCP) and our own precursor
+            # MCP calls; ``manual`` asks for everything. Anything not auto-approved
+            # is parked for explicit user approval.
+            policy = await self._approval_policy()
+            if policy == "autonomous":
+                return self._approve_once()
+            if policy != "manual" and self._should_auto_approve(request):
                 return self._approve_once()
             info = self._describe_permission(request)
             live = self._live.get(agent_id)
@@ -443,6 +451,10 @@ class AgentManager:
             return await self._park_permission(agent_id, request, info)
 
         return handler
+
+    async def _approval_policy(self) -> str:
+        async with SessionLocal() as session:
+            return await resolve_agents_approval_policy(session)
 
     @staticmethod
     def _signature(info: dict[str, Any]) -> tuple[str, str | None]:
