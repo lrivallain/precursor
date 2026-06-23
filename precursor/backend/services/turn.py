@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import AsyncExitStack
 from typing import Any
 
 import anyio
@@ -51,7 +50,7 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
-from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.mcp.client import get_mcp_client_manager
 
 logger = logging.getLogger(__name__)
 
@@ -112,25 +111,12 @@ async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> No
         provider = await get_llm_provider(session)
         github_token = await resolve_github_token(session)
 
-    async with AsyncExitStack() as stack:
-        sessions: dict[str, Any] = {}
-        tool_to_server: dict[str, tuple[str, str]] = {}
-        aggregated_tools: list[MCPToolDef] = []
+    async with manager.acquired(enabled_servers, github_token=github_token) as active:
+        tool_to_server = active.tool_to_server
+        for server_name, err in active.unavailable:
+            logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
-        for server_name in enabled_servers:
-            try:
-                mcp_session, tools = await stack.enter_async_context(
-                    manager.open_session(server_name, github_token=github_token)
-                )
-            except Exception as exc:
-                logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, exc)
-                continue
-            sessions[server_name] = mcp_session
-            for t in tools:
-                tool_to_server[t.qualified_name] = (server_name, t.name)
-            aggregated_tools.extend(tools)
-
-        provider_tools = _mcp_tools_to_provider(aggregated_tools)
+        provider_tools = _mcp_tools_to_provider(active.tools)
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=system_prompt),
             *history,
@@ -224,7 +210,7 @@ async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> No
                         is_error = True
                     if args is not None:
                         try:
-                            result = await sessions[server_name].call_tool(raw_name, args)
+                            result = await active.call_tool(server_name, raw_name, args)
                             result_text = _format_tool_result(result)
                             is_error = bool(getattr(result, "isError", False))
                         except Exception as exc:

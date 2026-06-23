@@ -2,13 +2,18 @@
 
 Today we ship one built-in server (GitHub, remote streamable-http at
 ``https://api.githubcopilot.com/mcp``). The same machinery is designed to host
-additional built-ins (work-iq) and user-defined BYO servers later. Sessions
-are opened per chat turn rather than kept alive — the SDK's session objects
-are async-context-bound and the request scope is the natural unit of work.
+additional built-ins (work-iq) and user-defined BYO servers later. Sessions are
+kept *warm* in a small per-server pool (see ``MCPClientManager.acquire`` and
+``_ServerWorker``): each server's session is opened once and reused across chat
+turns until it goes idle, so the tool loop no longer pays connect + initialize +
+list_tools on every message. A one-shot ``open_session`` remains for the catalog
+probe.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -21,6 +26,8 @@ from typing import Any, Literal
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+
+from precursor.backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +82,15 @@ class MCPClientManager:
 
     def __init__(self) -> None:
         self._servers: dict[str, MCPServerEntry] = {}
+        # Warm-session pool: one long-lived worker task per server name, kept
+        # alive across turns so we don't pay connect+initialize+list_tools on
+        # every message. Guarded by a lock so concurrent turns don't start
+        # duplicate workers for the same server.
+        self._workers: dict[str, _ServerWorker] = {}
+        self._pool_lock = asyncio.Lock()
+        # Strong refs to fire-and-forget worker-retirement tasks so the GC
+        # doesn't cancel them mid-teardown.
+        self._retiring: set[asyncio.Task[None]] = set()
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -198,11 +214,24 @@ class MCPClientManager:
     async def open_session(
         self, name: str, *, github_token: str = ""
     ) -> AsyncIterator[tuple[ClientSession, list[MCPToolDef]]]:
-        """Open a live MCP session against a configured server.
+        """Open a one-shot live MCP session against a configured server.
 
-        Yields ``(session, tools)``; caller must use as ``async with``.
-        ``github_token`` is the resolved token for servers that authenticate
-        with it (e.g. the built-in GitHub server).
+        Yields ``(session, tools)``; caller must use as ``async with``. Used for
+        the catalog probe and any path that wants a throwaway session. The chat
+        tool loop uses :meth:`acquire` instead, which keeps sessions warm.
+        """
+        async with self._open_transport(name, github_token=github_token) as (session, tools):
+            yield session, tools
+
+    @asynccontextmanager
+    async def _open_transport(
+        self, name: str, *, github_token: str = ""
+    ) -> AsyncIterator[tuple[ClientSession, list[MCPToolDef]]]:
+        """Open the transport + initialized session for ``name``.
+
+        Shared by the one-shot :meth:`open_session` and the warm-pool worker.
+        Updates ``entry.state``/``entry.tools`` so the Settings UI reflects
+        connectivity either way.
         """
         entry = self._servers.get(name)
         if entry is None:
@@ -264,6 +293,82 @@ class MCPClientManager:
             if entry.state == "connected":
                 entry.state = "ready"
 
+    async def acquire(self, server_names: list[str], *, github_token: str = "") -> ActiveTools:
+        """Return aggregated tools for ``server_names`` over warm sessions.
+
+        Starts (or reuses) one long-lived worker per server, waits for them to
+        become ready concurrently, and returns an :class:`ActiveTools` bundle
+        whose :meth:`ActiveTools.call_tool` routes to the right warm session.
+        Servers that fail to start are reported via ``unavailable`` rather than
+        raising, mirroring the previous best-effort per-server behaviour.
+        """
+        pool_disabled = get_settings().mcp_idle_ttl_seconds <= 0
+        bundle = ActiveTools(manager=self, ephemeral=pool_disabled)
+
+        async with self._pool_lock:
+            targets: dict[str, _ServerWorker] = {}
+            for name in server_names:
+                entry = self._servers.get(name)
+                worker = self._workers.get(name)
+                token_stale = (
+                    entry is not None
+                    and entry.headers_provider is not None
+                    and worker is not None
+                    and worker.github_token != github_token
+                )
+                if worker is None or not worker.alive or token_stale or pool_disabled:
+                    if worker is not None:
+                        # Retire the stale/dead worker without blocking startup.
+                        retire = asyncio.create_task(worker.aclose())
+                        self._retiring.add(retire)
+                        retire.add_done_callback(self._retiring.discard)
+                    worker = _ServerWorker(self, name, github_token)
+                    if not pool_disabled:
+                        self._workers[name] = worker
+                targets[name] = worker
+
+        results = await asyncio.gather(
+            *(w.wait_ready() for w in targets.values()), return_exceptions=True
+        )
+        for (name, worker), result in zip(targets.items(), results, strict=True):
+            if isinstance(result, BaseException):
+                bundle.unavailable.append((name, str(result)))
+                async with self._pool_lock:
+                    if self._workers.get(name) is worker:
+                        del self._workers[name]
+                continue
+            for tool in result:
+                bundle.tools.append(tool)
+                bundle.tool_to_server[tool.qualified_name] = (name, tool.name)
+                bundle.workers[name] = worker
+        return bundle
+
+    async def aclose(self) -> None:
+        """Tear down every warm worker (called on app shutdown)."""
+        async with self._pool_lock:
+            workers = list(self._workers.values())
+            self._workers.clear()
+        if workers:
+            await asyncio.gather(*(w.aclose() for w in workers), return_exceptions=True)
+
+    @asynccontextmanager
+    async def acquired(
+        self, server_names: list[str], *, github_token: str = ""
+    ) -> AsyncIterator[ActiveTools]:
+        """Context-manager flavour of :meth:`acquire`.
+
+        Yields the :class:`ActiveTools` bundle for the turn. When pooling is
+        enabled, exiting leaves the sessions warm for the next turn (only
+        :meth:`aclose` or idle expiry tears them down). When pooling is disabled
+        the bundle is ephemeral, so exiting closes its one-shot sessions.
+        """
+        bundle = await self.acquire(server_names, github_token=github_token)
+        try:
+            yield bundle
+        finally:
+            if bundle.ephemeral:
+                await bundle.aclose()
+
     async def _fetch_tools(self, server_name: str, session: ClientSession) -> list[MCPToolDef]:
         result = await session.list_tools()
         return [
@@ -314,8 +419,131 @@ def _github_headers(token: str) -> dict[str, str] | None:
         return None
     return {
         "Authorization": f"Bearer {token}",
-        "X-MCP-Toolsets": "all",
+        "X-MCP-Toolsets": get_settings().github_mcp_toolsets,
     }
+
+
+@dataclass(slots=True)
+class _ToolCall:
+    raw_name: str
+    args: dict[str, Any]
+    future: asyncio.Future[Any]
+
+
+class _ServerWorker:
+    """Owns a long-lived MCP session inside a dedicated task.
+
+    The session is opened *and* closed in the same task (an anyio requirement —
+    the SDK's transports bind cancel scopes to their owning task), so callers on
+    other tasks reach it only by enqueueing tool calls. The session is held warm
+    until idle for ``mcp_idle_ttl_seconds`` or until :meth:`aclose`.
+    """
+
+    def __init__(self, manager: MCPClientManager, name: str, github_token: str) -> None:
+        self._manager = manager
+        self.name = name
+        self.github_token = github_token
+        self._queue: asyncio.Queue[_ToolCall | None] = asyncio.Queue()
+        self._ready: asyncio.Future[list[MCPToolDef]] = asyncio.get_running_loop().create_future()
+        self._task = asyncio.create_task(self._run())
+
+    @property
+    def alive(self) -> bool:
+        return not self._task.done()
+
+    async def wait_ready(self) -> list[MCPToolDef]:
+        """Block until the session has initialized; returns its tools or raises."""
+        return await self._ready
+
+    async def call(self, raw_name: str, args: dict[str, Any]) -> Any:
+        if self._task.done():
+            raise RuntimeError(f"MCP server '{self.name}' session is not running")
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        await self._queue.put(_ToolCall(raw_name=raw_name, args=args, future=future))
+        return await future
+
+    async def aclose(self) -> None:
+        if self._task.done():
+            return
+        await self._queue.put(None)  # graceful-shutdown sentinel
+        try:
+            await asyncio.wait_for(asyncio.shield(self._task), timeout=10)
+        except (TimeoutError, asyncio.CancelledError):
+            self._task.cancel()
+            with contextlib.suppress(BaseException):
+                await self._task
+
+    async def _run(self) -> None:
+        idle_ttl = get_settings().mcp_idle_ttl_seconds
+        timeout = idle_ttl if idle_ttl > 0 else None
+        try:
+            async with self._manager._open_transport(self.name, github_token=self.github_token) as (
+                session,
+                tools,
+            ):
+                if not self._ready.done():
+                    self._ready.set_result(tools)
+                while True:
+                    try:
+                        item = await asyncio.wait_for(self._queue.get(), timeout=timeout)
+                    except TimeoutError:
+                        break  # idle → release the warm session
+                    if item is None:
+                        break  # shutdown sentinel
+                    if item.future.done():
+                        continue  # caller already gave up
+                    try:
+                        result = await session.call_tool(item.raw_name, item.args)
+                    except Exception as exc:
+                        if not item.future.done():
+                            item.future.set_exception(exc)
+                    else:
+                        if not item.future.done():
+                            item.future.set_result(result)
+        except BaseException as exc:
+            if not self._ready.done():
+                self._ready.set_exception(exc)
+        finally:
+            self._fail_pending(RuntimeError(f"MCP server '{self.name}' session closed"))
+
+    def _fail_pending(self, exc: Exception) -> None:
+        """Reject any still-queued calls so callers don't hang after teardown."""
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item is not None and not item.future.done():
+                item.future.set_exception(exc)
+
+
+@dataclass(slots=True)
+class ActiveTools:
+    """Aggregated, ready-to-use tools backed by warm sessions for one turn."""
+
+    manager: MCPClientManager
+    tools: list[MCPToolDef] = field(default_factory=list)
+    # qualified tool name -> (server, raw tool name)
+    tool_to_server: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # server name -> worker serving its calls
+    workers: dict[str, _ServerWorker] = field(default_factory=dict)
+    # (server, error) for servers that failed to start this turn
+    unavailable: list[tuple[str, str]] = field(default_factory=list)
+    # True when pooling is disabled: the workers are one-shot and the caller
+    # (or the ``acquired`` context manager) must close them at turn end.
+    ephemeral: bool = False
+
+    async def call_tool(self, server: str, raw_name: str, args: dict[str, Any]) -> Any:
+        worker = self.workers.get(server)
+        if worker is None:
+            raise KeyError(f"No active MCP session for server '{server}'")
+        return await worker.call(raw_name, args)
+
+    async def aclose(self) -> None:
+        """Close the workers backing this bundle (only used when ephemeral)."""
+        workers = list(self.workers.values())
+        if workers:
+            await asyncio.gather(*(w.aclose() for w in workers), return_exceptions=True)
 
 
 @lru_cache

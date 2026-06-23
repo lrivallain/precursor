@@ -14,7 +14,6 @@ import re
 import shutil
 import unicodedata
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -59,7 +58,7 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
-from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.roles import resolve_role_prompt
 
 logger = logging.getLogger(__name__)
@@ -523,35 +522,22 @@ async def chat_stream(
     )
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
-        async with AsyncExitStack() as stack:
-            sessions: dict[str, Any] = {}
-            tool_to_server: dict[str, tuple[str, str]] = {}
-            aggregated_tools: list[MCPToolDef] = []
+        async with manager.acquired(enabled_servers, github_token=github_token) as active:
+            tool_to_server = active.tool_to_server
+            for server_name, err in active.unavailable:
+                logger.warning(
+                    "Workspace chat: MCP server %s unavailable: %s",
+                    server_name,
+                    err,
+                )
+                yield {
+                    "event": "system",
+                    "data": json.dumps(
+                        {"message": f"MCP server '{server_name}' unavailable: {err}"}
+                    ),
+                }
 
-            for server_name in enabled_servers:
-                try:
-                    mcp_session, tools = await stack.enter_async_context(
-                        manager.open_session(server_name, github_token=github_token)
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Workspace chat: MCP server %s unavailable: %s",
-                        server_name,
-                        exc,
-                    )
-                    yield {
-                        "event": "system",
-                        "data": json.dumps(
-                            {"message": f"MCP server '{server_name}' unavailable: {exc}"}
-                        ),
-                    }
-                    continue
-                sessions[server_name] = mcp_session
-                for t in tools:
-                    tool_to_server[t.qualified_name] = (server_name, t.name)
-                aggregated_tools.extend(tools)
-
-            provider_tools = _mcp_tools_to_provider(aggregated_tools)
+            provider_tools = _mcp_tools_to_provider(active.tools)
             messages = list(base_messages)
 
             # No tools enabled → simple text stream (matches the old behaviour).
@@ -649,7 +635,7 @@ async def chat_stream(
                                 is_error = True
                             if args is not None:
                                 try:
-                                    result = await sessions[server_name].call_tool(raw_name, args)
+                                    result = await active.call_tool(server_name, raw_name, args)
                                     result_text = _format_tool_result(result)
                                     is_error = bool(getattr(result, "isError", False))
                                 except Exception as exc:
