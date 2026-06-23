@@ -220,10 +220,14 @@ class AgentManager:
             timeout = await resolve_agents_watchdog_timeout(session)
             cutoff = datetime.now(UTC) - timedelta(seconds=timeout)
             rows = (
-                await session.execute(
-                    select(AgentSession).where(AgentSession.status == "running")
+                (
+                    await session.execute(
+                        select(AgentSession).where(AgentSession.status == "running")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             stale: list[tuple[int, int | None, int | None]] = []
             reason = (
                 f"No runtime activity for over {max(1, timeout // 60)} min — "
@@ -586,7 +590,9 @@ class AgentManager:
             req_name = type(request).__name__
             try:
                 live = self._live.get(agent_id)
-                policy = (live.approval_policy if live else None) or get_settings().agents_approval_policy
+                policy = (
+                    live.approval_policy if live else None
+                ) or get_settings().agents_approval_policy
                 logger.info(
                     "agent %s: permission handler hit — request=%s policy=%s live=%s",
                     agent_id,
@@ -603,9 +609,7 @@ class AgentManager:
                 info = self._describe_permission(request)
                 # Honour a prior "approve for session" for the same action.
                 if live is not None and self._signature(info) in live.session_approvals:
-                    logger.info(
-                        "agent %s: %s auto-approved (session grant)", agent_id, req_name
-                    )
+                    logger.info("agent %s: %s auto-approved (session grant)", agent_id, req_name)
                     return self._approve_once()
                 logger.info(
                     "agent %s: %s requires approval — parking (%s)",
@@ -836,11 +840,15 @@ class AgentManager:
         # attribute carries it — the normaliser currently archives ``data: null``
         # for ToolExecutionCompleteData, so the denial reason is otherwise lost.
         if name.startswith("ToolExecution"):
-            attrs = {
-                k: (str(v)[:300] if not callable(v) else "<fn>")
-                for k, v in vars(data).items()
-                if not k.startswith("_")
-            } if hasattr(data, "__dict__") else {"repr": repr(data)[:300]}
+            attrs = (
+                {
+                    k: (str(v)[:300] if not callable(v) else "<fn>")
+                    for k, v in vars(data).items()
+                    if not k.startswith("_")
+                }
+                if hasattr(data, "__dict__")
+                else {"repr": repr(data)[:300]}
+            )
             logger.debug("agent %s: %s attrs=%s", agent_id, name, attrs)
         now = datetime.now(UTC)
         patch: dict[str, Any] = {"last_activity_at": now}

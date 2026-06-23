@@ -114,9 +114,7 @@ class AgentSession(Base, TimestampMixin):
 
     # Non-null once the session is archived (hidden from the active list but kept
     # for history). Mirrors Topic/Chat archiving.
-    archived_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     topic: Mapped[Topic | None] = relationship("Topic")
     chat: Mapped[Chat | None] = relationship("Chat")

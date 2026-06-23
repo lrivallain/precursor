@@ -183,9 +183,7 @@ async def send_to_agent(
 
 
 @router.post("/{agent_id}/resume", response_model=AgentSessionRead)
-async def resume_agent(
-    agent_id: str, session: AsyncSession = Depends(get_session)
-) -> AgentSession:
+async def resume_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> AgentSession:
     """Re-run the in-flight turn of an interrupted session.
 
     Resends the persisted ``active_prompt`` so the turn that was cut off (by a

@@ -49,6 +49,7 @@ if engine.dialect.name == "sqlite":
         finally:
             cursor.close()
 
+
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine,
     expire_on_commit=False,

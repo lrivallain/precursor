@@ -368,5 +368,7 @@ async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
     Clamped to a sane floor so a misconfigured value can't kill live turns.
     """
     db_value = await _get_db_value(session, "agents_watchdog_timeout_seconds")
-    value = db_value if isinstance(db_value, int) else get_settings().agents_watchdog_timeout_seconds
+    value = (
+        db_value if isinstance(db_value, int) else get_settings().agents_watchdog_timeout_seconds
+    )
     return max(30, int(value))
