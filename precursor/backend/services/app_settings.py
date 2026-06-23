@@ -347,3 +347,15 @@ async def resolve_agents_approval_policy(session: AsyncSession) -> str:
         return db_value
     default = get_settings().agents_approval_policy
     return default if default in AGENTS_APPROVAL_POLICIES else "balanced"
+
+
+async def resolve_agents_system_prompt(session: AsyncSession) -> str:
+    """Extra system-message preamble appended to every agent session.
+
+    DB override on top of the ``agents_system_prompt`` env default. The SDK base
+    prompt isn't ours to set, so this is appended (alongside any topic binding).
+    """
+    db_value = await _get_db_value(session, "agents_system_prompt")
+    if isinstance(db_value, str):
+        return db_value
+    return get_settings().agents_system_prompt

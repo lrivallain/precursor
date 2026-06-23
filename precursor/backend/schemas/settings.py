@@ -66,6 +66,7 @@ class SettingsPayload(BaseModel):
     agents_enabled: bool | None = None
     agents_default_model: str | None = None
     agents_approval_policy: str | None = None
+    agents_system_prompt: str | None = None
 
 
 class SettingsRead(BaseModel):
@@ -124,3 +125,5 @@ class SettingsRead(BaseModel):
     agents_default_model: str = "claude-sonnet-4.5"
     # Default approval policy for agent actions: manual | balanced | autonomous.
     agents_approval_policy: str = "balanced"
+    # Extra system-message preamble appended to every agent session.
+    agents_system_prompt: str = ""

@@ -303,6 +303,7 @@ export interface Settings {
   agents_unavailable_reason: string | null;
   agents_default_model: string;
   agents_approval_policy: AgentApprovalPolicy;
+  agents_system_prompt: string;
 }
 
 export interface SettingsUpdate {
@@ -337,6 +338,7 @@ export interface SettingsUpdate {
   agents_enabled?: boolean;
   agents_default_model?: string;
   agents_approval_policy?: AgentApprovalPolicy;
+  agents_system_prompt?: string;
 }
 
 export interface IssueLabel {

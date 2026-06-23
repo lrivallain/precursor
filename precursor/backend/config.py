@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     #   "balanced"   — auto-approve read-only actions, ask for writes/shell/etc.
     #   "autonomous" — auto-approve everything (no prompts)
     agents_approval_policy: str = "balanced"
+    # Extra system-message preamble appended to every agent session, on top of
+    # the SDK's base prompt (which we cannot override) and any topic binding.
+    # Empty by default; editable at runtime via Settings → Agents.
+    agents_system_prompt: str = ""
 
     @cached_property
     def agents_home(self) -> str:

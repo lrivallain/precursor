@@ -414,17 +414,15 @@ function MessageNode({
 // the user wants to see "what was done"; a pending approval renders inline.
 function ToolBox({
   step,
-  showToolDetail,
   busy,
   onDecision,
 }: {
   step: ToolStep;
-  showToolDetail: boolean;
   busy: boolean;
   onDecision: DecisionHandler;
 }) {
   const [open, setOpen] = useState(false);
-  const detailOpen = open || showToolDetail;
+  const detailOpen = open;
   const hasDetail = Boolean(step.input || step.output);
   const status = step.pending
     ? "awaiting approval"
@@ -720,11 +718,13 @@ export function AgentView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Workflow display toggles. System (the big base prompt) is noise by default;
-  // tool I/O is collapsed until the user wants to see "what was done".
+  // Workflow display toggles. System (the big base prompt) is noise by default.
+  // "Tool" shows/hides whole tool boxes (their I/O stays collapsed, expandable
+  // per-box). "Thinking" shows/hides the agent's reasoning steps.
   const [showSystem, setShowSystem] = useState(false);
   const [showAssistant, setShowAssistant] = useState(true);
-  const [showToolDetail, setShowToolDetail] = useState(false);
+  const [showThinking, setShowThinking] = useState(true);
+  const [showTool, setShowTool] = useState(true);
   // Yellow side bubbles: turn start/end, usage, idle… side info, on by default.
   const [showLifecycle, setShowLifecycle] = useState(true);
 
@@ -1001,10 +1001,11 @@ export function AgentView({
               label="Assistant"
             />
             <ToggleChip
-              active={showToolDetail}
-              onClick={() => setShowToolDetail((v) => !v)}
-              label="Tool details"
+              active={showThinking}
+              onClick={() => setShowThinking((v) => !v)}
+              label="Thinking"
             />
+            <ToggleChip active={showTool} onClick={() => setShowTool((v) => !v)} label="Tool" />
             <ToggleChip
               active={showLifecycle}
               onClick={() => setShowLifecycle((v) => !v)}
@@ -1051,8 +1052,10 @@ export function AgentView({
 
           const visible = rows.filter((r) => {
             if (r.type === "hook") return showLifecycle;
+            if (r.type === "tool") return showTool;
             if (r.type !== "node") return true;
             if (r.cat === "system" && !showSystem) return false;
+            if (r.cat === "reasoning" && !showThinking) return false;
             // Keep the final answer even when assistant chatter is hidden.
             if (r.cat === "assistant" && !showAssistant && r !== answerRow) return false;
             return true;
@@ -1087,7 +1090,6 @@ export function AgentView({
                   {seg.row.type === "tool" ? (
                     <ToolBox
                       step={seg.row.step}
-                      showToolDetail={showToolDetail}
                       busy={busy}
                       onDecision={approve}
                     />

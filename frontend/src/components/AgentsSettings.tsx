@@ -43,6 +43,7 @@ export function AgentsSettings() {
   const reason = settings?.agents_unavailable_reason ?? null;
   const defaultModel = settings?.agents_default_model ?? "";
   const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
+  const systemPrompt = settings?.agents_system_prompt ?? "";
 
   const loadGrants = useCallback(() => {
     if (!enabled) {
@@ -97,6 +98,7 @@ export function AgentsSettings() {
     agents_enabled?: boolean;
     agents_default_model?: string;
     agents_approval_policy?: AgentApprovalPolicy;
+    agents_system_prompt?: string;
   }): Promise<void> {
     setBusy(true);
     setError(null);
@@ -215,6 +217,27 @@ export function AgentsSettings() {
           </select>
           <span className="block text-[11px] text-muted">
             {APPROVAL_POLICIES.find((p) => p.value === approvalPolicy)?.hint}
+          </span>
+        </label>
+      )}
+
+      {enabled && (
+        <label className="block space-y-1">
+          <span className="block text-sm">Custom system message</span>
+          <textarea
+            value={systemPrompt}
+            disabled={busy}
+            rows={4}
+            placeholder="Extra instructions appended to every agent session…"
+            onChange={(e) =>
+              settingsStore.set({ ...settings!, agents_system_prompt: e.target.value })
+            }
+            onBlur={(e) => void patch({ agents_system_prompt: e.target.value })}
+            className="w-full resize-y rounded border border-border bg-surface px-2 py-1.5 font-mono text-[12px] leading-snug"
+          />
+          <span className="block text-[11px] text-muted">
+            Appended to the Copilot base prompt (which can't be overridden) and any
+            topic binding. Applies to new agent sessions.
           </span>
         </label>
       )}

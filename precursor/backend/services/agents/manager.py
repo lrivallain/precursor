@@ -44,6 +44,7 @@ from precursor.backend.services.agents import runtime
 from precursor.backend.services.app_settings import (
     resolve_agents_approval_policy,
     resolve_agents_enabled,
+    resolve_agents_system_prompt,
 )
 from precursor.backend.services.events import (
     publish_agent_changed,
@@ -252,6 +253,19 @@ class AgentManager:
         ]
         return "\n".join(lines)
 
+    async def _system_preamble(self, agent: AgentSession) -> str | None:
+        """Combined system-message append: operator custom prompt + topic binding.
+
+        The SDK base prompt isn't ours to set, so both pieces are *appended*. The
+        custom prompt (Settings → Agents) comes first as general guidance; the
+        topic binding follows so the agent always knows which record it's on.
+        """
+        async with SessionLocal() as session:
+            custom = (await resolve_agents_system_prompt(session)).strip()
+        topic = await self._topic_context(agent)
+        parts = [p for p in (custom, topic) if p]
+        return "\n\n".join(parts) if parts else None
+
     # ------------------------------------------------------------------ sessions
 
     async def _ensure_live(self, agent: AgentSession) -> _LiveSession:
@@ -272,11 +286,11 @@ class AgentManager:
         mcp = self._precursor_mcp_config()
         if mcp:
             kwargs["mcp_servers"] = mcp
-        context = await self._topic_context(agent)
-        if context:
-            # Append (don't replace) so the agent keeps its base instructions but
-            # always knows which topic it's bound to and how to read/write it.
-            kwargs["system_message"] = {"mode": "append", "content": context}
+        preamble = await self._system_preamble(agent)
+        if preamble:
+            # Append (don't replace) so the agent keeps its SDK base instructions
+            # but also gets the operator's custom guidance and any topic binding.
+            kwargs["system_message"] = {"mode": "append", "content": preamble}
 
         sdk_session = await self._client.create_session(**kwargs)
         live = _LiveSession(sdk_session=sdk_session)
