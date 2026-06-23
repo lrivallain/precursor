@@ -1042,7 +1042,7 @@ _EVENT_KINDS: dict[str, str] = {
     "AssistantMessageData": "assistant_message",
     "AssistantMessageDeltaData": "assistant_delta",
     "AssistantReasoningData": "reasoning",
-    "AssistantReasoningDeltaData": "reasoning",
+    "AssistantReasoningDeltaData": "reasoning_delta",
     "AssistantTurnStartData": "turn_start",
     "AssistantTurnEndData": "turn_end",
     "AssistantUsageData": "usage",

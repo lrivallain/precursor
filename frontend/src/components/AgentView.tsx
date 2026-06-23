@@ -880,6 +880,10 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     if (cat === "hook") {
       rows.push({ type: "hook", ev });
     } else if (cat === "reasoning") {
+      // Streamed reasoning deltas carry no standalone text (the SDK sends the
+      // full block separately as AssistantReasoningData); drop the empty ones so
+      // streaming mode doesn't fill the timeline with blank "thinking" steps.
+      if (!ev.text || !ev.text.trim()) continue;
       // The SDK emits reasoning right AFTER the assistant message of a turn;
       // surface it just before so each turn reads think → speak and a trailing
       // reasoning never dangles below the final answer.
