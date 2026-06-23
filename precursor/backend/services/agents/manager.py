@@ -34,9 +34,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import delete, select
+
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import AgentSession, Message, MessageRole, Topic
+from precursor.backend.models import AgentEventRecord, AgentSession, Message, MessageRole, Topic
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.app_settings import (
@@ -83,11 +85,15 @@ class AgentManager:
         self._live: dict[int, _LiveSession] = {}
         # Durable per-agent timeline. The SDK's ``get_events`` is per-connection
         # (a resumed session only replays ``SessionStartData``), so we archive
-        # every streamed event here. This survives ``teardown_session`` — e.g.
-        # when a topic is linked — so the workflow view isn't wiped. Cleared only
-        # when the agent is deleted, or lost on process restart (acceptable: the
-        # plan keeps history out of the DB).
+        # every streamed event. This in-memory copy is a write-through cache over
+        # the ``agent_events`` table: it survives ``teardown_session`` (e.g. on
+        # topic link) and, because every event is also persisted, the timeline is
+        # reloaded from the DB after a process restart (see ``_ensure_loaded``).
+        # Cleared only when the agent is deleted.
         self._events: dict[int, list[AgentEvent]] = {}
+        # Agents whose DB archive has been hydrated into ``_events`` this process.
+        self._loaded: set[int] = set()
+        self._events_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
 
@@ -365,11 +371,13 @@ class AgentManager:
 
     async def get_events(self, agent_id: int) -> list[AgentEvent]:
         """Return the normalised event history for the workflow timeline."""
+        await self._ensure_loaded(agent_id)
         live = self._live.get(agent_id)
         events = list(self._events.get(agent_id, []))
         if not events:
-            # No archived stream yet (e.g. first load after a resume). Fall back
-            # to whatever the live session can replay.
+            # Nothing archived (neither in memory nor the DB) — e.g. a session
+            # resumed after a restart that hasn't re-emitted yet. Fall back to
+            # whatever the live session can replay.
             if live is None:
                 agent = await self._load(agent_id)
                 if agent is None or not agent.copilot_session_id:
@@ -409,6 +417,15 @@ class AgentManager:
                 await live.sdk_session.disconnect()
         if forget:
             self._events.pop(agent_id, None)
+            self._loaded.discard(agent_id)
+            # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
+            # pragma is on, so clear the archive explicitly (the codebase manages
+            # such cleanups in the app layer — see roles/topics delete).
+            async with SessionLocal() as session:
+                await session.execute(
+                    delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
+                )
+                await session.commit()
 
     async def list_models(self) -> list[dict[str, str]]:
         """Return the runtime's available models (``id``/``name``), or empty.
@@ -570,10 +587,62 @@ class AgentManager:
 
     # ------------------------------------------------------------------ events
 
+    async def _ensure_loaded(self, agent_id: int) -> None:
+        """Hydrate the in-memory timeline from the ``agent_events`` archive once.
+
+        After a process restart the live cache is empty and the SDK only replays
+        ``SessionStartData`` on resume, so the durable history lives only in the
+        DB. Load it lazily the first time an agent is touched (an event arriving
+        or a timeline read) and mark it loaded so we don't re-read per event.
+        """
+        if agent_id in self._loaded:
+            return
+        async with self._events_lock:
+            if agent_id in self._loaded:
+                return
+            async with SessionLocal() as session:
+                payloads = (
+                    await session.scalars(
+                        select(AgentEventRecord.payload)
+                        .where(AgentEventRecord.agent_session_id == agent_id)
+                        .order_by(AgentEventRecord.id)
+                    )
+                ).all()
+            archived: list[AgentEvent] = []
+            for payload in payloads:
+                try:
+                    archived.append(AgentEvent.model_validate_json(payload))
+                except Exception:
+                    logger.debug(
+                        "skipping malformed archived event for agent %s", agent_id, exc_info=True
+                    )
+            if archived:
+                self._events[agent_id] = archived
+            self._loaded.add(agent_id)
+
+    async def _archive_event(self, agent_id: int, event: AgentEvent) -> None:
+        """Persist one normalised event to the durable timeline archive."""
+        try:
+            async with SessionLocal() as session:
+                session.add(
+                    AgentEventRecord(
+                        agent_session_id=agent_id,
+                        payload=event.model_dump_json(),
+                    )
+                )
+                await session.commit()
+        except Exception:
+            logger.debug("failed to archive event for agent %s", agent_id, exc_info=True)
+
     async def _handle_event(self, agent_id: int, event: Any) -> None:
         # Archive every event so the timeline persists across session teardown
-        # (e.g. on topic link) and resume, where the SDK would otherwise drop it.
-        self._events.setdefault(agent_id, []).append(self._normalise(event))
+        # (e.g. on topic link) and process restart, where the SDK would otherwise
+        # drop it (``get_events`` only replays ``SessionStartData`` on resume).
+        await self._ensure_loaded(agent_id)
+        normalised = self._normalise(event)
+        normalised.at = datetime.now(UTC)
+        self._events.setdefault(agent_id, []).append(normalised)
+        await self._archive_event(agent_id, normalised)
 
         data = getattr(event, "data", event)
         name = type(data).__name__
@@ -617,7 +686,6 @@ class AgentManager:
         """
         if agent.topic_id is None and agent.chat_id is None:
             return
-        from sqlalchemy import select
 
         answer = (agent.result_summary or "").strip() or "Agent task finished."
         prompt = (agent.task_prompt or "").strip()

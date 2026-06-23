@@ -7,8 +7,10 @@ a thin pointer row here: the resume handle, the optional container it's linked
 to (a topic *or* a chat, mirroring ``Message``/``Reminder``), and a denormalised
 ``status`` cache so the Agents tab can list sessions without booting the runtime.
 
-The conversation/event history is **not** stored here — it is read live from the
-SDK (``session.get_events``) and streamed over the event bus.
+The conversation/event history is **not** stored on this row. The SDK owns the
+live session, but because ``session.get_events`` only replays ``SessionStartData``
+on resume, the normalised workflow timeline is archived in the ``agent_events``
+table (see ``AgentEventRecord``) so it survives restarts and session teardown.
 """
 
 from __future__ import annotations
