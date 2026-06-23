@@ -879,6 +879,11 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
 
     if (cat === "hook") {
       rows.push({ type: "hook", ev });
+    } else if (cat === "assistant" && (!ev.text || !ev.text.trim())) {
+      // Streaming emits an empty AssistantMessageStartData marker per message;
+      // drop the contentless frames so they don't render as blank "Assistant"
+      // steps. The real answer arrives as AssistantMessageData (with text).
+      continue;
     } else if (cat === "reasoning") {
       // Streamed reasoning deltas carry no standalone text (the SDK sends the
       // full block separately as AssistantReasoningData); drop the empty ones so
@@ -1391,7 +1396,8 @@ export function AgentView({
       {/* Follow-up */}
       {(selected.status === "idle" ||
         selected.status === "completed" ||
-        selected.status === "interrupted") && (
+        selected.status === "interrupted" ||
+        selected.status === "failed") && (
         <div className="shrink-0 border-t border-border px-5 py-3">
           <label className="mb-1.5 flex w-fit items-center gap-2 text-[11px] text-muted">
             <input

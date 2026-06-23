@@ -97,6 +97,12 @@ class _LiveSession:
     # *every* turn's exchange to the topic/chat (not just the first), keyed to
     # the right prompt rather than always the initial ``task_prompt``.
     pending_prompt: str | None = None
+    # Streamed assistant text accumulated from AssistantMessageDeltaData for the
+    # in-flight turn. Used to salvage an answer when the SDK's streaming path
+    # ends without emitting a final AssistantMessageData (it sometimes errors
+    # with "stream ended without producing a Message"). Cleared once a final
+    # message lands or the turn is finalised.
+    stream_parts: list[str] = field(default_factory=list)
 
 
 class AgentManager:
@@ -859,15 +865,38 @@ class AgentManager:
         now = datetime.now(UTC)
         patch: dict[str, Any] = {"last_activity_at": now}
 
-        if name == "AssistantMessageData":
+        if name == "AssistantMessageDeltaData":
+            # Streaming mode delivers the answer as deltas (field ``delta_content``);
+            # buffer them so we can salvage the text if no final message arrives.
+            live = self._live.get(agent_id)
+            delta = getattr(data, "delta_content", None)
+            if live is not None and delta:
+                live.stream_parts.append(str(delta))
+        elif name == "AssistantMessageData":
             content = getattr(data, "content", None)
             if content:
                 patch["result_summary"] = str(content)[:2000]
+            # A final message superseded the stream — drop the buffer.
+            live = self._live.get(agent_id)
+            if live is not None:
+                live.stream_parts.clear()
         elif name == "AssistantUsageData":
             await self._record_usage(agent_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
             agent = await self._load(agent_id)
-            if agent is not None and agent.status not in ("needs_approval", "cancelled"):
+            # Don't let a trailing idle event mask a turn that just errored or
+            # was paused/cancelled — those statuses are sticky so the failure
+            # stays visible (and the in-flight prompt stays resumable).
+            if agent is not None and agent.status not in (
+                "needs_approval",
+                "cancelled",
+                "failed",
+            ):
+                if not (agent.result_summary or "").strip():
+                    salvaged = await self._salvage_stream(agent_id)
+                    if salvaged:
+                        patch["result_summary"] = salvaged
+                        agent.result_summary = salvaged  # so _notify_back posts it
                 patch["status"] = "idle"
                 # The turn has finished — drop the durable in-flight prompt so a
                 # later resume can't re-run an already-completed turn.
@@ -878,6 +907,13 @@ class AgentManager:
         elif name in ("ErrorData", "SessionErrorData"):
             patch["status"] = "failed"
             patch["error"] = str(getattr(data, "message", name))[:2000]
+            # Surface whatever streamed before the failure so the partial answer
+            # isn't lost (the SDK's streaming path can die mid-answer).
+            agent = await self._load(agent_id)
+            if agent is None or not (agent.result_summary or "").strip():
+                salvaged = await self._salvage_stream(agent_id)
+                if salvaged:
+                    patch["result_summary"] = salvaged
 
         await self._patch(agent_id, **patch)
         agent = await self._load(agent_id)
@@ -886,6 +922,28 @@ class AgentManager:
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
         )
+
+    async def _salvage_stream(self, agent_id: int) -> str | None:
+        """Assemble buffered streamed deltas into an answer node.
+
+        Streaming sometimes ends without a final ``AssistantMessageData`` (the
+        SDK errors with "stream ended without producing a Message"). Rather than
+        lose what already streamed, join the buffered ``delta_content`` into one
+        synthetic assistant message so the timeline shows the (partial) answer.
+        Returns the trimmed summary text, or ``None`` when nothing streamed.
+        """
+        live = self._live.get(agent_id)
+        if live is None or not live.stream_parts:
+            return None
+        text = "".join(live.stream_parts).strip()
+        live.stream_parts.clear()
+        if not text:
+            return None
+        synthetic = AgentEvent(kind="assistant_message", text=text[:8000])
+        synthetic.at = datetime.now(UTC)
+        self._events.setdefault(agent_id, []).append(synthetic)
+        await self._archive_event(agent_id, synthetic)
+        return text[:2000]
 
     async def _record_usage(self, agent_id: int, data: Any) -> None:
         """Meter an ``AssistantUsageData`` round into the shared usage ledger.
@@ -971,7 +1029,14 @@ class AgentManager:
         """Map a raw SDK event onto the workflow-timeline shape."""
         data = getattr(event, "data", event)
         name = type(data).__name__
-        text = getattr(data, "content", None) or getattr(data, "text", None)
+        # ``message`` covers error events (SessionErrorData/ErrorData) whose detail
+        # lives there rather than in ``content``/``text`` — otherwise their
+        # timeline node renders blank.
+        text = (
+            getattr(data, "content", None)
+            or getattr(data, "text", None)
+            or getattr(data, "message", None)
+        )
         tool_name = getattr(data, "tool_name", None) or getattr(data, "name", None)
         kind = _EVENT_KINDS.get(name, name)
         tool_status: str | None = None
@@ -979,9 +1044,19 @@ class AgentManager:
             tool_status = "running"
         elif "ToolResult" in name or kind == "tool_result":
             tool_status = "error" if getattr(data, "is_error", False) else "done"
-        # Capture tool I/O so the UI can show "what was done" on demand.
+        # Capture tool I/O (and error diagnostics) so the UI can show "what was
+        # done" / "why it failed" on demand.
         extra: dict[str, Any] = {}
-        for attr in ("arguments", "input", "result", "output", "server_name"):
+        for attr in (
+            "arguments",
+            "input",
+            "result",
+            "output",
+            "server_name",
+            "error_type",
+            "error_code",
+            "status_code",
+        ):
             val = getattr(data, attr, None)
             if val is None:
                 continue
