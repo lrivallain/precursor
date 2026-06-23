@@ -258,6 +258,11 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
   deleteAgent: (id: number) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
+  listArchivedAgents: () => request<AgentSession[]>(`/api/agents/archived`),
+  archiveAgent: (id: number) =>
+    request<AgentSession>(`/api/agents/${id}/archive`, { method: "POST" }),
+  unarchiveAgent: (id: number) =>
+    request<AgentSession>(`/api/agents/${id}/unarchive`, { method: "POST" }),
 
   // Messages
   listMessages: (topicId: number) =>

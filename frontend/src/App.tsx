@@ -18,6 +18,7 @@ import {
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
 import { AgentList } from "./components/AgentList";
+import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
 import { InlineTitle } from "./components/InlineTitle";
@@ -168,6 +169,7 @@ export default function App() {
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [roleSelectorOpen, setRoleSelectorOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -416,6 +418,20 @@ export default function App() {
     const target = agentUrl(activeAgentId);
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeAgentId, sidebarMode]);
+
+  // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
+  // back to its Agents-mode session.
+  useEffect(() => {
+    function onOpenAgent(e: Event): void {
+      const id = (e as CustomEvent<{ id: number }>).detail?.id;
+      if (id == null) return;
+      setActiveAgentId(id);
+      setWsRoute({ open: false, slug: null, path: null });
+      setSidebarMode("agents");
+    }
+    window.addEventListener("precursor:open-agent", onOpenAgent);
+    return () => window.removeEventListener("precursor:open-agent", onOpenAgent);
+  }, []);
 
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
@@ -964,6 +980,14 @@ export default function App() {
                     inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
                   />
                   <AgentStatusBadge status={activeAgent.status} />
+                  <button
+                    className="p-2 rounded hover:bg-surface shrink-0"
+                    aria-label="Agent settings"
+                    data-tooltip="Agent settings"
+                    onClick={() => setAgentSettingsOpen(true)}
+                  >
+                    <SettingsIcon size={18} />
+                  </button>
                   {(activeAgent.status === "running" ||
                     activeAgent.status === "pending" ||
                     activeAgent.status === "needs_approval") && (
@@ -1135,6 +1159,29 @@ export default function App() {
         />
       )}
 
+      {agentSettingsOpen && activeAgent && (
+        <AgentSettingsPanel
+          agent={activeAgent}
+          onClose={() => setAgentSettingsOpen(false)}
+          onSaved={(updated) => {
+            setAgents((prev) =>
+              (prev ?? []).map((a) => (a.id === updated.id ? updated : a)),
+            );
+            setAgentSettingsOpen(false);
+          }}
+          onArchived={() => {
+            setAgentSettingsOpen(false);
+            if (activeAgentId === activeAgent.id) setActiveAgentId(null);
+            void loadAgents();
+          }}
+          onDeleted={() => {
+            setAgentSettingsOpen(false);
+            if (activeAgentId === activeAgent.id) setActiveAgentId(null);
+            void loadAgents();
+          }}
+        />
+      )}
+
       {createWorkspaceOpen && (
         <CreateWorkspaceModal
           onClose={() => setCreateWorkspaceOpen(false)}
@@ -1161,6 +1208,11 @@ export default function App() {
           onChatDeleted={(id) => {
             if (activeChat?.id === id) setActiveChat(null);
             setChatListReloadKey((k) => k + 1);
+          }}
+          onAgentRestored={() => void loadAgents()}
+          onAgentDeleted={(id) => {
+            if (activeAgentId === id) setActiveAgentId(null);
+            void loadAgents();
           }}
         />
       )}

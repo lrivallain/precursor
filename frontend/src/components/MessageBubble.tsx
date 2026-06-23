@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import {
+  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -27,6 +28,9 @@ interface Props {
   // When true, renders the (repeated automation) prompt collapsed by default
   // with a toggle to reveal it, freeing room for the generated content.
   collapsible?: boolean;
+  // Set when this turn was posted by an Agents-mode session — renders a badge
+  // that deep-links back to /agents/{id}.
+  agentSessionId?: number | null;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -51,7 +55,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible }: Props) {
+export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -160,7 +164,10 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <div className="text-[11px] uppercase tracking-wide text-muted">{roleLabel[role]}</div>
+      <div className="flex items-center gap-2">
+        <div className="text-[11px] uppercase tracking-wide text-muted">{roleLabel[role]}</div>
+        {agentSessionId != null && <AgentExchangeBadge agentSessionId={agentSessionId} />}
+      </div>
       <div
         className={`relative px-3 py-2 rounded-lg border border-border ${
           isUser ? "bg-accent/10" : "bg-surface"
@@ -308,6 +315,25 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
         )}
       </div>
     </div>
+  );
+}
+
+function AgentExchangeBadge({ agentSessionId }: { agentSessionId: number }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        window.dispatchEvent(
+          new CustomEvent("precursor:open-agent", { detail: { id: agentSessionId } }),
+        );
+      }}
+      className="inline-flex items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
+      title="Open the agent session"
+      data-tooltip="Open the agent session"
+    >
+      <Bot size={11} />
+      Agent
+    </button>
   );
 }
 

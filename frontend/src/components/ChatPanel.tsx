@@ -1139,6 +1139,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 content={m.content}
                 attachments={m.attachments}
                 collapsible={collapsible}
+                agentSessionId={m.agent_session_id}
                 onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
               />
             );

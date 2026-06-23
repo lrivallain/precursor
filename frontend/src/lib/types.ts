@@ -162,6 +162,7 @@ export interface AgentSession {
   topic_id: number | null;
   chat_id: number | null;
   last_activity_at: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -225,6 +226,7 @@ export interface Message {
   role: MessageRole;
   content: string;
   tool_calls: string | null;
+  agent_session_id?: number | null;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   created_at: string;

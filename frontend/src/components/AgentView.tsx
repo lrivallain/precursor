@@ -10,9 +10,7 @@ import {
   FileText,
   Globe,
   Loader2,
-  Play,
   Search,
-  Send,
   Settings as SettingsIcon,
   ShieldQuestion,
   Sparkles,
@@ -23,6 +21,12 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
+import { GITHUB_SLASH_COMMANDS, matchSlashCommands, type SlashCommand } from "../lib/commands";
+import { useSettings } from "../lib/settingsStore";
+import { useSkills } from "../lib/skillsStore";
+import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useResizableHeight } from "../lib/useResizableHeight";
+import { Composer } from "./Composer";
 import type {
   AgentEvent,
   AgentPermissionDecisionValue,
@@ -492,7 +496,7 @@ function ToolField({ label, value }: { label: string; value: string }) {
 }
 
 // A searchable topic lookup (combobox), used to associate an agent with a topic.
-function TopicPicker({
+export function TopicPicker({
   topics,
   value,
   onChange,
@@ -697,6 +701,60 @@ export function AgentView({
   // Yellow side bubbles: turn start/end, usage, idle… side info, on by default.
   const [showLifecycle, setShowLifecycle] = useState(true);
 
+  // Shared composer infrastructure (same as topics/chats): resizable height,
+  // dictation, ↑/↓ history, and a slash/skills picker. Only one composer is
+  // mounted at a time (the start form *or* the follow-up box), so a single
+  // speech/skills setup serves both — dictation targets whichever is active.
+  const settings = useSettings();
+  const selectedRef = useRef(false);
+  const { height: composerHeight, onMouseDown: onComposerResize } = useResizableHeight({
+    storageKey: "precursor:agent-composer:height",
+    defaultHeight: 56,
+    min: 40,
+    max: 480,
+  });
+  const [interimText, setInterimText] = useState("");
+  const appendFinalChunk = (text: string) => {
+    const chunk = text.trim();
+    if (!chunk) return;
+    const append = (d: string) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk);
+    if (selectedRef.current) setFollowUp(append);
+    else setTask(append);
+    setInterimText("");
+  };
+  const speech = useAzureSpeech({
+    onFinalChunk: appendFinalChunk,
+    onInterim: setInterimText,
+    enabled: settings?.stt_azure_ready ?? false,
+    lang: settings?.azure_speech_language || undefined,
+  });
+  useEffect(() => {
+    if (!speech.listening) setInterimText("");
+  }, [speech.listening]);
+
+  const skills = useSkills();
+  const skillCommands = useMemo<SlashCommand[]>(
+    () =>
+      skills.map((s) => ({
+        name: s.name,
+        label: `/${s.name}`,
+        description: s.description ?? "",
+        kind: "skill" as const,
+        argumentHint: "input",
+      })),
+    [skills],
+  );
+  // Agents can't resolve the GitHub-issue slash commands (no topic association
+  // pipeline), so keep those out of the picker; skills and the rest carry over.
+  const taskSuggestions = useMemo<SlashCommand[]>(
+    () => matchSlashCommands(task, skillCommands, GITHUB_SLASH_COMMANDS) ?? [],
+    [task, skillCommands],
+  );
+  const followUpSuggestions = useMemo<SlashCommand[]>(
+    () => matchSlashCommands(followUp, skillCommands, GITHUB_SLASH_COMMANDS) ?? [],
+    [followUp, skillCommands],
+  );
+
   // Autoscroll: keep the newest step in view as the workflow grows, but only
   // while the user is parked at the bottom (don't yank them away mid-scroll).
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -707,6 +765,9 @@ export function AgentView({
     () => agents.find((a) => a.id === agentId) ?? null,
     [agents, agentId],
   );
+  useEffect(() => {
+    selectedRef.current = selected != null;
+  }, [selected]);
 
   const loadEvents = useCallback(async (id: number): Promise<void> => {
     try {
@@ -730,6 +791,16 @@ export function AgentView({
       avatarUrl: me?.github?.avatar_url ?? null,
     }),
     [me],
+  );
+
+  // Prior user turns (initial task + follow-ups) for ↑/↓ history recall.
+  const userHistory = useMemo(
+    () =>
+      events
+        .filter((e) => classify(e) === "user")
+        .map((e) => e.text ?? "")
+        .filter(Boolean),
+    [events],
   );
 
   // Load the selected session's timeline, and keep it live on agent.changed.
@@ -871,14 +942,6 @@ export function AgentView({
             {unavailableReason ? `: ${unavailableReason}` : "."}
           </div>
         )}
-        <textarea
-          value={task}
-          onChange={(e) => setTask(e.target.value)}
-          placeholder="e.g. Investigate the flaky CI test and propose a fix…"
-          rows={4}
-          disabled={!available || busy}
-          className="resize-none rounded border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50"
-        />
         <label className="flex items-center gap-2 text-[12px] text-muted">
           Associate with topic
           <TopicPicker
@@ -889,17 +952,20 @@ export function AgentView({
           />
         </label>
         {error && <p className="text-[11px] text-red-500">{error}</p>}
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => void startTask()}
-            disabled={!available || busy || !task.trim()}
-            className="flex items-center gap-1.5 rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Start
-            agent
-          </button>
-        </div>
+        <Composer
+          value={task}
+          onChange={setTask}
+          onSend={() => void startTask()}
+          onStop={() => {}}
+          streaming={false}
+          suggestions={taskSuggestions}
+          userHistory={[]}
+          speech={speech}
+          interimText={interimText}
+          height={composerHeight}
+          onResizeStart={onComposerResize}
+          placeholder="e.g. Investigate the flaky CI test and propose a fix…"
+        />
       </div>
     );
   }
@@ -1044,28 +1110,21 @@ export function AgentView({
       {(selected.status === "idle" ||
         selected.status === "completed" ||
         selected.status === "interrupted") && (
-        <div className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">
-          <input
+        <div className="shrink-0 border-t border-border px-5 py-3">
+          <Composer
             value={followUp}
-            onChange={(e) => setFollowUp(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void sendFollowUp();
-              }
-            }}
+            onChange={setFollowUp}
+            onSend={() => void sendFollowUp()}
+            onStop={() => {}}
+            streaming={false}
+            suggestions={followUpSuggestions}
+            userHistory={userHistory}
+            speech={speech}
+            interimText={interimText}
+            height={composerHeight}
+            onResizeStart={onComposerResize}
             placeholder="Send a follow-up message…"
-            disabled={!available || busy}
-            className="flex-1 rounded border border-border bg-bg px-3 py-2 text-[12px] disabled:opacity-50"
           />
-          <button
-            type="button"
-            onClick={() => void sendFollowUp()}
-            disabled={!available || busy || !followUp.trim()}
-            className="flex items-center gap-1 rounded bg-accent px-3 py-2 text-[12px] text-white disabled:opacity-50"
-          >
-            <Send size={14} />
-          </button>
         </div>
       )}
     </div>
