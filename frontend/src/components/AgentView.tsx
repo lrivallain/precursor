@@ -118,7 +118,7 @@ function classify(event: AgentEvent): StepCategory {
   const kind = event.kind.toLowerCase();
   if (kind.includes("delta")) return "skip";
   if (kind === "permission_request") return "permission";
-  if (event.tool_name || kind.includes("tool")) return "tool";
+  if (event.tool_name || kind.startsWith("tool")) return "tool";
   if (kind.includes("reason") || kind.includes("think")) return "reasoning";
   if (kind.includes("error")) return "error";
   if (
@@ -622,6 +622,18 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
 
     if (cat === "hook") {
       rows.push({ type: "hook", ev });
+    } else if (cat === "reasoning") {
+      // The SDK emits reasoning right AFTER the assistant message of a turn;
+      // surface it just before so each turn reads think → speak and a trailing
+      // reasoning never dangles below the final answer.
+      let at = rows.length;
+      while (at > 0 && rows[at - 1].type === "hook") at--;
+      const anchor = at > 0 ? rows[at - 1] : undefined;
+      if (anchor && anchor.type === "node" && anchor.cat === "assistant") {
+        rows.splice(at - 1, 0, { type: "node", ev, cat });
+      } else {
+        rows.push({ type: "node", ev, cat });
+      }
     } else {
       rows.push({ type: "node", ev, cat });
     }
