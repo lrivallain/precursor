@@ -190,6 +190,9 @@ export default function App() {
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
     () => parseAppRoute().agentId,
   );
+  // Topic to preselect in the new-agent form, set when "/agent" (no prompt) is
+  // run from a topic. Cleared once consumed.
+  const [agentDraftTopicId, setAgentDraftTopicId] = useState<number | null>(null);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -431,8 +434,10 @@ export default function App() {
   // back to its Agents-mode session.
   useEffect(() => {
     function onOpenAgent(e: Event): void {
-      const id = (e as CustomEvent<{ id: number }>).detail?.id;
-      if (id == null) return;
+      const detail = (e as CustomEvent<{ id: number | null; topicId?: number }>).detail;
+      const id = detail?.id ?? null;
+      // A null id opens the new-agent form; carry the topic so it's preselected.
+      setAgentDraftTopicId(id == null ? (detail?.topicId ?? null) : null);
       setActiveAgentId(id);
       setWsRoute({ open: false, slug: null, path: null });
       setSidebarMode("agents");
@@ -1147,6 +1152,7 @@ export default function App() {
               onReload={() => void loadAgents()}
               onSelect={(id) => setActiveAgentId(id)}
               onOpenSettings={() => setGlobalSettingsOpen(true)}
+              draftTopicId={agentDraftTopicId}
             />
           )}
         </div>

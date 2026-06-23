@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { RotateCcw } from "lucide-react";
 import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
@@ -28,6 +29,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type {
+  AgentSession,
   Attachment,
   Message,
   NoteDraftAttachment,
@@ -79,6 +81,7 @@ const HANDLED_COMMANDS = new Set<string>([
   "reminder-cancel",
   "done",
   "role",
+  "agent",
 ]);
 
 function cardTitle(p: PendingCommand): string {
@@ -160,6 +163,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const confirmAction = useConfirm();
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
   const [savedNotesDraft, setSavedNotesDraft] = useState<{
@@ -195,10 +199,12 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
-  const excludedCommands = useMemo<ReadonlySet<string>>(
-    () => (issueAssociationsEnabled ? new Set<string>() : GITHUB_SLASH_COMMANDS),
-    [issueAssociationsEnabled],
-  );
+  const agentsEnabled = settings?.agents_enabled ?? false;
+  const excludedCommands = useMemo<ReadonlySet<string>>(() => {
+    const set = new Set<string>(issueAssociationsEnabled ? [] : GITHUB_SLASH_COMMANDS);
+    if (!agentsEnabled) set.add("agent");
+    return set;
+  }, [issueAssociationsEnabled, agentsEnabled]);
   const streamKey = convKey("topic", topic.id);
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
@@ -616,6 +622,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runRole(argument);
       return;
     }
+    if (name === "agent") {
+      await runAgent(argument);
+      return;
+    }
     if (name === "gh-update" || name === "gh-create" || name === "gh-close") {
       await startDraft(name, argument);
     }
@@ -695,6 +705,68 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       systemNote(`Assistant role set to "${role.name}".`);
     } catch (err) {
       systemNote(`Role change failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Prefill the composer with "/agent <id> " so the user can type a follow-up
+  // and reinstantiate an existing agent session straight from its summary.
+  function prefillAgentFollowUp(sessionId: number): void {
+    setDraft(`/agent ${sessionId} `);
+    setComposerFocusToken((t) => t + 1);
+  }
+
+  // Navigate to the Agents tab. A non-null id opens that session; null opens
+  // the new-agent form with this topic preselected (via the event's topicId).
+  function openAgent(id: number | null): void {
+    window.dispatchEvent(
+      new CustomEvent("precursor:open-agent", { detail: { id, topicId: topic.id } }),
+    );
+  }
+
+  async function runAgent(argument: string): Promise<void> {
+    const arg = argument.trim();
+    // "/agent <session-id> <prompt>" continues an existing session when the
+    // first token is a number that maps to a real agent; otherwise the whole
+    // text is treated as a new task (so prompts starting with a number work).
+    const m = arg.match(/^(\d+)\b\s*([\s\S]*)$/);
+    if (m) {
+      const sessionId = Number(m[1]);
+      const prompt = m[2].trim();
+      let existing: AgentSession | null = null;
+      try {
+        existing = await api.getAgent(sessionId);
+      } catch {
+        existing = null;
+      }
+      if (existing) {
+        try {
+          if (prompt) await api.sendToAgent(sessionId, prompt);
+        } catch (err) {
+          systemNote(`Couldn't message agent #${sessionId}: ${(err as Error).message}`);
+          return;
+        }
+        systemNote(
+          prompt
+            ? `Sent a follow-up to agent session #${sessionId}.`
+            : `Opening agent session #${sessionId}.`,
+        );
+        openAgent(sessionId);
+        return;
+      }
+      // Not a real session id — fall through and treat the text as a new task.
+    }
+
+    if (!arg) {
+      // No prompt: open the new-agent form with this topic preselected.
+      openAgent(null);
+      return;
+    }
+    try {
+      const created = await api.createAgent({ task: arg, topic_id: topic.id });
+      systemNote(`Started agent session #${created.id}.`);
+      openAgent(created.id);
+    } catch (err) {
+      systemNote(`Couldn't start the agent: ${(err as Error).message}`);
     }
   }
 
@@ -1164,7 +1236,21 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                     key={`agent-${aid}-${m.id}`}
                     className="space-y-3 rounded-lg border border-dashed border-purple-500/50 bg-purple-500/[0.03] p-2.5"
                   >
-                    <AgentExchangeBadge agentSessionId={aid} />
+                    <div className="flex items-center gap-2">
+                      <AgentExchangeBadge agentSessionId={aid} />
+                      {agentsEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => prefillAgentFollowUp(aid)}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-purple-500/40 px-2 py-0.5 text-[10px] font-medium text-purple-600 hover:bg-purple-500/10 dark:text-purple-300"
+                          title={`Continue agent session #${aid}`}
+                          data-tooltip="Continue this agent session"
+                        >
+                          <RotateCcw size={11} />
+                          Continue
+                        </button>
+                      )}
+                    </div>
                     {group.map((gm) => renderMessage(gm, true))}
                   </div>,
                 );
@@ -1288,6 +1374,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             interimText={interimText}
             height={composerHeight}
             onResizeStart={onComposerResize}
+            focusToken={composerFocusToken}
             attachments={{
               pending: pendingAttachments,
               uploadingCount,

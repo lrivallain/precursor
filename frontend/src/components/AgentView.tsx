@@ -49,6 +49,8 @@ interface AgentViewProps {
   /** Select a session (or clear with null to show the start form). */
   onSelect: (id: number | null) => void;
   onOpenSettings: () => void;
+  /** Topic to preselect in the new-agent form (e.g. opened from a topic). */
+  draftTopicId?: number | null;
 }
 
 // One step in the workflow timeline.
@@ -847,6 +849,7 @@ export function AgentView({
   onReload,
   onSelect,
   onOpenSettings,
+  draftTopicId,
 }: AgentViewProps) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -856,6 +859,12 @@ export function AgentView({
   const [followUp, setFollowUp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Preselect the originating topic in the new-agent form when opened via
+  // "/agent" from a topic (only while no session is selected).
+  useEffect(() => {
+    if (agentId == null && draftTopicId != null) setNewTopicId(draftTopicId);
+  }, [agentId, draftTopicId]);
 
   // Workflow display toggles, persisted across sessions (localStorage). System
   // (the big base prompt) is noise by default. "Tool" shows/hides whole tool

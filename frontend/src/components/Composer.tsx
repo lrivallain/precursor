@@ -39,6 +39,8 @@ interface Props {
   /** When provided, the composer supports attachments (paperclip / paste / drop). */
   attachments?: ComposerAttachments;
   placeholder?: string;
+  /** Bump to focus the textarea (e.g. after an external prefill). */
+  focusToken?: number;
 }
 
 const DEFAULT_PLACEHOLDER =
@@ -63,6 +65,7 @@ export function Composer({
   onResizeStart,
   attachments,
   placeholder,
+  focusToken,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -73,6 +76,17 @@ export function Composer({
 
   const pickerOpen = suggestions.length > 0;
   useEffect(() => setPickerIndex(0), [value]);
+
+  // Focus + move the caret to the end whenever an external prefill bumps the
+  // token (e.g. the "Continue" button on an agent summary).
+  useEffect(() => {
+    if (!focusToken) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+  }, [focusToken]);
 
   const hasPending = (attachments?.pending.length ?? 0) > 0;
   const sendDisabled = !value.trim() && !hasPending;
