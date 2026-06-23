@@ -17,6 +17,7 @@ from precursor.backend.models import AgentSession, Chat, Topic
 from precursor.backend.schemas.agent import (
     AgentEvent,
     AgentLinkRequest,
+    AgentModelInfo,
     AgentPermissionDecision,
     AgentSendRequest,
     AgentSessionCreate,
@@ -55,6 +56,14 @@ async def _validate_container(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     if chat_id is not None and await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+
+
+@router.get("/models", response_model=list[AgentModelInfo])
+async def list_agent_models(
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, str]]:
+    """Available runtime models for the default-model picker (empty if down)."""
+    return await get_agent_manager().list_models()
 
 
 @router.get("", response_model=list[AgentSessionRead])

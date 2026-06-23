@@ -84,3 +84,10 @@ class AgentEvent(BaseModel):
     request_id: str | None = None
     data: dict[str, Any] | None = None
     at: UtcDateTime | None = None
+
+
+class AgentModelInfo(BaseModel):
+    """A model available to the agents runtime (for the default-model picker)."""
+
+    id: str
+    name: str

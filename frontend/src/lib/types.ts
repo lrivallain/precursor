@@ -187,6 +187,12 @@ export interface AgentEvent {
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
 
+// A model exposed by the agents runtime, for the default-model picker.
+export interface AgentModelInfo {
+  id: string;
+  name: string;
+}
+
 export interface AgentLink {
   topic_id?: number | null;
   chat_id?: number | null;

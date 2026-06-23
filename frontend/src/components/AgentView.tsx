@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
+  CircleDot,
+  FileText,
+  Globe,
   Loader2,
+  MessageSquare,
   Play,
   Send,
   Settings as SettingsIcon,
   ShieldQuestion,
   Square,
+  Terminal,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
-import type { AgentEvent, AgentSession, Topic } from "../lib/types";
+import type {
+  AgentEvent,
+  AgentPermissionDecisionValue,
+  AgentSession,
+  Topic,
+} from "../lib/types";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { useConfirm } from "./ConfirmDialog";
 
@@ -30,29 +41,206 @@ interface AgentViewProps {
 }
 
 // One step in the workflow timeline.
-function TimelineStep({ event }: { event: AgentEvent }) {
-  const isTool = !!event.tool_name;
-  const dotColor =
-    event.tool_status === "error"
-      ? "bg-red-500"
-      : event.tool_status === "done"
-        ? "bg-emerald-500"
-        : event.tool_status === "running"
-          ? "bg-sky-500"
-          : "bg-border";
-  const label = isTool ? event.tool_name : event.kind.replace(/_/g, " ");
+type DecisionHandler = (
+  requestId: string,
+  decision: AgentPermissionDecisionValue,
+) => void | Promise<void>;
+
+// Pick a node icon + accent for a workflow step.
+function nodeVisual(event: AgentEvent): { icon: React.ReactNode; ring: string } {
+  if (event.kind === "permission_request")
+    return {
+      icon: <ShieldQuestion size={13} />,
+      ring: "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    };
+  if (event.tool_name) {
+    if (event.tool_status === "error")
+      return { icon: <Wrench size={13} />, ring: "border-red-500/50 bg-red-500/10 text-red-500" };
+    if (event.tool_status === "running")
+      return {
+        icon: <Loader2 size={13} className="animate-spin" />,
+        ring: "border-sky-500/50 bg-sky-500/10 text-sky-500",
+      };
+    const name = event.tool_name.toLowerCase();
+    const icon = name.includes("shell") ? (
+      <Terminal size={13} />
+    ) : name.includes("write") || name.includes("file") || name.includes("read") ? (
+      <FileText size={13} />
+    ) : name.includes("url") || name.includes("fetch") ? (
+      <Globe size={13} />
+    ) : (
+      <Wrench size={13} />
+    );
+    return {
+      icon,
+      ring: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    };
+  }
+  if (event.kind === "message")
+    return { icon: <MessageSquare size={13} />, ring: "border-border bg-surface text-muted" };
+  return { icon: <CircleDot size={13} />, ring: "border-border bg-surface text-muted" };
+}
+
+// Renders the details + approve/deny controls for an inline permission request.
+function PermissionBody({
+  data,
+  requestId,
+  busy,
+  onDecision,
+}: {
+  data: Record<string, unknown>;
+  requestId: string | null;
+  busy: boolean;
+  onDecision: DecisionHandler;
+}) {
+  const str = (k: string): string | null => {
+    const v = data[k];
+    return typeof v === "string" && v.trim() ? v : null;
+  };
+  const command = str("command");
+  const path = str("path");
+  const url = str("url");
+  const server = str("server");
+  const tool = str("tool");
+  const intention = str("intention");
+  const warning = str("warning");
+  const diff = str("diff");
+  const fact = str("fact");
+  const reason = str("reason");
+  const detail = str("detail");
+
   return (
-    <li className="relative pl-5">
-      <span className={`absolute left-0 top-1.5 h-2 w-2 rounded-full ${dotColor}`} aria-hidden />
-      <div className="flex items-baseline gap-2">
-        <span className="text-[11px] font-medium capitalize">{label}</span>
-        {event.tool_status && <span className="text-[10px] text-muted">{event.tool_status}</span>}
-      </div>
-      {event.text && (
-        <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-muted">
-          {event.text.length > 800 ? `${event.text.slice(0, 800)}…` : event.text}
+    <div className="mt-1 space-y-1.5">
+      {intention && <p className="text-[11px] text-muted">{intention}</p>}
+      {command && (
+        <pre className="overflow-x-auto rounded bg-bg px-2 py-1 font-mono text-[11px]">
+          {command}
+        </pre>
+      )}
+      {path && (
+        <p className="font-mono text-[11px]">
+          <span className="text-muted">path: </span>
+          {path}
         </p>
       )}
+      {url && (
+        <p className="break-all font-mono text-[11px]">
+          <span className="text-muted">url: </span>
+          {url}
+        </p>
+      )}
+      {(server || tool) && (
+        <p className="font-mono text-[11px]">
+          <span className="text-muted">tool: </span>
+          {[server, tool].filter(Boolean).join(" · ")}
+        </p>
+      )}
+      {fact && (
+        <p className="text-[11px]">
+          <span className="text-muted">remember: </span>
+          {fact}
+        </p>
+      )}
+      {reason && <p className="text-[11px] text-muted">{reason}</p>}
+      {detail && <p className="text-[11px] text-muted">{detail}</p>}
+      {diff && (
+        <pre className="max-h-48 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10px] leading-snug">
+          {diff}
+        </pre>
+      )}
+      {warning && (
+        <p className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-600 dark:text-amber-400">
+          ⚠ {warning}
+        </p>
+      )}
+      {requestId && (
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          <button
+            type="button"
+            onClick={() => void onDecision(requestId, "approve-once")}
+            disabled={busy}
+            className="rounded bg-accent px-2 py-1 text-[11px] text-white disabled:opacity-50"
+          >
+            Approve once
+          </button>
+          <button
+            type="button"
+            onClick={() => void onDecision(requestId, "approve-always")}
+            disabled={busy}
+            className="rounded border border-border px-2 py-1 text-[11px] disabled:opacity-50"
+          >
+            Approve for session
+          </button>
+          <button
+            type="button"
+            onClick={() => void onDecision(requestId, "deny")}
+            disabled={busy}
+            className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-red-500 disabled:opacity-50"
+          >
+            <X size={12} /> Deny
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One node in the linked-boxes workflow.
+function WorkflowNode({
+  event,
+  isLast,
+  busy,
+  onDecision,
+}: {
+  event: AgentEvent;
+  isLast: boolean;
+  busy: boolean;
+  onDecision: DecisionHandler;
+}) {
+  const isPermission = event.kind === "permission_request";
+  const { icon, ring } = nodeVisual(event);
+  const data = (event.data ?? {}) as Record<string, unknown>;
+  const title =
+    isPermission && typeof data.title === "string"
+      ? data.title
+      : event.tool_name || event.kind.replace(/_/g, " ");
+
+  return (
+    <li className="relative flex gap-3">
+      {/* Rail: node marker + connector to the next box. */}
+      <div className="flex flex-col items-center">
+        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${ring}`}>
+          {icon}
+        </span>
+        {!isLast && <span className="w-px flex-1 bg-border" />}
+      </div>
+      {/* Box */}
+      <div
+        className={`mb-2 flex-1 rounded-lg border p-2 ${
+          isPermission ? "border-orange-500/40 bg-orange-500/5" : "border-border bg-surface"
+        }`}
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="text-[11px] font-medium capitalize">{title}</span>
+          {event.tool_status && (
+            <span className="text-[10px] text-muted">{event.tool_status}</span>
+          )}
+        </div>
+        {isPermission ? (
+          <PermissionBody
+            data={data}
+            requestId={event.request_id}
+            busy={busy}
+            onDecision={onDecision}
+          />
+        ) : (
+          event.text && (
+            <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-muted">
+              {event.text.length > 800 ? `${event.text.slice(0, 800)}…` : event.text}
+            </p>
+          )
+        )}
+      </div>
     </li>
   );
 }
@@ -141,7 +329,7 @@ export function AgentView({
 
   async function approve(
     requestId: string,
-    decision: "approve-once" | "approve-always" | "deny",
+    decision: AgentPermissionDecisionValue,
   ): Promise<void> {
     if (!selected) return;
     setBusy(true);
@@ -195,14 +383,6 @@ export function AgentView({
       setBusy(false);
     }
   }
-
-  const pendingRequestId = useMemo(() => {
-    if (selected?.status !== "needs_approval") return null;
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].request_id) return events[i].request_id;
-    }
-    return null;
-  }, [events, selected?.status]);
 
   // Disabled: send the user to Settings to turn the feature on.
   if (!enabled) {
@@ -325,38 +505,10 @@ export function AgentView({
 
       {error && <p className="text-[11px] text-red-500">{error}</p>}
 
-      {/* Permission prompt */}
-      {selected.status === "needs_approval" && pendingRequestId && (
-        <div className="rounded border border-orange-500/30 bg-orange-500/10 p-2">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-orange-600 dark:text-orange-400">
-            <ShieldQuestion size={13} /> The agent needs permission to continue.
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => void approve(pendingRequestId, "approve-once")}
-              disabled={busy}
-              className="rounded bg-accent px-2 py-1 text-[11px] text-white disabled:opacity-50"
-            >
-              Approve once
-            </button>
-            <button
-              type="button"
-              onClick={() => void approve(pendingRequestId, "approve-always")}
-              disabled={busy}
-              className="rounded border border-border px-2 py-1 text-[11px] disabled:opacity-50"
-            >
-              Approve for session
-            </button>
-            <button
-              type="button"
-              onClick={() => void approve(pendingRequestId, "deny")}
-              disabled={busy}
-              className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-red-500 disabled:opacity-50"
-            >
-              <X size={12} /> Deny
-            </button>
-          </div>
+      {selected.status === "needs_approval" && (
+        <div className="flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
+          <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step in
+          the workflow below.
         </div>
       )}
 
@@ -372,19 +524,25 @@ export function AgentView({
         </div>
       )}
 
-      {/* Workflow timeline */}
+      {/* Workflow */}
       <div>
-        <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+        <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted">
           Workflow
         </div>
         {events.length === 0 ? (
           <p className="text-[11px] text-muted">No steps recorded yet.</p>
         ) : (
-          <ul className="space-y-2 border-l border-border pl-1">
+          <ol className="flex flex-col">
             {events.map((ev, i) => (
-              <TimelineStep key={i} event={ev} />
+              <WorkflowNode
+                key={i}
+                event={ev}
+                isLast={i === events.length - 1}
+                busy={busy}
+                onDecision={approve}
+              />
             ))}
-          </ul>
+          </ol>
         )}
       </div>
 

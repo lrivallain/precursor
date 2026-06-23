@@ -47,12 +47,6 @@ from precursor.backend.services.events import (
 
 logger = logging.getLogger(__name__)
 
-# Tool kinds (Copilot permission-request variants) auto-approved without asking.
-# Reads, URL fetches and MCP calls are allowed; writes / shell / memory are
-# parked for explicit approval. MCP calls to our own 'precursor' server are
-# always allowed (that's the notify-back path).
-_AUTO_APPROVE_KINDS = {"read", "url", "mcp"}
-
 # Cap how long we wait for the out-of-process runtime to come up so a stuck or
 # unauthenticated CLI can't block app startup or a settings save indefinitely.
 _START_TIMEOUT_SECONDS = 30.0
@@ -64,6 +58,9 @@ class _LiveSession:
 
     sdk_session: Any
     pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    # request_id -> normalised description of what's being requested, so the UI
+    # can render an inline approval card explaining the action.
+    pending_info: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class AgentManager:
@@ -274,8 +271,21 @@ class AgentManager:
             raw = await live.sdk_session.get_events()
         except Exception:
             logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
-            return []
-        return [self._normalise(ev) for ev in raw or []]
+            raw = []
+        events = [self._normalise(ev) for ev in raw or []]
+        # Append any unresolved permission requests as inline workflow steps so
+        # the approval card renders in-place (with details of what's requested)
+        # rather than floating detached from the timeline.
+        for info in live.pending_info.values():
+            events.append(
+                AgentEvent(
+                    kind="permission_request",
+                    text=info.get("title"),
+                    request_id=info.get("request_id"),
+                    data=info,
+                )
+            )
+        return events
 
     async def teardown_session(self, agent_id: int) -> None:
         """Disconnect a live session (e.g. before deleting the row)."""
@@ -284,21 +294,93 @@ class AgentManager:
             with contextlib.suppress(Exception):
                 await live.sdk_session.disconnect()
 
-    # ------------------------------------------------------------------ permissions
+    async def list_models(self) -> list[dict[str, str]]:
+        """Return the runtime's available models (``id``/``name``), or empty.
+
+        Used to populate the Settings default-model picker. The SDK caches the
+        result after the first call, so this is cheap to poll.
+        """
+        if not self._ready or self._client is None:
+            return []
+        try:
+            models = await self._client.list_models()
+        except Exception:
+            logger.debug("list_models failed", exc_info=True)
+            return []
+        out: list[dict[str, str]] = []
+        for m in models or []:
+            mid = getattr(m, "id", None)
+            if not mid:
+                continue
+            out.append({"id": str(mid), "name": str(getattr(m, "name", None) or mid)})
+        return out
 
     def _make_permission_handler(self, agent_id: int) -> Any:
         async def handler(request: Any, invocation: Any) -> Any:
-            kind = str(getattr(request, "kind", "") or "").lower()
-            server = str(getattr(request, "server_name", "") or "")
-            read_only = bool(getattr(request, "read_only", False))
-            # Always allow our own precursor MCP calls (the notify-back path),
-            # plus reads / url fetches / read-only MCP.
-            if server == "precursor" or kind in _AUTO_APPROVE_KINDS or read_only:
+            # Always allow read-only intents (reads, URL fetches, read-only MCP)
+            # and our own precursor MCP calls (the notify-back path); gate the
+            # rest (writes, shell, memory, custom tools) behind explicit approval.
+            if self._should_auto_approve(request):
                 return self._approve_once()
-            # Gate the rest: park a future and surface needs_approval.
             return await self._park_permission(agent_id, request)
 
         return handler
+
+    @staticmethod
+    def _should_auto_approve(request: Any) -> bool:
+        name = type(request).__name__
+        if name in ("PermissionRequestRead", "PermissionRequestUrl"):
+            return True
+        if name == "PermissionRequestMcp":
+            server = str(getattr(request, "server_name", "") or "")
+            return server == "precursor" or bool(getattr(request, "read_only", False))
+        return False
+
+    @staticmethod
+    def _describe_permission(request: Any) -> dict[str, Any]:
+        """Normalise a permission request into a UI-friendly description."""
+
+        def g(attr: str) -> Any:
+            value = getattr(request, attr, None)
+            return value if value not in ("",) else None
+
+        name = type(request).__name__.replace("PermissionRequest", "") or "Tool"
+        info: dict[str, Any] = {"type": name.lower(), "title": f"{name} permission"}
+        if name == "Shell":
+            info.update(
+                title="Run a shell command",
+                command=g("full_command_text"),
+                intention=g("intention"),
+                warning=g("warning"),
+            )
+        elif name == "Write":
+            info.update(
+                title="Write to a file",
+                path=g("file_name"),
+                intention=g("intention"),
+                diff=(str(g("diff"))[:4000] if g("diff") else None),
+            )
+        elif name == "Read":
+            info.update(title="Read a file", path=g("path"), intention=g("intention"))
+        elif name == "Mcp":
+            tool = g("tool_title") or g("tool_name")
+            info.update(
+                title=f"Use MCP tool: {tool}" if tool else "Use an MCP tool",
+                server=g("server_name"),
+                tool=g("tool_name"),
+            )
+        elif name == "Url":
+            info.update(title="Fetch a URL", url=g("url"), intention=g("intention"))
+        elif name == "Memory":
+            info.update(title="Update memory", fact=g("fact"), reason=g("reason"))
+        elif name == "CustomTool":
+            tool = g("tool_name")
+            info.update(
+                title=f"Use tool: {tool}" if tool else "Use a tool",
+                tool=tool,
+                detail=g("tool_description"),
+            )
+        return {k: v for k, v in info.items() if v is not None}
 
     async def _park_permission(self, agent_id: int, request: Any) -> Any:
         live = self._live.get(agent_id)
@@ -308,6 +390,10 @@ class AgentManager:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Any] = loop.create_future()
         live.pending[request_id] = fut
+        live.pending_info[request_id] = {
+            "request_id": request_id,
+            **self._describe_permission(request),
+        }
         await self._patch(agent_id, status="needs_approval")
         agent = await self._load(agent_id)
         await publish_agent_changed(
@@ -319,24 +405,23 @@ class AgentManager:
             return await fut
         finally:
             live.pending.pop(request_id, None)
+            live.pending_info.pop(request_id, None)
 
     def _approve_once(self) -> Any:
-        sdk = runtime.load_sdk()
-        return sdk.PermissionDecisionApproveOnce()
+        return runtime.load_rpc().PermissionDecisionApproveOnce()
 
     def _reject(self, feedback: str) -> Any:
-        sdk = runtime.load_sdk()
-        return sdk.PermissionDecisionReject(feedback=feedback)
+        return runtime.load_rpc().PermissionDecisionReject(feedback=feedback)
 
     def _decision(self, decision: str) -> Any:
-        sdk = runtime.load_sdk()
+        rpc = runtime.load_rpc()
         if decision == "approve-always":
             with contextlib.suppress(Exception):
-                return sdk.PermissionDecisionApproveForSession()
-            return sdk.PermissionDecisionApproveOnce()
+                return rpc.PermissionDecisionApproveForSession()
+            return rpc.PermissionDecisionApproveOnce()
         if decision == "deny":
-            return sdk.PermissionDecisionReject(feedback="Denied by user")
-        return sdk.PermissionDecisionApproveOnce()
+            return rpc.PermissionDecisionReject(feedback="Denied by user")
+        return rpc.PermissionDecisionApproveOnce()
 
     # ------------------------------------------------------------------ events
 

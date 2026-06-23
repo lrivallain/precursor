@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   AgentLink,
+  AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentSession,
   AgentSessionCreate,
@@ -225,6 +226,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
   getAgentEvents: (id: number) => request<AgentEvent[]>(`/api/agents/${id}/events`),
+  listAgentModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
   sendToAgent: (id: number, message: string) =>
     request<AgentSession>(`/api/agents/${id}/send`, {
       method: "POST",

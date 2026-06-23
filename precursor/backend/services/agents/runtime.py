@@ -101,3 +101,15 @@ def load_sdk() -> Any:
             "(install with `uv sync --extra agents`)."
         )
     return _import_sdk()
+
+
+@lru_cache(maxsize=1)
+def load_rpc() -> Any:
+    """Return ``copilot.generated.rpc`` (permission-decision constructors).
+
+    The ``PermissionDecision*`` classes are *not* re-exported on the top-level
+    ``copilot`` module — they live in this generated RPC module. Centralised here
+    so the manager has one place to reach them.
+    """
+    load_sdk()
+    return importlib.import_module("copilot.generated.rpc")

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bot, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { settingsStore, useSettings } from "../lib/settingsStore";
+import type { AgentModelInfo } from "../lib/types";
 
 // Settings-only controls for Agents mode. The actual agent UI (session list and
 // workflow) lives in the top-level "Agents" sidebar mode, not here.
@@ -9,11 +10,25 @@ export function AgentsSettings() {
   const settings = useSettings();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<AgentModelInfo[]>([]);
 
   const enabled = settings?.agents_enabled ?? false;
   const available = settings?.agents_available ?? false;
   const reason = settings?.agents_unavailable_reason ?? null;
   const defaultModel = settings?.agents_default_model ?? "";
+
+  // Load the runtime's model list when the feature is on and available. Empty
+  // when the runtime is down — we fall back to free text in that case.
+  useEffect(() => {
+    if (!enabled || !available) {
+      setModels([]);
+      return;
+    }
+    void api
+      .listAgentModels()
+      .then(setModels)
+      .catch(() => setModels([]));
+  }, [enabled, available]);
 
   async function patch(update: {
     agents_enabled?: boolean;
@@ -77,20 +92,40 @@ export function AgentsSettings() {
       {enabled && (
         <label className="block space-y-1">
           <span className="block text-sm">Default model</span>
-          <input
-            type="text"
-            value={defaultModel}
-            disabled={busy}
-            placeholder="e.g. claude-sonnet-4.5"
-            onChange={(e) =>
-              settingsStore.set({
-                ...settings!,
-                agents_default_model: e.target.value,
-              })
-            }
-            onBlur={(e) => void patch({ agents_default_model: e.target.value.trim() })}
-            className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
-          />
+          {models.length > 0 ? (
+            <select
+              value={defaultModel}
+              disabled={busy}
+              onChange={(e) => void patch({ agents_default_model: e.target.value })}
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
+            >
+              <option value="">Runtime default</option>
+              {/* Keep the saved value selectable even if the runtime no longer lists it. */}
+              {defaultModel && !models.some((m) => m.id === defaultModel) && (
+                <option value={defaultModel}>{defaultModel}</option>
+              )}
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={defaultModel}
+              disabled={busy}
+              placeholder="e.g. claude-sonnet-4.5"
+              onChange={(e) =>
+                settingsStore.set({
+                  ...settings!,
+                  agents_default_model: e.target.value,
+                })
+              }
+              onBlur={(e) => void patch({ agents_default_model: e.target.value.trim() })}
+              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
+            />
+          )}
           <span className="block text-[11px] text-muted">
             Model used for new agent sessions when none is specified.
           </span>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -41,6 +42,8 @@ from precursor.backend.services.mcp.precursor_server import (
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+logger = logging.getLogger(__name__)
 
 # Keys that contain secrets — never echoed back, only their presence is reported.
 _SECRET_KEYS = {"api_keys"}
@@ -181,13 +184,18 @@ async def update_settings(
     await session.commit()
 
     # Reconcile the agents runtime live so toggling the setting doesn't require a
-    # restart (both start/stop are idempotent and a no-op when unavailable).
+    # restart (both start/stop are idempotent and a no-op when unavailable). The
+    # preference is already persisted, so a runtime hiccup here must not fail the
+    # save — log and carry on.
     if "agents_enabled" in data:
         manager = get_agent_manager()
-        if await resolve_agents_enabled(session):
-            await manager.start()
-        else:
-            await manager.stop()
+        try:
+            if await resolve_agents_enabled(session):
+                await manager.start()
+            else:
+                await manager.stop()
+        except Exception:
+            logger.exception("Agents runtime reconcile failed after settings update")
 
     refreshed = await _load_all(session)
     system = await resolve_system_settings(session)
