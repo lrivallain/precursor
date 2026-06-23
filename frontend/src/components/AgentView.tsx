@@ -1149,6 +1149,20 @@ export function AgentView({
     }
   }
 
+  async function stopAgent(): Promise<void> {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cancelAgent(selected.id);
+      onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function resume(): Promise<void> {
     if (!selected) return;
     setBusy(true);
@@ -1371,28 +1385,38 @@ export function AgentView({
           </div>
       </div>
 
-      {/* Follow-up */}
-      {(selected.status === "idle" ||
-        selected.status === "completed" ||
-        selected.status === "interrupted" ||
-        selected.status === "failed") && (
-        <div className="shrink-0 border-t border-border px-5 py-3">
-          <Composer
-            value={followUp}
-            onChange={setFollowUp}
-            onSend={() => void sendFollowUp()}
-            onStop={() => {}}
-            streaming={false}
-            suggestions={followUpSuggestions}
-            userHistory={userHistory}
-            speech={speech}
-            interimText={interimText}
-            height={composerHeight}
-            onResizeStart={onComposerResize}
-            placeholder="Send a follow-up message…"
-          />
-        </div>
-      )}
+      {/* Follow-up: always visible. While a turn is in flight the input is
+          disabled and the send button becomes a Stop control, matching the
+          topic/chat composer pattern. */}
+      {(() => {
+        const turnActive =
+          selected.status === "running" ||
+          selected.status === "pending" ||
+          selected.status === "needs_approval";
+        return (
+          <div className="shrink-0 border-t border-border px-5 py-3">
+            <Composer
+              value={followUp}
+              onChange={setFollowUp}
+              onSend={() => void sendFollowUp()}
+              onStop={() => void stopAgent()}
+              streaming={turnActive}
+              disabled={turnActive}
+              suggestions={followUpSuggestions}
+              userHistory={userHistory}
+              speech={speech}
+              interimText={interimText}
+              height={composerHeight}
+              onResizeStart={onComposerResize}
+              placeholder={
+                turnActive
+                  ? "Agent is working… use Stop to interrupt"
+                  : "Send a follow-up message…"
+              }
+            />
+          </div>
+        );
+      })()}
       </div>
       <AgentShowPanel showPrefs={showPrefs} toggleShow={toggleShow} />
     </div>
