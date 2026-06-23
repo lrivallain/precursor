@@ -902,7 +902,8 @@ export function AgentView({
             <div className="flex flex-col items-center">
               {visible.map((r, i) => {
                 if (r.type === "hook") {
-                  prevMain = false;
+                  // A side bubble doesn't break the vertical chain between the
+                  // main boxes, so leave prevMain untouched.
                   return <HookBubble key={i} event={r.ev} />;
                 }
                 const connector = prevMain ? <Connector /> : null;

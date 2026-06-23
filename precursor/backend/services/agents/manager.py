@@ -611,6 +611,8 @@ class AgentManager:
             val = getattr(data, attr, None)
             if val is None:
                 continue
+            if attr in ("result", "output"):
+                val = self._unwrap_result(val)
             extra[attr] = val if isinstance(val, str) else self._jsonify(val)
         return AgentEvent(
             kind=kind,
@@ -620,6 +622,21 @@ class AgentManager:
             request_id=getattr(data, "tool_call_id", None),
             data=extra or None,
         )
+
+    @staticmethod
+    def _unwrap_result(value: Any) -> Any:
+        """Pull readable text out of SDK result wrappers.
+
+        Tool results arrive as ``ToolExecutionCompleteResult`` objects whose
+        repr would otherwise leak into the UI; surface their content instead.
+        """
+        if isinstance(value, str):
+            return value
+        for attr in ("content", "detailed_content"):
+            inner = getattr(value, attr, None)
+            if isinstance(inner, str) and inner.strip():
+                return inner
+        return value
 
     @staticmethod
     def _jsonify(value: Any) -> str:
