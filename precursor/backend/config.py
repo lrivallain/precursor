@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # the SDK's base prompt (which we cannot override) and any topic binding.
     # Empty by default; editable at runtime via Settings → Agents.
     agents_system_prompt: str = ""
+    # How long (seconds) a running agent session may go without any new runtime
+    # event before the watchdog marks it ``interrupted`` (resumable). Guards
+    # against a stuck/runaway turn pinning a session in "running" forever.
+    agents_watchdog_timeout_seconds: int = 600
 
     @cached_property
     def agents_home(self) -> str:

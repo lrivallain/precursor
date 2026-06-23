@@ -238,6 +238,8 @@ export const api = {
     }),
   cancelAgent: (id: number) =>
     request<AgentSession>(`/api/agents/${id}/cancel`, { method: "POST" }),
+  resumeAgent: (id: number | string) =>
+    request<AgentSession>(`/api/agents/${id}/resume`, { method: "POST" }),
   resolveAgentPermission: (
     id: number,
     requestId: string,

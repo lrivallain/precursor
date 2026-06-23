@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -82,6 +83,19 @@ class AgentSession(Base, TimestampMixin):
     # The initial instruction the agent was started with (kept for display and
     # for restarting an interrupted session).
     task_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # The prompt for the turn currently in flight: set when a task/follow-up is
+    # sent, cleared once the turn finishes and is posted back. Unlike the
+    # in-memory ``_LiveSession.pending_prompt`` this survives a restart, so a
+    # turn interrupted mid-flight can be re-sent on resume and still notify back.
+    active_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # When true this agent runs with SDK token streaming on, so the timeline
+    # fills in live (deltas) rather than landing whole at turn end. Chosen
+    # per-agent when the task is started.
+    streaming: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", server_default="pending", index=True

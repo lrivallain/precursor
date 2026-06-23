@@ -8,11 +8,14 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  Code2,
   Cog,
+  Copy,
   Eye,
   FileText,
   Globe,
   Loader2,
+  PlayCircle,
   Search,
   Settings as SettingsIcon,
   ShieldQuestion,
@@ -30,6 +33,7 @@ import { useSkills } from "../lib/skillsStore";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
+import { Markdown } from "./Markdown";
 import type {
   AgentEvent,
   AgentPermissionDecisionValue,
@@ -174,10 +178,14 @@ function HookBubble({ event }: { event: AgentEvent }) {
 // The centered link drawn between two consecutive workflow boxes.
 function Connector() {
   return (
-    <div className="flex flex-col items-center" aria-hidden>
-      <span className="h-3 w-0.5 bg-muted/50" />
-      <ChevronDown size={16} strokeWidth={2.5} className="-my-1 text-muted/70" />
-      <span className="h-3 w-0.5 bg-muted/50" />
+    <div className="group flex flex-col items-center px-6 py-0.5" aria-hidden>
+      <span className="-mt-1 h-2 w-2 rounded-full bg-muted/50 transition-colors group-hover:bg-accent" />
+      <span className="h-3 w-0.5 rounded-full bg-muted/50 transition-colors group-hover:bg-accent" />
+      <ChevronDown
+        size={18}
+        strokeWidth={2.5}
+        className="-mt-1.5 -mb-1.5 text-muted/70 transition-colors group-hover:text-accent"
+      />
     </div>
   );
 }
@@ -188,14 +196,18 @@ function Connector() {
 function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
   if (hooks.length === 0) return <Connector />;
   return (
-    <div className="relative flex w-full max-w-xl justify-end py-1">
+    <div className="group relative flex w-full max-w-xl justify-end py-1">
       <div
-        className="absolute inset-y-0 left-1/2 flex -translate-x-1/2 flex-col items-center"
+        className="absolute -inset-y-1 left-1/2 flex -translate-x-1/2 flex-col items-center"
         aria-hidden
       >
-        <span className="w-0.5 flex-1 bg-muted/50" />
-        <ChevronDown size={16} strokeWidth={2.5} className="-my-0.5 shrink-0 text-muted/70" />
-        <span className="w-0.5 flex-1 bg-muted/50" />
+        <span className="h-2 w-2 shrink-0 rounded-full bg-muted/50 transition-colors group-hover:bg-accent" />
+        <span className="w-0.5 flex-1 rounded-full bg-muted/50 transition-colors group-hover:bg-accent" />
+        <ChevronDown
+          size={18}
+          strokeWidth={2.5}
+          className="-mt-1.5 shrink-0 text-muted/70 transition-colors group-hover:text-accent"
+        />
       </div>
       <div className="relative flex flex-col items-end gap-0.5">
         {hooks.map((ev, i) => (
@@ -457,13 +469,31 @@ function MessageNode({
   // than a generic icon/label.
   const isUser = category === "user";
   const isSystem = category === "system";
+  const isAssistant = category === "assistant";
   const label = isUser && user ? user.name : style.label;
   // The system message (the long base prompt) is collapsed to a few lines with
   // a Details toggle, like a tool box, so it never floods the timeline.
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<null | "text" | "md">(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // Copy the rendered text (markdown stripped) or the raw markdown source, the
+  // same pair of actions offered on topic/chat assistant bubbles.
+  const copyTo = async (kind: "text" | "md") => {
+    const value =
+      kind === "md"
+        ? (event.text ?? "")
+        : (contentRef.current?.textContent ?? event.text ?? "").trim();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1200);
+    } catch {
+      // Clipboard may be unavailable (e.g. insecure context); fail silently.
+    }
+  };
   return (
     <div
-      className={`w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
+      className={`group/node relative w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
     >
       <div className="flex items-center gap-2">
         {isUser && user?.avatarUrl ? (
@@ -509,11 +539,47 @@ function MessageNode({
               {open ? "Hide" : "Details"}
             </button>
           </div>
+        ) : isAssistant ? (
+          <div ref={contentRef}>
+            <Markdown className="mt-1 text-[11px] leading-relaxed text-muted">
+              {event.text}
+            </Markdown>
+          </div>
         ) : (
           <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
             {event.text.length > 1500 ? `${event.text.slice(0, 1500)}…` : event.text}
           </p>
         ))}
+      {isAssistant && event.text && (
+        <div className="absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100">
+          <button
+            type="button"
+            onClick={() => copyTo("text")}
+            className="rounded-full p-1 text-muted hover:text-accent"
+            aria-label="Copy message"
+            data-tooltip="Copy message"
+          >
+            {copied === "text" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Copy size={12} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => copyTo("md")}
+            className="rounded-full p-1 text-muted hover:text-accent"
+            aria-label="Copy raw markdown"
+            data-tooltip="Copy raw markdown"
+          >
+            {copied === "md" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Code2 size={12} />
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -856,6 +922,7 @@ export function AgentView({
   const [me, setMe] = useState<Me | null>(null);
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
+  const [newStreaming, setNewStreaming] = useState(false);
   const [followUp, setFollowUp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -937,7 +1004,7 @@ export function AgentView({
   // Autoscroll: keep the newest step in view as the workflow grows, but only
   // while the user is parked at the bottom (don't yank them away mid-scroll).
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
   const selected = useMemo(
@@ -997,20 +1064,41 @@ export function AgentView({
     });
   }, [agentId, loadEvents]);
 
-  // Autoscroll to the newest step whenever the timeline grows, but only while
-  // the user is pinned to the bottom (tracked by the scroll handler). Reading
-  // back through history is never interrupted.
+  // Snap the scroll container to its absolute bottom. We drive the container's
+  // scrollTop directly (rather than scrollIntoView on an anchor) so height that
+  // lands late — streaming text, markdown/code reflow, images — can't leave us
+  // short of the real bottom.
+  const scrollToBottom = useCallback(() => {
+    const box = scrollRef.current;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
+  }, []);
+
+  // While pinned, stay glued to the bottom as the content height changes. A
+  // ResizeObserver catches every reflow (including ones that land after React
+  // has already committed the events update), which the events-effect alone
+  // kept missing — that was the "not quite reaching the bottom" symptom.
   useEffect(() => {
-    if (pinnedRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [events]);
+    const inner = innerRef.current;
+    if (!inner) return;
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current) scrollToBottom();
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
+
+  // New steps: follow to the bottom while pinned, once layout has settled.
+  useEffect(() => {
+    if (!pinnedRef.current) return;
+    requestAnimationFrame(scrollToBottom);
+  }, [events, scrollToBottom]);
 
   // Jump straight to the bottom (and re-pin) when switching agents.
   useEffect(() => {
     pinnedRef.current = true;
-    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end" }));
-  }, [agentId]);
+    requestAnimationFrame(scrollToBottom);
+  }, [agentId, scrollToBottom]);
 
   const onScroll = useCallback(() => {
     const box = scrollRef.current;
@@ -1026,9 +1114,11 @@ export function AgentView({
       const created = await api.createAgent({
         task: task.trim(),
         topic_id: newTopicId,
+        streaming: newStreaming,
       });
       setTask("");
       setNewTopicId(null);
+      setNewStreaming(false);
       onReload();
       onSelect(created.id);
     } catch (e) {
@@ -1045,6 +1135,20 @@ export function AgentView({
     try {
       await api.sendToAgent(selected.id, followUp.trim());
       setFollowUp("");
+      onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resume(): Promise<void> {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.resumeAgent(selected.id);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1119,6 +1223,16 @@ export function AgentView({
             disabled={!available || busy}
           />
         </label>
+        <label className="flex items-center gap-2 text-[12px] text-muted">
+          <input
+            type="checkbox"
+            checked={newStreaming}
+            onChange={(e) => setNewStreaming(e.target.checked)}
+            disabled={!available || busy}
+            className="accent-accent"
+          />
+          Stream the response live (fills in token-by-token as it works)
+        </label>
         {error && <p className="text-[11px] text-red-500">{error}</p>}
         <Composer
           value={task}
@@ -1143,12 +1257,32 @@ export function AgentView({
       <div className="mx-auto flex h-full min-w-0 w-full max-w-3xl flex-col">
         {/* Scrollable workflow region. */}
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-5 py-3">
+          <div ref={innerRef}>
         {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
 
         {selected.status === "needs_approval" && (
           <div className="mb-3 flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
             <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step
             below.
+          </div>
+        )}
+
+        {selected.status === "interrupted" && (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+            <span className="flex items-center gap-1.5">
+              <AlertTriangle size={13} /> This turn was interrupted before it
+              finished.
+            </span>
+            {selected.active_prompt && (
+              <button
+                type="button"
+                onClick={() => void resume()}
+                disabled={busy}
+                className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 font-medium text-amber-800 hover:bg-amber-500/30 disabled:opacity-50 dark:text-amber-300"
+              >
+                <PlayCircle size={12} /> Resume
+              </button>
+            )}
           </div>
         )}
 
@@ -1238,7 +1372,7 @@ export function AgentView({
             </div>
           );
         })()}
-        <div ref={bottomRef} />
+          </div>
       </div>
 
       {/* Follow-up */}

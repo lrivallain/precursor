@@ -155,6 +155,8 @@ export interface AgentSession {
   copilot_session_id: string | null;
   title: string;
   task_prompt: string;
+  active_prompt: string | null;
+  streaming: boolean;
   status: AgentStatus;
   result_summary: string | null;
   error: string | null;
@@ -171,6 +173,7 @@ export interface AgentSessionCreate {
   task: string;
   title?: string | null;
   model?: string | null;
+  streaming?: boolean;
   topic_id?: number | null;
   chat_id?: number | null;
 }
@@ -306,6 +309,7 @@ export interface Settings {
   agents_default_model: string;
   agents_approval_policy: AgentApprovalPolicy;
   agents_system_prompt: string;
+  agents_watchdog_timeout_seconds: number;
 }
 
 export interface SettingsUpdate {
@@ -341,6 +345,7 @@ export interface SettingsUpdate {
   agents_default_model?: string;
   agents_approval_policy?: AgentApprovalPolicy;
   agents_system_prompt?: string;
+  agents_watchdog_timeout_seconds?: number;
 }
 
 export interface IssueLabel {

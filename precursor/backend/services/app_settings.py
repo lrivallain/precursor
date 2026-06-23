@@ -359,3 +359,14 @@ async def resolve_agents_system_prompt(session: AsyncSession) -> str:
     if isinstance(db_value, str):
         return db_value
     return get_settings().agents_system_prompt
+
+
+async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
+    """Seconds a running session may stall before the watchdog interrupts it.
+
+    DB override on top of the ``agents_watchdog_timeout_seconds`` env default.
+    Clamped to a sane floor so a misconfigured value can't kill live turns.
+    """
+    db_value = await _get_db_value(session, "agents_watchdog_timeout_seconds")
+    value = db_value if isinstance(db_value, int) else get_settings().agents_watchdog_timeout_seconds
+    return max(30, int(value))

@@ -28,6 +28,8 @@ class AgentSessionRead(BaseModel):
     copilot_session_id: str | None = None
     title: str
     task_prompt: str
+    active_prompt: str | None = None
+    streaming: bool = False
     status: AgentStatus
     result_summary: str | None = None
     error: str | None = None
@@ -46,6 +48,7 @@ class AgentSessionCreate(BaseModel):
     task: str = Field(min_length=1)
     title: str | None = Field(default=None, max_length=200)
     model: str | None = None
+    streaming: bool = False
     topic_id: int | None = None
     chat_id: int | None = None
 

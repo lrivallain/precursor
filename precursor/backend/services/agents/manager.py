@@ -31,7 +31,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -45,18 +45,23 @@ from precursor.backend.services.app_settings import (
     resolve_agents_approval_policy,
     resolve_agents_enabled,
     resolve_agents_system_prompt,
+    resolve_agents_watchdog_timeout,
 )
 from precursor.backend.services.events import (
     publish_agent_changed,
     publish_message_changed,
     publish_message_changed_chat,
 )
+from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
 
 # Cap how long we wait for the out-of-process runtime to come up so a stuck or
 # unauthenticated CLI can't block app startup or a settings save indefinitely.
 _START_TIMEOUT_SECONDS = 30.0
+
+# How often the watchdog sweeps for stalled running sessions.
+_WATCHDOG_INTERVAL_SECONDS = 60.0
 
 
 @dataclass
@@ -112,6 +117,7 @@ class AgentManager:
         self._event_locks: dict[int, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
+        self._watchdog_task: asyncio.Task[Any] | None = None
 
     @property
     def ready(self) -> bool:
@@ -151,6 +157,8 @@ class AgentManager:
             self._ready = True
             logger.info("Agents runtime started (%s).", detail)
         await self._mark_interrupted_on_boot()
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
     async def stop(self) -> None:
         async with self._lock:
@@ -172,6 +180,9 @@ class AgentManager:
             self._client = None
         for task in list(self._tasks):
             task.cancel()
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
 
     async def _mark_interrupted_on_boot(self) -> None:
         """Flag sessions that were mid-turn when the process last died."""
@@ -184,6 +195,61 @@ class AgentManager:
                 .values(status="interrupted")
             )
             await session.commit()
+
+    # ------------------------------------------------------------------ watchdog
+
+    async def _watchdog_loop(self) -> None:
+        """Periodically interrupt running sessions that have gone silent.
+
+        A turn can wedge (a hung tool, a dropped runtime connection) and leave a
+        session pinned in ``running`` forever, never notifying back. This sweep
+        flips such sessions to ``interrupted`` (resumable) with a reason, so they
+        surface in the UI and the user can Resume to retry the in-flight prompt.
+        """
+        while self._ready:
+            try:
+                await asyncio.sleep(_WATCHDOG_INTERVAL_SECONDS)
+                await self._watchdog_sweep()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.debug("agent watchdog sweep failed", exc_info=True)
+
+    async def _watchdog_sweep(self) -> None:
+        async with SessionLocal() as session:
+            timeout = await resolve_agents_watchdog_timeout(session)
+            cutoff = datetime.now(UTC) - timedelta(seconds=timeout)
+            rows = (
+                await session.execute(
+                    select(AgentSession).where(AgentSession.status == "running")
+                )
+            ).scalars().all()
+            stale: list[tuple[int, int | None, int | None]] = []
+            reason = (
+                f"No runtime activity for over {max(1, timeout // 60)} min — "
+                "interrupted by the watchdog. Resume to retry."
+            )
+            for agent in rows:
+                ref = agent.last_activity_at or agent.updated_at or agent.created_at
+                if ref is None:
+                    continue
+                if ref.tzinfo is None:
+                    ref = ref.replace(tzinfo=UTC)
+                if ref < cutoff:
+                    agent.status = "interrupted"
+                    agent.error = reason
+                    stale.append((agent.id, agent.topic_id, agent.chat_id))
+            if stale:
+                await session.commit()
+        # Drop any wedged live session so a Resume rebuilds it clean, then signal
+        # the UI. Done outside the DB transaction to keep the commit tight.
+        for agent_id, topic_id, chat_id in stale:
+            logger.warning("agent %s: interrupted by watchdog (idle > %ss)", agent_id, timeout)
+            with contextlib.suppress(Exception):
+                await self.teardown_session(agent_id)
+            await publish_agent_changed(
+                agent_session_id=agent_id, topic_id=topic_id, chat_id=chat_id
+            )
 
     # ------------------------------------------------------------------ helpers
 
@@ -288,7 +354,7 @@ class AgentManager:
         kwargs: dict[str, Any] = {
             "model": agent.model or get_settings().agents_default_model,
             "on_permission_request": self._make_permission_handler(agent.id),
-            "streaming": False,
+            "streaming": bool(agent.streaming),
         }
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
@@ -321,8 +387,9 @@ class AgentManager:
             return
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
-        live.pending_prompt = (agent.task_prompt or "").strip() or None
-        await self._patch(agent_id, status="running", error=None)
+        prompt = (agent.task_prompt or "").strip() or None
+        live.pending_prompt = prompt
+        await self._patch(agent_id, status="running", error=None, active_prompt=prompt)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
         )
@@ -334,12 +401,35 @@ class AgentManager:
             return
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
-        live.pending_prompt = text.strip() or None
-        await self._patch(agent_id, status="running")
+        prompt = text.strip() or None
+        live.pending_prompt = prompt
+        await self._patch(agent_id, status="running", active_prompt=prompt)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
         )
         await live.sdk_session.send(text)
+
+    async def resume(self, agent_id: int) -> None:
+        """Re-run the in-flight turn of an interrupted session.
+
+        Re-sends the persisted ``active_prompt`` (the turn cut off by a restart
+        or the watchdog) so it finishes and notifies back. A no-op when there's
+        nothing tracked to resume.
+        """
+        agent = await self._load(agent_id)
+        if agent is None:
+            return
+        prompt = (agent.active_prompt or "").strip()
+        if not prompt:
+            return
+        live = await self._ensure_live(agent)
+        live.approval_policy = await self._approval_policy()
+        live.pending_prompt = prompt
+        await self._patch(agent_id, status="running", error=None)
+        await publish_agent_changed(
+            agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+        )
+        await live.sdk_session.send(prompt)
 
     async def cancel(self, agent_id: int) -> None:
         live = self._live.get(agent_id)
@@ -494,25 +584,45 @@ class AgentManager:
             # never touch the DB here. If anything in the body raises, fall back to
             # the in-memory settings policy instead of letting the exception become
             # a silent, detail-less SDK denial.
+            req_name = type(request).__name__
             try:
                 live = self._live.get(agent_id)
                 policy = (live.approval_policy if live else None) or get_settings().agents_approval_policy
+                logger.info(
+                    "agent %s: permission handler hit — request=%s policy=%s live=%s",
+                    agent_id,
+                    req_name,
+                    policy,
+                    live is not None,
+                )
                 if policy == "autonomous":
+                    logger.info("agent %s: %s auto-approved (autonomous)", agent_id, req_name)
                     return self._approve_once()
                 if policy != "manual" and self._should_auto_approve(request):
+                    logger.info("agent %s: %s auto-approved (read-only)", agent_id, req_name)
                     return self._approve_once()
                 info = self._describe_permission(request)
                 # Honour a prior "approve for session" for the same action.
                 if live is not None and self._signature(info) in live.session_approvals:
+                    logger.info(
+                        "agent %s: %s auto-approved (session grant)", agent_id, req_name
+                    )
                     return self._approve_once()
+                logger.info(
+                    "agent %s: %s requires approval — parking (%s)",
+                    agent_id,
+                    req_name,
+                    info.get("title"),
+                )
                 return await self._park_permission(agent_id, request, info)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 fallback = get_settings().agents_approval_policy
                 logger.exception(
-                    "agent %s: permission handler failed; falling back to %r policy",
+                    "agent %s: permission handler failed for %s; falling back to %r policy",
                     agent_id,
+                    req_name,
                     fallback,
                 )
                 # Don't silently deny in unattended modes — that's the bug we're
@@ -610,6 +720,9 @@ class AgentManager:
     ) -> Any:
         live = self._live.get(agent_id)
         if live is None:
+            logger.warning(
+                "agent %s: cannot park permission — no live session; rejecting", agent_id
+            )
             return self._reject("session gone")
         request_id = str(getattr(request, "tool_call_id", "") or id(request))
         loop = asyncio.get_running_loop()
@@ -719,6 +832,17 @@ class AgentManager:
 
         data = getattr(event, "data", event)
         name = type(data).__name__
+        # Diagnostic: dump tool-execution payloads so we can see *why* a tool
+        # failed (e.g. a sandbox "permission denied" string) and discover which
+        # attribute carries it — the normaliser currently archives ``data: null``
+        # for ToolExecutionCompleteData, so the denial reason is otherwise lost.
+        if name.startswith("ToolExecution"):
+            attrs = {
+                k: (str(v)[:300] if not callable(v) else "<fn>")
+                for k, v in vars(data).items()
+                if not k.startswith("_")
+            } if hasattr(data, "__dict__") else {"repr": repr(data)[:300]}
+            logger.debug("agent %s: %s attrs=%s", agent_id, name, attrs)
         now = datetime.now(UTC)
         patch: dict[str, Any] = {"last_activity_at": now}
 
@@ -726,10 +850,15 @@ class AgentManager:
             content = getattr(data, "content", None)
             if content:
                 patch["result_summary"] = str(content)[:2000]
+        elif name == "AssistantUsageData":
+            await self._record_usage(agent_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
             agent = await self._load(agent_id)
             if agent is not None and agent.status not in ("needs_approval", "cancelled"):
                 patch["status"] = "idle"
+                # The turn has finished — drop the durable in-flight prompt so a
+                # later resume can't re-run an already-completed turn.
+                patch["active_prompt"] = None
                 await self._notify_back(agent)
         elif name in ("AbortData",):
             patch["status"] = "cancelled"
@@ -744,6 +873,38 @@ class AgentManager:
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
         )
+
+    async def _record_usage(self, agent_id: int, data: Any) -> None:
+        """Meter an ``AssistantUsageData`` round into the shared usage ledger.
+
+        Each agent LLM call lands as one ``source="agent"`` row tagged with the
+        agent's linked container, so agent spend shows up in the global usage
+        stats alongside chat/topic turns. ``SessionUsageInfoData`` is *not*
+        recorded — it reports context-window occupancy, not billable deltas, so
+        counting it would double-charge the turn.
+        """
+        prompt_tokens = int(getattr(data, "input_tokens", None) or 0)
+        completion_tokens = int(getattr(data, "output_tokens", None) or 0)
+        if not prompt_tokens and not completion_tokens:
+            return
+        model = getattr(data, "model", None)
+        agent = await self._load(agent_id)
+        if agent is None:
+            return
+        try:
+            async with SessionLocal() as session:
+                await record_usage(
+                    session,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    source="agent",
+                    model=str(model) if model else agent.model,
+                    topic_id=agent.topic_id,
+                    chat_id=agent.chat_id,
+                )
+                await session.commit()
+        except Exception:
+            logger.debug("failed to record agent usage for %s", agent_id, exc_info=True)
 
     async def _notify_back(self, agent: AgentSession) -> None:
         """Post the just-finished turn's exchange into the linked container.

@@ -29,6 +29,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_default_model,
     resolve_agents_enabled,
     resolve_agents_system_prompt,
+    resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
     resolve_llm_provider,
@@ -137,6 +138,7 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_default_model": await resolve_agents_default_model(session),
         "agents_approval_policy": await resolve_agents_approval_policy(session),
         "agents_system_prompt": await resolve_agents_system_prompt(session),
+        "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
     }
 
 

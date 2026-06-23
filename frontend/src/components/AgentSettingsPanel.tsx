@@ -137,17 +137,6 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
               </p>
             </section>
 
-            <section>
-              <label className="block text-xs text-muted mb-1">Task</label>
-              <p className="w-full whitespace-pre-wrap rounded border border-border bg-surface px-2 py-1.5 text-sm text-muted">
-                {agent.task_prompt || "—"}
-              </p>
-              <p className="text-[11px] text-muted mt-1">
-                The instruction the agent was started with. It can't be edited — start a new agent
-                for a different task.
-              </p>
-            </section>
-
             {error && <p className="text-xs text-red-500">{error}</p>}
 
             <section className="pt-2 border-t border-border space-y-3">

@@ -139,6 +139,7 @@ async def create_agent(
         title=title,
         task_prompt=payload.task,
         model=payload.model,
+        streaming=payload.streaming,
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
         status="pending",
@@ -179,6 +180,25 @@ async def send_to_agent(
     agent = await _get_or_404(session, agent_id)
     mgr = get_agent_manager()
     mgr.enqueue(mgr.send_message(agent.id, payload.message))
+    return agent
+
+
+@router.post("/{agent_id}/resume", response_model=AgentSessionRead)
+async def resume_agent(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> AgentSession:
+    """Re-run the in-flight turn of an interrupted session.
+
+    Resends the persisted ``active_prompt`` so the turn that was cut off (by a
+    restart or the watchdog) completes and posts its result back. Rejected when
+    there's nothing to resume.
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    if not (agent.active_prompt or "").strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Nothing to resume on this session")
+    mgr = get_agent_manager()
+    mgr.enqueue(mgr.resume(agent.id))
     return agent
 
 

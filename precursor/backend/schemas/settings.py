@@ -67,6 +67,7 @@ class SettingsPayload(BaseModel):
     agents_default_model: str | None = None
     agents_approval_policy: str | None = None
     agents_system_prompt: str | None = None
+    agents_watchdog_timeout_seconds: int | None = None
 
 
 class SettingsRead(BaseModel):
@@ -127,3 +128,6 @@ class SettingsRead(BaseModel):
     agents_approval_policy: str = "balanced"
     # Extra system-message preamble appended to every agent session.
     agents_system_prompt: str = ""
+    # Minutes... seconds, actually: how long a running session may sit with no
+    # new runtime events before the watchdog marks it interrupted (resumable).
+    agents_watchdog_timeout_seconds: int = 600

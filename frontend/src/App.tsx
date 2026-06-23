@@ -483,6 +483,10 @@ export default function App() {
   // rewritten from a transient integer fallback once the list resolves.
   useEffect(() => {
     if (sidebarMode !== "agents") return;
+    // Don't clobber a deep-link URL whose agent we haven't resolved yet (the
+    // list may still be loading). Overwriting it with "/agents" here would also
+    // drop the UUID before the agents-load effect can resolve it.
+    if (activeAgentId == null && pendingAgentRef.current) return;
     const target = agentUrl(activeAgentId, agents);
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeAgentId, sidebarMode, agents]);

@@ -44,6 +44,7 @@ export function AgentsSettings() {
   const defaultModel = settings?.agents_default_model ?? "";
   const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
   const systemPrompt = settings?.agents_system_prompt ?? "";
+  const watchdogTimeout = settings?.agents_watchdog_timeout_seconds ?? 600;
 
   const loadGrants = useCallback(() => {
     if (!enabled) {
@@ -99,6 +100,7 @@ export function AgentsSettings() {
     agents_default_model?: string;
     agents_approval_policy?: AgentApprovalPolicy;
     agents_system_prompt?: string;
+    agents_watchdog_timeout_seconds?: number;
   }): Promise<void> {
     setBusy(true);
     setError(null);
@@ -238,6 +240,38 @@ export function AgentsSettings() {
           <span className="block text-[11px] text-muted">
             Appended to the Copilot base prompt (which can't be overridden) and any
             topic binding. Applies to new agent sessions.
+          </span>
+        </label>
+      )}
+
+      {enabled && (
+        <label className="block space-y-1">
+          <span className="block text-sm">Idle / runaway watchdog</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              step={1}
+              disabled={busy}
+              value={Math.max(1, Math.round(watchdogTimeout / 60))}
+              onChange={(e) => {
+                const minutes = Math.max(1, Number(e.target.value) || 1);
+                settingsStore.set({
+                  ...settings!,
+                  agents_watchdog_timeout_seconds: minutes * 60,
+                });
+              }}
+              onBlur={(e) => {
+                const minutes = Math.max(1, Number(e.target.value) || 1);
+                void patch({ agents_watchdog_timeout_seconds: minutes * 60 });
+              }}
+              className="w-20 rounded border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+            <span className="text-[12px] text-muted">minutes</span>
+          </div>
+          <span className="block text-[11px] text-muted">
+            A running agent with no activity for longer than this is flipped to
+            “interrupted” (you can resume it). Minimum 30 seconds.
           </span>
         </label>
       )}
