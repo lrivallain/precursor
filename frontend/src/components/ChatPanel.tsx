@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { RotateCcw } from "lucide-react";
+import { ArrowRightCircle } from "lucide-react";
 import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
@@ -1236,9 +1236,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                     key={`agent-${aid}-${m.id}`}
                     className="space-y-3 rounded-lg border border-dashed border-purple-500/50 bg-purple-500/[0.03] p-2.5"
                   >
-                    <div className="flex items-center gap-2">
-                      <AgentExchangeBadge agentSessionId={aid} />
-                      {agentsEnabled && (
+                    <AgentExchangeBadge agentSessionId={aid} />
+                    {group.map((gm) => renderMessage(gm, true))}
+                    {agentsEnabled && (
+                      <div className="flex justify-end">
                         <button
                           type="button"
                           onClick={() => prefillAgentFollowUp(aid)}
@@ -1246,12 +1247,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                           title={`Continue agent session #${aid}`}
                           data-tooltip="Continue this agent session"
                         >
-                          <RotateCcw size={11} />
-                          Continue
+                          <ArrowRightCircle size={11} />
+                          Continue session
                         </button>
-                      )}
-                    </div>
-                    {group.map((gm) => renderMessage(gm, true))}
+                      </div>
+                    )}
                   </div>,
                 );
                 i = j;
