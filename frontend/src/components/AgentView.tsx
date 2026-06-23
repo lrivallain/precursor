@@ -172,6 +172,41 @@ function Connector() {
   );
 }
 
+// The link between two main boxes, with any lifecycle hooks that happened in
+// between floated to the right of the arrow — so the arrow always sits directly
+// between the steps and the hooks never push the boxes apart.
+function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
+  if (hooks.length === 0) return <Connector />;
+  return (
+    <div className="relative flex w-full max-w-xl justify-end py-1">
+      <div
+        className="absolute inset-y-0 left-1/2 flex -translate-x-1/2 flex-col items-center"
+        aria-hidden
+      >
+        <span className="w-px flex-1 bg-border" />
+        <ChevronDown size={12} className="-my-0.5 shrink-0 text-border" />
+        <span className="w-px flex-1 bg-border" />
+      </div>
+      <div className="relative flex flex-col items-end gap-0.5">
+        {hooks.map((ev, i) => (
+          <HookBubble key={i} event={ev} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Hooks before the first box or after the last one, with no arrow to attach to.
+function HookGutter({ hooks }: { hooks: AgentEvent[] }) {
+  return (
+    <div className="flex w-full max-w-xl flex-col items-end gap-0.5 py-1">
+      {hooks.map((ev, i) => (
+        <HookBubble key={i} event={ev} />
+      ))}
+    </div>
+  );
+}
+
 // A small on/off filter pill for the workflow display toggles.
 function ToggleChip({
   active,
@@ -875,59 +910,68 @@ export function AgentView({
           const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
             selected.status,
           );
-          let answerKey = -1;
+          let answerRow: WorkflowRow | null = null;
           if (terminal) {
             for (let i = rows.length - 1; i >= 0; i--) {
               const r = rows[i];
               if (r.type === "node" && r.cat === "assistant") {
-                answerKey = i;
+                answerRow = r;
                 break;
               }
             }
           }
 
-          const visible = rows.filter((r, i) => {
+          const visible = rows.filter((r) => {
             if (r.type !== "node") return true;
             if (r.cat === "system" && !showSystem) return false;
             // Keep the final answer even when assistant chatter is hidden.
-            if (r.cat === "assistant" && !showAssistant && i !== answerKey) return false;
+            if (r.cat === "assistant" && !showAssistant && r !== answerRow) return false;
             return true;
           });
 
-          if (visible.length === 0)
+          // Group each main box with the hooks that preceded it, so the arrow
+          // sits directly between boxes and hooks float beside it.
+          const segments: { row: WorkflowRow; hooks: AgentEvent[] }[] = [];
+          let pendingHooks: AgentEvent[] = [];
+          for (const r of visible) {
+            if (r.type === "hook") {
+              pendingHooks.push(r.ev);
+              continue;
+            }
+            segments.push({ row: r, hooks: pendingHooks });
+            pendingHooks = [];
+          }
+          const trailingHooks = pendingHooks;
+
+          if (segments.length === 0 && trailingHooks.length === 0)
             return <p className="text-[11px] text-muted">No steps recorded yet.</p>;
 
-          let prevMain = false;
           return (
             <div className="flex flex-col items-center">
-              {visible.map((r, i) => {
-                if (r.type === "hook") {
-                  // A side bubble doesn't break the vertical chain between the
-                  // main boxes, so leave prevMain untouched.
-                  return <HookBubble key={i} event={r.ev} />;
-                }
-                const connector = prevMain ? <Connector /> : null;
-                prevMain = true;
-                return (
-                  <Fragment key={i}>
-                    {connector}
-                    {r.type === "tool" ? (
-                      <ToolBox
-                        step={r.step}
-                        showToolDetail={showToolDetail}
-                        busy={busy}
-                        onDecision={approve}
-                      />
-                    ) : (
-                      <MessageNode
-                        event={r.ev}
-                        category={r.cat}
-                        isLastAnswer={rows.indexOf(r) === answerKey}
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
+              {segments.map((seg, idx) => (
+                <Fragment key={idx}>
+                  {idx === 0 ? (
+                    seg.hooks.length > 0 && <HookGutter hooks={seg.hooks} />
+                  ) : (
+                    <StepConnector hooks={seg.hooks} />
+                  )}
+                  {seg.row.type === "tool" ? (
+                    <ToolBox
+                      step={seg.row.step}
+                      showToolDetail={showToolDetail}
+                      busy={busy}
+                      onDecision={approve}
+                    />
+                  ) : seg.row.type === "node" ? (
+                    <MessageNode
+                      event={seg.row.ev}
+                      category={seg.row.cat}
+                      isLastAnswer={seg.row === answerRow}
+                    />
+                  ) : null}
+                </Fragment>
+              ))}
+              {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
             </div>
           );
         })()}
