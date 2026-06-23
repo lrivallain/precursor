@@ -170,9 +170,9 @@ function HookBubble({ event }: { event: AgentEvent }) {
 function Connector() {
   return (
     <div className="flex flex-col items-center" aria-hidden>
-      <span className="h-3 w-0.5 bg-muted/50" />
-      <ChevronDown size={16} strokeWidth={2.5} className="-my-1 text-muted/70" />
-      <span className="h-3 w-0.5 bg-muted/50" />
+      <span className="h-3 w-[3px] rounded-full bg-muted" />
+      <ChevronDown size={20} strokeWidth={3} className="-my-1 text-muted" />
+      <span className="h-3 w-[3px] rounded-full bg-muted" />
     </div>
   );
 }
@@ -188,9 +188,9 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
         className="absolute inset-y-0 left-1/2 flex -translate-x-1/2 flex-col items-center"
         aria-hidden
       >
-        <span className="w-0.5 flex-1 bg-muted/50" />
-        <ChevronDown size={16} strokeWidth={2.5} className="-my-0.5 shrink-0 text-muted/70" />
-        <span className="w-0.5 flex-1 bg-muted/50" />
+        <span className="w-[3px] flex-1 rounded-full bg-muted" />
+        <ChevronDown size={20} strokeWidth={3} className="-my-0.5 shrink-0 text-muted" />
+        <span className="w-[3px] flex-1 rounded-full bg-muted" />
       </div>
       <div className="relative flex flex-col items-end gap-0.5">
         {hooks.map((ev, i) => (
@@ -382,7 +382,7 @@ function MessageNode({
   const [open, setOpen] = useState(false);
   return (
     <div
-      className={`w-full max-w-xl rounded-lg border p-2.5 transition-colors hover:border-accent/60 ${box}`}
+      className={`w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
     >
       <div className="flex items-center gap-2">
         {isUser && user?.avatarUrl ? (
@@ -462,7 +462,7 @@ function ToolBox({
 
   return (
     <div
-      className={`w-full max-w-xl rounded-lg border p-2.5 transition-colors hover:border-accent/60 ${box}`}
+      className={`w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
     >
       <div className="flex items-center gap-2">
         <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}>
@@ -1098,21 +1098,25 @@ export function AgentView({
 
         {(() => {
           const rows = buildRows(events);
-          // Only the finished turn carries a real "answer" — don't highlight an
-          // interim assistant line while the agent is still working.
+          // Each completed turn's *final* assistant message is an "answer" — the
+          // real reply to a prompt (not interim chatter like "I'll run that").
+          // We mark the last assistant of every turn (flushed at turn_end); the
+          // still-running turn only counts once the agent reaches a terminal
+          // state so we don't highlight a half-finished line.
           const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
             selected.status,
           );
-          let answerRow: WorkflowRow | null = null;
-          if (terminal) {
-            for (let i = rows.length - 1; i >= 0; i--) {
-              const r = rows[i];
-              if (r.type === "node" && r.cat === "assistant") {
-                answerRow = r;
-                break;
-              }
+          const answerRows = new Set<WorkflowRow>();
+          let lastAssistant: WorkflowRow | null = null;
+          for (const r of rows) {
+            if (r.type === "node" && r.cat === "assistant") {
+              lastAssistant = r;
+            } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("turn_end")) {
+              if (lastAssistant) answerRows.add(lastAssistant);
+              lastAssistant = null;
             }
           }
+          if (terminal && lastAssistant) answerRows.add(lastAssistant);
 
           const visible = rows.filter((r) => {
             if (r.type === "hook") return showPrefs.lifecycle;
@@ -1120,8 +1124,8 @@ export function AgentView({
             if (r.type !== "node") return true;
             if (r.cat === "system" && !showPrefs.system) return false;
             if (r.cat === "reasoning" && !showPrefs.thinking) return false;
-            // Keep the final answer even when assistant chatter is hidden.
-            if (r.cat === "assistant" && !showPrefs.assistant && r !== answerRow) return false;
+            // Keep answers visible even when assistant chatter is hidden.
+            if (r.cat === "assistant" && !showPrefs.assistant && !answerRows.has(r)) return false;
             return true;
           });
 
@@ -1161,7 +1165,7 @@ export function AgentView({
                     <MessageNode
                       event={seg.row.ev}
                       category={seg.row.cat}
-                      isLastAnswer={seg.row === answerRow}
+                      isLastAnswer={answerRows.has(seg.row)}
                       user={userPersona}
                     />
                   ) : null}

@@ -318,7 +318,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   );
 }
 
-function AgentExchangeBadge({ agentSessionId }: { agentSessionId: number }) {
+export function AgentExchangeBadge({ agentSessionId }: { agentSessionId: number }) {
   return (
     <button
       type="button"

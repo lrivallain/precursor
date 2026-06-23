@@ -83,6 +83,11 @@ class _LiveSession:
     # SQLite lock there would otherwise raise and the SDK turns a raising handler
     # into an opaque, detail-less denial (even in autonomous mode).
     approval_policy: str | None = None
+    # The prompt for the turn currently in flight, set when we send a task or a
+    # follow-up and cleared once posted to the linked container. Lets us post
+    # *every* turn's exchange to the topic/chat (not just the first), keyed to
+    # the right prompt rather than always the initial ``task_prompt``.
+    pending_prompt: str | None = None
 
 
 class AgentManager:
@@ -101,6 +106,10 @@ class AgentManager:
         # Agents whose DB archive has been hydrated into ``_events`` this process.
         self._loaded: set[int] = set()
         self._events_lock = asyncio.Lock()
+        # Per-agent locks serialising event handling so SDK events are processed
+        # in arrival order — otherwise an idle handler can race ahead of the
+        # assistant-message handler and post a stale answer back to the topic.
+        self._event_locks: dict[int, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
 
@@ -312,6 +321,7 @@ class AgentManager:
             return
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
+        live.pending_prompt = (agent.task_prompt or "").strip() or None
         await self._patch(agent_id, status="running", error=None)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -324,6 +334,7 @@ class AgentManager:
             return
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
+        live.pending_prompt = text.strip() or None
         await self._patch(agent_id, status="running")
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -440,6 +451,7 @@ class AgentManager:
         if forget:
             self._events.pop(agent_id, None)
             self._loaded.discard(agent_id)
+            self._event_locks.pop(agent_id, None)
             # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
             # pragma is on, so clear the archive explicitly (the codebase manages
             # such cleanups in the app layer — see roles/topics delete).
@@ -687,6 +699,15 @@ class AgentManager:
             logger.debug("failed to archive event for agent %s", agent_id, exc_info=True)
 
     async def _handle_event(self, agent_id: int, event: Any) -> None:
+        # Serialise per-agent so events are handled in arrival order: the idle
+        # handler must run *after* the assistant-message handler has committed
+        # ``result_summary``, otherwise ``_notify_back`` posts the previous
+        # turn's answer.
+        lock = self._event_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            await self._handle_event_locked(agent_id, event)
+
+    async def _handle_event_locked(self, agent_id: int, event: Any) -> None:
         # Archive every event so the timeline persists across session teardown
         # (e.g. on topic link) and process restart, where the SDK would otherwise
         # drop it (``get_events`` only replays ``SessionStartData`` on resume).
@@ -725,38 +746,38 @@ class AgentManager:
         )
 
     async def _notify_back(self, agent: AgentSession) -> None:
-        """Post the agent exchange into the linked container when a task finishes.
+        """Post the just-finished turn's exchange into the linked container.
 
-        Posts the initial **prompt** (as a user turn) and the agent's **answer**
+        Posts the turn's **prompt** (as a user turn) and the agent's **answer**
         (as an assistant turn), both tagged with ``agent_session_id`` so the UI
         renders an "agent exchange" badge linking back to ``/agents/{id}``. Like
         the reminder ticker, the discussion goes unread + notifies.
 
-        Guarded to post **once** per agent (the initial task exchange): later
-        idles from follow-up turns are skipped, detected via an existing
-        agent-tagged message in the container.
+        Posts **once per turn**: the prompt is captured on ``_LiveSession`` when a
+        task/follow-up is sent and cleared here, so repeated idle events for the
+        same turn don't double-post and every turn (not just the first) lands in
+        the topic. A resumed turn with no tracked prompt is skipped.
         """
         if agent.topic_id is None and agent.chat_id is None:
             return
 
+        live = self._live.get(agent.id)
+        if live is None or live.pending_prompt is None:
+            return
+        prompt = live.pending_prompt
+        live.pending_prompt = None
+
         answer = (agent.result_summary or "").strip() or "Agent task finished."
-        prompt = (agent.task_prompt or "").strip()
         async with SessionLocal() as session:
-            already = await session.scalar(
-                select(Message.id).where(Message.agent_session_id == agent.id).limit(1)
-            )
-            if already is not None:
-                return
-            if prompt:
-                session.add(
-                    Message(
-                        topic_id=agent.topic_id,
-                        chat_id=agent.chat_id,
-                        role=MessageRole.USER,
-                        content=prompt,
-                        agent_session_id=agent.id,
-                    )
+            session.add(
+                Message(
+                    topic_id=agent.topic_id,
+                    chat_id=agent.chat_id,
+                    role=MessageRole.USER,
+                    content=prompt,
+                    agent_session_id=agent.id,
                 )
+            )
             session.add(
                 Message(
                     topic_id=agent.topic_id,

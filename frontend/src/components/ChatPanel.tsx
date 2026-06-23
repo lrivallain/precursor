@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageBubble } from "./MessageBubble";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
@@ -1106,44 +1106,76 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               Send a message to start the conversation.
             </div>
           )}
-          {visibleMessages.map((m) => {
-            if (m.role === "tool") {
-              const meta = parseToolMeta(m.tool_calls);
+          {(() => {
+            const renderMessage = (m: (typeof visibleMessages)[number], grouped: boolean) => {
+              if (m.role === "tool") {
+                const meta = parseToolMeta(m.tool_calls);
+                return (
+                  <ToolCallBubble
+                    key={m.id}
+                    name={meta?.name ?? "(unknown)"}
+                    arguments={meta?.arguments ?? "{}"}
+                    content={meta?.pending ? null : m.content}
+                    isError={Boolean(meta?.is_error)}
+                    pending={Boolean(meta?.pending)}
+                  />
+                );
+              }
+              // Hide assistant turns that only emitted tool calls (no text):
+              // the tool bubbles below carry the meaningful content.
+              if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
+                return null;
+              }
+              const canDelete =
+                !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
+              // In a scheduled topic the user turn is the repeated automation
+              // prompt — collapse it so generated content gets the room.
+              const collapsible = m.role === "user" && topic.kind === "scheduled";
               return (
-                <ToolCallBubble
+                <MessageBubble
                   key={m.id}
-                  name={meta?.name ?? "(unknown)"}
-                  arguments={meta?.arguments ?? "{}"}
-                  content={meta?.pending ? null : m.content}
-                  isError={Boolean(meta?.is_error)}
-                  pending={Boolean(meta?.pending)}
+                  role={m.role}
+                  content={m.content}
+                  attachments={m.attachments}
+                  collapsible={collapsible}
+                  agentSessionId={grouped ? undefined : m.agent_session_id}
+                  onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
                 />
               );
+            };
+
+            // Wrap consecutive agent-tagged turns (prompt + answer) in a dashed
+            // purple frame with a single AGENT badge, so an agent exchange reads
+            // as one block instead of two separately-tagged bubbles.
+            const out: ReactNode[] = [];
+            let i = 0;
+            while (i < visibleMessages.length) {
+              const m = visibleMessages[i];
+              const aid = m.agent_session_id;
+              if (aid != null) {
+                const group: typeof visibleMessages = [];
+                let j = i;
+                while (j < visibleMessages.length && visibleMessages[j].agent_session_id === aid) {
+                  group.push(visibleMessages[j]);
+                  j++;
+                }
+                out.push(
+                  <div
+                    key={`agent-${aid}-${m.id}`}
+                    className="space-y-3 rounded-lg border border-dashed border-purple-500/50 bg-purple-500/[0.03] p-2.5"
+                  >
+                    <AgentExchangeBadge agentSessionId={aid} />
+                    {group.map((gm) => renderMessage(gm, true))}
+                  </div>,
+                );
+                i = j;
+              } else {
+                out.push(renderMessage(m, false));
+                i++;
+              }
             }
-            // Hide assistant turns that only emitted tool calls (no text):
-            // the tool bubbles below carry the meaningful content.
-            if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
-              return null;
-            }
-            const canDelete =
-              !streaming &&
-              m.id > 0 &&
-              (m.role === "user" || m.role === "assistant");
-            // In a scheduled topic the user turn is the repeated automation
-            // prompt — collapse it so generated content gets the room.
-            const collapsible = m.role === "user" && topic.kind === "scheduled";
-            return (
-              <MessageBubble
-                key={m.id}
-                role={m.role}
-                content={m.content}
-                attachments={m.attachments}
-                collapsible={collapsible}
-                agentSessionId={m.agent_session_id}
-                onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
-              />
-            );
-          })}
+            return out;
+          })()}
           {streaming && (
             <MessageBubble role="assistant" content={pendingContent} pending onStop={stop} />
           )}
