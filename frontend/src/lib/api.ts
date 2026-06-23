@@ -252,6 +252,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ topic_id: link.topic_id ?? null, chat_id: link.chat_id ?? null }),
     }),
+  renameAgent: (id: number, title: string) =>
+    request<AgentSession>(`/api/agents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
   deleteAgent: (id: number) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
 
   // Messages

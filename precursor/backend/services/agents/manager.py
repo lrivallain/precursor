@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -577,13 +578,28 @@ class AgentManager:
             tool_status = "running"
         elif "ToolResult" in name or kind == "tool_result":
             tool_status = "error" if getattr(data, "is_error", False) else "done"
+        # Capture tool I/O so the UI can show "what was done" on demand.
+        extra: dict[str, Any] = {}
+        for attr in ("arguments", "input", "result", "output", "server_name"):
+            val = getattr(data, attr, None)
+            if val is None:
+                continue
+            extra[attr] = val if isinstance(val, str) else self._jsonify(val)
         return AgentEvent(
             kind=kind,
             text=str(text) if text is not None else None,
             tool_name=str(tool_name) if tool_name else None,
             tool_status=tool_status,
             request_id=getattr(data, "tool_call_id", None),
+            data=extra or None,
         )
+
+    @staticmethod
+    def _jsonify(value: Any) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+        except (TypeError, ValueError):
+            return str(value)
 
     # ------------------------------------------------------------------ DB utils
 

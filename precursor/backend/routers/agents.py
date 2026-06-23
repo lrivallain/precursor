@@ -25,6 +25,7 @@ from precursor.backend.schemas.agent import (
     AgentSendRequest,
     AgentSessionCreate,
     AgentSessionRead,
+    AgentUpdateRequest,
 )
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.agents.manager import get_agent_manager
@@ -175,6 +176,23 @@ async def resolve_permission(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No pending permission request")
     # The session resumes; reflect that it's working again.
     agent.status = "running"
+    await session.commit()
+    await session.refresh(agent)
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+    return agent
+
+
+@router.patch("/{agent_id}", response_model=AgentSessionRead)
+async def update_agent(
+    agent_id: int,
+    payload: AgentUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+) -> AgentSession:
+    """Rename an agent session."""
+    agent = await _get_or_404(session, agent_id)
+    agent.title = payload.title.strip()[:200] or agent.title
     await session.commit()
     await session.refresh(agent)
     await publish_agent_changed(

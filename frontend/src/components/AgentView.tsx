@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Bot,
   Brain,
+  Check,
+  ChevronDown,
   CircleDot,
   Cog,
   FileText,
   Globe,
   Loader2,
+  Pencil,
   Play,
   Send,
   Settings as SettingsIcon,
@@ -149,13 +152,51 @@ function toolIcon(name: string | null): React.ReactNode {
 }
 
 // A minimized "transition" hook (turn start/end, usage, idle…) rendered as a
-// small centered pill on the connector rather than a full box.
+// small centered pill between boxes rather than a full node.
 function HookBadge({ event }: { event: AgentEvent }) {
   return (
-    <li className="flex items-center gap-1.5 py-0.5 pl-[1.45rem] text-[10px] text-muted">
+    <div className="flex items-center gap-1.5 py-0.5 text-[10px] text-muted">
       <CircleDot size={9} className="opacity-60" />
       <span className="uppercase tracking-wide">{event.kind.replace(/_/g, " ")}</span>
-    </li>
+    </div>
+  );
+}
+
+// The centered link drawn between two consecutive workflow boxes.
+function Connector() {
+  return (
+    <div className="flex flex-col items-center" aria-hidden>
+      <span className="h-3 w-px bg-border" />
+      <ChevronDown size={12} className="-my-1 text-border" />
+      <span className="h-3 w-px bg-border" />
+    </div>
+  );
+}
+
+// A small on/off filter pill for the workflow display toggles.
+function ToggleChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition ${
+        active
+          ? "border-accent/40 bg-accent/15 text-accent"
+          : "border-border text-muted hover:text-fg"
+      }`}
+    >
+      {active ? <Check size={10} /> : <X size={10} className="opacity-50" />}
+      {label}
+    </button>
   );
 }
 
@@ -263,81 +304,127 @@ function PermissionBody({
   );
 }
 
-// One node in the full-fill colored-box workflow.
+// One node in the centered linked-box workflow.
 function WorkflowNode({
   event,
   category,
-  isLast,
   isLastAnswer,
+  showToolDetail,
   busy,
   onDecision,
 }: {
   event: AgentEvent;
   category: Exclude<StepCategory, "skip" | "hook">;
-  isLast: boolean;
   isLastAnswer: boolean;
+  showToolDetail: boolean;
   busy: boolean;
   onDecision: DecisionHandler;
 }) {
   const isPermission = category === "permission";
+  const isTool = category === "tool";
   const style = CATEGORY_STYLE[category];
   const data = (event.data ?? {}) as Record<string, unknown>;
+  const [open, setOpen] = useState(false);
   const title =
     isPermission && typeof data.title === "string"
       ? data.title
-      : category === "tool"
+      : isTool
         ? event.tool_name || style.label
         : style.label;
-  const icon = category === "tool" ? toolIcon(event.tool_name) : style.icon;
+  const icon = isTool ? toolIcon(event.tool_name) : style.icon;
 
-  // The final assistant answer gets an emerald highlight so it's easy to find.
-  const box = isLastAnswer ? "border-emerald-500/50 bg-emerald-500/15 ring-1 ring-emerald-500/30" : style.box;
+  // Tool I/O captured by the backend; rendered on demand so the box stays compact.
+  const toolDetail = useMemo(() => {
+    if (!isTool) return null;
+    const parts: { label: string; value: string }[] = [];
+    for (const [k, label] of [
+      ["arguments", "input"],
+      ["input", "input"],
+      ["result", "result"],
+      ["output", "result"],
+    ] as const) {
+      const v = data[k];
+      if (typeof v === "string" && v.trim()) parts.push({ label, value: v });
+    }
+    if (event.text && event.text.trim()) parts.push({ label: "result", value: event.text });
+    return parts.length ? parts : null;
+  }, [isTool, data, event.text]);
+
+  const detailOpen = open || showToolDetail;
+
+  // The real final answer gets an emerald highlight so it's easy to find.
+  const box = isLastAnswer
+    ? "border-emerald-500/50 bg-emerald-500/15 ring-1 ring-emerald-500/30"
+    : style.box;
   const marker = isLastAnswer
     ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-600 dark:text-emerald-300"
     : style.marker;
 
   return (
-    <li className="relative flex gap-3">
-      {/* Rail: node marker + connector to the next box. */}
-      <div className="flex flex-col items-center">
+    <div className={`w-full max-w-xl rounded-lg border p-2.5 ${box}`}>
+      <div className="flex items-center gap-2">
         <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}>
-          {category === "tool" && event.tool_status === "running" ? (
+          {isTool && event.tool_status === "running" ? (
             <Loader2 size={13} className="animate-spin" />
           ) : (
             icon
           )}
         </span>
-        {!isLast && <span className="w-px flex-1 bg-border" />}
-      </div>
-      {/* Box */}
-      <div className={`mb-2 flex-1 rounded-lg border p-2 ${box}`}>
-        <div className="flex items-baseline gap-2">
-          <span className="text-[11px] font-semibold capitalize">{title}</span>
-          {isLastAnswer && (
-            <span className="text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-              latest
-            </span>
-          )}
-          {event.tool_status && (
-            <span className="text-[10px] text-muted">{event.tool_status}</span>
-          )}
-        </div>
-        {isPermission ? (
-          <PermissionBody
-            data={data}
-            requestId={event.request_id}
-            busy={busy}
-            onDecision={onDecision}
-          />
-        ) : (
-          event.text && (
-            <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-muted">
-              {event.text.length > 800 ? `${event.text.slice(0, 800)}…` : event.text}
-            </p>
-          )
+        <span className="text-[11px] font-semibold capitalize">{title}</span>
+        {isLastAnswer && (
+          <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+            Answer
+          </span>
+        )}
+        {event.tool_status && !isLastAnswer && (
+          <span className="text-[10px] text-muted">{event.tool_status}</span>
+        )}
+        {isTool && toolDetail && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="ml-auto flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted hover:bg-bg"
+            title={detailOpen ? "Hide details" : "Show what was done"}
+          >
+            <ChevronDown
+              size={12}
+              className={`transition-transform ${detailOpen ? "rotate-180" : ""}`}
+            />
+            {detailOpen ? "Hide" : "Details"}
+          </button>
         )}
       </div>
-    </li>
+      {isPermission ? (
+        <PermissionBody
+          data={data}
+          requestId={event.request_id}
+          busy={busy}
+          onDecision={onDecision}
+        />
+      ) : isTool ? (
+        detailOpen &&
+        toolDetail && (
+          <div className="mt-1.5 space-y-1.5">
+            {toolDetail.map((p, i) => (
+              <div key={i}>
+                <div className="text-[9px] font-medium uppercase tracking-wide text-muted">
+                  {p.label}
+                </div>
+                <pre className="mt-0.5 max-h-48 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10px] leading-snug">
+                  {p.value.length > 2000 ? `${p.value.slice(0, 2000)}…` : p.value}
+                </pre>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        event.text && (
+          <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
+            {event.text.length > 1200 ? `${event.text.slice(0, 1200)}…` : event.text}
+          </p>
+        )
+      )}
+    </div>
   );
 }
 
@@ -355,9 +442,24 @@ export function AgentView({
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [task, setTask] = useState("");
+  const [newTopicId, setNewTopicId] = useState<number | null>(null);
   const [followUp, setFollowUp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Workflow display toggles. System (the big base prompt) is noise by default;
+  // tool I/O is collapsed until the user wants to see "what was done".
+  const [showSystem, setShowSystem] = useState(false);
+  const [showAssistant, setShowAssistant] = useState(true);
+  const [showToolDetail, setShowToolDetail] = useState(false);
+
+  // Inline rename.
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+
+  // Autoscroll: keep the newest step in view as the workflow grows.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(
     () => agents.find((a) => a.id === agentId) ?? null,
@@ -392,19 +494,50 @@ export function AgentView({
     });
   }, [agentId, loadEvents]);
 
+  // Autoscroll to the newest step whenever the timeline grows or the agent
+  // switches. Only nudges if the user is already near the bottom, so reading
+  // back through history isn't yanked away.
+  useEffect(() => {
+    const box = scrollRef.current;
+    if (!box) return;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [events]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [agentId]);
+
   async function startTask(): Promise<void> {
     if (!task.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      const created = await api.createAgent({ task: task.trim() });
+      const created = await api.createAgent({
+        task: task.trim(),
+        topic_id: newTopicId,
+      });
       setTask("");
+      setNewTopicId(null);
       onReload();
       onSelect(created.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveRename(): Promise<void> {
+    if (!selected) return;
+    const title = nameDraft.trim();
+    setRenaming(false);
+    if (!title || title === selected.title) return;
+    try {
+      await api.renameAgent(selected.id, title);
+      onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -529,6 +662,22 @@ export function AgentView({
           disabled={!available || busy}
           className="resize-none rounded border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50"
         />
+        <label className="flex items-center gap-2 text-[12px] text-muted">
+          Attach to topic
+          <select
+            value={newTopicId ?? ""}
+            onChange={(e) => setNewTopicId(e.target.value ? Number(e.target.value) : null)}
+            disabled={!available || busy}
+            className="rounded border border-border bg-bg px-2 py-1 text-[12px] disabled:opacity-50"
+          >
+            <option value="">None</option>
+            {topics.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+        </label>
         {error && <p className="text-[11px] text-red-500">{error}</p>}
         <div className="flex justify-end">
           <button
@@ -546,125 +695,201 @@ export function AgentView({
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-3 overflow-y-auto p-5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{selected.title}</span>
-            <AgentStatusBadge status={selected.status} />
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
+      {/* Fixed header: title, status and controls stay visible while scrolling. */}
+      <div className="shrink-0 border-b border-border px-5 pb-3 pt-5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              {renaming ? (
+                <input
+                  autoFocus
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onBlur={() => void saveRename()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void saveRename();
+                    } else if (e.key === "Escape") {
+                      setRenaming(false);
+                    }
+                  }}
+                  className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-0.5 text-sm font-medium outline-none focus:border-accent"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameDraft(selected.title);
+                    setRenaming(true);
+                  }}
+                  title="Rename agent"
+                  className="group flex min-w-0 items-center gap-1.5"
+                >
+                  <span className="truncate text-sm font-medium">{selected.title}</span>
+                  <Pencil
+                    size={12}
+                    className="shrink-0 text-muted opacity-0 transition group-hover:opacity-100"
+                  />
+                </button>
+              )}
+              <AgentStatusBadge status={selected.status} />
+            </div>
+            <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap text-[11px] text-muted">
+              {selected.task_prompt}
+            </p>
           </div>
-          <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-muted">
-            {selected.task_prompt}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {(selected.status === "running" || selected.status === "pending") && (
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              onClick={() => void cancel()}
+              onClick={() => {
+                setNameDraft(selected.title);
+                setRenaming(true);
+              }}
               disabled={busy}
-              title="Stop"
+              title="Rename"
+              className="rounded border border-border p-1.5 text-muted hover:text-fg"
+            >
+              <Pencil size={14} />
+            </button>
+            {(selected.status === "running" ||
+              selected.status === "pending" ||
+              selected.status === "needs_approval") && (
+              <button
+                type="button"
+                onClick={() => void cancel()}
+                disabled={busy}
+                title="Stop"
+                className="rounded border border-border p-1.5 text-muted hover:text-red-500"
+              >
+                <Square size={14} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void remove(selected)}
+              disabled={busy}
+              title="Delete"
               className="rounded border border-border p-1.5 text-muted hover:text-red-500"
             >
-              <Square size={14} />
+              <Trash2 size={14} />
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => void remove(selected)}
-            disabled={busy}
-            title="Delete"
-            className="rounded border border-border p-1.5 text-muted hover:text-red-500"
-          >
-            <Trash2 size={14} />
-          </button>
+          </div>
+        </div>
+
+        {/* Attach to a topic + workflow display toggles. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted">Topic</span>
+            <select
+              value={selected.topic_id ?? ""}
+              onChange={(e) => void relink(e.target.value ? Number(e.target.value) : null)}
+              disabled={busy}
+              className="rounded border border-border bg-bg px-1.5 py-1 text-[11px]"
+            >
+              <option value="">Nothing</option>
+              {topics.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-muted">Show</span>
+            <ToggleChip active={showSystem} onClick={() => setShowSystem((v) => !v)} label="System" />
+            <ToggleChip
+              active={showAssistant}
+              onClick={() => setShowAssistant((v) => !v)}
+              label="Assistant"
+            />
+            <ToggleChip
+              active={showToolDetail}
+              onClick={() => setShowToolDetail((v) => !v)}
+              label="Tool details"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Attach to a topic */}
-      <div className="flex items-center gap-2 text-[11px]">
-        <span className="text-muted">Attached to</span>
-        <select
-          value={selected.topic_id ?? ""}
-          onChange={(e) => void relink(e.target.value ? Number(e.target.value) : null)}
-          disabled={busy}
-          className="rounded border border-border bg-bg px-1.5 py-1 text-[11px]"
-        >
-          <option value="">Nothing</option>
-          {topics.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.title}
-            </option>
-          ))}
-        </select>
-      </div>
+      {/* Scrollable workflow region. */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-3">
+        {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
 
-      {error && <p className="text-[11px] text-red-500">{error}</p>}
+        {selected.status === "needs_approval" && (
+          <div className="mb-3 flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
+            <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step
+            below.
+          </div>
+        )}
 
-      {selected.status === "needs_approval" && (
-        <div className="flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
-          <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step in
-          the workflow below.
-        </div>
-      )}
+        {selected.error && (
+          <div className="mb-3 rounded border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-500">
+            {selected.error}
+          </div>
+        )}
 
-      {/* Result / error */}
-      {selected.result_summary && (
-        <div className="whitespace-pre-wrap rounded border border-border bg-surface p-2 text-[11px]">
-          {selected.result_summary}
-        </div>
-      )}
-      {selected.error && (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-500">
-          {selected.error}
-        </div>
-      )}
-
-      {/* Workflow */}
-      <div>
-        <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted">
-          Workflow
-        </div>
         {(() => {
-          const steps = events
+          const all = events
             .map((ev) => ({ ev, cat: classify(ev) }))
             .filter((s) => s.cat !== "skip");
-          let lastAnswerIdx = -1;
-          for (let i = steps.length - 1; i >= 0; i--) {
-            if (steps[i].cat === "assistant") {
-              lastAnswerIdx = i;
-              break;
+          // Only the finished turn carries a real "answer" — don't highlight an
+          // interim assistant line while the agent is still working.
+          const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
+            selected.status,
+          );
+          let answerIdx = -1;
+          if (terminal) {
+            for (let i = all.length - 1; i >= 0; i--) {
+              if (all[i].cat === "assistant") {
+                answerIdx = i;
+                break;
+              }
             }
           }
-          if (steps.length === 0)
+          const visible = all
+            .map((s, i) => ({ ...s, isAnswer: i === answerIdx }))
+            .filter((s) => {
+              if (s.cat === "system" && !showSystem) return false;
+              // Keep the final answer even when assistant chatter is hidden.
+              if (s.cat === "assistant" && !showAssistant && !s.isAnswer) return false;
+              return true;
+            });
+
+          if (visible.length === 0)
             return <p className="text-[11px] text-muted">No steps recorded yet.</p>;
+
           return (
-            <ol className="flex flex-col">
-              {steps.map((s, i) =>
-                s.cat === "hook" ? (
-                  <HookBadge key={i} event={s.ev} />
-                ) : (
-                  <WorkflowNode
-                    key={i}
-                    event={s.ev}
-                    category={s.cat as Exclude<StepCategory, "skip" | "hook">}
-                    isLast={i === steps.length - 1}
-                    isLastAnswer={i === lastAnswerIdx}
-                    busy={busy}
-                    onDecision={approve}
-                  />
-                ),
-              )}
-            </ol>
+            <div className="flex flex-col items-center">
+              {visible.map((s, i) => (
+                <Fragment key={i}>
+                  {s.cat === "hook" ? (
+                    <HookBadge event={s.ev} />
+                  ) : (
+                    <WorkflowNode
+                      event={s.ev}
+                      category={s.cat as Exclude<StepCategory, "skip" | "hook">}
+                      isLastAnswer={s.isAnswer}
+                      showToolDetail={showToolDetail}
+                      busy={busy}
+                      onDecision={approve}
+                    />
+                  )}
+                  {i < visible.length - 1 && <Connector />}
+                </Fragment>
+              ))}
+            </div>
           );
         })()}
+        <div ref={bottomRef} />
       </div>
 
       {/* Follow-up */}
       {(selected.status === "idle" ||
         selected.status === "completed" ||
         selected.status === "interrupted") && (
-        <div className="mt-auto flex items-center gap-2 pt-2">
+        <div className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">
           <input
             value={followUp}
             onChange={(e) => setFollowUp(e.target.value)}

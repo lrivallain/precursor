@@ -55,6 +55,12 @@ class AgentSendRequest(BaseModel):
     message: str = Field(min_length=1)
 
 
+class AgentUpdateRequest(BaseModel):
+    """Rename an agent session."""
+
+    title: str = Field(min_length=1, max_length=200)
+
+
 class AgentLinkRequest(BaseModel):
     """Attach or detach the session to a container. Both null = detach."""
 
