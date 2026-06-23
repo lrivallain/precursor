@@ -91,3 +91,13 @@ class AgentModelInfo(BaseModel):
 
     id: str
     name: str
+
+
+class AgentPermissionGrant(BaseModel):
+    """An active "approve for session" grant, for the Settings security recap."""
+
+    agent_id: int
+    type: str
+    title: str | None = None
+    target: str | None = None
+    at: UtcDateTime | None = None

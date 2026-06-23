@@ -3,6 +3,7 @@ import type {
   AgentLink,
   AgentModelInfo,
   AgentPermissionDecisionValue,
+  AgentPermissionGrant,
   AgentSession,
   AgentSessionCreate,
   AppVersion,
@@ -227,6 +228,9 @@ export const api = {
     }),
   getAgentEvents: (id: number) => request<AgentEvent[]>(`/api/agents/${id}/events`),
   listAgentModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
+  listAgentPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
+  resetAgentPermissions: () =>
+    request<{ cleared: number }>(`/api/agents/permissions/reset`, { method: "POST" }),
   sendToAgent: (id: number, message: string) =>
     request<AgentSession>(`/api/agents/${id}/send`, {
       method: "POST",

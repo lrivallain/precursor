@@ -193,6 +193,15 @@ export interface AgentModelInfo {
   name: string;
 }
 
+// An active "approve for session" grant, shown in the Settings security recap.
+export interface AgentPermissionGrant {
+  agent_id: number;
+  type: string;
+  title: string | null;
+  target: string | null;
+  at: string | null;
+}
+
 export interface AgentLink {
   topic_id?: number | null;
   chat_id?: number | null;

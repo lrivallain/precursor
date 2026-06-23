@@ -1,21 +1,35 @@
-import { useEffect, useState } from "react";
-import { Bot, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Bot, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { settingsStore, useSettings } from "../lib/settingsStore";
-import type { AgentModelInfo } from "../lib/types";
+import { useConfirm } from "./ConfirmDialog";
+import type { AgentModelInfo, AgentPermissionGrant } from "../lib/types";
 
 // Settings-only controls for Agents mode. The actual agent UI (session list and
 // workflow) lives in the top-level "Agents" sidebar mode, not here.
 export function AgentsSettings() {
   const settings = useSettings();
+  const confirmAction = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<AgentModelInfo[]>([]);
+  const [grants, setGrants] = useState<AgentPermissionGrant[]>([]);
 
   const enabled = settings?.agents_enabled ?? false;
   const available = settings?.agents_available ?? false;
   const reason = settings?.agents_unavailable_reason ?? null;
   const defaultModel = settings?.agents_default_model ?? "";
+
+  const loadGrants = useCallback(() => {
+    if (!enabled) {
+      setGrants([]);
+      return;
+    }
+    void api
+      .listAgentPermissions()
+      .then(setGrants)
+      .catch(() => setGrants([]));
+  }, [enabled]);
 
   // Load the runtime's model list when the feature is on and available. Empty
   // when the runtime is down — we fall back to free text in that case.
@@ -29,6 +43,31 @@ export function AgentsSettings() {
       .then(setModels)
       .catch(() => setModels([]));
   }, [enabled, available]);
+
+  useEffect(() => loadGrants(), [loadGrants]);
+
+  async function resetPermissions(): Promise<void> {
+    if (
+      !(await confirmAction({
+        message:
+          "Revoke all “approve for session” grants? Running agents are reset and " +
+          "will ask for permission again on their next action.",
+        confirmLabel: "Revoke all",
+        variant: "danger",
+      }))
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.resetAgentPermissions();
+      loadGrants();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function patch(update: {
     agents_enabled?: boolean;
@@ -130,6 +169,49 @@ export function AgentsSettings() {
             Model used for new agent sessions when none is specified.
           </span>
         </label>
+      )}
+
+      {enabled && (
+        <div className="space-y-2 rounded border border-border bg-surface/50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              <ShieldCheck size={14} /> Session permissions
+            </span>
+            <button
+              type="button"
+              onClick={() => void resetPermissions()}
+              disabled={busy || grants.length === 0}
+              className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-red-500 disabled:opacity-40"
+            >
+              <Trash2 size={12} /> Reset all
+            </button>
+          </div>
+          <p className="text-[11px] text-muted">
+            “Approve for session” grants currently active in running agents. They
+            reset automatically when an agent session ends; use Reset all to revoke
+            them now.
+          </p>
+          {grants.length === 0 ? (
+            <p className="text-[11px] text-muted">No active grants.</p>
+          ) : (
+            <ul className="space-y-1">
+              {grants.map((g, i) => (
+                <li
+                  key={i}
+                  className="flex items-baseline justify-between gap-2 rounded border border-border bg-bg px-2 py-1 text-[11px]"
+                >
+                  <span className="min-w-0">
+                    <span className="font-medium">{g.title || g.type}</span>
+                    {g.target && (
+                      <span className="ml-1 break-all font-mono text-muted">{g.target}</span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-muted">agent #{g.agent_id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </section>
   );

@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Bot,
+  Brain,
   CircleDot,
+  Cog,
   FileText,
   Globe,
   Loader2,
-  MessageSquare,
   Play,
   Send,
   Settings as SettingsIcon,
   ShieldQuestion,
+  Sparkles,
   Square,
   Terminal,
   Trash2,
+  User,
   Wrench,
   X,
 } from "lucide-react";
@@ -46,39 +50,113 @@ type DecisionHandler = (
   decision: AgentPermissionDecisionValue,
 ) => void | Promise<void>;
 
-// Pick a node icon + accent for a workflow step.
-function nodeVisual(event: AgentEvent): { icon: React.ReactNode; ring: string } {
-  if (event.kind === "permission_request")
-    return {
-      icon: <ShieldQuestion size={13} />,
-      ring: "border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400",
-    };
-  if (event.tool_name) {
-    if (event.tool_status === "error")
-      return { icon: <Wrench size={13} />, ring: "border-red-500/50 bg-red-500/10 text-red-500" };
-    if (event.tool_status === "running")
-      return {
-        icon: <Loader2 size={13} className="animate-spin" />,
-        ring: "border-sky-500/50 bg-sky-500/10 text-sky-500",
-      };
-    const name = event.tool_name.toLowerCase();
-    const icon = name.includes("shell") ? (
-      <Terminal size={13} />
-    ) : name.includes("write") || name.includes("file") || name.includes("read") ? (
-      <FileText size={13} />
-    ) : name.includes("url") || name.includes("fetch") ? (
-      <Globe size={13} />
-    ) : (
-      <Wrench size={13} />
-    );
-    return {
-      icon,
-      ring: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-    };
-  }
-  if (event.kind === "message")
-    return { icon: <MessageSquare size={13} />, ring: "border-border bg-surface text-muted" };
-  return { icon: <CircleDot size={13} />, ring: "border-border bg-surface text-muted" };
+// Coarse category every event maps to. Drives one consistent color scheme so
+// the same kind always looks the same across every agent conversation.
+type StepCategory =
+  | "user"
+  | "system"
+  | "assistant"
+  | "reasoning"
+  | "tool"
+  | "permission"
+  | "error"
+  | "hook"
+  | "skip";
+
+// Per-category visuals: a solid pastel fill + matching marker. Theme-aware via
+// alpha so both light and dark modes stay legible.
+const CATEGORY_STYLE: Record<
+  Exclude<StepCategory, "skip" | "hook">,
+  { label: string; box: string; marker: string; icon: React.ReactNode }
+> = {
+  user: {
+    label: "User prompt",
+    box: "border-sky-500/30 bg-sky-500/15",
+    marker: "border-sky-500/40 bg-sky-500/20 text-sky-600 dark:text-sky-300",
+    icon: <User size={13} />,
+  },
+  system: {
+    label: "System",
+    box: "border-orange-400/30 bg-orange-400/15",
+    marker: "border-orange-400/40 bg-orange-400/20 text-orange-600 dark:text-orange-300",
+    icon: <Cog size={13} />,
+  },
+  assistant: {
+    label: "Assistant",
+    box: "border-border bg-surface",
+    marker: "border-border bg-surface text-muted",
+    icon: <Sparkles size={13} />,
+  },
+  reasoning: {
+    label: "Thinking",
+    box: "border-cyan-500/30 bg-cyan-500/10",
+    marker: "border-cyan-500/40 bg-cyan-500/15 text-cyan-600 dark:text-cyan-300",
+    icon: <Brain size={13} />,
+  },
+  tool: {
+    label: "Tool",
+    box: "border-violet-500/30 bg-violet-500/12",
+    marker: "border-violet-500/40 bg-violet-500/20 text-violet-600 dark:text-violet-300",
+    icon: <Wrench size={13} />,
+  },
+  permission: {
+    label: "Permission",
+    box: "border-orange-500/40 bg-orange-500/10",
+    marker: "border-orange-500/50 bg-orange-500/15 text-orange-600 dark:text-orange-400",
+    icon: <ShieldQuestion size={13} />,
+  },
+  error: {
+    label: "Error",
+    box: "border-red-500/40 bg-red-500/12",
+    marker: "border-red-500/50 bg-red-500/15 text-red-500",
+    icon: <AlertTriangle size={13} />,
+  },
+};
+
+// Map a raw event onto a category. Unmapped kinds fall back by substring so new
+// SDK event names still land somewhere sensible.
+function classify(event: AgentEvent): StepCategory {
+  const kind = event.kind.toLowerCase();
+  if (kind.includes("delta")) return "skip";
+  if (kind === "permission_request") return "permission";
+  if (event.tool_name || kind.includes("tool")) return "tool";
+  if (kind.includes("reason") || kind.includes("think")) return "reasoning";
+  if (kind.includes("error")) return "error";
+  if (
+    kind.includes("turn") ||
+    kind.includes("usage") ||
+    kind.includes("idle") ||
+    kind.includes("session") ||
+    kind.includes("abort")
+  )
+    return "hook";
+  if (kind.includes("user")) return "user";
+  if (kind.includes("system")) return "system";
+  if (kind.includes("assistant") || kind === "message") return "assistant";
+  return "hook";
+}
+
+// A tool icon keyed off the tool's name (shell/file/url) for quick scanning.
+function toolIcon(name: string | null): React.ReactNode {
+  const n = (name ?? "").toLowerCase();
+  if (n.includes("shell") || n.includes("bash") || n.includes("command"))
+    return <Terminal size={13} />;
+  if (n.includes("write") || n.includes("file") || n.includes("read") || n.includes("edit"))
+    return <FileText size={13} />;
+  if (n.includes("url") || n.includes("fetch") || n.includes("search") || n.includes("web"))
+    return <Globe size={13} />;
+  return <Wrench size={13} />;
+}
+
+// A minimized "transition" hook (turn start/end, usage, idle…) rendered as a
+// small centered pill on the connector rather than a full box.
+function HookBadge({ event }: { event: AgentEvent }) {
+  return (
+    <li className="flex items-center gap-1.5 py-0.5 pl-[1.45rem] text-[10px] text-muted">
+      <CircleDot size={9} className="opacity-60" />
+      <span className="uppercase tracking-wide">{event.kind.replace(/_/g, " ")}</span>
+    </li>
+  );
 }
 
 // Renders the details + approve/deny controls for an inline permission request.
@@ -185,43 +263,61 @@ function PermissionBody({
   );
 }
 
-// One node in the linked-boxes workflow.
+// One node in the full-fill colored-box workflow.
 function WorkflowNode({
   event,
+  category,
   isLast,
+  isLastAnswer,
   busy,
   onDecision,
 }: {
   event: AgentEvent;
+  category: Exclude<StepCategory, "skip" | "hook">;
   isLast: boolean;
+  isLastAnswer: boolean;
   busy: boolean;
   onDecision: DecisionHandler;
 }) {
-  const isPermission = event.kind === "permission_request";
-  const { icon, ring } = nodeVisual(event);
+  const isPermission = category === "permission";
+  const style = CATEGORY_STYLE[category];
   const data = (event.data ?? {}) as Record<string, unknown>;
   const title =
     isPermission && typeof data.title === "string"
       ? data.title
-      : event.tool_name || event.kind.replace(/_/g, " ");
+      : category === "tool"
+        ? event.tool_name || style.label
+        : style.label;
+  const icon = category === "tool" ? toolIcon(event.tool_name) : style.icon;
+
+  // The final assistant answer gets an emerald highlight so it's easy to find.
+  const box = isLastAnswer ? "border-emerald-500/50 bg-emerald-500/15 ring-1 ring-emerald-500/30" : style.box;
+  const marker = isLastAnswer
+    ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-600 dark:text-emerald-300"
+    : style.marker;
 
   return (
     <li className="relative flex gap-3">
       {/* Rail: node marker + connector to the next box. */}
       <div className="flex flex-col items-center">
-        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${ring}`}>
-          {icon}
+        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}>
+          {category === "tool" && event.tool_status === "running" ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            icon
+          )}
         </span>
         {!isLast && <span className="w-px flex-1 bg-border" />}
       </div>
       {/* Box */}
-      <div
-        className={`mb-2 flex-1 rounded-lg border p-2 ${
-          isPermission ? "border-orange-500/40 bg-orange-500/5" : "border-border bg-surface"
-        }`}
-      >
+      <div className={`mb-2 flex-1 rounded-lg border p-2 ${box}`}>
         <div className="flex items-baseline gap-2">
-          <span className="text-[11px] font-medium capitalize">{title}</span>
+          <span className="text-[11px] font-semibold capitalize">{title}</span>
+          {isLastAnswer && (
+            <span className="text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+              latest
+            </span>
+          )}
           {event.tool_status && (
             <span className="text-[10px] text-muted">{event.tool_status}</span>
           )}
@@ -529,21 +625,39 @@ export function AgentView({
         <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted">
           Workflow
         </div>
-        {events.length === 0 ? (
-          <p className="text-[11px] text-muted">No steps recorded yet.</p>
-        ) : (
-          <ol className="flex flex-col">
-            {events.map((ev, i) => (
-              <WorkflowNode
-                key={i}
-                event={ev}
-                isLast={i === events.length - 1}
-                busy={busy}
-                onDecision={approve}
-              />
-            ))}
-          </ol>
-        )}
+        {(() => {
+          const steps = events
+            .map((ev) => ({ ev, cat: classify(ev) }))
+            .filter((s) => s.cat !== "skip");
+          let lastAnswerIdx = -1;
+          for (let i = steps.length - 1; i >= 0; i--) {
+            if (steps[i].cat === "assistant") {
+              lastAnswerIdx = i;
+              break;
+            }
+          }
+          if (steps.length === 0)
+            return <p className="text-[11px] text-muted">No steps recorded yet.</p>;
+          return (
+            <ol className="flex flex-col">
+              {steps.map((s, i) =>
+                s.cat === "hook" ? (
+                  <HookBadge key={i} event={s.ev} />
+                ) : (
+                  <WorkflowNode
+                    key={i}
+                    event={s.ev}
+                    category={s.cat as Exclude<StepCategory, "skip" | "hook">}
+                    isLast={i === steps.length - 1}
+                    isLastAnswer={i === lastAnswerIdx}
+                    busy={busy}
+                    onDecision={approve}
+                  />
+                ),
+              )}
+            </ol>
+          );
+        })()}
       </div>
 
       {/* Follow-up */}

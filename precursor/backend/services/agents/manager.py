@@ -35,7 +35,7 @@ from typing import Any
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import AgentSession, Message, MessageRole
+from precursor.backend.models import AgentSession, Message, MessageRole, Topic
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.app_settings import resolve_agents_enabled
@@ -61,6 +61,10 @@ class _LiveSession:
     # request_id -> normalised description of what's being requested, so the UI
     # can render an inline approval card explaining the action.
     pending_info: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # "Approve for session" grants made during this live session's lifetime, kept
+    # so Settings can recap and revoke them. Session-scoped on purpose: these
+    # mirror the SDK's per-session approvals and reset when the session does.
+    grants: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AgentManager:
@@ -172,13 +176,53 @@ class AgentManager:
             return None
         # Reuse the same launcher the in-app MCP client uses, so there's one
         # definition of how to run the precursor server.
+        env = dict(os.environ)
+        # First-party access: agents bypass the external mcp_expose toggles so
+        # they can read topic content and post results back.
+        env["PRECURSOR_MCP_FULL_ACCESS"] = "1"
         config: Any = sdk.MCPStdioServerConfig(
             type="stdio",
             command=sys.executable,
             args=["-m", "precursor.backend.services.mcp.precursor_server"],
-            env=dict(os.environ),
+            env=env,
+            # Expose all precursor tools — without this the runtime includes none
+            # ([] is the default), so the agent can't read/post topic content.
+            tools=["*"],
         )
         return {"precursor": config}
+
+    async def _topic_context(self, agent: AgentSession) -> str | None:
+        """Build a system-message preamble binding the agent to its topic.
+
+        Without this the agent has no idea which topic it's attached to, so a
+        request like "summarise the topic description" gets answered from the
+        tool's field schema instead of the actual record. We give it the id,
+        title and description, and point it at the precursor MCP tools to pull
+        the rest on demand (and post results back).
+        """
+        if not agent.topic_id:
+            return None
+        async with SessionLocal() as session:
+            topic = await session.get(Topic, agent.topic_id)
+        if topic is None:
+            return None
+        lines = [
+            "## Bound Precursor topic",
+            "",
+            f'You are operating on Precursor topic #{topic.id} ("{topic.title}").',
+        ]
+        description = (topic.description or "").strip()
+        if description:
+            lines += ["", "Topic description:", description]
+        lines += [
+            "",
+            "Use the `precursor` MCP tools to work with it: `get_topic("
+            f"{topic.id})` for metadata, `list_messages({topic.id})` to read the "
+            "conversation, `search(...)` to find related content, and "
+            f"`post_message({topic.id}, ...)` to write your results back to the "
+            "topic. Prefer reading the live topic over assumptions.",
+        ]
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------ sessions
 
@@ -200,6 +244,11 @@ class AgentManager:
         mcp = self._precursor_mcp_config()
         if mcp:
             kwargs["mcp_servers"] = mcp
+        context = await self._topic_context(agent)
+        if context:
+            # Append (don't replace) so the agent keeps its base instructions but
+            # always knows which topic it's bound to and how to read/write it.
+            kwargs["system_message"] = {"mode": "append", "content": context}
 
         sdk_session = await self._client.create_session(**kwargs)
         live = _LiveSession(sdk_session=sdk_session)
@@ -256,8 +305,45 @@ class AgentManager:
         fut = live.pending.get(request_id)
         if fut is None or fut.done():
             return False
+        if decision == "approve-always":
+            # Record the session-scoped grant so Settings can recap/revoke it.
+            info = live.pending_info.get(request_id, {})
+            live.grants.append(
+                {
+                    "type": info.get("type", "tool"),
+                    "title": info.get("title"),
+                    "target": info.get("command")
+                    or info.get("path")
+                    or info.get("url")
+                    or info.get("tool")
+                    or info.get("server"),
+                    "at": datetime.now(UTC),
+                }
+            )
         fut.set_result(self._decision(decision))
         return True
+
+    def list_permissions(self) -> list[dict[str, Any]]:
+        """Recap of active "approve for session" grants across live sessions."""
+        out: list[dict[str, Any]] = []
+        for agent_id, live in self._live.items():
+            for grant in live.grants:
+                out.append({"agent_id": agent_id, **grant})
+        out.sort(key=lambda g: g.get("at") or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return out
+
+    async def reset_permissions(self) -> int:
+        """Revoke all session grants by disconnecting every live session.
+
+        Tearing the SDK sessions down drops their in-session approvals; they're
+        recreated fresh (and will ask again) on next use. Returns the count of
+        grants cleared.
+        """
+        cleared = sum(len(live.grants) for live in self._live.values())
+        agent_ids = list(self._live.keys())
+        for agent_id in agent_ids:
+            await self.teardown_session(agent_id)
+        return cleared
 
     async def get_events(self, agent_id: int) -> list[AgentEvent]:
         """Return the normalised event history for the workflow timeline."""

@@ -8,6 +8,8 @@ are streamed via the shared event bus (``agent.changed``) and read back through
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +21,7 @@ from precursor.backend.schemas.agent import (
     AgentLinkRequest,
     AgentModelInfo,
     AgentPermissionDecision,
+    AgentPermissionGrant,
     AgentSendRequest,
     AgentSessionCreate,
     AgentSessionRead,
@@ -64,6 +67,19 @@ async def list_agent_models(
 ) -> list[dict[str, str]]:
     """Available runtime models for the default-model picker (empty if down)."""
     return await get_agent_manager().list_models()
+
+
+@router.get("/permissions", response_model=list[AgentPermissionGrant])
+async def list_agent_permissions() -> list[dict[str, Any]]:
+    """Recap of active "approve for session" grants (for the Settings panel)."""
+    return get_agent_manager().list_permissions()
+
+
+@router.post("/permissions/reset")
+async def reset_agent_permissions() -> dict[str, int]:
+    """Revoke all session grants by resetting live sessions. Security control."""
+    cleared = await get_agent_manager().reset_permissions()
+    return {"cleared": cleared}
 
 
 @router.get("", response_model=list[AgentSessionRead])
@@ -176,10 +192,14 @@ async def link_agent(
     """Attach the session to a topic/chat, or detach it (both null)."""
     agent = await _get_or_404(session, agent_id)
     await _validate_container(session, topic_id=payload.topic_id, chat_id=payload.chat_id)
+    topic_changed = agent.topic_id != payload.topic_id
     agent.topic_id = payload.topic_id
     agent.chat_id = payload.chat_id
     await session.commit()
     await session.refresh(agent)
+    # Drop the live session so the bound-topic context is re-injected on next use.
+    if topic_changed:
+        await get_agent_manager().teardown_session(agent_id)
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
     )
