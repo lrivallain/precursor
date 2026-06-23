@@ -65,6 +65,10 @@ class MessageRead(BaseModel):
     role: MessageRole
     content: str
     tool_calls: str | None = None
+    agent_session_id: int | None = None
+    # The linked agent's public (UUID) id — used by the UI for deep links and
+    # the /agent command so it never has to surface the internal integer id.
+    agent_session_public_id: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     created_at: datetime

@@ -16,6 +16,7 @@ import {
   SlidersHorizontal,
   Mic,
   BarChart3,
+  Bot,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -40,6 +41,7 @@ import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
+import { AgentsSettings } from "./AgentsSettings";
 
 interface Props {
   onClose: () => void;
@@ -86,6 +88,7 @@ type Category =
   | "skills"
   | "roles"
   | "memory"
+  | "agents"
   | "stats"
   | "system";
 
@@ -104,6 +107,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
+  { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
 ];
@@ -1002,6 +1006,7 @@ export function SettingsPanel({ onClose }: Props) {
             {category === "roles" && <RolesTab />}
 
             {category === "memory" && <MemoriesTab />}
+            {category === "agents" && <AgentsSettings />}
 
             {category === "stats" && <StatsTab />}
 

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageBubble } from "./MessageBubble";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowRightCircle } from "lucide-react";
+import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
@@ -28,6 +29,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type {
+  AgentSession,
   Attachment,
   Message,
   NoteDraftAttachment,
@@ -79,6 +81,7 @@ const HANDLED_COMMANDS = new Set<string>([
   "reminder-cancel",
   "done",
   "role",
+  "agent",
 ]);
 
 function cardTitle(p: PendingCommand): string {
@@ -160,6 +163,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const confirmAction = useConfirm();
   const [persisted, setPersisted] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
   const [savedNotesDraft, setSavedNotesDraft] = useState<{
@@ -195,10 +199,12 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
-  const excludedCommands = useMemo<ReadonlySet<string>>(
-    () => (issueAssociationsEnabled ? new Set<string>() : GITHUB_SLASH_COMMANDS),
-    [issueAssociationsEnabled],
-  );
+  const agentsEnabled = settings?.agents_enabled ?? false;
+  const excludedCommands = useMemo<ReadonlySet<string>>(() => {
+    const set = new Set<string>(issueAssociationsEnabled ? [] : GITHUB_SLASH_COMMANDS);
+    if (!agentsEnabled) set.add("agent");
+    return set;
+  }, [issueAssociationsEnabled, agentsEnabled]);
   const streamKey = convKey("topic", topic.id);
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
@@ -616,6 +622,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runRole(argument);
       return;
     }
+    if (name === "agent") {
+      await runAgent(argument);
+      return;
+    }
     if (name === "gh-update" || name === "gh-create" || name === "gh-close") {
       await startDraft(name, argument);
     }
@@ -695,6 +705,71 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       systemNote(`Assistant role set to "${role.name}".`);
     } catch (err) {
       systemNote(`Role change failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Prefill the composer with "/agent <uuid> " so the user can type a follow-up
+  // and reinstantiate an existing agent session straight from its summary.
+  function prefillAgentFollowUp(ref: string): void {
+    setDraft(`/agent ${ref} `);
+    setComposerFocusToken((t) => t + 1);
+  }
+
+  // Navigate to the Agents tab. A non-null id opens that session; null opens
+  // the new-agent form with this topic preselected (via the event's topicId).
+  function openAgent(id: number | null): void {
+    window.dispatchEvent(
+      new CustomEvent("precursor:open-agent", { detail: { id, topicId: topic.id } }),
+    );
+  }
+
+  async function runAgent(argument: string): Promise<void> {
+    const arg = argument.trim();
+    // "/agent <session-id> <prompt>" continues an existing session when the
+    // first token is a session id — a public UUID (preferred) or a legacy
+    // integer — that maps to a real agent. Anything else is treated as a brand
+    // new task, so ordinary prompts still work.
+    const m = arg.match(
+      /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)\b\s*([\s\S]*)$/i,
+    );
+    if (m) {
+      const ref = m[1];
+      const prompt = m[2].trim();
+      let existing: AgentSession | null = null;
+      try {
+        existing = await api.getAgent(ref);
+      } catch {
+        existing = null;
+      }
+      if (existing) {
+        try {
+          if (prompt) await api.sendToAgent(existing.id, prompt);
+        } catch (err) {
+          systemNote(`Couldn't message "${existing.title}": ${(err as Error).message}`);
+          return;
+        }
+        systemNote(
+          prompt
+            ? `Sent a follow-up to "${existing.title}".`
+            : `Opening "${existing.title}".`,
+        );
+        openAgent(existing.id);
+        return;
+      }
+      // Not a real session id — fall through and treat the text as a new task.
+    }
+
+    if (!arg) {
+      // No prompt: open the new-agent form with this topic preselected.
+      openAgent(null);
+      return;
+    }
+    try {
+      const created = await api.createAgent({ task: arg, topic_id: topic.id });
+      systemNote(`Started agent "${created.title}".`);
+      openAgent(created.id);
+    } catch (err) {
+      systemNote(`Couldn't start the agent: ${(err as Error).message}`);
     }
   }
 
@@ -1106,43 +1181,93 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               Send a message to start the conversation.
             </div>
           )}
-          {visibleMessages.map((m) => {
-            if (m.role === "tool") {
-              const meta = parseToolMeta(m.tool_calls);
+          {(() => {
+            const renderMessage = (m: (typeof visibleMessages)[number], grouped: boolean) => {
+              if (m.role === "tool") {
+                const meta = parseToolMeta(m.tool_calls);
+                return (
+                  <ToolCallBubble
+                    key={m.id}
+                    name={meta?.name ?? "(unknown)"}
+                    arguments={meta?.arguments ?? "{}"}
+                    content={meta?.pending ? null : m.content}
+                    isError={Boolean(meta?.is_error)}
+                    pending={Boolean(meta?.pending)}
+                  />
+                );
+              }
+              // Hide assistant turns that only emitted tool calls (no text):
+              // the tool bubbles below carry the meaningful content.
+              if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
+                return null;
+              }
+              const canDelete =
+                !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
+              // In a scheduled topic the user turn is the repeated automation
+              // prompt — collapse it so generated content gets the room.
+              const collapsible = m.role === "user" && topic.kind === "scheduled";
               return (
-                <ToolCallBubble
+                <MessageBubble
                   key={m.id}
-                  name={meta?.name ?? "(unknown)"}
-                  arguments={meta?.arguments ?? "{}"}
-                  content={meta?.pending ? null : m.content}
-                  isError={Boolean(meta?.is_error)}
-                  pending={Boolean(meta?.pending)}
+                  role={m.role}
+                  content={m.content}
+                  attachments={m.attachments}
+                  collapsible={collapsible}
+                  agentSessionId={grouped ? undefined : m.agent_session_id}
+                  onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
                 />
               );
+            };
+
+            // Wrap consecutive agent-tagged turns (prompt + answer) in a dashed
+            // purple frame with a single AGENT badge, so an agent exchange reads
+            // as one block instead of two separately-tagged bubbles.
+            const out: ReactNode[] = [];
+            let i = 0;
+            while (i < visibleMessages.length) {
+              const m = visibleMessages[i];
+              const aid = m.agent_session_id;
+              if (aid != null) {
+                const group: typeof visibleMessages = [];
+                let j = i;
+                while (j < visibleMessages.length && visibleMessages[j].agent_session_id === aid) {
+                  group.push(visibleMessages[j]);
+                  j++;
+                }
+                // Prefer the agent's public UUID for the follow-up command;
+                // fall back to the integer id for legacy rows without one.
+                const agentRef = m.agent_session_public_id ?? String(aid);
+                out.push(
+                  <div
+                    key={`agent-${aid}-${m.id}`}
+                    className="space-y-3 rounded-lg border border-dashed border-purple-500/50 bg-purple-500/[0.03] p-2.5"
+                  >
+                    <AgentExchangeBadge agentSessionId={aid} />
+                    {group.map((gm) => renderMessage(gm, true))}
+                    {agentsEnabled && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => prefillAgentFollowUp(agentRef)}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-purple-500/40 px-2 py-0.5 text-[10px] font-medium text-purple-600 hover:bg-purple-500/10 dark:text-purple-300"
+                          title="Continue this agent session"
+                          data-tooltip="Continue this agent session"
+                        >
+                          <ArrowRightCircle size={11} />
+                          Continue session
+                        </button>
+                      </div>
+                    )}
+                  </div>,
+                );
+                i = j;
+              } else {
+                out.push(renderMessage(m, false));
+                i++;
+              }
             }
-            // Hide assistant turns that only emitted tool calls (no text):
-            // the tool bubbles below carry the meaningful content.
-            if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
-              return null;
-            }
-            const canDelete =
-              !streaming &&
-              m.id > 0 &&
-              (m.role === "user" || m.role === "assistant");
-            // In a scheduled topic the user turn is the repeated automation
-            // prompt — collapse it so generated content gets the room.
-            const collapsible = m.role === "user" && topic.kind === "scheduled";
-            return (
-              <MessageBubble
-                key={m.id}
-                role={m.role}
-                content={m.content}
-                attachments={m.attachments}
-                collapsible={collapsible}
-                onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
-              />
-            );
-          })}
+            return out;
+          })()}
           {streaming && (
             <MessageBubble role="assistant" content={pendingContent} pending onStop={stop} />
           )}
@@ -1255,6 +1380,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             interimText={interimText}
             height={composerHeight}
             onResizeStart={onComposerResize}
+            focusToken={composerFocusToken}
             attachments={{
               pending: pendingAttachments,
               uploadingCount,

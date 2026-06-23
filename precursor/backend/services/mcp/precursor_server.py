@@ -25,6 +25,7 @@ Sections → tools:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypeVar
@@ -140,6 +141,11 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 async def _section_enabled(section: str) -> bool:
+    # First-party agent sessions launch this server with full access — the
+    # ``mcp_expose`` toggles gate *external* MCP clients, not Precursor's own
+    # agents, which must read topic content and post results back.
+    if os.environ.get("PRECURSOR_MCP_FULL_ACCESS") == "1":
+        return True
     async with SessionLocal() as session:
         expose = await resolve_mcp_expose(session)
     return bool(expose.get(section))

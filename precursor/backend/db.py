@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sqlalchemy import event
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -24,6 +25,30 @@ engine = create_async_engine(
     future=True,
     pool_pre_ping=True,
 )
+
+
+if engine.dialect.name == "sqlite":
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_connection: object, _record: object) -> None:
+        """Make SQLite tolerate the app's concurrent writers.
+
+        SQLite allows a single writer at a time and, by default, a blocked
+        writer fails *immediately* with "database is locked". The agents runtime
+        now writes from several coroutines at once (per-event timeline archiving,
+        status patches, the permission handler's policy read), so without a busy
+        timeout a transient lock can bubble out of, say, the permission handler
+        and be turned into an opaque tool denial. WAL + a 5s busy timeout let
+        writers queue instead of erroring. No-op on Postgres.
+        """
+        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+
 
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine,

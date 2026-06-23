@@ -125,6 +125,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Archive this conversation and leave it. Restore it any time from the archive (your profile menu in the sidebar).",
     kind: "builtin",
   },
+  {
+    name: "agent",
+    label: "/agent",
+    description:
+      "Start an agent session from this topic with the text as its task. Pass an existing session id (UUID) first (e.g. '/agent 3f2a… keep going') to send the rest as a follow-up to that session instead.",
+    argumentHint: "prompt — or: session-uuid prompt",
+    kind: "builtin",
+  },
 ];
 
 export interface ParsedCommand {

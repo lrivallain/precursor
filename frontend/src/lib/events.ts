@@ -14,7 +14,13 @@ export type BusEvent =
   | { type: "message.changed"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.started"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.ended"; topic_id?: number | null; chat_id?: number | null }
-  | { type: "reminder.changed"; topic_id?: number | null; chat_id?: number | null };
+  | { type: "reminder.changed"; topic_id?: number | null; chat_id?: number | null }
+  | {
+      type: "agent.changed";
+      agent_session_id?: number | null;
+      topic_id?: number | null;
+      chat_id?: number | null;
+    };
 
 type Handler = (event: BusEvent) => void;
 
@@ -24,7 +30,12 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
 function dispatch(type: BusEvent["type"], raw: string): void {
-  let payload: { client_id?: string; topic_id?: number | null; chat_id?: number | null };
+  let payload: {
+    client_id?: string;
+    topic_id?: number | null;
+    chat_id?: number | null;
+    agent_session_id?: number | null;
+  };
   try {
     payload = JSON.parse(raw);
   } catch {
@@ -35,6 +46,7 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     type,
     topic_id: payload.topic_id ?? null,
     chat_id: payload.chat_id ?? null,
+    agent_session_id: payload.agent_session_id ?? null,
   } as BusEvent;
   for (const h of handlers) {
     try {
@@ -62,6 +74,9 @@ function connect(): void {
   );
   source.addEventListener("reminder.changed", (e) =>
     dispatch("reminder.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("agent.changed", (e) =>
+    dispatch("agent.changed", (e as MessageEvent).data),
   );
   source.onerror = () => {
     source?.close();

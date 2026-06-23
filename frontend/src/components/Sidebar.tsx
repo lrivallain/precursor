@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ReactNode } from "react";
 import {
   AlarmClock,
+  Bot,
   Check,
   ChevronDown,
   ChevronRight,
@@ -24,7 +25,21 @@ import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
-export type SidebarMode = "topics" | "chats" | "workspaces";
+export type SidebarMode = "topics" | "chats" | "workspaces" | "agents";
+
+// Label for the header "New" action, which is mode-aware.
+function newActionLabel(mode: SidebarMode): string {
+  switch (mode) {
+    case "chats":
+      return "New chat";
+    case "workspaces":
+      return "New workspace";
+    case "agents":
+      return "New agent";
+    default:
+      return "New topic";
+  }
+}
 
 interface Props {
   tree: TopicNode[];
@@ -37,6 +52,8 @@ interface Props {
   chatSlot?: ReactNode;
   /** Rendered in the body when mode === "workspaces" (the workspace list). */
   workspaceSlot?: ReactNode;
+  /** Rendered in the body when mode === "agents" (the agent session list). */
+  agentSlot?: ReactNode;
   onToggleCollapsed: () => void;
   onSelect: (id: number) => void;
   /** Mode-aware "New" action (topic / chat / workspace) in the header. */
@@ -66,6 +83,7 @@ export function Sidebar({
   onModeChange,
   chatSlot,
   workspaceSlot,
+  agentSlot,
   onToggleCollapsed,
   onSelect,
   onNew,
@@ -148,15 +166,19 @@ export function Sidebar({
         >
           <FolderGit2 size={18} />
         </button>
+        <button
+          className={`p-2 rounded ${mode === "agents" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Agents"
+          data-tooltip="Agents"
+          onClick={() => onModeChange("agents")}
+        >
+          <Bot size={18} />
+        </button>
         <div className="my-1 h-px w-6 bg-border" />
         <button
           className="p-2 rounded hover:bg-surface"
-          aria-label={
-            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
-          }
-          data-tooltip={
-            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
-          }
+          aria-label={newActionLabel(mode)}
+          data-tooltip={newActionLabel(mode)}
           onClick={onNew}
         >
           <Plus size={18} />
@@ -185,12 +207,8 @@ export function Sidebar({
         <div className="flex-1 font-semibold tracking-tight">Precursor</div>
         <button
           className="p-1.5 rounded hover:bg-surface"
-          aria-label={
-            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
-          }
-          data-tooltip={
-            mode === "topics" ? "New topic" : mode === "chats" ? "New chat" : "New workspace"
-          }
+          aria-label={newActionLabel(mode)}
+          data-tooltip={newActionLabel(mode)}
           onClick={onNew}
         >
           <Plus size={16} />
@@ -248,6 +266,8 @@ export function Sidebar({
         chatSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
+      ) : mode === "agents" ? (
+        agentSlot
       ) : (
         <>
           <div className="px-3 py-2 border-b border-border">
@@ -623,6 +643,7 @@ const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
   { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
   { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
   { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
+  { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
 ];
 
 // Responsive mode switcher: shows as many labelled mode buttons as fit, and

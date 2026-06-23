@@ -24,6 +24,7 @@ class Event(TypedDict, total=False):
     type: str
     topic_id: int | None
     chat_id: int | None
+    agent_session_id: int | None
     client_id: str | None
 
 
@@ -59,6 +60,7 @@ class EventBus:
             "type": event["type"],
             "topic_id": event.get("topic_id"),
             "chat_id": event.get("chat_id"),
+            "agent_session_id": event.get("agent_session_id"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         # Snapshot to avoid mutation during iteration.
@@ -113,3 +115,25 @@ async def publish_reminder_changed(
     sidebar Reminders section reloads regardless.
     """
     await _bus.publish({"type": "reminder.changed", "topic_id": topic_id, "chat_id": chat_id})
+
+
+async def publish_agent_changed(
+    *,
+    agent_session_id: int | None = None,
+    topic_id: int | None = None,
+    chat_id: int | None = None,
+) -> None:
+    """Signal that an agent session's state or event stream changed.
+
+    Carries the agent session id (so the Agents tab / an open session view can
+    react) plus the linked container, if any, so a window viewing that topic or
+    chat can refresh its agent badge.
+    """
+    await _bus.publish(
+        {
+            "type": "agent.changed",
+            "agent_session_id": agent_session_id,
+            "topic_id": topic_id,
+            "chat_id": chat_id,
+        }
+    )

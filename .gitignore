@@ -20,6 +20,8 @@ precursor/_version.py
 # SQLite dev DB
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 

@@ -62,6 +62,12 @@ class SettingsPayload(BaseModel):
     cmd_runner_memory: str | None = None
     cmd_runner_pids_limit: int | None = None
     cmd_runner_cpus: str | None = None
+    # Agents mode (Copilot SDK). Opt-in; download/runtime gated by availability.
+    agents_enabled: bool | None = None
+    agents_default_model: str | None = None
+    agents_approval_policy: str | None = None
+    agents_system_prompt: str | None = None
+    agents_watchdog_timeout_seconds: int | None = None
 
 
 class SettingsRead(BaseModel):
@@ -112,3 +118,16 @@ class SettingsRead(BaseModel):
     cmd_runner_cpus: str = "1"
     # True when Docker is usable right now (informs the jail toggle in the UI).
     docker_available: bool = False
+    # Agents mode (Copilot SDK): the enabled preference, whether the runtime is
+    # usable right now, and the default model for new agent sessions.
+    agents_enabled: bool = False
+    agents_available: bool = False
+    agents_unavailable_reason: str | None = None
+    agents_default_model: str = "claude-sonnet-4.5"
+    # Default approval policy for agent actions: manual | balanced | autonomous.
+    agents_approval_policy: str = "balanced"
+    # Extra system-message preamble appended to every agent session.
+    agents_system_prompt: str = ""
+    # Minutes... seconds, actually: how long a running session may sit with no
+    # new runtime events before the watchdog marks it interrupted (resumable).
+    agents_watchdog_timeout_seconds: int = 600

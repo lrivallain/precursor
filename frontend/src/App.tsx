@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
+import {
+  ArrowUpRight,
+  MessagesSquare,
+  Pin,
+  PinOff,
+  Settings as SettingsIcon,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
@@ -17,7 +25,12 @@ import {
   WorkspaceView,
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
+import { AgentList } from "./components/AgentList";
+import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
+import { AgentStatusBadge } from "./components/AgentStatusBadge";
+import { AgentView } from "./components/AgentView";
 import { InlineTitle } from "./components/InlineTitle";
+import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { api } from "./lib/api";
@@ -28,7 +41,15 @@ import { rolesStore } from "./lib/rolesStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
-import type { Chat, ReminderItem, Schedule, Topic, TopicNode, Workspace } from "./lib/types";
+import type {
+  AgentSession,
+  Chat,
+  ReminderItem,
+  Schedule,
+  Topic,
+  TopicNode,
+  Workspace,
+} from "./lib/types";
 
 interface WsRoute {
   open: boolean;
@@ -57,19 +78,36 @@ interface AppRoute {
   mode: SidebarMode;
   topicSlug: string | null;
   chatSlug: string | null;
+  // The raw agent path segment — a public UUID for new links, or a legacy
+  // integer id. Resolved to an internal numeric id once the agent list loads.
+  agentRef: string | null;
 }
 
 function parseAppRoute(): AppRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-  if (segs[0] === "ws") return { mode: "workspaces", topicSlug: null, chatSlug: null };
+  if (segs[0] === "ws")
+    return { mode: "workspaces", topicSlug: null, chatSlug: null, agentRef: null };
+  if (segs[0] === "agents") {
+    return {
+      mode: "agents",
+      topicSlug: null,
+      chatSlug: null,
+      agentRef: segs[1] ? decodeURIComponent(segs[1]) : null,
+    };
+  }
   if (segs[0] === "chats") {
-    return { mode: "chats", topicSlug: null, chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
+    return {
+      mode: "chats",
+      topicSlug: null,
+      chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
+      agentRef: null,
+    };
   }
   if (segs[0] === "topics") {
     const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
-    return { mode: "topics", topicSlug: last, chatSlug: null };
+    return { mode: "topics", topicSlug: last, chatSlug: null, agentRef: null };
   }
-  return { mode: "topics", topicSlug: null, chatSlug: null };
+  return { mode: "topics", topicSlug: null, chatSlug: null, agentRef: null };
 }
 
 /** Ancestor → self slug chain for a topic, using the loaded tree. */
@@ -99,6 +137,25 @@ function topicUrl(tree: TopicNode[], topic: Topic): string {
 
 function chatUrl(chat: Chat): string {
   return "/chats/" + encodeURIComponent(chat.slug);
+}
+
+// Agents are addressed by their public UUID (copilot_session_id) in the URL.
+// Until the agent list has loaded we may not know the UUID yet, so fall back to
+// the internal id; the URL-sync effect rewrites it to the UUID once known.
+function agentUrl(agentId: number | null, agents: AgentSession[] | null): string {
+  if (agentId == null) return "/agents";
+  const a = agents?.find((x) => x.id === agentId);
+  const ref = a?.copilot_session_id ?? String(agentId);
+  return `/agents/${encodeURIComponent(ref)}`;
+}
+
+// Resolve a URL agent segment to an internal id. A pure-integer ref is a legacy
+// id; anything else is a public UUID looked up in the loaded session list.
+// Returns null when a UUID can't be matched yet (agents not loaded).
+function resolveAgentRef(ref: string | null, agents: AgentSession[] | null): number | null {
+  if (!ref) return null;
+  if (/^\d+$/.test(ref)) return Number(ref);
+  return agents?.find((a) => a.copilot_session_id === ref)?.id ?? null;
 }
 
 const BASE_TITLE = "Precursor";
@@ -136,6 +193,7 @@ export default function App() {
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [roleSelectorOpen, setRoleSelectorOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -143,6 +201,23 @@ export default function App() {
   // Workspaces are loaded lazily when the user first enters workspaces mode.
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
+  // Agents are loaded lazily when the user first enters agents mode.
+  const [agents, setAgents] = useState<AgentSession[] | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<number | null>(
+    // A legacy integer ref resolves immediately; a UUID waits for the list.
+    () => resolveAgentRef(parseAppRoute().agentRef, null),
+  );
+  // A URL UUID we couldn't resolve yet (agent list not loaded). Resolved once
+  // the sessions arrive. Initialised from the entry URL.
+  const pendingAgentRef = useRef<string | null>(
+    (() => {
+      const ref = parseAppRoute().agentRef;
+      return ref && !/^\d+$/.test(ref) ? ref : null;
+    })(),
+  );
+  // Topic to preselect in the new-agent form, set when "/agent" (no prompt) is
+  // run from a topic. Cleared once consumed.
+  const [agentDraftTopicId, setAgentDraftTopicId] = useState<number | null>(null);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -181,8 +256,18 @@ export default function App() {
 
   const settings = useSettings();
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
+  const agentsEnabled = settings?.agents_enabled ?? false;
+  const agentsAvailable = settings?.agents_available ?? false;
+  const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
 
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
+
+  const confirmAction = useConfirm();
+  // The currently-selected agent session, surfaced in the shared header.
+  const activeAgent = useMemo(
+    () => (agents ?? []).find((a) => a.id === activeAgentId) ?? null,
+    [agents, activeAgentId],
+  );
 
   // Mirror activeTopic into a ref so the onComplete callback (set up once)
   // can read the current value without resubscribing on every change.
@@ -196,6 +281,30 @@ export default function App() {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
+
+  // Mirror activeAgentId into a ref so changeMode can build the agents URL.
+  const activeAgentIdRef = useRef<number | null>(activeAgentId);
+  useEffect(() => {
+    activeAgentIdRef.current = activeAgentId;
+  }, [activeAgentId]);
+
+  // Mirror the loaded agent list into a ref so the mount-only URL sync handler
+  // can resolve a UUID segment without re-subscribing.
+  const agentsRef = useRef<AgentSession[] | null>(agents);
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+
+  // Once sessions load, resolve any UUID deep link that arrived before the list
+  // was available (e.g. opening /agents/<uuid> cold).
+  useEffect(() => {
+    if (!pendingAgentRef.current || agents == null) return;
+    const id = resolveAgentRef(pendingAgentRef.current, agents);
+    if (id != null) {
+      pendingAgentRef.current = null;
+      setActiveAgentId(id);
+    }
+  }, [agents]);
 
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
@@ -282,6 +391,22 @@ export default function App() {
       }
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
+      if (r.mode === "agents") {
+        if (r.agentRef == null) {
+          pendingAgentRef.current = null;
+          setActiveAgentId(null);
+          return;
+        }
+        const id = resolveAgentRef(r.agentRef, agentsRef.current);
+        if (id != null) {
+          pendingAgentRef.current = null;
+          setActiveAgentId(id);
+        } else {
+          // UUID not resolvable yet — stash it for the agents-load effect.
+          pendingAgentRef.current = r.agentRef;
+        }
+        return;
+      }
       if (r.mode === "topics") {
         const slug = r.topicSlug;
         if (!slug || activeTopicRef.current?.slug === slug) return;
@@ -353,6 +478,35 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeChat, sidebarMode]);
 
+  // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
+  // canonical URL uses the public UUID; depends on `agents` so the link is
+  // rewritten from a transient integer fallback once the list resolves.
+  useEffect(() => {
+    if (sidebarMode !== "agents") return;
+    // Don't clobber a deep-link URL whose agent we haven't resolved yet (the
+    // list may still be loading). Overwriting it with "/agents" here would also
+    // drop the UUID before the agents-load effect can resolve it.
+    if (activeAgentId == null && pendingAgentRef.current) return;
+    const target = agentUrl(activeAgentId, agents);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
+  }, [activeAgentId, sidebarMode, agents]);
+
+  // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
+  // back to its Agents-mode session.
+  useEffect(() => {
+    function onOpenAgent(e: Event): void {
+      const detail = (e as CustomEvent<{ id: number | null; topicId?: number }>).detail;
+      const id = detail?.id ?? null;
+      // A null id opens the new-agent form; carry the topic so it's preselected.
+      setAgentDraftTopicId(id == null ? (detail?.topicId ?? null) : null);
+      setActiveAgentId(id);
+      setWsRoute({ open: false, slug: null, path: null });
+      setSidebarMode("agents");
+    }
+    window.addEventListener("precursor:open-agent", onOpenAgent);
+    return () => window.removeEventListener("precursor:open-agent", onOpenAgent);
+  }, []);
+
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
   function changeMode(next: SidebarMode): void {
@@ -364,6 +518,8 @@ export default function App() {
         : "/topics";
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
+    } else if (next === "agents") {
+      target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else {
       target = "/ws";
     }
@@ -480,6 +636,11 @@ export default function App() {
         // ticker). Reload the sidebar section; loadReminders also notifies for
         // any newly-fired ones.
         void loadReminders();
+      } else if (event.type === "agent.changed") {
+        // An agent session was created, advanced, or finished (possibly in the
+        // background). Refresh the list so statuses/badges stay current; the
+        // AgentView refreshes its own timeline.
+        void loadAgents();
       }
     });
   }, []);
@@ -499,6 +660,30 @@ export default function App() {
     const updated = await api.updateTopic(id, { title });
     if (activeTopicRef.current?.id === id) setActiveTopic(updated);
     await refreshTree();
+  }
+
+  async function handleRenameAgent(id: number, title: string): Promise<void> {
+    await api.renameAgent(id, title);
+    await loadAgents();
+  }
+
+  async function handleStopAgent(id: number): Promise<void> {
+    await api.cancelAgent(id);
+    await loadAgents();
+  }
+
+  async function handleDeleteAgent(agent: AgentSession): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Delete agent “${agent.title}”? Its session state is discarded.`,
+        confirmLabel: "Delete",
+        variant: "danger",
+      }))
+    )
+      return;
+    await api.deleteAgent(agent.id);
+    if (activeAgentId === agent.id) setActiveAgentId(null);
+    await loadAgents();
   }
 
   async function handleSelectChat(chat: Chat): Promise<void> {
@@ -581,6 +766,7 @@ export default function App() {
   function handleNew(): void {
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") void handleCreateChat();
+    else if (sidebarMode === "agents") setActiveAgentId(null);
     else setCreateWorkspaceOpen(true);
   }
 
@@ -649,6 +835,26 @@ export default function App() {
     navigateWorkspace(ws.slug, null);
   }
 
+  // ---- Agents -----------------------------------------------------------
+  async function loadAgents(): Promise<AgentSession[]> {
+    try {
+      const list = await api.listAgents();
+      setAgents(list);
+      return list;
+    } catch {
+      setAgents([]);
+      return [];
+    }
+  }
+
+  // Lazily load agent sessions the first time the user enters agents mode
+  // (only when the feature is enabled).
+  useEffect(() => {
+    if (sidebarMode !== "agents" || agents !== null || !agentsEnabled) return;
+    void loadAgents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarMode, agentsEnabled]);
+
   function handleCreate(parentId: number | null): void {
     // Top-level "+ create" passes null; in that case, if a topic is currently
     // selected, nest the new one under it. Per-node "+ child" buttons pass
@@ -707,6 +913,15 @@ export default function App() {
             workspaces={workspaces}
             activeId={activeWorkspaceId}
             onSelect={handleSelectWorkspace}
+          />
+        }
+        agentSlot={
+          <AgentList
+            agents={agents ?? []}
+            activeId={activeAgentId}
+            enabled={agentsEnabled}
+            onSelect={(id) => setActiveAgentId(id)}
+            onRename={handleRenameAgent}
           />
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -824,10 +1039,77 @@ export default function App() {
                 </button>
               )}
             </>
-          ) : (
+          ) : sidebarMode === "workspaces" ? (
             <span className="truncate font-medium min-w-0 flex-1">
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
             </span>
+          ) : (
+            <>
+              {activeAgent ? (
+                <>
+                  <InlineTitle
+                    title={activeAgent.title}
+                    onRename={(t) => handleRenameAgent(activeAgent.id, t)}
+                    className="truncate font-medium min-w-0 flex-1"
+                    inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+                  />
+                  <AgentStatusBadge status={activeAgent.status} />
+                  {activeAgent.topic_id != null && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tid = activeAgent.topic_id;
+                        if (tid == null) return;
+                        changeMode("topics");
+                        void handleSelect(tid);
+                      }}
+                      className="group inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
+                      title="Open the associated topic"
+                      data-tooltip="Open the associated topic"
+                    >
+                      <MessagesSquare size={12} />
+                      <span className="max-w-[12rem] truncate">
+                        {findTitle(tree, activeAgent.topic_id) ?? "Topic"}
+                      </span>
+                      <ArrowUpRight
+                        size={12}
+                        className="opacity-60 transition group-hover:opacity-100"
+                      />
+                    </button>
+                  )}
+                  <button
+                    className="p-2 rounded hover:bg-surface shrink-0"
+                    aria-label="Agent settings"
+                    data-tooltip="Agent settings"
+                    onClick={() => setAgentSettingsOpen(true)}
+                  >
+                    <SettingsIcon size={18} />
+                  </button>
+                  {(activeAgent.status === "running" ||
+                    activeAgent.status === "pending" ||
+                    activeAgent.status === "needs_approval") && (
+                    <button
+                      className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
+                      aria-label="Stop agent"
+                      data-tooltip="Stop agent"
+                      onClick={() => void handleStopAgent(activeAgent.id)}
+                    >
+                      <Square size={18} />
+                    </button>
+                  )}
+                  <button
+                    className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
+                    aria-label="Delete agent"
+                    data-tooltip="Delete agent"
+                    onClick={() => void handleDeleteAgent(activeAgent)}
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </>
+              ) : (
+                <span className="truncate font-medium min-w-0 flex-1">Agents</span>
+              )}
+            </>
           )}
           {hasActiveDiscussion && (
             <RoleSelector
@@ -900,25 +1182,39 @@ export default function App() {
             ) : (
               <EmptyHero label="No chat selected." />
             )
-          ) : workspaces === null ? (
-            <EmptyHero label="Loading workspaces…" />
-          ) : activeWorkspace ? (
-            <WorkspaceView
-              key={activeWorkspace.id}
-              workspace={activeWorkspace}
-              initialPath={workspaceInitialPath}
-              onPathChange={(p) => navigateWorkspace(activeWorkspace.slug, p)}
-              onDeleted={async () => {
-                const list = await loadWorkspaces();
-                const next = list[0] ?? null;
-                setActiveWorkspaceId(next?.id ?? null);
-                navigateWorkspace(next?.slug ?? null, null);
-              }}
-              onSetRole={setRoleForActive}
-              onOpenRoleSelector={() => setRoleSelectorOpen(true)}
-            />
+          ) : sidebarMode === "workspaces" ? (
+            workspaces === null ? (
+              <EmptyHero label="Loading workspaces…" />
+            ) : activeWorkspace ? (
+              <WorkspaceView
+                key={activeWorkspace.id}
+                workspace={activeWorkspace}
+                initialPath={workspaceInitialPath}
+                onPathChange={(p) => navigateWorkspace(activeWorkspace.slug, p)}
+                onDeleted={async () => {
+                  const list = await loadWorkspaces();
+                  const next = list[0] ?? null;
+                  setActiveWorkspaceId(next?.id ?? null);
+                  navigateWorkspace(next?.slug ?? null, null);
+                }}
+                onSetRole={setRoleForActive}
+                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
+              />
+            ) : (
+              <EmptyHero label="No workspaces yet." />
+            )
           ) : (
-            <EmptyHero label="No workspaces yet." />
+            <AgentView
+              agents={agents ?? []}
+              agentId={activeAgentId}
+              enabled={agentsEnabled}
+              available={agentsAvailable}
+              unavailableReason={agentsUnavailableReason}
+              onReload={() => void loadAgents()}
+              onSelect={(id) => setActiveAgentId(id)}
+              onOpenSettings={() => setGlobalSettingsOpen(true)}
+              draftTopicId={agentDraftTopicId}
+            />
           )}
         </div>
       </main>
@@ -961,6 +1257,29 @@ export default function App() {
         />
       )}
 
+      {agentSettingsOpen && activeAgent && (
+        <AgentSettingsPanel
+          agent={activeAgent}
+          onClose={() => setAgentSettingsOpen(false)}
+          onSaved={(updated) => {
+            setAgents((prev) =>
+              (prev ?? []).map((a) => (a.id === updated.id ? updated : a)),
+            );
+            setAgentSettingsOpen(false);
+          }}
+          onArchived={() => {
+            setAgentSettingsOpen(false);
+            if (activeAgentId === activeAgent.id) setActiveAgentId(null);
+            void loadAgents();
+          }}
+          onDeleted={() => {
+            setAgentSettingsOpen(false);
+            if (activeAgentId === activeAgent.id) setActiveAgentId(null);
+            void loadAgents();
+          }}
+        />
+      )}
+
       {createWorkspaceOpen && (
         <CreateWorkspaceModal
           onClose={() => setCreateWorkspaceOpen(false)}
@@ -987,6 +1306,11 @@ export default function App() {
           onChatDeleted={(id) => {
             if (activeChat?.id === id) setActiveChat(null);
             setChatListReloadKey((k) => k + 1);
+          }}
+          onAgentRestored={() => void loadAgents()}
+          onAgentDeleted={(id) => {
+            if (activeAgentId === id) setActiveAgentId(null);
+            void loadAgents();
           }}
         />
       )}

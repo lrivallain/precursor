@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -13,6 +14,8 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
+from precursor.backend.services.agents.manager import get_agent_manager
+from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
     DEFAULT_GITHUB_REPO,
     DEFAULT_ISSUE_ASSOCIATIONS_ENABLED,
@@ -22,6 +25,11 @@ from precursor.backend.services.app_settings import (
     MAX_TOOL_ROUNDS_CEILING,
     azure_stt_ready,
     redact_llm_providers,
+    resolve_agents_approval_policy,
+    resolve_agents_default_model,
+    resolve_agents_enabled,
+    resolve_agents_system_prompt,
+    resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
     resolve_llm_provider,
@@ -37,6 +45,8 @@ from precursor.backend.services.mcp.precursor_server import (
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+logger = logging.getLogger(__name__)
 
 # Keys that contain secrets — never echoed back, only their presence is reported.
 _SECRET_KEYS = {"api_keys"}
@@ -119,6 +129,19 @@ async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, A
     }
 
 
+async def _agents_block(session: AsyncSession) -> dict[str, Any]:
+    ok, detail = agents_available()
+    return {
+        "agents_enabled": await resolve_agents_enabled(session),
+        "agents_available": ok,
+        "agents_unavailable_reason": None if ok else detail,
+        "agents_default_model": await resolve_agents_default_model(session),
+        "agents_approval_policy": await resolve_agents_approval_policy(session),
+        "agents_system_prompt": await resolve_agents_system_prompt(session),
+        "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
+    }
+
+
 @router.get("", response_model=SettingsRead)
 async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
     data = await _load_all(session)
@@ -127,6 +150,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system.update(await _mcp_http_block(session))
     system.update(await _stt_block(session))
     system.update(await _llm_block(session, data))
+    system.update(await _agents_block(session))
     return _as_read(data, system, docker_available()[0])
 
 
@@ -164,10 +188,26 @@ async def update_settings(
     for key, value in data.items():
         await _upsert(session, key, value)
     await session.commit()
+
+    # Reconcile the agents runtime live so toggling the setting doesn't require a
+    # restart (both start/stop are idempotent and a no-op when unavailable). The
+    # preference is already persisted, so a runtime hiccup here must not fail the
+    # save — log and carry on.
+    if "agents_enabled" in data:
+        manager = get_agent_manager()
+        try:
+            if await resolve_agents_enabled(session):
+                await manager.start()
+            else:
+                await manager.stop()
+        except Exception:
+            logger.exception("Agents runtime reconcile failed after settings update")
+
     refreshed = await _load_all(session)
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
     system.update(await _stt_block(session))
     system.update(await _llm_block(session, refreshed))
+    system.update(await _agents_block(session))
     return _as_read(refreshed, system, docker_available()[0])

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Archive,
+  Bot,
   ExternalLink,
   MessageSquare,
   MessagesSquare,
@@ -9,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { Chat, Topic } from "../lib/types";
+import type { AgentSession, Chat, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
@@ -18,40 +19,48 @@ interface Props {
   onTopicDeleted: (topicId: number) => void;
   onChatRestored: (chat: Chat) => void;
   onChatDeleted: (chatId: number) => void;
+  onAgentRestored: (agent: AgentSession) => void;
+  onAgentDeleted: (agentId: number) => void;
 }
 
-type Tab = "topics" | "chats";
+type Tab = "topics" | "chats" | "agents";
 
-// Archive is shared across modes: topics and chats are both archivable, and
-// each restores into its own section. The view lists both regardless of which
-// mode the user is currently in.
+// Archive is shared across modes: topics, chats and agent sessions are all
+// archivable, and each restores into its own section. The view lists all three
+// regardless of which mode the user is currently in.
 export function ArchivePanel({
   onClose,
   onTopicRestored,
   onTopicDeleted,
   onChatRestored,
   onChatDeleted,
+  onAgentRestored,
+  onAgentDeleted,
 }: Props) {
   const confirmAction = useConfirm();
   const [tab, setTab] = useState<Tab>("topics");
   const [topics, setTopics] = useState<Topic[] | null>(null);
   const [chats, setChats] = useState<Chat[] | null>(null);
+  const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       try {
-        const [t, c] = await Promise.all([
+        const [t, c, a] = await Promise.all([
           api.listArchivedTopics(),
           api.listArchivedChats(),
+          api.listArchivedAgents(),
         ]);
         setTopics(t);
         setChats(c);
+        setAgents(a);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setTopics([]);
         setChats([]);
+        setAgents([]);
       }
     })();
   }, []);
@@ -128,8 +137,45 @@ export function ArchivePanel({
     }
   }
 
+  async function restoreAgent(a: AgentSession): Promise<void> {
+    setBusy(`a${a.id}`);
+    setError(null);
+    try {
+      const updated = await api.unarchiveAgent(a.id);
+      setAgents((prev) => prev?.filter((x) => x.id !== a.id) ?? []);
+      onAgentRestored(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteAgent(a: AgentSession): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Permanently delete agent "${a.title}"? Its timeline and runtime session are removed.`,
+        confirmLabel: "Delete agent",
+        variant: "danger",
+      }))
+    )
+      return;
+    setBusy(`a${a.id}`);
+    setError(null);
+    try {
+      await api.deleteAgent(a.id);
+      setAgents((prev) => prev?.filter((x) => x.id !== a.id) ?? []);
+      onAgentDeleted(a.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const topicCount = topics?.length ?? 0;
   const chatCount = chats?.length ?? 0;
+  const agentCount = agents?.length ?? 0;
 
   return (
     <div
@@ -177,6 +223,17 @@ export function ArchivePanel({
             <MessageSquare size={14} /> Chats
             {chatCount > 0 && <span className="text-xs opacity-70">({chatCount})</span>}
           </button>
+          <button
+            className={`flex items-center gap-1.5 px-4 py-2 ${
+              tab === "agents"
+                ? "border-b-2 border-accent text-accent"
+                : "text-muted hover:text-text"
+            }`}
+            onClick={() => setTab("agents")}
+          >
+            <Bot size={14} /> Agents
+            {agentCount > 0 && <span className="text-xs opacity-70">({agentCount})</span>}
+          </button>
         </nav>
 
         <div className="flex-1 overflow-y-auto p-3">
@@ -221,28 +278,56 @@ export function ArchivePanel({
                 ))}
               </ul>
             )
-          ) : chats === null ? (
+          ) : tab === "chats" ? (
+            chats === null ? (
+              <p className="text-xs text-muted px-1">Loading…</p>
+            ) : chats.length === 0 ? (
+              <p className="text-xs text-muted px-1">No archived chats.</p>
+            ) : (
+              <ul className="space-y-2">
+                {chats.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-start gap-3 rounded border border-border bg-surface px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{c.title}</div>
+                      <div className="text-[11px] text-muted truncate">
+                        #{c.slug}
+                        {c.archived_at && <> · archived {new Date(c.archived_at).toLocaleString()}</>}
+                      </div>
+                    </div>
+                    <RestoreDeleteButtons
+                      busy={busy === `c${c.id}`}
+                      onRestore={() => void restoreChat(c)}
+                      onDelete={() => void deleteChat(c)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : agents === null ? (
             <p className="text-xs text-muted px-1">Loading…</p>
-          ) : chats.length === 0 ? (
-            <p className="text-xs text-muted px-1">No archived chats.</p>
+          ) : agents.length === 0 ? (
+            <p className="text-xs text-muted px-1">No archived agents.</p>
           ) : (
             <ul className="space-y-2">
-              {chats.map((c) => (
+              {agents.map((a) => (
                 <li
-                  key={c.id}
+                  key={a.id}
                   className="flex items-start gap-3 rounded border border-border bg-surface px-3 py-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{c.title}</div>
+                    <div className="text-sm font-medium truncate">{a.title}</div>
                     <div className="text-[11px] text-muted truncate">
-                      #{c.slug}
-                      {c.archived_at && <> · archived {new Date(c.archived_at).toLocaleString()}</>}
+                      {a.status}
+                      {a.archived_at && <> · archived {new Date(a.archived_at).toLocaleString()}</>}
                     </div>
                   </div>
                   <RestoreDeleteButtons
-                    busy={busy === `c${c.id}`}
-                    onRestore={() => void restoreChat(c)}
-                    onDelete={() => void deleteChat(c)}
+                    busy={busy === `a${a.id}`}
+                    onRestore={() => void restoreAgent(a)}
+                    onDelete={() => void deleteAgent(a)}
                   />
                 </li>
               ))}

@@ -310,3 +310,65 @@ async def resolve_mcp_http_enabled(session: AsyncSession) -> bool:
     if isinstance(db_value, bool):
         return db_value
     return DEFAULT_MCP_HTTP_ENABLED
+
+
+async def resolve_agents_enabled(session: AsyncSession) -> bool:
+    """Whether Agents mode (Copilot SDK) is enabled.
+
+    DB override on top of the ``agents_enabled`` env default. Note this is the
+    *preference*; whether the runtime is actually usable is a separate capability
+    probe (``services.agents.runtime.agents_available``).
+    """
+    db_value = await _get_db_value(session, "agents_enabled")
+    if isinstance(db_value, bool):
+        return db_value
+    return get_settings().agents_enabled
+
+
+async def resolve_agents_default_model(session: AsyncSession) -> str:
+    """Default model for new agent sessions (DB override on env default)."""
+    db_value = await _get_db_value(session, "agents_default_model")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value
+    return get_settings().agents_default_model
+
+
+AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+
+
+async def resolve_agents_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy gating agent actions (DB override on env default).
+
+    See ``Settings.agents_approval_policy``: ``manual`` asks for everything,
+    ``balanced`` auto-approves read-only actions, ``autonomous`` approves all.
+    """
+    db_value = await _get_db_value(session, "agents_approval_policy")
+    if isinstance(db_value, str) and db_value in AGENTS_APPROVAL_POLICIES:
+        return db_value
+    default = get_settings().agents_approval_policy
+    return default if default in AGENTS_APPROVAL_POLICIES else "balanced"
+
+
+async def resolve_agents_system_prompt(session: AsyncSession) -> str:
+    """Extra system-message preamble appended to every agent session.
+
+    DB override on top of the ``agents_system_prompt`` env default. The SDK base
+    prompt isn't ours to set, so this is appended (alongside any topic binding).
+    """
+    db_value = await _get_db_value(session, "agents_system_prompt")
+    if isinstance(db_value, str):
+        return db_value
+    return get_settings().agents_system_prompt
+
+
+async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
+    """Seconds a running session may stall before the watchdog interrupts it.
+
+    DB override on top of the ``agents_watchdog_timeout_seconds`` env default.
+    Clamped to a sane floor so a misconfigured value can't kill live turns.
+    """
+    db_value = await _get_db_value(session, "agents_watchdog_timeout_seconds")
+    value = (
+        db_value if isinstance(db_value, int) else get_settings().agents_watchdog_timeout_seconds
+    )
+    return max(30, int(value))

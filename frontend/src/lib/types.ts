@@ -138,6 +138,77 @@ export interface ReminderCreate {
   note?: string | null;
 }
 
+// --- Agents mode (Copilot SDK) ---
+
+export type AgentStatus =
+  | "pending"
+  | "running"
+  | "idle"
+  | "needs_approval"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export interface AgentSession {
+  id: number;
+  copilot_session_id: string | null;
+  title: string;
+  task_prompt: string;
+  active_prompt: string | null;
+  status: AgentStatus;
+  result_summary: string | null;
+  error: string | null;
+  model: string | null;
+  topic_id: number | null;
+  chat_id: number | null;
+  last_activity_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentSessionCreate {
+  task: string;
+  title?: string | null;
+  model?: string | null;
+  topic_id?: number | null;
+  chat_id?: number | null;
+}
+
+// A normalised SDK event, shaped for the workflow-step timeline.
+export interface AgentEvent {
+  kind: string;
+  text: string | null;
+  tool_name: string | null;
+  tool_status: string | null;
+  request_id: string | null;
+  data: Record<string, unknown> | null;
+  at: string | null;
+}
+
+export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
+
+// A model exposed by the agents runtime, for the default-model picker.
+export interface AgentModelInfo {
+  id: string;
+  name: string;
+}
+
+// An active "approve for session" grant, shown in the Settings security recap.
+export interface AgentPermissionGrant {
+  agent_id: number;
+  type: string;
+  title: string | null;
+  target: string | null;
+  at: string | null;
+}
+
+export interface AgentLink {
+  topic_id?: number | null;
+  chat_id?: number | null;
+}
+
 export interface Attachment {
   id: number;
   topic_id?: number | null;
@@ -156,6 +227,9 @@ export interface Message {
   role: MessageRole;
   content: string;
   tool_calls: string | null;
+  agent_session_id?: number | null;
+  /** The linked agent's public (UUID) id — used for deep links / the /agent command. */
+  agent_session_public_id?: string | null;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   created_at: string;
@@ -176,6 +250,12 @@ export interface NoteDraftAttachment {
   original_filename: string;
   created_at: string;
 }
+
+// Default approval policy gating agent actions:
+//  - "manual":     ask before every action
+//  - "balanced":   auto-approve read-only actions, ask for the rest
+//  - "autonomous": auto-approve everything
+export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
 export interface Settings {
   theme: "light" | "dark" | "system";
@@ -218,6 +298,16 @@ export interface Settings {
   cmd_runner_pids_limit: number;
   cmd_runner_cpus: string;
   docker_available: boolean;
+  // Agents mode (Copilot SDK): the enabled preference, whether the runtime is
+  // usable right now (probe), an optional reason when it isn't, and the default
+  // model for new agent sessions.
+  agents_enabled: boolean;
+  agents_available: boolean;
+  agents_unavailable_reason: string | null;
+  agents_default_model: string;
+  agents_approval_policy: AgentApprovalPolicy;
+  agents_system_prompt: string;
+  agents_watchdog_timeout_seconds: number;
 }
 
 export interface SettingsUpdate {
@@ -249,6 +339,11 @@ export interface SettingsUpdate {
   cmd_runner_memory?: string;
   cmd_runner_pids_limit?: number;
   cmd_runner_cpus?: string;
+  agents_enabled?: boolean;
+  agents_default_model?: string;
+  agents_approval_policy?: AgentApprovalPolicy;
+  agents_system_prompt?: string;
+  agents_watchdog_timeout_seconds?: number;
 }
 
 export interface IssueLabel {

@@ -91,6 +91,33 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "cmd-runner" / "scratch")
 
+    # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
+    # by default at the env level; the effective on/off lives in the DB app
+    # settings (Settings → Agents) so it can be toggled at runtime. The SDK
+    # persists each session's state under ``agents_home`` (its ``COPILOT_HOME``).
+    agents_enabled: bool = False
+    # Model used for new agent sessions when the caller doesn't specify one.
+    agents_default_model: str = "claude-sonnet-4.5"
+    # Default approval policy gating an agent's actions. One of:
+    #   "manual"     — ask before every action (most cautious)
+    #   "balanced"   — auto-approve read-only actions, ask for writes/shell/etc.
+    #   "autonomous" — auto-approve everything (no prompts)
+    agents_approval_policy: str = "balanced"
+    # Extra system-message preamble appended to every agent session, on top of
+    # the SDK's base prompt (which we cannot override) and any topic binding.
+    # Empty by default; editable at runtime via Settings → Agents.
+    agents_system_prompt: str = ""
+    # How long (seconds) a running agent session may go without any new runtime
+    # event before the watchdog marks it ``interrupted`` (resumable). Guards
+    # against a stuck/runaway turn pinning a session in "running" forever.
+    agents_watchdog_timeout_seconds: int = 600
+
+    @cached_property
+    def agents_home(self) -> str:
+        from pathlib import Path
+
+        return str(Path(self.data_dir).resolve() / "agents" / "copilot-home")
+
 
 @lru_cache
 def get_settings() -> Settings:

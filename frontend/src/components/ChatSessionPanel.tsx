@@ -849,6 +849,7 @@ export function ChatSessionPanel({
                   role={m.role}
                   content={m.content}
                   attachments={m.attachments}
+                  agentSessionId={m.agent_session_id}
                   onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
                 />
               );
