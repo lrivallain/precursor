@@ -924,6 +924,7 @@ export function AgentView({
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
   const [newStreaming, setNewStreaming] = useState(false);
   const [followUp, setFollowUp] = useState("");
+  const [followUpStreaming, setFollowUpStreaming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1014,6 +1015,14 @@ export function AgentView({
   useEffect(() => {
     selectedRef.current = selected != null;
   }, [selected]);
+
+  // Default the follow-up streaming toggle to the session's current mode when
+  // switching agents, so the checkbox reflects how the next turn will run.
+  const selectedId = selected?.id;
+  const selectedStreaming = selected?.streaming ?? false;
+  useEffect(() => {
+    setFollowUpStreaming(selectedStreaming);
+  }, [selectedId, selectedStreaming]);
 
   const loadEvents = useCallback(async (id: number): Promise<void> => {
     try {
@@ -1133,7 +1142,7 @@ export function AgentView({
     setBusy(true);
     setError(null);
     try {
-      await api.sendToAgent(selected.id, followUp.trim());
+      await api.sendToAgent(selected.id, followUp.trim(), followUpStreaming);
       setFollowUp("");
       onReload();
     } catch (e) {
@@ -1380,6 +1389,16 @@ export function AgentView({
         selected.status === "completed" ||
         selected.status === "interrupted") && (
         <div className="shrink-0 border-t border-border px-5 py-3">
+          <label className="mb-1.5 flex w-fit items-center gap-2 text-[11px] text-muted">
+            <input
+              type="checkbox"
+              checked={followUpStreaming}
+              onChange={(e) => setFollowUpStreaming(e.target.checked)}
+              disabled={busy}
+              className="accent-accent"
+            />
+            Stream the response live for the next prompt
+          </label>
           <Composer
             value={followUp}
             onChange={setFollowUp}

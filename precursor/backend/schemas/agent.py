@@ -57,6 +57,10 @@ class AgentSendRequest(BaseModel):
     """Send a follow-up message into a running/idle agent session."""
 
     message: str = Field(min_length=1)
+    # Optional per-turn streaming override. When set and different from the
+    # session's current mode, the live session is recreated so the next turn
+    # streams (or stops streaming).
+    streaming: bool | None = None
 
 
 class AgentUpdateRequest(BaseModel):

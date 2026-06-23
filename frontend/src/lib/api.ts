@@ -231,10 +231,10 @@ export const api = {
   listAgentPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
   resetAgentPermissions: () =>
     request<{ cleared: number }>(`/api/agents/permissions/reset`, { method: "POST" }),
-  sendToAgent: (id: number | string, message: string) =>
+  sendToAgent: (id: number | string, message: string, streaming?: boolean) =>
     request<AgentSession>(`/api/agents/${id}/send`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, streaming }),
     }),
   cancelAgent: (id: number) =>
     request<AgentSession>(`/api/agents/${id}/cancel`, { method: "POST" }),

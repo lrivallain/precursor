@@ -88,6 +88,10 @@ class _LiveSession:
     # SQLite lock there would otherwise raise and the SDK turns a raising handler
     # into an opaque, detail-less denial (even in autonomous mode).
     approval_policy: str | None = None
+    # Whether this live SDK session was created in streaming mode. Tracked so a
+    # follow-up that flips the toggle can detect the mismatch and recreate the
+    # session (streaming is fixed at SDK-session creation time).
+    streaming: bool = False
     # The prompt for the turn currently in flight, set when we send a task or a
     # follow-up and cleared once posted to the linked container. Lets us post
     # *every* turn's exchange to the topic/chat (not just the first), keyed to
@@ -368,7 +372,7 @@ class AgentManager:
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
         sdk_session = await self._client.create_session(**kwargs)
-        live = _LiveSession(sdk_session=sdk_session)
+        live = _LiveSession(sdk_session=sdk_session, streaming=bool(agent.streaming))
         self._live[agent.id] = live
 
         # Wire the event stream. The SDK invokes this synchronously; defer the
@@ -395,10 +399,19 @@ class AgentManager:
         )
         await live.sdk_session.send(agent.task_prompt)
 
-    async def send_message(self, agent_id: int, text: str) -> None:
+    async def send_message(
+        self, agent_id: int, text: str, *, streaming: bool | None = None
+    ) -> None:
         agent = await self._load(agent_id)
         if agent is None:
             return
+        if streaming is not None and bool(agent.streaming) != streaming:
+            # Streaming is baked into the SDK session at creation, so persist the
+            # new preference and drop any live session — _ensure_live resumes the
+            # same copilot session (context preserved) with the new mode.
+            await self._patch(agent_id, streaming=streaming)
+            agent.streaming = streaming
+            await self.teardown_session(agent_id)
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
         prompt = text.strip() or None

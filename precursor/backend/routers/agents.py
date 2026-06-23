@@ -179,7 +179,7 @@ async def send_to_agent(
     await _require_runtime(session)
     agent = await _get_or_404(session, agent_id)
     mgr = get_agent_manager()
-    mgr.enqueue(mgr.send_message(agent.id, payload.message))
+    mgr.enqueue(mgr.send_message(agent.id, payload.message, streaming=payload.streaming))
     return agent
 
 
