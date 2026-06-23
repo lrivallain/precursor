@@ -604,22 +604,46 @@ class AgentManager:
         )
 
     async def _notify_back(self, agent: AgentSession) -> None:
-        """Post a system message to the linked container when a task finishes.
+        """Post the agent exchange into the linked container when a task finishes.
 
-        Mirrors the reminder ticker: the discussion goes unread + notifies. The
-        agent may *also* have posted richer content itself via ``post_message``.
+        Posts the initial **prompt** (as a user turn) and the agent's **answer**
+        (as an assistant turn), both tagged with ``agent_session_id`` so the UI
+        renders an "agent exchange" badge linking back to ``/agents/{id}``. Like
+        the reminder ticker, the discussion goes unread + notifies.
+
+        Guarded to post **once** per agent (the initial task exchange): later
+        idles from follow-up turns are skipped, detected via an existing
+        agent-tagged message in the container.
         """
         if agent.topic_id is None and agent.chat_id is None:
             return
-        summary = (agent.result_summary or "").strip() or "Agent task finished."
-        content = f"🤖 Agent **{agent.title}** finished.\n\n{summary}"
+        from sqlalchemy import select
+
+        answer = (agent.result_summary or "").strip() or "Agent task finished."
+        prompt = (agent.task_prompt or "").strip()
         async with SessionLocal() as session:
+            already = await session.scalar(
+                select(Message.id).where(Message.agent_session_id == agent.id).limit(1)
+            )
+            if already is not None:
+                return
+            if prompt:
+                session.add(
+                    Message(
+                        topic_id=agent.topic_id,
+                        chat_id=agent.chat_id,
+                        role=MessageRole.USER,
+                        content=prompt,
+                        agent_session_id=agent.id,
+                    )
+                )
             session.add(
                 Message(
                     topic_id=agent.topic_id,
                     chat_id=agent.chat_id,
-                    role=MessageRole.SYSTEM,
-                    content=content,
+                    role=MessageRole.ASSISTANT,
+                    content=answer,
+                    agent_session_id=agent.id,
                 )
             )
             await session.commit()

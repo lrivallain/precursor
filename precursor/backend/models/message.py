@@ -45,6 +45,14 @@ class Message(Base, TimestampMixin):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # Set when this message was posted into the container by an Agents-mode
+    # session (the prompt + answer of an agent exchange). Lets the UI render an
+    # "agent exchange" badge with a deep link back to /agents/{id}. SET NULL on
+    # agent deletion so the exchange text survives but the link disappears.
+    agent_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+
     # Optional serialized tool-call payload (JSON string) for assistant turns.
     tool_calls: Mapped[str | None] = mapped_column(Text, nullable=True)
 

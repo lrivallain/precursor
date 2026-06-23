@@ -35,6 +35,7 @@ class AgentSessionRead(BaseModel):
     topic_id: int | None = None
     chat_id: int | None = None
     last_activity_at: UtcDateTime | None = None
+    archived_at: UtcDateTime | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
 

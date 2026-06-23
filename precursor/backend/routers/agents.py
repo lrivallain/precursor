@@ -8,6 +8,7 @@ are streamed via the shared event bus (``agent.changed``) and read back through
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -89,12 +90,28 @@ async def list_agents(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentSession]:
-    stmt = select(AgentSession).order_by(AgentSession.created_at.desc())
+    stmt = (
+        select(AgentSession)
+        .where(AgentSession.archived_at.is_(None))
+        .order_by(AgentSession.created_at.desc())
+    )
     if topic_id is not None:
         stmt = stmt.where(AgentSession.topic_id == topic_id)
     if chat_id is not None:
         stmt = stmt.where(AgentSession.chat_id == chat_id)
     result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/archived", response_model=list[AgentSessionRead])
+async def list_archived_agents(
+    session: AsyncSession = Depends(get_session),
+) -> list[AgentSession]:
+    result = await session.execute(
+        select(AgentSession)
+        .where(AgentSession.archived_at.is_not(None))
+        .order_by(AgentSession.archived_at.desc())
+    )
     return list(result.scalars().all())
 
 
@@ -221,6 +238,37 @@ async def link_agent(
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
     )
+    return agent
+
+
+@router.post("/{agent_id}/archive", response_model=AgentSessionRead)
+async def archive_agent(
+    agent_id: int, session: AsyncSession = Depends(get_session)
+) -> AgentSession:
+    """Hide the session from the active list (kept for history). Mirrors topics."""
+    agent = await _get_or_404(session, agent_id)
+    if agent.archived_at is None:
+        agent.archived_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(agent)
+        await publish_agent_changed(
+            agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+        )
+    return agent
+
+
+@router.post("/{agent_id}/unarchive", response_model=AgentSessionRead)
+async def unarchive_agent(
+    agent_id: int, session: AsyncSession = Depends(get_session)
+) -> AgentSession:
+    agent = await _get_or_404(session, agent_id)
+    if agent.archived_at is not None:
+        agent.archived_at = None
+        await session.commit()
+        await session.refresh(agent)
+        await publish_agent_changed(
+            agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+        )
     return agent
 
 

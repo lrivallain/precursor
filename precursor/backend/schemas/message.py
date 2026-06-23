@@ -65,6 +65,7 @@ class MessageRead(BaseModel):
     role: MessageRole
     content: str
     tool_calls: str | None = None
+    agent_session_id: int | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     created_at: datetime
