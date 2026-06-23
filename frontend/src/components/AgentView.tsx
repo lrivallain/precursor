@@ -345,6 +345,7 @@ interface ToolStep {
   toolName: string | null;
   input?: string;
   output?: string;
+  done?: boolean;
   pending?: { data: Record<string, unknown>; requestId: string | null };
 }
 
@@ -421,7 +422,11 @@ function ToolBox({
   const [open, setOpen] = useState(false);
   const detailOpen = open || showToolDetail;
   const hasDetail = Boolean(step.input || step.output);
-  const status = step.pending ? "awaiting approval" : step.output !== undefined ? "done" : "running";
+  const status = step.pending
+    ? "awaiting approval"
+    : step.done
+      ? "done"
+      : "running";
   const style = CATEGORY_STYLE.tool;
   const box = step.pending ? CATEGORY_STYLE.permission.box : style.box;
   const marker = step.pending ? CATEGORY_STYLE.permission.marker : style.marker;
@@ -628,11 +633,16 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
       if (ev.tool_name) step.toolName = ev.tool_name;
       const input = pick(ev.data, "arguments", "input");
       if (input) step.input = input;
-      // Output comes only from the tool-complete event (or its text body).
-      if (kind.includes("complete") || kind.includes("result")) {
+      // A tool is "done" when its completion event arrives — independent of
+      // whether it carried any output text (many tools complete silently).
+      // Partial-result events stream interim output but don't finish the tool.
+      const isComplete = kind.includes("complete");
+      const isFinalResult = kind.includes("result") && !kind.includes("partial");
+      if (isComplete || isFinalResult) {
         const output = pick(ev.data, "result", "output") ?? ev.text ?? undefined;
         if (output) step.output = output;
       }
+      if (isComplete || isFinalResult) step.done = true;
       if (kind === "permission_request") {
         step.pending = { data: (ev.data ?? {}) as Record<string, unknown>, requestId: ev.request_id };
       }
