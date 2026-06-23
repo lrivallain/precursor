@@ -5,8 +5,11 @@ import {
   Brain,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
   Cog,
+  Eye,
   FileText,
   Globe,
   Loader2,
@@ -236,6 +239,82 @@ function ToggleChip({
       {active ? <Check size={10} /> : <X size={10} className="opacity-50" />}
       {label}
     </button>
+  );
+}
+
+// Collapsible right-hand panel holding the workflow "Show" filters — mirrors
+// the conversation-stats aside on topics/chats. Collapse state is persisted.
+const SHOW_PANEL_KEY = "precursor:agent-show-panel:collapsed";
+
+function AgentShowPanel({
+  showPrefs,
+  toggleShow,
+}: {
+  showPrefs: ShowPrefs;
+  toggleShow: (k: keyof ShowPrefs) => void;
+}) {
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(SHOW_PANEL_KEY) === "1";
+  });
+  useEffect(() => {
+    window.localStorage.setItem(SHOW_PANEL_KEY, collapsed ? "1" : "0");
+  }, [collapsed]);
+
+  if (collapsed) {
+    return (
+      <aside className="flex w-9 shrink-0 flex-col items-center border-l border-border bg-surface/40 px-1 py-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          className="rounded p-1.5 text-muted hover:bg-surface"
+          data-tooltip="Show workflow filters"
+          aria-label="Show workflow filters"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <Eye size={16} className="mt-2 text-muted" />
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="flex w-52 shrink-0 flex-col border-l border-border bg-surface/30">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          <Eye size={14} />
+          <span>Show</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          className="rounded p-1 text-muted hover:bg-surface"
+          data-tooltip="Collapse filters"
+          aria-label="Collapse filters"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      <div className="flex flex-col items-start gap-1.5 p-3">
+        <ToggleChip active={showPrefs.system} onClick={() => toggleShow("system")} label="System" />
+        <ToggleChip
+          active={showPrefs.assistant}
+          onClick={() => toggleShow("assistant")}
+          label="Assistant"
+        />
+        <ToggleChip
+          active={showPrefs.thinking}
+          onClick={() => toggleShow("thinking")}
+          label="Thinking"
+        />
+        <ToggleChip active={showPrefs.tool} onClick={() => toggleShow("tool")} label="Tool" />
+        <ToggleChip
+          active={showPrefs.lifecycle}
+          onClick={() => toggleShow("lifecycle")}
+          label="Lifecycle"
+        />
+      </div>
+    </aside>
   );
 }
 
@@ -1051,36 +1130,10 @@ export function AgentView({
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      {/* Slim sub-toolbar: workflow display toggles. The agent title, topic
-          association and stop/delete controls live in the header / settings. */}
-      <div className="shrink-0 border-b border-border px-5 pb-2.5 pt-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
-          <div className="flex items-center gap-1">
-            <span className="text-muted">Show</span>
-            <ToggleChip active={showPrefs.system} onClick={() => toggleShow("system")} label="System" />
-            <ToggleChip
-              active={showPrefs.assistant}
-              onClick={() => toggleShow("assistant")}
-              label="Assistant"
-            />
-            <ToggleChip
-              active={showPrefs.thinking}
-              onClick={() => toggleShow("thinking")}
-              label="Thinking"
-            />
-            <ToggleChip active={showPrefs.tool} onClick={() => toggleShow("tool")} label="Tool" />
-            <ToggleChip
-              active={showPrefs.lifecycle}
-              onClick={() => toggleShow("lifecycle")}
-              label="Lifecycle"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Scrollable workflow region. */}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-5 py-3">
+    <div className="flex h-full min-h-0 w-full">
+      <div className="mx-auto flex h-full min-w-0 w-full max-w-3xl flex-col">
+        {/* Scrollable workflow region. */}
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-5 py-3">
         {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
 
         {selected.status === "needs_approval" && (
@@ -1200,6 +1253,8 @@ export function AgentView({
           />
         </div>
       )}
+      </div>
+      <AgentShowPanel showPrefs={showPrefs} toggleShow={toggleShow} />
     </div>
   );
 }
