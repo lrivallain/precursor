@@ -2,15 +2,17 @@ import { useMemo, useState } from "react";
 import { Bot, Search } from "lucide-react";
 import type { AgentSession } from "../lib/types";
 import { AgentStatusBadge, agentRelativeTime } from "./AgentStatusBadge";
+import { InlineTitle } from "./InlineTitle";
 
 interface AgentListProps {
   agents: AgentSession[];
   activeId: number | null;
   enabled: boolean;
   onSelect: (id: number) => void;
+  onRename: (id: number, title: string) => void | Promise<void>;
 }
 
-export function AgentList({ agents, activeId, enabled, onSelect }: AgentListProps) {
+export function AgentList({ agents, activeId, enabled, onSelect, onRename }: AgentListProps) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -56,23 +58,34 @@ export function AgentList({ agents, activeId, enabled, onSelect }: AgentListProp
               const isActive = a.id === activeId;
               return (
                 <li key={a.id}>
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onSelect(a.id)}
-                    className={`w-full rounded px-2 py-1.5 text-left ${
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelect(a.id);
+                      }
+                    }}
+                    className={`group w-full cursor-pointer rounded px-2 py-1.5 text-left ${
                       isActive ? "bg-accent/15 text-accent" : "hover:bg-surface"
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <Bot size={14} className="shrink-0 opacity-70" />
-                      <span className="flex-1 truncate text-sm">{a.title}</span>
+                      <InlineTitle
+                        title={a.title}
+                        onRename={(t) => onRename(a.id, t)}
+                        className="flex-1 truncate text-sm"
+                      />
                       <AgentStatusBadge status={a.status} />
                     </div>
                     <div className="mt-0.5 pl-6 text-[10px] text-muted">
                       {agentRelativeTime(a.last_activity_at ?? a.created_at)}
                       {a.topic_id != null && ` · topic #${a.topic_id}`}
                     </div>
-                  </button>
+                  </div>
                 </li>
               );
             })}

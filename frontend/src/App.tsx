@@ -831,6 +831,7 @@ export default function App() {
             activeId={activeAgentId}
             enabled={agentsEnabled}
             onSelect={(id) => setActiveAgentId(id)}
+            onRename={handleRenameAgent}
           />
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
