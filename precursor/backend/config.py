@@ -73,6 +73,18 @@ class Settings(BaseSettings):
     cmd_runner_pids_limit: int = 256
     cmd_runner_cpus: str = "1"
 
+    # MCP client — the chat/tool loop keeps each enabled server's session warm
+    # across turns instead of re-spawning/initialising it every message (that
+    # cold start dominated time-to-first-token). A warm session is released
+    # after this many seconds with no tool calls; set to 0 to disable pooling
+    # and open a fresh session per turn.
+    mcp_idle_ttl_seconds: int = 600
+    # GitHub MCP (remote) advertises one tool group per toolset. Requesting
+    # "all" floods the prompt with hundreds of tools, slowing the first token.
+    # Comma-separated list sent as the ``X-MCP-Toolsets`` header; use "all" to
+    # restore the full catalogue.
+    github_mcp_toolsets: str = "context,repos,issues,pull_requests,users"
+
     @cached_property
     def cmd_runner_scratch_dir(self) -> str:
         from pathlib import Path

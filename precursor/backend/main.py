@@ -83,6 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await scheduler.stop()
         await reminder_ticker.stop()
+        from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+        await get_mcp_client_manager().aclose()
 
 
 class _McpHttpGate:

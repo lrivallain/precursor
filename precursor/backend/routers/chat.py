@@ -9,7 +9,6 @@ import logging
 import re
 import zipfile
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
 from typing import Any, Literal
 from xml.etree import ElementTree as ET
 
@@ -591,33 +590,19 @@ async def _run_message_stream(
         "data": json.dumps(user_echo),
     }
 
-    async with AsyncExitStack() as stack:
-        # Open one live MCP session per enabled server. Each yields a
-        # (session, tools) tuple; we aggregate all tools for the LLM.
-        sessions: dict[str, Any] = {}
-        tool_to_server: dict[str, tuple[str, str]] = {}  # qualified -> (server, raw_name)
-        aggregated_tools: list[MCPToolDef] = []
+    async with manager.acquired(enabled_servers, github_token=github_token) as active:
+        # Warm MCP sessions for the enabled servers (reused across turns). Each
+        # contributes tools we aggregate for the LLM; failures are surfaced but
+        # don't abort the turn.
+        tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
+        for server_name, err in active.unavailable:
+            logger.warning("MCP server %s unavailable: %s", server_name, err)
+            yield {
+                "event": "system",
+                "data": json.dumps({"message": f"MCP server '{server_name}' unavailable: {err}"}),
+            }
 
-        for server_name in enabled_servers:
-            try:
-                mcp_session, tools = await stack.enter_async_context(
-                    manager.open_session(server_name, github_token=github_token)
-                )
-            except Exception as exc:
-                logger.warning("MCP server %s unavailable: %s", server_name, exc)
-                yield {
-                    "event": "system",
-                    "data": json.dumps(
-                        {"message": f"MCP server '{server_name}' unavailable: {exc}"}
-                    ),
-                }
-                continue
-            sessions[server_name] = mcp_session
-            for t in tools:
-                tool_to_server[t.qualified_name] = (server_name, t.name)
-            aggregated_tools.extend(tools)
-
-        provider_tools = _mcp_tools_to_provider(aggregated_tools)
+        provider_tools = _mcp_tools_to_provider(active.tools)
 
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=system_prompt),
@@ -790,8 +775,7 @@ async def _run_message_stream(
                             is_error = True
                         if args is not None:
                             try:
-                                mcp_session = sessions[server_name]
-                                result = await mcp_session.call_tool(raw_name, args)
+                                result = await active.call_tool(server_name, raw_name, args)
                                 result_text = _format_tool_result(result)
                                 is_error = bool(getattr(result, "isError", False))
                             except Exception as exc:
