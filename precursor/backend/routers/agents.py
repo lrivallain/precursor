@@ -45,8 +45,19 @@ async def _require_runtime(session: AsyncSession) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Agents runtime unavailable: {detail}")
 
 
-async def _get_or_404(session: AsyncSession, agent_id: int) -> AgentSession:
-    agent = await session.get(AgentSession, agent_id)
+async def _get_or_404(session: AsyncSession, agent_ref: str) -> AgentSession:
+    """Resolve an agent by its public UUID (``copilot_session_id``) or, as a
+    fallback, its legacy integer id. Deep links and the ``/agent`` command use
+    the UUID; older bookmarks may still carry the integer id."""
+    agent: AgentSession | None = None
+    if agent_ref.isdigit():
+        agent = await session.get(AgentSession, int(agent_ref))
+    if agent is None:
+        agent = (
+            await session.execute(
+                select(AgentSession).where(AgentSession.copilot_session_id == agent_ref)
+            )
+        ).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent session not found")
     return agent
@@ -146,48 +157,48 @@ async def create_agent(
 
 
 @router.get("/{agent_id}", response_model=AgentSessionRead)
-async def get_agent(agent_id: int, session: AsyncSession = Depends(get_session)) -> AgentSession:
+async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> AgentSession:
     return await _get_or_404(session, agent_id)
 
 
 @router.get("/{agent_id}/events", response_model=list[AgentEvent])
 async def get_agent_events(
-    agent_id: int, session: AsyncSession = Depends(get_session)
+    agent_id: str, session: AsyncSession = Depends(get_session)
 ) -> list[AgentEvent]:
-    await _get_or_404(session, agent_id)
-    return await get_agent_manager().get_events(agent_id)
+    agent = await _get_or_404(session, agent_id)
+    return await get_agent_manager().get_events(agent.id)
 
 
 @router.post("/{agent_id}/send", response_model=AgentSessionRead)
 async def send_to_agent(
-    agent_id: int,
+    agent_id: str,
     payload: AgentSendRequest,
     session: AsyncSession = Depends(get_session),
 ) -> AgentSession:
     await _require_runtime(session)
     agent = await _get_or_404(session, agent_id)
     mgr = get_agent_manager()
-    mgr.enqueue(mgr.send_message(agent_id, payload.message))
+    mgr.enqueue(mgr.send_message(agent.id, payload.message))
     return agent
 
 
 @router.post("/{agent_id}/cancel", response_model=AgentSessionRead)
-async def cancel_agent(agent_id: int, session: AsyncSession = Depends(get_session)) -> AgentSession:
+async def cancel_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> AgentSession:
     agent = await _get_or_404(session, agent_id)
-    await get_agent_manager().cancel(agent_id)
+    await get_agent_manager().cancel(agent.id)
     await session.refresh(agent)
     return agent
 
 
 @router.post("/{agent_id}/permission", response_model=AgentSessionRead)
 async def resolve_permission(
-    agent_id: int,
+    agent_id: str,
     payload: AgentPermissionDecision,
     session: AsyncSession = Depends(get_session),
 ) -> AgentSession:
     agent = await _get_or_404(session, agent_id)
     matched = await get_agent_manager().resolve_permission(
-        agent_id, payload.request_id, payload.decision
+        agent.id, payload.request_id, payload.decision
     )
     if not matched:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No pending permission request")
@@ -203,7 +214,7 @@ async def resolve_permission(
 
 @router.patch("/{agent_id}", response_model=AgentSessionRead)
 async def update_agent(
-    agent_id: int,
+    agent_id: str,
     payload: AgentUpdateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> AgentSession:
@@ -220,7 +231,7 @@ async def update_agent(
 
 @router.patch("/{agent_id}/link", response_model=AgentSessionRead)
 async def link_agent(
-    agent_id: int,
+    agent_id: str,
     payload: AgentLinkRequest,
     session: AsyncSession = Depends(get_session),
 ) -> AgentSession:
@@ -234,7 +245,7 @@ async def link_agent(
     await session.refresh(agent)
     # Drop the live session so the bound-topic context is re-injected on next use.
     if topic_changed:
-        await get_agent_manager().teardown_session(agent_id)
+        await get_agent_manager().teardown_session(agent.id)
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
     )
@@ -243,7 +254,7 @@ async def link_agent(
 
 @router.post("/{agent_id}/archive", response_model=AgentSessionRead)
 async def archive_agent(
-    agent_id: int, session: AsyncSession = Depends(get_session)
+    agent_id: str, session: AsyncSession = Depends(get_session)
 ) -> AgentSession:
     """Hide the session from the active list (kept for history). Mirrors topics."""
     agent = await _get_or_404(session, agent_id)
@@ -259,7 +270,7 @@ async def archive_agent(
 
 @router.post("/{agent_id}/unarchive", response_model=AgentSessionRead)
 async def unarchive_agent(
-    agent_id: int, session: AsyncSession = Depends(get_session)
+    agent_id: str, session: AsyncSession = Depends(get_session)
 ) -> AgentSession:
     agent = await _get_or_404(session, agent_id)
     if agent.archived_at is not None:
@@ -273,10 +284,10 @@ async def unarchive_agent(
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_agent(agent_id: int, session: AsyncSession = Depends(get_session)) -> None:
+async def delete_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> None:
     agent = await _get_or_404(session, agent_id)
-    topic_id, chat_id = agent.topic_id, agent.chat_id
-    await get_agent_manager().teardown_session(agent_id, forget=True)
+    aid, topic_id, chat_id = agent.id, agent.topic_id, agent.chat_id
+    await get_agent_manager().teardown_session(aid, forget=True)
     await session.delete(agent)
     await session.commit()
-    await publish_agent_changed(agent_session_id=agent_id, topic_id=topic_id, chat_id=chat_id)
+    await publish_agent_changed(agent_session_id=aid, topic_id=topic_id, chat_id=chat_id)

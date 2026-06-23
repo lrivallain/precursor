@@ -15,6 +15,7 @@ table (see ``AgentEventRecord``) so it survives restarts and session teardown.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -61,10 +62,20 @@ class AgentSession(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # The SDK session id — the durable resume handle. Null until the runtime has
-    # created the session (i.e. while ``status == "pending"``).
+    # The SDK session id — the durable resume handle and the *public* identifier
+    # used in deep links and the ``/agent`` command. We mint it ourselves (a
+    # UUID) at row creation and hand it to ``create_session(session_id=...)``,
+    # which the SDK adopts as its own session id. Generating it eagerly (rather
+    # than waiting for the runtime to assign one) means every session has a
+    # stable, shareable id from the moment it exists — even while ``pending`` or
+    # if it never connects. Legacy rows created before this may still be null
+    # until the runtime backfills one on first connect.
     copilot_session_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, unique=True, index=True
+        String(128),
+        nullable=True,
+        unique=True,
+        index=True,
+        default=lambda: str(uuid.uuid4()),
     )
 
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="Agent task")

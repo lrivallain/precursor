@@ -78,20 +78,21 @@ interface AppRoute {
   mode: SidebarMode;
   topicSlug: string | null;
   chatSlug: string | null;
-  agentId: number | null;
+  // The raw agent path segment — a public UUID for new links, or a legacy
+  // integer id. Resolved to an internal numeric id once the agent list loads.
+  agentRef: string | null;
 }
 
 function parseAppRoute(): AppRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   if (segs[0] === "ws")
-    return { mode: "workspaces", topicSlug: null, chatSlug: null, agentId: null };
+    return { mode: "workspaces", topicSlug: null, chatSlug: null, agentRef: null };
   if (segs[0] === "agents") {
-    const id = segs[1] ? Number(decodeURIComponent(segs[1])) : NaN;
     return {
       mode: "agents",
       topicSlug: null,
       chatSlug: null,
-      agentId: Number.isFinite(id) ? id : null,
+      agentRef: segs[1] ? decodeURIComponent(segs[1]) : null,
     };
   }
   if (segs[0] === "chats") {
@@ -99,14 +100,14 @@ function parseAppRoute(): AppRoute {
       mode: "chats",
       topicSlug: null,
       chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
-      agentId: null,
+      agentRef: null,
     };
   }
   if (segs[0] === "topics") {
     const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
-    return { mode: "topics", topicSlug: last, chatSlug: null, agentId: null };
+    return { mode: "topics", topicSlug: last, chatSlug: null, agentRef: null };
   }
-  return { mode: "topics", topicSlug: null, chatSlug: null, agentId: null };
+  return { mode: "topics", topicSlug: null, chatSlug: null, agentRef: null };
 }
 
 /** Ancestor → self slug chain for a topic, using the loaded tree. */
@@ -138,8 +139,23 @@ function chatUrl(chat: Chat): string {
   return "/chats/" + encodeURIComponent(chat.slug);
 }
 
-function agentUrl(agentId: number | null): string {
-  return agentId != null ? `/agents/${agentId}` : "/agents";
+// Agents are addressed by their public UUID (copilot_session_id) in the URL.
+// Until the agent list has loaded we may not know the UUID yet, so fall back to
+// the internal id; the URL-sync effect rewrites it to the UUID once known.
+function agentUrl(agentId: number | null, agents: AgentSession[] | null): string {
+  if (agentId == null) return "/agents";
+  const a = agents?.find((x) => x.id === agentId);
+  const ref = a?.copilot_session_id ?? String(agentId);
+  return `/agents/${encodeURIComponent(ref)}`;
+}
+
+// Resolve a URL agent segment to an internal id. A pure-integer ref is a legacy
+// id; anything else is a public UUID looked up in the loaded session list.
+// Returns null when a UUID can't be matched yet (agents not loaded).
+function resolveAgentRef(ref: string | null, agents: AgentSession[] | null): number | null {
+  if (!ref) return null;
+  if (/^\d+$/.test(ref)) return Number(ref);
+  return agents?.find((a) => a.copilot_session_id === ref)?.id ?? null;
 }
 
 const BASE_TITLE = "Precursor";
@@ -188,7 +204,16 @@ export default function App() {
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
-    () => parseAppRoute().agentId,
+    // A legacy integer ref resolves immediately; a UUID waits for the list.
+    () => resolveAgentRef(parseAppRoute().agentRef, null),
+  );
+  // A URL UUID we couldn't resolve yet (agent list not loaded). Resolved once
+  // the sessions arrive. Initialised from the entry URL.
+  const pendingAgentRef = useRef<string | null>(
+    (() => {
+      const ref = parseAppRoute().agentRef;
+      return ref && !/^\d+$/.test(ref) ? ref : null;
+    })(),
   );
   // Topic to preselect in the new-agent form, set when "/agent" (no prompt) is
   // run from a topic. Cleared once consumed.
@@ -262,6 +287,24 @@ export default function App() {
   useEffect(() => {
     activeAgentIdRef.current = activeAgentId;
   }, [activeAgentId]);
+
+  // Mirror the loaded agent list into a ref so the mount-only URL sync handler
+  // can resolve a UUID segment without re-subscribing.
+  const agentsRef = useRef<AgentSession[] | null>(agents);
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+
+  // Once sessions load, resolve any UUID deep link that arrived before the list
+  // was available (e.g. opening /agents/<uuid> cold).
+  useEffect(() => {
+    if (!pendingAgentRef.current || agents == null) return;
+    const id = resolveAgentRef(pendingAgentRef.current, agents);
+    if (id != null) {
+      pendingAgentRef.current = null;
+      setActiveAgentId(id);
+    }
+  }, [agents]);
 
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
@@ -349,7 +392,19 @@ export default function App() {
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
       if (r.mode === "agents") {
-        setActiveAgentId(r.agentId);
+        if (r.agentRef == null) {
+          pendingAgentRef.current = null;
+          setActiveAgentId(null);
+          return;
+        }
+        const id = resolveAgentRef(r.agentRef, agentsRef.current);
+        if (id != null) {
+          pendingAgentRef.current = null;
+          setActiveAgentId(id);
+        } else {
+          // UUID not resolvable yet — stash it for the agents-load effect.
+          pendingAgentRef.current = r.agentRef;
+        }
         return;
       }
       if (r.mode === "topics") {
@@ -423,12 +478,14 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeChat, sidebarMode]);
 
-  // activeAgentId -> /agents/<id> (or /agents when nothing is selected).
+  // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
+  // canonical URL uses the public UUID; depends on `agents` so the link is
+  // rewritten from a transient integer fallback once the list resolves.
   useEffect(() => {
     if (sidebarMode !== "agents") return;
-    const target = agentUrl(activeAgentId);
+    const target = agentUrl(activeAgentId, agents);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeAgentId, sidebarMode]);
+  }, [activeAgentId, sidebarMode, agents]);
 
   // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
   // back to its Agents-mode session.
@@ -458,7 +515,7 @@ export default function App() {
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
     } else if (next === "agents") {
-      target = agentUrl(activeAgentIdRef.current);
+      target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else {
       target = "/ws";
     }

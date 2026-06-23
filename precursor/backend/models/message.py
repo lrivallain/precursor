@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.agent_session import AgentSession
     from precursor.backend.models.attachment import Attachment
     from precursor.backend.models.chat import Chat
     from precursor.backend.models.topic import Topic
@@ -64,9 +65,20 @@ class Message(Base, TimestampMixin):
 
     topic: Mapped[Topic | None] = relationship("Topic", back_populates="messages")
     chat: Mapped[Chat | None] = relationship("Chat", back_populates="messages")
+    # Read-only link to the agent that posted this exchange, eager-loaded so the
+    # UI can surface the agent's public (UUID) id for deep links / the /agent
+    # command without an extra round-trip. We only ever write the FK column.
+    agent_session: Mapped[AgentSession | None] = relationship(
+        "AgentSession", lazy="selectin", viewonly=True
+    )
     attachments: Mapped[list[Attachment]] = relationship(
         "Attachment",
         back_populates="message",
         cascade="all, delete-orphan",
         order_by="Attachment.id",
     )
+
+    @property
+    def agent_session_public_id(self) -> str | None:
+        """The linked agent's public (UUID) id, or ``None`` when unlinked."""
+        return self.agent_session.copilot_session_id if self.agent_session else None

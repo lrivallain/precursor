@@ -708,10 +708,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
   }
 
-  // Prefill the composer with "/agent <id> " so the user can type a follow-up
+  // Prefill the composer with "/agent <uuid> " so the user can type a follow-up
   // and reinstantiate an existing agent session straight from its summary.
-  function prefillAgentFollowUp(sessionId: number): void {
-    setDraft(`/agent ${sessionId} `);
+  function prefillAgentFollowUp(ref: string): void {
+    setDraft(`/agent ${ref} `);
     setComposerFocusToken((t) => t + 1);
   }
 
@@ -726,31 +726,34 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   async function runAgent(argument: string): Promise<void> {
     const arg = argument.trim();
     // "/agent <session-id> <prompt>" continues an existing session when the
-    // first token is a number that maps to a real agent; otherwise the whole
-    // text is treated as a new task (so prompts starting with a number work).
-    const m = arg.match(/^(\d+)\b\s*([\s\S]*)$/);
+    // first token is a session id — a public UUID (preferred) or a legacy
+    // integer — that maps to a real agent. Anything else is treated as a brand
+    // new task, so ordinary prompts still work.
+    const m = arg.match(
+      /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)\b\s*([\s\S]*)$/i,
+    );
     if (m) {
-      const sessionId = Number(m[1]);
+      const ref = m[1];
       const prompt = m[2].trim();
       let existing: AgentSession | null = null;
       try {
-        existing = await api.getAgent(sessionId);
+        existing = await api.getAgent(ref);
       } catch {
         existing = null;
       }
       if (existing) {
         try {
-          if (prompt) await api.sendToAgent(sessionId, prompt);
+          if (prompt) await api.sendToAgent(existing.id, prompt);
         } catch (err) {
-          systemNote(`Couldn't message agent #${sessionId}: ${(err as Error).message}`);
+          systemNote(`Couldn't message "${existing.title}": ${(err as Error).message}`);
           return;
         }
         systemNote(
           prompt
-            ? `Sent a follow-up to agent session #${sessionId}.`
-            : `Opening agent session #${sessionId}.`,
+            ? `Sent a follow-up to "${existing.title}".`
+            : `Opening "${existing.title}".`,
         );
-        openAgent(sessionId);
+        openAgent(existing.id);
         return;
       }
       // Not a real session id — fall through and treat the text as a new task.
@@ -763,7 +766,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     try {
       const created = await api.createAgent({ task: arg, topic_id: topic.id });
-      systemNote(`Started agent session #${created.id}.`);
+      systemNote(`Started agent "${created.title}".`);
       openAgent(created.id);
     } catch (err) {
       systemNote(`Couldn't start the agent: ${(err as Error).message}`);
@@ -1231,6 +1234,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                   group.push(visibleMessages[j]);
                   j++;
                 }
+                // Prefer the agent's public UUID for the follow-up command;
+                // fall back to the integer id for legacy rows without one.
+                const agentRef = m.agent_session_public_id ?? String(aid);
                 out.push(
                   <div
                     key={`agent-${aid}-${m.id}`}
@@ -1242,9 +1248,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                       <div className="flex justify-end">
                         <button
                           type="button"
-                          onClick={() => prefillAgentFollowUp(aid)}
+                          onClick={() => prefillAgentFollowUp(agentRef)}
                           className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-purple-500/40 px-2 py-0.5 text-[10px] font-medium text-purple-600 hover:bg-purple-500/10 dark:text-purple-300"
-                          title={`Continue agent session #${aid}`}
+                          title="Continue this agent session"
                           data-tooltip="Continue this agent session"
                         >
                           <ArrowRightCircle size={11} />

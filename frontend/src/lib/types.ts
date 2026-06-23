@@ -227,6 +227,8 @@ export interface Message {
   content: string;
   tool_calls: string | null;
   agent_session_id?: number | null;
+  /** The linked agent's public (UUID) id — used for deep links / the /agent command. */
+  agent_session_public_id?: string | null;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   created_at: string;

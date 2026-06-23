@@ -220,7 +220,7 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<AgentSession[]>(`/api/agents${suffix}`);
   },
-  getAgent: (id: number) => request<AgentSession>(`/api/agents/${id}`),
+  getAgent: (id: number | string) => request<AgentSession>(`/api/agents/${id}`),
   createAgent: (data: AgentSessionCreate) =>
     request<AgentSession>(`/api/agents`, {
       method: "POST",
@@ -231,7 +231,7 @@ export const api = {
   listAgentPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
   resetAgentPermissions: () =>
     request<{ cleared: number }>(`/api/agents/permissions/reset`, { method: "POST" }),
-  sendToAgent: (id: number, message: string) =>
+  sendToAgent: (id: number | string, message: string) =>
     request<AgentSession>(`/api/agents/${id}/send`, {
       method: "POST",
       body: JSON.stringify({ message }),
