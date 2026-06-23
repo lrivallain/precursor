@@ -170,9 +170,9 @@ function HookBubble({ event }: { event: AgentEvent }) {
 function Connector() {
   return (
     <div className="flex flex-col items-center" aria-hidden>
-      <span className="h-3 w-px bg-border" />
-      <ChevronDown size={12} className="-my-1 text-border" />
-      <span className="h-3 w-px bg-border" />
+      <span className="h-3 w-0.5 bg-muted/50" />
+      <ChevronDown size={16} strokeWidth={2.5} className="-my-1 text-muted/70" />
+      <span className="h-3 w-0.5 bg-muted/50" />
     </div>
   );
 }
@@ -188,9 +188,9 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
         className="absolute inset-y-0 left-1/2 flex -translate-x-1/2 flex-col items-center"
         aria-hidden
       >
-        <span className="w-px flex-1 bg-border" />
-        <ChevronDown size={12} className="-my-0.5 shrink-0 text-border" />
-        <span className="w-px flex-1 bg-border" />
+        <span className="w-0.5 flex-1 bg-muted/50" />
+        <ChevronDown size={16} strokeWidth={2.5} className="-my-0.5 shrink-0 text-muted/70" />
+        <span className="w-0.5 flex-1 bg-muted/50" />
       </div>
       <div className="relative flex flex-col items-end gap-0.5">
         {hooks.map((ev, i) => (
@@ -375,9 +375,15 @@ function MessageNode({
   // For the user's own prompt, show their GitHub persona (avatar + name) rather
   // than a generic icon/label.
   const isUser = category === "user";
+  const isSystem = category === "system";
   const label = isUser && user ? user.name : style.label;
+  // The system message (the long base prompt) is collapsed to a few lines with
+  // a Details toggle, like a tool box, so it never floods the timeline.
+  const [open, setOpen] = useState(false);
   return (
-    <div className={`w-full max-w-xl rounded-lg border p-2.5 ${box}`}>
+    <div
+      className={`w-full max-w-xl rounded-lg border p-2.5 transition-colors hover:border-accent/60 ${box}`}
+    >
       <div className="flex items-center gap-2">
         {isUser && user?.avatarUrl ? (
           <img
@@ -401,11 +407,32 @@ function MessageNode({
           </span>
         )}
       </div>
-      {event.text && (
-        <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
-          {event.text.length > 1500 ? `${event.text.slice(0, 1500)}…` : event.text}
-        </p>
-      )}
+      {event.text &&
+        (isSystem ? (
+          <div className="mt-1">
+            <p
+              className={`whitespace-pre-wrap text-[11px] text-muted ${open ? "" : "line-clamp-3"}`}
+            >
+              {event.text}
+            </p>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="mt-1 flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted hover:bg-bg"
+              title={open ? "Collapse" : "Show full system message"}
+            >
+              <ChevronDown
+                size={12}
+                className={`transition-transform ${open ? "rotate-180" : ""}`}
+              />
+              {open ? "Hide" : "Details"}
+            </button>
+          </div>
+        ) : (
+          <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
+            {event.text.length > 1500 ? `${event.text.slice(0, 1500)}…` : event.text}
+          </p>
+        ))}
     </div>
   );
 }
@@ -434,7 +461,9 @@ function ToolBox({
   const marker = step.pending ? CATEGORY_STYLE.permission.marker : style.marker;
 
   return (
-    <div className={`w-full max-w-xl rounded-lg border p-2.5 ${box}`}>
+    <div
+      className={`w-full max-w-xl rounded-lg border p-2.5 transition-colors hover:border-accent/60 ${box}`}
+    >
       <div className="flex items-center gap-2">
         <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}>
           {status === "running" ? (
@@ -593,6 +622,37 @@ export function TopicPicker({
   );
 }
 
+// Persisted "Show" toggle preferences for the workflow timeline. One JSON blob
+// in localStorage so a user's choices stick across agents and app restarts.
+type ShowPrefs = {
+  system: boolean;
+  assistant: boolean;
+  thinking: boolean;
+  tool: boolean;
+  lifecycle: boolean;
+};
+
+const SHOW_PREFS_KEY = "precursor:agent-show-prefs";
+
+const DEFAULT_SHOW_PREFS: ShowPrefs = {
+  system: false,
+  assistant: true,
+  thinking: true,
+  tool: true,
+  lifecycle: true,
+};
+
+function readShowPrefs(): ShowPrefs {
+  if (typeof window === "undefined") return DEFAULT_SHOW_PREFS;
+  try {
+    const raw = window.localStorage.getItem(SHOW_PREFS_KEY);
+    if (raw) return { ...DEFAULT_SHOW_PREFS, ...(JSON.parse(raw) as Partial<ShowPrefs>) };
+  } catch {
+    /* corrupt/unavailable storage — fall back to defaults */
+  }
+  return DEFAULT_SHOW_PREFS;
+}
+
 // A row in the rendered workflow: a centered message node, a grouped tool box,
 // or a side hook bubble.
 type WorkflowRow =
@@ -718,15 +778,19 @@ export function AgentView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Workflow display toggles. System (the big base prompt) is noise by default.
-  // "Tool" shows/hides whole tool boxes (their I/O stays collapsed, expandable
-  // per-box). "Thinking" shows/hides the agent's reasoning steps.
-  const [showSystem, setShowSystem] = useState(false);
-  const [showAssistant, setShowAssistant] = useState(true);
-  const [showThinking, setShowThinking] = useState(true);
-  const [showTool, setShowTool] = useState(true);
-  // Yellow side bubbles: turn start/end, usage, idle… side info, on by default.
-  const [showLifecycle, setShowLifecycle] = useState(true);
+  // Workflow display toggles, persisted across sessions (localStorage). System
+  // (the big base prompt) is noise by default. "Tool" shows/hides whole tool
+  // boxes (their I/O stays collapsed, expandable per-box). "Thinking" shows/hides
+  // the agent's reasoning steps.
+  const [showPrefs, setShowPrefs] = useState<ShowPrefs>(readShowPrefs);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SHOW_PREFS_KEY, JSON.stringify(showPrefs));
+    } catch {
+      /* private mode / quota — prefs just won't persist */
+    }
+  }, [showPrefs]);
+  const toggleShow = (k: keyof ShowPrefs) => setShowPrefs((p) => ({ ...p, [k]: !p[k] }));
 
   // Shared composer infrastructure (same as topics/chats): resizable height,
   // dictation, ↑/↓ history, and a slash/skills picker. Only one composer is
@@ -994,21 +1058,21 @@ export function AgentView({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
           <div className="flex items-center gap-1">
             <span className="text-muted">Show</span>
-            <ToggleChip active={showSystem} onClick={() => setShowSystem((v) => !v)} label="System" />
+            <ToggleChip active={showPrefs.system} onClick={() => toggleShow("system")} label="System" />
             <ToggleChip
-              active={showAssistant}
-              onClick={() => setShowAssistant((v) => !v)}
+              active={showPrefs.assistant}
+              onClick={() => toggleShow("assistant")}
               label="Assistant"
             />
             <ToggleChip
-              active={showThinking}
-              onClick={() => setShowThinking((v) => !v)}
+              active={showPrefs.thinking}
+              onClick={() => toggleShow("thinking")}
               label="Thinking"
             />
-            <ToggleChip active={showTool} onClick={() => setShowTool((v) => !v)} label="Tool" />
+            <ToggleChip active={showPrefs.tool} onClick={() => toggleShow("tool")} label="Tool" />
             <ToggleChip
-              active={showLifecycle}
-              onClick={() => setShowLifecycle((v) => !v)}
+              active={showPrefs.lifecycle}
+              onClick={() => toggleShow("lifecycle")}
               label="Lifecycle"
             />
           </div>
@@ -1051,13 +1115,13 @@ export function AgentView({
           }
 
           const visible = rows.filter((r) => {
-            if (r.type === "hook") return showLifecycle;
-            if (r.type === "tool") return showTool;
+            if (r.type === "hook") return showPrefs.lifecycle;
+            if (r.type === "tool") return showPrefs.tool;
             if (r.type !== "node") return true;
-            if (r.cat === "system" && !showSystem) return false;
-            if (r.cat === "reasoning" && !showThinking) return false;
+            if (r.cat === "system" && !showPrefs.system) return false;
+            if (r.cat === "reasoning" && !showPrefs.thinking) return false;
             // Keep the final answer even when assistant chatter is hidden.
-            if (r.cat === "assistant" && !showAssistant && r !== answerRow) return false;
+            if (r.cat === "assistant" && !showPrefs.assistant && r !== answerRow) return false;
             return true;
           });
 
