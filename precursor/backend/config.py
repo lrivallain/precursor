@@ -91,6 +91,20 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "cmd-runner" / "scratch")
 
+    # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
+    # by default at the env level; the effective on/off lives in the DB app
+    # settings (Settings → Agents) so it can be toggled at runtime. The SDK
+    # persists each session's state under ``agents_home`` (its ``COPILOT_HOME``).
+    agents_enabled: bool = False
+    # Model used for new agent sessions when the caller doesn't specify one.
+    agents_default_model: str = "claude-sonnet-4.5"
+
+    @cached_property
+    def agents_home(self) -> str:
+        from pathlib import Path
+
+        return str(Path(self.data_dir).resolve() / "agents" / "copilot-home")
+
 
 @lru_cache
 def get_settings() -> Settings:

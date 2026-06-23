@@ -17,6 +17,9 @@ older ones.
   offline development
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
+- **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
+  SDK agent attached to a topic/chat, followed in a workflow-style tab. Enable
+  it in **Settings → Agents** (needs the `agents` extra: `uv sync --extra agents`)
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Plugin-ready**: backend entry points + a frontend extension registry,

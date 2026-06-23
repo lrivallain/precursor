@@ -27,6 +27,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import init_db
 from precursor.backend.plugins import discover, get_registry
 from precursor.backend.routers import (
+    agents,
     attachments,
     chat,
     chat_messages,
@@ -71,6 +72,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     reminder_ticker = get_reminder_ticker()
     await reminder_ticker.start()
+    from precursor.backend.services.agents.manager import get_agent_manager
+
+    agent_manager = get_agent_manager()
+    await agent_manager.start()
     try:
         # The mounted streamable-HTTP MCP app needs its session manager's task group
         # running for the lifetime of the server (the mount itself doesn't start it).
@@ -83,6 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await scheduler.stop()
         await reminder_ticker.stop()
+        await agent_manager.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
 
         await get_mcp_client_manager().aclose()
@@ -195,6 +201,7 @@ def create_app() -> FastAPI:
         workspaces.router,
         schedules.router,
         reminders.router,
+        agents.router,
         stt.router,
         raw.router,
         version.router,

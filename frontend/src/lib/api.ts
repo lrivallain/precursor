@@ -1,4 +1,9 @@
 import type {
+  AgentEvent,
+  AgentLink,
+  AgentPermissionDecisionValue,
+  AgentSession,
+  AgentSessionCreate,
   AppVersion,
   Attachment,
   Chat,
@@ -202,6 +207,46 @@ export const api = {
   // Used for both /reminder-cancel (pending) and /done (fired) — both delete.
   clearReminder: (container: ReminderContainer, id: number) =>
     request<void>(`/api/reminders/${container}/${id}`, { method: "DELETE" }),
+
+  // Agents mode (Copilot SDK). Long-running agent sessions, optionally attached
+  // to a topic/chat. Live progress arrives via the `agent.changed` SSE event;
+  // the step timeline is re-fetched from `/events` on each signal.
+  listAgents: (filter?: { topicId?: number; chatId?: number }) => {
+    const qs = new URLSearchParams();
+    if (filter?.topicId != null) qs.set("topic_id", String(filter.topicId));
+    if (filter?.chatId != null) qs.set("chat_id", String(filter.chatId));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<AgentSession[]>(`/api/agents${suffix}`);
+  },
+  getAgent: (id: number) => request<AgentSession>(`/api/agents/${id}`),
+  createAgent: (data: AgentSessionCreate) =>
+    request<AgentSession>(`/api/agents`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getAgentEvents: (id: number) => request<AgentEvent[]>(`/api/agents/${id}/events`),
+  sendToAgent: (id: number, message: string) =>
+    request<AgentSession>(`/api/agents/${id}/send`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
+  cancelAgent: (id: number) =>
+    request<AgentSession>(`/api/agents/${id}/cancel`, { method: "POST" }),
+  resolveAgentPermission: (
+    id: number,
+    requestId: string,
+    decision: AgentPermissionDecisionValue,
+  ) =>
+    request<AgentSession>(`/api/agents/${id}/permission`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId, decision }),
+    }),
+  linkAgent: (id: number, link: AgentLink) =>
+    request<AgentSession>(`/api/agents/${id}/link`, {
+      method: "PATCH",
+      body: JSON.stringify({ topic_id: link.topic_id ?? null, chat_id: link.chat_id ?? null }),
+    }),
+  deleteAgent: (id: number) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
 
   // Messages
   listMessages: (topicId: number) =>

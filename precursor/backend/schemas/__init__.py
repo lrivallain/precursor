@@ -1,5 +1,13 @@
 """Pydantic request/response schemas."""
 
+from precursor.backend.schemas.agent import (
+    AgentEvent,
+    AgentLinkRequest,
+    AgentPermissionDecision,
+    AgentSendRequest,
+    AgentSessionCreate,
+    AgentSessionRead,
+)
 from precursor.backend.schemas.chat import (
     ChatCreate,
     ChatRead,
@@ -53,6 +61,12 @@ from precursor.backend.schemas.workspace import (
 )
 
 __all__ = [
+    "AgentEvent",
+    "AgentLinkRequest",
+    "AgentPermissionDecision",
+    "AgentSendRequest",
+    "AgentSessionCreate",
+    "AgentSessionRead",
     "AttachmentRead",
     "ChatCreate",
     "ChatRead",

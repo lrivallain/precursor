@@ -38,6 +38,10 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.31.0"]
+# Opt-in "Agents" mode: the GitHub Copilot SDK drives long-running agent
+# sessions. The SDK package is lightweight; it lazily downloads a native CLI
+# runtime binary on first use (or when Agents mode is enabled in Settings).
+agents = ["github-copilot-sdk>=1.0.3"]
 dev = [
     "ruff>=0.15.18",
     "mypy>=2.1.0",

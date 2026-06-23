@@ -310,3 +310,24 @@ async def resolve_mcp_http_enabled(session: AsyncSession) -> bool:
     if isinstance(db_value, bool):
         return db_value
     return DEFAULT_MCP_HTTP_ENABLED
+
+
+async def resolve_agents_enabled(session: AsyncSession) -> bool:
+    """Whether Agents mode (Copilot SDK) is enabled.
+
+    DB override on top of the ``agents_enabled`` env default. Note this is the
+    *preference*; whether the runtime is actually usable is a separate capability
+    probe (``services.agents.runtime.agents_available``).
+    """
+    db_value = await _get_db_value(session, "agents_enabled")
+    if isinstance(db_value, bool):
+        return db_value
+    return get_settings().agents_enabled
+
+
+async def resolve_agents_default_model(session: AsyncSession) -> str:
+    """Default model for new agent sessions (DB override on env default)."""
+    db_value = await _get_db_value(session, "agents_default_model")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value
+    return get_settings().agents_default_model

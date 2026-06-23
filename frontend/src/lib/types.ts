@@ -138,6 +138,60 @@ export interface ReminderCreate {
   note?: string | null;
 }
 
+// --- Agents mode (Copilot SDK) ---
+
+export type AgentStatus =
+  | "pending"
+  | "running"
+  | "idle"
+  | "needs_approval"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export interface AgentSession {
+  id: number;
+  copilot_session_id: string | null;
+  title: string;
+  task_prompt: string;
+  status: AgentStatus;
+  result_summary: string | null;
+  error: string | null;
+  model: string | null;
+  topic_id: number | null;
+  chat_id: number | null;
+  last_activity_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentSessionCreate {
+  task: string;
+  title?: string | null;
+  model?: string | null;
+  topic_id?: number | null;
+  chat_id?: number | null;
+}
+
+// A normalised SDK event, shaped for the workflow-step timeline.
+export interface AgentEvent {
+  kind: string;
+  text: string | null;
+  tool_name: string | null;
+  tool_status: string | null;
+  request_id: string | null;
+  data: Record<string, unknown> | null;
+  at: string | null;
+}
+
+export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
+
+export interface AgentLink {
+  topic_id?: number | null;
+  chat_id?: number | null;
+}
+
 export interface Attachment {
   id: number;
   topic_id?: number | null;
@@ -218,6 +272,13 @@ export interface Settings {
   cmd_runner_pids_limit: number;
   cmd_runner_cpus: string;
   docker_available: boolean;
+  // Agents mode (Copilot SDK): the enabled preference, whether the runtime is
+  // usable right now (probe), an optional reason when it isn't, and the default
+  // model for new agent sessions.
+  agents_enabled: boolean;
+  agents_available: boolean;
+  agents_unavailable_reason: string | null;
+  agents_default_model: string;
 }
 
 export interface SettingsUpdate {
@@ -249,6 +310,8 @@ export interface SettingsUpdate {
   cmd_runner_memory?: string;
   cmd_runner_pids_limit?: number;
   cmd_runner_cpus?: string;
+  agents_enabled?: boolean;
+  agents_default_model?: string;
 }
 
 export interface IssueLabel {
