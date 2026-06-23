@@ -66,6 +66,11 @@ class _LiveSession:
     # so Settings can recap and revoke them. Session-scoped on purpose: these
     # mirror the SDK's per-session approvals and reset when the session does.
     grants: list[dict[str, Any]] = field(default_factory=list)
+    # Signatures (type, target) the user approved "for the session". We enforce
+    # session scope ourselves — auto-approving matching requests — rather than
+    # returning the SDK's approve-for-session decision, whose ``approval`` object
+    # is mandatory for command/write prompts and easy to get wrong.
+    session_approvals: set[tuple[str, str | None]] = field(default_factory=set)
 
 
 class AgentManager:
@@ -307,8 +312,10 @@ class AgentManager:
         if fut is None or fut.done():
             return False
         if decision == "approve-always":
-            # Record the session-scoped grant so Settings can recap/revoke it.
+            # Remember the action for the rest of the session (enforced locally by
+            # the permission handler) and record the grant for the Settings recap.
             info = live.pending_info.get(request_id, {})
+            live.session_approvals.add(self._signature(info))
             live.grants.append(
                 {
                     "type": info.get("type", "tool"),
@@ -409,9 +416,26 @@ class AgentManager:
             # rest (writes, shell, memory, custom tools) behind explicit approval.
             if self._should_auto_approve(request):
                 return self._approve_once()
-            return await self._park_permission(agent_id, request)
+            info = self._describe_permission(request)
+            live = self._live.get(agent_id)
+            # Honour a prior "approve for session" for the same action.
+            if live is not None and self._signature(info) in live.session_approvals:
+                return self._approve_once()
+            return await self._park_permission(agent_id, request, info)
 
         return handler
+
+    @staticmethod
+    def _signature(info: dict[str, Any]) -> tuple[str, str | None]:
+        """A stable key for "approve for session": the action and its target."""
+        target = (
+            info.get("command")
+            or info.get("path")
+            or info.get("url")
+            or info.get("tool")
+            or info.get("server")
+        )
+        return (str(info.get("type", "tool")), str(target) if target else None)
 
     @staticmethod
     def _should_auto_approve(request: Any) -> bool:
@@ -469,7 +493,9 @@ class AgentManager:
             )
         return {k: v for k, v in info.items() if v is not None}
 
-    async def _park_permission(self, agent_id: int, request: Any) -> Any:
+    async def _park_permission(
+        self, agent_id: int, request: Any, info: dict[str, Any] | None = None
+    ) -> Any:
         live = self._live.get(agent_id)
         if live is None:
             return self._reject("session gone")
@@ -479,7 +505,7 @@ class AgentManager:
         live.pending[request_id] = fut
         live.pending_info[request_id] = {
             "request_id": request_id,
-            **self._describe_permission(request),
+            **(info if info is not None else self._describe_permission(request)),
         }
         await self._patch(agent_id, status="needs_approval")
         agent = await self._load(agent_id)
@@ -502,12 +528,13 @@ class AgentManager:
 
     def _decision(self, decision: str) -> Any:
         rpc = runtime.load_rpc()
-        if decision == "approve-always":
-            with contextlib.suppress(Exception):
-                return rpc.PermissionDecisionApproveForSession()
-            return rpc.PermissionDecisionApproveOnce()
         if decision == "deny":
             return rpc.PermissionDecisionReject(feedback="Denied by user")
+        # Both approve-once and approve-for-session approve the *current* request
+        # with the same SDK call. We don't emit PermissionDecisionApproveForSession
+        # — its mandatory ``approval`` object for command/write prompts is what
+        # triggers the runtime's "missing approval field" error. Session scope is
+        # instead enforced by ``session_approvals`` in the permission handler.
         return rpc.PermissionDecisionApproveOnce()
 
     # ------------------------------------------------------------------ events

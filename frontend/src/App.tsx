@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
+import { Pin, PinOff, Settings as SettingsIcon, Square, Trash2 } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
@@ -18,8 +18,10 @@ import {
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
 import { AgentList } from "./components/AgentList";
+import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
 import { InlineTitle } from "./components/InlineTitle";
+import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { api } from "./lib/api";
@@ -221,6 +223,13 @@ export default function App() {
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
 
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
+
+  const confirmAction = useConfirm();
+  // The currently-selected agent session, surfaced in the shared header.
+  const activeAgent = useMemo(
+    () => (agents ?? []).find((a) => a.id === activeAgentId) ?? null,
+    [agents, activeAgentId],
+  );
 
   // Mirror activeTopic into a ref so the onComplete callback (set up once)
   // can read the current value without resubscribing on every change.
@@ -561,6 +570,30 @@ export default function App() {
     const updated = await api.updateTopic(id, { title });
     if (activeTopicRef.current?.id === id) setActiveTopic(updated);
     await refreshTree();
+  }
+
+  async function handleRenameAgent(id: number, title: string): Promise<void> {
+    await api.renameAgent(id, title);
+    await loadAgents();
+  }
+
+  async function handleStopAgent(id: number): Promise<void> {
+    await api.cancelAgent(id);
+    await loadAgents();
+  }
+
+  async function handleDeleteAgent(agent: AgentSession): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Delete agent “${agent.title}”? Its session state is discarded.`,
+        confirmLabel: "Delete",
+        variant: "danger",
+      }))
+    )
+      return;
+    await api.deleteAgent(agent.id);
+    if (activeAgentId === agent.id) setActiveAgentId(null);
+    await loadAgents();
   }
 
   async function handleSelectChat(chat: Chat): Promise<void> {
@@ -920,7 +953,41 @@ export default function App() {
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
             </span>
           ) : (
-            <span className="truncate font-medium min-w-0 flex-1">Agents</span>
+            <>
+              {activeAgent ? (
+                <>
+                  <InlineTitle
+                    title={activeAgent.title}
+                    onRename={(t) => handleRenameAgent(activeAgent.id, t)}
+                    className="truncate font-medium min-w-0 flex-1"
+                    inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+                  />
+                  <AgentStatusBadge status={activeAgent.status} />
+                  {(activeAgent.status === "running" ||
+                    activeAgent.status === "pending" ||
+                    activeAgent.status === "needs_approval") && (
+                    <button
+                      className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
+                      aria-label="Stop agent"
+                      data-tooltip="Stop agent"
+                      onClick={() => void handleStopAgent(activeAgent.id)}
+                    >
+                      <Square size={18} />
+                    </button>
+                  )}
+                  <button
+                    className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
+                    aria-label="Delete agent"
+                    data-tooltip="Delete agent"
+                    onClick={() => void handleDeleteAgent(activeAgent)}
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </>
+              ) : (
+                <span className="truncate font-medium min-w-0 flex-1">Agents</span>
+              )}
+            </>
           )}
           {hasActiveDiscussion && (
             <RoleSelector
