@@ -652,6 +652,8 @@ export function AgentView({
   const [showSystem, setShowSystem] = useState(false);
   const [showAssistant, setShowAssistant] = useState(true);
   const [showToolDetail, setShowToolDetail] = useState(false);
+  // Yellow side bubbles: turn start/end, usage, idle… side info, on by default.
+  const [showLifecycle, setShowLifecycle] = useState(true);
 
   // Autoscroll: keep the newest step in view as the workflow grows, but only
   // while the user is parked at the bottom (don't yank them away mid-scroll).
@@ -882,6 +884,11 @@ export function AgentView({
               onClick={() => setShowToolDetail((v) => !v)}
               label="Tool details"
             />
+            <ToggleChip
+              active={showLifecycle}
+              onClick={() => setShowLifecycle((v) => !v)}
+              label="Lifecycle"
+            />
           </div>
         </div>
       </div>
@@ -922,6 +929,7 @@ export function AgentView({
           }
 
           const visible = rows.filter((r) => {
+            if (r.type === "hook") return showLifecycle;
             if (r.type !== "node") return true;
             if (r.cat === "system" && !showSystem) return false;
             // Keep the final answer even when assistant chatter is hidden.
