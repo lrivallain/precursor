@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pin, PinOff, Settings as SettingsIcon, Square, Trash2 } from "lucide-react";
+import {
+  ArrowUpRight,
+  MessagesSquare,
+  Pin,
+  PinOff,
+  Settings as SettingsIcon,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
@@ -980,6 +988,29 @@ export default function App() {
                     inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
                   />
                   <AgentStatusBadge status={activeAgent.status} />
+                  {activeAgent.topic_id != null && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tid = activeAgent.topic_id;
+                        if (tid == null) return;
+                        changeMode("topics");
+                        void handleSelect(tid);
+                      }}
+                      className="group inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
+                      title="Open the associated topic"
+                      data-tooltip="Open the associated topic"
+                    >
+                      <MessagesSquare size={12} />
+                      <span className="max-w-[12rem] truncate">
+                        {findTitle(tree, activeAgent.topic_id) ?? "Topic"}
+                      </span>
+                      <ArrowUpRight
+                        size={12}
+                        className="opacity-60 transition group-hover:opacity-100"
+                      />
+                    </button>
+                  )}
                   <button
                     className="p-2 rounded hover:bg-surface shrink-0"
                     aria-label="Agent settings"
