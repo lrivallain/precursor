@@ -27,9 +27,8 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
-import { GITHUB_SLASH_COMMANDS, matchSlashCommands, type SlashCommand } from "../lib/commands";
+import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
-import { useSkills } from "../lib/skillsStore";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
@@ -986,27 +985,14 @@ export function AgentView({
     if (!speech.listening) setInterimText("");
   }, [speech.listening]);
 
-  const skills = useSkills();
-  const skillCommands = useMemo<SlashCommand[]>(
-    () =>
-      skills.map((s) => ({
-        name: s.name,
-        label: `/${s.name}`,
-        description: s.description ?? "",
-        kind: "skill" as const,
-        argumentHint: "input",
-      })),
-    [skills],
-  );
-  // Agents can't resolve the GitHub-issue slash commands (no topic association
-  // pipeline), so keep those out of the picker; skills and the rest carry over.
-  const taskSuggestions = useMemo<SlashCommand[]>(
-    () => matchSlashCommands(task, skillCommands, GITHUB_SLASH_COMMANDS) ?? [],
-    [task, skillCommands],
-  );
+  // Agents support only the system-handled slash commands (/rename, /clear,
+  // /archive); skills and every other builtin are disabled here. They only apply
+  // to an existing session, so the start composer offers none and the follow-up
+  // composer offers just those three. The backend rejects anything else.
+  const taskSuggestions = useMemo<SlashCommand[]>(() => [], []);
   const followUpSuggestions = useMemo<SlashCommand[]>(
-    () => matchSlashCommands(followUp, skillCommands, GITHUB_SLASH_COMMANDS) ?? [],
-    [followUp, skillCommands],
+    () => matchAgentSlashCommands(followUp) ?? [],
+    [followUp],
   );
 
   // Autoscroll: keep the newest step in view as the workflow grows, but only
@@ -1136,10 +1122,19 @@ export function AgentView({
 
   async function sendFollowUp(): Promise<void> {
     if (!selected || !followUp.trim()) return;
+    const message = followUp.trim();
+    // /clear erases the whole transcript on the backend — confirm first, mirroring
+    // the topic/chat clear flow.
+    if (
+      /^\/clear\b/i.test(message) &&
+      !window.confirm("Clear this agent conversation? The transcript will be erased.")
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await api.sendToAgent(selected.id, followUp.trim());
+      await api.sendToAgent(selected.id, message);
       setFollowUp("");
       onReload();
     } catch (e) {

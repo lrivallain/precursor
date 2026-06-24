@@ -29,7 +29,7 @@ from precursor.backend.schemas.agent import (
     AgentUpdateRequest,
 )
 from precursor.backend.services.agents import runtime
-from precursor.backend.services.agents.manager import get_agent_manager
+from precursor.backend.services.agents.manager import get_agent_manager, parse_agent_command
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.events import publish_agent_changed
 
@@ -178,6 +178,17 @@ async def send_to_agent(
     await _require_runtime(session)
     agent = await _get_or_404(session, agent_id)
     mgr = get_agent_manager()
+    # Slash commands are handled by the system (rename/clear/archive) instead of
+    # being forwarded to the SDK as prompt text; any other command is rejected.
+    command = parse_agent_command(payload.message)
+    if command is not None:
+        name, argument = command
+        try:
+            await mgr.run_command(agent.id, name, argument)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        await session.refresh(agent)
+        return agent
     mgr.enqueue(mgr.send_message(agent.id, payload.message))
     return agent
 

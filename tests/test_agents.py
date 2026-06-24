@@ -142,3 +142,130 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
         manager.unregister_user_entry("my-http")
         manager.unregister_user_entry("my-broken")
         await _set_mcp_enabled({})
+
+
+def test_parse_agent_command() -> None:
+    from precursor.backend.services.agents.manager import parse_agent_command
+
+    assert parse_agent_command("hello there") is None
+    assert parse_agent_command("  not a / command") is None
+    assert parse_agent_command("/rename New Title") == ("rename", "New Title")
+    # Leading whitespace tolerated; name lowercased; argument trimmed.
+    assert parse_agent_command("  /Rename   New Title  ") == ("rename", "New Title")
+    assert parse_agent_command("/clear") == ("clear", "")
+    # Unknown commands still parse (so the caller can reject them by name).
+    assert parse_agent_command("/whatever do stuff") == ("whatever", "do stuff")
+
+
+async def _make_agent(**overrides: object) -> int:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    fields: dict[str, object] = {"title": "Old title", "task_prompt": "seed", "status": "idle"}
+    fields.update(overrides)
+    async with SessionLocal() as session:
+        agent = AgentSession(**fields)
+        session.add(agent)
+        await session.commit()
+        await session.refresh(agent)
+        return agent.id
+
+
+async def test_run_command_rename() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent()
+
+    await AgentManager().run_command(agent_id, "rename", "  Shiny   New   Name ")
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.title == "Shiny New Name"
+
+
+async def test_run_command_rename_requires_argument() -> None:
+    import pytest
+
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent()
+
+    with pytest.raises(ValueError, match="Usage: /rename"):
+        await AgentManager().run_command(agent_id, "rename", "   ")
+
+
+async def test_run_command_archive() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent()
+
+    await AgentManager().run_command(agent_id, "archive", "")
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.archived_at is not None
+
+
+async def test_run_command_clear_resets_session_and_timeline() -> None:
+    from sqlalchemy import select
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent(
+        copilot_session_id="sess-123",
+        status="completed",
+        active_prompt="in flight",
+        result_summary="done",
+        error="boom",
+    )
+    # Seed an archived timeline event that clear should wipe.
+    async with SessionLocal() as session:
+        session.add(AgentEventRecord(agent_session_id=agent_id, payload='{"kind":"assistant"}'))
+        await session.commit()
+
+    await AgentManager().run_command(agent_id, "clear", "")
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        # A fresh SDK session id is minted (so the next turn starts clean) — never
+        # left null, and never the previous handle.
+        assert agent.copilot_session_id is not None
+        assert agent.copilot_session_id != "sess-123"
+        assert agent.status == "idle"
+        assert agent.active_prompt is None
+        assert agent.result_summary is None
+        assert agent.error is None
+        remaining = (
+            await session.scalars(
+                select(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
+            )
+        ).all()
+        assert remaining == []
+
+
+async def test_run_command_rejects_unknown() -> None:
+    import pytest
+
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent()
+
+    with pytest.raises(ValueError, match="isn't available"):
+        await AgentManager().run_command(agent_id, "role", "assistant")

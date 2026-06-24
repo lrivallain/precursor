@@ -187,3 +187,27 @@ export const GITHUB_SLASH_COMMANDS: ReadonlySet<string> = new Set([
   "gh-create",
   "gh-close",
 ]);
+
+/**
+ * Slash commands available inside an agent session. Everything else is disabled
+ * there (the backend rejects unknown commands instead of forwarding them to the
+ * SDK), so the composer only offers these three.
+ */
+export const AGENT_SLASH_COMMANDS: ReadonlySet<string> = new Set([
+  "rename",
+  "clear",
+  "archive",
+]);
+
+/**
+ * Autocomplete matcher for the agent composer: like {@link matchSlashCommands}
+ * but restricted to {@link AGENT_SLASH_COMMANDS} (no skills, no other builtins).
+ */
+export function matchAgentSlashCommands(input: string): SlashCommand[] | null {
+  if (!input.startsWith("/")) return null;
+  if (/\s/.test(input)) return null;
+  const query = input.slice(1).toLowerCase();
+  return SLASH_COMMANDS.filter(
+    (c) => AGENT_SLASH_COMMANDS.has(c.name) && c.name.startsWith(query),
+  );
+}

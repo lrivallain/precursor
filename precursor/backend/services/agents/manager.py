@@ -31,7 +31,9 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -57,6 +59,28 @@ from precursor.backend.services.events import (
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
+
+# Slash commands the system intercepts inside an agent session map to real actions
+# (rename/clear/archive) handled in ``AgentManager.run_command`` rather than being
+# forwarded to the SDK as prompt text. Every *other* slash command is rejected.
+_SLASH_RE = re.compile(r"^/([a-zA-Z][a-zA-Z0-9-]*)\s*([\s\S]*)$")
+
+
+def parse_agent_command(message: str) -> tuple[str, str] | None:
+    """Recognise a leading slash command in a message sent to an agent.
+
+    Returns ``(name, argument)`` for *any* ``/word …`` input (so the caller can
+    reject unknown commands instead of leaking them to the SDK), or ``None`` when
+    the text is a normal message.
+    """
+    text = message.lstrip()
+    if not text.startswith("/"):
+        return None
+    match = _SLASH_RE.match(text)
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).strip()
+
 
 # Cap how long we wait for the out-of-process runtime to come up so a stuck or
 # unauthenticated CLI can't block app startup or a settings save indefinitely.
@@ -633,6 +657,67 @@ class AgentManager:
                     delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
                 )
                 await session.commit()
+
+    # ------------------------------------------------------------------ commands
+
+    async def clear_session(self, agent_id: int) -> None:
+        """Erase an agent's conversation and start its SDK context from scratch.
+
+        Disconnects + forgets the live session and wipes the archived timeline
+        (``teardown_session(forget=True)``), then mints a **fresh**
+        ``copilot_session_id`` so the next message opens a brand-new SDK session
+        (no prior history is resumed) while the agent keeps a stable, non-null
+        public id, and resets the in-flight/status fields back to idle.
+        """
+        await self.teardown_session(agent_id, forget=True)
+        await self._patch(
+            agent_id,
+            copilot_session_id=str(uuid.uuid4()),
+            status="idle",
+            active_prompt=None,
+            result_summary=None,
+            error=None,
+        )
+        await self._publish(agent_id)
+
+    async def run_command(self, agent_id: int, name: str, argument: str) -> None:
+        """Execute a system slash command for an agent (never forwarded to the SDK).
+
+        Handles ``rename`` (set title), ``clear`` (reset the conversation) and
+        ``archive`` (hide from the active list). The visible feedback is the state
+        change itself (header title, empty transcript, the session leaving the
+        list). Raises :class:`ValueError` for bad usage or an unknown command so
+        the caller can surface it.
+        """
+        if name == "rename":
+            title = " ".join(argument.split())[:200]
+            if not title:
+                raise ValueError("Usage: /rename <new title>")
+            await self._patch(agent_id, title=title)
+            await self._publish(agent_id)
+            return
+        if name == "archive":
+            agent = await self._load(agent_id)
+            if agent is not None and agent.archived_at is None:
+                await self._patch(agent_id, archived_at=datetime.now(UTC))
+                await self._publish(agent_id)
+            return
+        if name == "clear":
+            await self.clear_session(agent_id)
+            return
+        raise ValueError(
+            f"/{name} isn't available in agent sessions — "
+            "only /rename, /clear and /archive are supported."
+        )
+
+    async def _publish(self, agent_id: int) -> None:
+        """Emit an ``agent.changed`` signal for an agent by id (loads its links)."""
+        agent = await self._load(agent_id)
+        await publish_agent_changed(
+            agent_session_id=agent_id,
+            topic_id=agent.topic_id if agent else None,
+            chat_id=agent.chat_id if agent else None,
+        )
 
     async def list_models(self) -> list[dict[str, str]]:
         """Return the runtime's available models (``id``/``name``), or empty.
