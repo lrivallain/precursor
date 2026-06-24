@@ -188,9 +188,17 @@ history outbound is opt-in). Two transports, same tools:
 
 `services/scheduler.py` drives recurring "scheduled" topics: a single async
 ticker enqueues due `TopicSchedule` rows, a bounded worker pool runs each via
-`services/turn.py` (the same generation path as manual chat) under a timeout,
-with DB row leasing for crash recovery. Recurrence supports interval,
-weekday mask, and daily time-of-day in a timezone (`services/schedule_timing.py`).
+`services/scheduled_commands.py` under a timeout, with DB row leasing for crash
+recovery. Recurrence supports interval, weekday mask, and daily time-of-day in a
+timezone (`services/schedule_timing.py`).
+
+A scheduled prompt that begins with a slash command (e.g. `/agent run the
+tests`, `/gh-sync`) is dispatched to the command's backend action by
+`services/scheduled_commands.py` — the same commands the chat composer offers on
+the `topic` surface, plus user skills — instead of being sent to the LLM.
+Anything else runs a normal generation turn via `services/turn.py` (the same
+path as manual chat). Keep the dispatcher's `BUILTIN_TOPIC_COMMANDS` in sync
+with the topic surface in `frontend/src/lib/commands.ts`.
 
 ## Workspaces
 

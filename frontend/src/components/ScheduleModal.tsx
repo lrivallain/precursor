@@ -162,6 +162,11 @@ export function ScheduleModal({ schedule, onClose, onSaved }: Props) {
               placeholder="What should the assistant do on every run?"
               className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
             />
+            <p className="mt-1 text-xs text-muted">
+              Tip: slash commands work too — e.g.{" "}
+              <code className="text-fg">/agent run the smoke tests</code> or{" "}
+              <code className="text-fg">/gh-sync</code>.
+            </p>
           </div>
 
           <RecurrenceEditor value={recurrence} onChange={setRecurrence} />

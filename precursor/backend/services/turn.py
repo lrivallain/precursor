@@ -55,22 +55,38 @@ from precursor.backend.services.mcp.client import get_mcp_client_manager
 logger = logging.getLogger(__name__)
 
 
-async def run_topic_turn(topic_id: int, prompt: str, *, clear_context: bool = False) -> None:
+async def run_topic_turn(
+    topic_id: int,
+    prompt: str,
+    *,
+    clear_context: bool = False,
+    llm_prompt: str | None = None,
+) -> None:
     """Persist ``prompt`` as a user turn and generate the assistant reply.
 
     When ``clear_context`` is set, the topic's prior messages are deleted first
     so the run starts from a clean slate. Runs the full MCP tool loop. Raises on
     provider failure so the caller (the scheduler) can record the error;
     partial messages already persisted stay.
+
+    ``llm_prompt`` lets a skill invocation persist the literal slash command as
+    the user turn while sending the expanded instructions to the LLM for this
+    turn only (mirrors the ``prompt_override`` path in ``routers/chat.py``).
     """
     await publish_stream_started(topic_id)
     try:
-        await _run(topic_id, prompt, clear_context=clear_context)
+        await _run(topic_id, prompt, clear_context=clear_context, llm_prompt=llm_prompt)
     finally:
         await publish_stream_ended(topic_id)
 
 
-async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> None:
+async def _run(
+    topic_id: int,
+    prompt: str,
+    *,
+    clear_context: bool = False,
+    llm_prompt: str | None = None,
+) -> None:
     manager = get_mcp_client_manager()
 
     async with SessionLocal() as session:
@@ -99,6 +115,17 @@ async def _run(topic_id: int, prompt: str, *, clear_context: bool = False) -> No
             .order_by(Message.created_at)
         )
         history = _hydrate_history(list(history_result.scalars().all()))
+        # For skill invocations the persisted user turn stays the literal slash
+        # command, but the LLM should see the expanded prompt for this turn only.
+        if llm_prompt is not None:
+            for idx in range(len(history) - 1, -1, -1):
+                if history[idx].role == "user":
+                    history[idx] = ChatMessage(
+                        role="user",
+                        content=llm_prompt,
+                        image_urls=history[idx].image_urls,
+                    )
+                    break
         enabled_servers = await _load_enabled_mcp_servers(session)
         # Never let a programmatically-driven turn (scheduler / MCP post_message)
         # re-expose Precursor's own MCP server to itself — that would let a
