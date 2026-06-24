@@ -11,7 +11,9 @@ Responsibilities:
 * Lifespan ``start``/``stop`` (gated on the enabled preference + capability
   probe — a no-op when Agents mode is off or the SDK is absent).
 * Create/resume SDK sessions and attach the ``precursor`` MCP server so the
-  agent can read topic context and post results back (``post_message``).
+  agent can read topic context and post results back (``post_message``), plus
+  every other catalog MCP server (built-in or user-defined) the user has
+  enabled in Settings.
 * Bridge SDK events → DB status cache + ``agent.changed`` bus signals, and post a
   system message to the linked container when a task finishes.
 * Apply the permission policy: auto-approve read-only + precursor MCP; park
@@ -29,10 +31,13 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sys
+import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import delete, select
 
@@ -55,6 +60,28 @@ from precursor.backend.services.events import (
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
+
+# Slash commands the system intercepts inside an agent session map to real actions
+# (rename/clear/archive) handled in ``AgentManager.run_command`` rather than being
+# forwarded to the SDK as prompt text. Every *other* slash command is rejected.
+_SLASH_RE = re.compile(r"^/([a-zA-Z][a-zA-Z0-9-]*)\s*([\s\S]*)$")
+
+
+def parse_agent_command(message: str) -> tuple[str, str] | None:
+    """Recognise a leading slash command in a message sent to an agent.
+
+    Returns ``(name, argument)`` for *any* ``/word …`` input (so the caller can
+    reject unknown commands instead of leaking them to the SDK), or ``None`` when
+    the text is a normal message.
+    """
+    text = message.lstrip()
+    if not text.startswith("/"):
+        return None
+    match = _SLASH_RE.match(text)
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).strip()
+
 
 # Cap how long we wait for the out-of-process runtime to come up so a stuck or
 # unauthenticated CLI can't block app startup or a settings save indefinitely.
@@ -299,6 +326,80 @@ class AgentManager:
         )
         return {"precursor": config}
 
+    @staticmethod
+    def _entry_to_sdk_config(sdk: Any, entry: Any, github_token: str) -> Any:
+        """Translate one ``MCPServerEntry`` into an SDK MCP server config.
+
+        Raises ``ValueError`` for entries the SDK can't represent (missing
+        command/url, unknown transport) so the caller can skip + log them.
+        """
+        if entry.transport == "stdio":
+            if not entry.command:
+                raise ValueError("stdio server has no command")
+            return sdk.MCPStdioServerConfig(
+                type="stdio",
+                command=entry.command,
+                args=list(entry.args),
+                # Built-ins set their own env (or None → inherit ours so PATH and
+                # the venv resolve); user entries always inherit ours.
+                env=entry.env if entry.env is not None else dict(os.environ),
+                tools=["*"],
+            )
+        if entry.transport == "streamable_http":
+            if not entry.url:
+                raise ValueError("streamable_http server has no url")
+            # headers_provider folds in per-request secrets — the GitHub bearer
+            # token for the built-in 'github' server, or a user entry's stored
+            # headers. Resolved here, never persisted in agent events.
+            headers = entry.headers_provider(github_token) if entry.headers_provider else None
+            return sdk.MCPHTTPServerConfig(
+                type="http",
+                url=entry.url,
+                headers=headers or None,
+                tools=["*"],
+            )
+        raise ValueError(f"unsupported transport {entry.transport!r}")
+
+    async def _catalog_mcp_configs(self) -> dict[str, Any]:
+        """SDK configs for every catalog MCP server the user has *enabled*.
+
+        Mirrors the chat/topics surface: both built-in servers (``github``,
+        ``fetch``, ``workspace-fs``, …) and user-defined ones are attached when
+        their ``mcp_enabled`` toggle is on, so an agent can call the same tools.
+        ``precursor`` is excluded here — it's attached separately with full
+        access in :meth:`_precursor_mcp_config`. Returns ``{}`` if the SDK isn't
+        loadable.
+        """
+        try:
+            sdk = runtime.load_sdk()
+        except RuntimeError:
+            return {}
+
+        # Imported lazily to keep this module importable without the MCP service
+        # graph in the import path of the agents-unavailable case.
+        from precursor.backend.services.app_settings import resolve_mcp_enabled
+        from precursor.backend.services.github_auth import resolve_github_token
+        from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+        async with SessionLocal() as session:
+            enabled = await resolve_mcp_enabled(session)
+            github_token = await resolve_github_token(session)
+
+        manager = get_mcp_client_manager()
+        configs: dict[str, Any] = {}
+        for entry in manager.list_entries():
+            # 'precursor' is first-party and attached with full access elsewhere;
+            # never gate or duplicate it here.
+            if entry.name == "precursor":
+                continue
+            if not enabled.get(entry.name, False):
+                continue
+            try:
+                configs[entry.name] = self._entry_to_sdk_config(sdk, entry, github_token)
+            except ValueError as exc:
+                logger.warning("Skipping MCP server '%s': %s", entry.name, exc)
+        return configs
+
     async def _topic_context(self, agent: AgentSession) -> str | None:
         """Build a system-message preamble binding the agent to its topic.
 
@@ -362,7 +463,11 @@ class AgentManager:
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
         mcp = self._precursor_mcp_config()
-        if mcp:
+        if mcp is not None:
+            # Attach every enabled catalog server (built-in + user-defined).
+            # _catalog_mcp_configs already excludes 'precursor', so the
+            # first-party full-access entry can't be shadowed.
+            mcp.update(await self._catalog_mcp_configs())
             kwargs["mcp_servers"] = mcp
         preamble = await self._system_preamble(agent)
         if preamble:
@@ -553,6 +658,85 @@ class AgentManager:
                     delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
                 )
                 await session.commit()
+
+    # ------------------------------------------------------------------ commands
+
+    async def clear_session(self, agent_id: int) -> None:
+        """Erase an agent's conversation and start its SDK context from scratch.
+
+        Disconnects + forgets the live session and wipes the archived timeline
+        (``teardown_session(forget=True)``), then mints a **fresh**
+        ``copilot_session_id`` so the next message opens a brand-new SDK session
+        (no prior history is resumed) while the agent keeps a stable, non-null
+        public id, and resets the in-flight/status fields back to idle.
+        """
+        await self.teardown_session(agent_id, forget=True)
+        await self._patch(
+            agent_id,
+            copilot_session_id=str(uuid.uuid4()),
+            status="idle",
+            active_prompt=None,
+            result_summary=None,
+            error=None,
+        )
+        await self._publish(agent_id)
+
+    async def run_command(self, agent_id: int, name: str, argument: str) -> None:
+        """Execute a system slash command for an agent (never forwarded to the SDK).
+
+        Dispatches to a handler from :attr:`_COMMAND_HANDLERS` (rename/clear/
+        archive). The visible feedback is the state change itself (header title,
+        empty transcript, the session leaving the list). Raises
+        :class:`ValueError` for bad usage or an unknown command so the caller can
+        surface it. Adding a command is a single registry entry below.
+        """
+        handler = self._COMMAND_HANDLERS.get(name)
+        if handler is None:
+            supported = ", ".join(f"/{cmd}" for cmd in self.supported_commands())
+            raise ValueError(
+                f"/{name} isn't available in agent sessions — only {supported} are supported."
+            )
+        await handler(self, agent_id, argument)
+
+    async def _cmd_rename(self, agent_id: int, argument: str) -> None:
+        title = " ".join(argument.split())[:200]
+        if not title:
+            raise ValueError("Usage: /rename <new title>")
+        await self._patch(agent_id, title=title)
+        await self._publish(agent_id)
+
+    async def _cmd_archive(self, agent_id: int, argument: str) -> None:
+        agent = await self._load(agent_id)
+        if agent is not None and agent.archived_at is None:
+            await self._patch(agent_id, archived_at=datetime.now(UTC))
+            await self._publish(agent_id)
+
+    async def _cmd_clear(self, agent_id: int, argument: str) -> None:
+        await self.clear_session(agent_id)
+
+    # Registry of system slash commands available inside an agent session:
+    # name -> async handler. The set of supported names (used for validation and
+    # the rejection message) is derived from these keys, and the frontend picker
+    # mirrors it via AGENT_SLASH_COMMANDS, so a new command is a single entry.
+    _COMMAND_HANDLERS: ClassVar[dict[str, Callable[[AgentManager, int, str], Awaitable[None]]]] = {
+        "rename": _cmd_rename,
+        "archive": _cmd_archive,
+        "clear": _cmd_clear,
+    }
+
+    @classmethod
+    def supported_commands(cls) -> tuple[str, ...]:
+        """Names of slash commands an agent session accepts (registry keys)."""
+        return tuple(cls._COMMAND_HANDLERS)
+
+    async def _publish(self, agent_id: int) -> None:
+        """Emit an ``agent.changed`` signal for an agent by id (loads its links)."""
+        agent = await self._load(agent_id)
+        await publish_agent_changed(
+            agent_session_id=agent_id,
+            topic_id=agent.topic_id if agent else None,
+            chat_id=agent.chat_id if agent else None,
+        )
 
     async def list_models(self) -> list[dict[str, str]]:
         """Return the runtime's available models (``id``/``name``), or empty.

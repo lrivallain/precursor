@@ -11,9 +11,10 @@ import {
   unsupportedAttachmentMessage,
 } from "../lib/attachments";
 import {
-  GITHUB_SLASH_COMMANDS,
+  commandsForSurface,
   matchSlashCommands,
   parseSlashCommand,
+  surfaceExcludes,
   type SlashCommand,
 } from "../lib/commands";
 import { skillsStore, useSkills } from "../lib/skillsStore";
@@ -48,25 +49,12 @@ interface ChatSessionPanelProps {
   onOpenRoleSelector?: () => void;
 }
 
-// Chats are flat sessions with no GitHub issue, so the gh-* commands and the
-// tree-only /new don't apply. Everything else (skills, notes, rename, pin,
-// clear, archive) behaves exactly like a topic.
-const CHAT_EXCLUDED_COMMANDS: ReadonlySet<string> = new Set([
-  ...GITHUB_SLASH_COMMANDS,
-  "new",
-]);
-const HANDLED_COMMANDS = new Set<string>([
-  "notes",
-  "rename",
-  "pin",
-  "unpin",
-  "clear",
-  "archive",
-  "reminder",
-  "reminder-cancel",
-  "done",
-  "role",
-]);
+// Chats are flat sessions with no GitHub issue, so the gh-* commands, the
+// tree-only /new and the topic-only /agent don't apply. The handled and
+// excluded sets are derived from the catalog (see lib/commands.ts) so they
+// can't drift from SLASH_COMMANDS.
+const CHAT_EXCLUDED_COMMANDS: ReadonlySet<string> = surfaceExcludes("chat");
+const HANDLED_COMMANDS = commandsForSurface("chat");
 
 interface ParsedToolMeta {
   tool_call_id?: string;
