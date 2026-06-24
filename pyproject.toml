@@ -20,35 +20,42 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+# Floors are intentionally coarse (major.minor, no patch pin): they state the
+# minimum API we rely on, not "the latest at the time of writing". uv.lock pins
+# exact versions for reproducible dev/CI installs, so the floors don't need to
+# chase every release — see dependabot.yml (`increase-if-necessary`) which keeps
+# routine minor/patch bumps out of the manifest.
 dependencies = [
-    "fastapi>=0.138.0",
-    "uvicorn[standard]>=0.49.0",
-    "sqlalchemy[asyncio]>=2.0.51",
-    "aiosqlite>=0.22.1",
-    "alembic>=1.18.4",
-    "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.2",
-    "sse-starlette>=3.4.5",
-    "httpx>=0.28.1",
-    "openai>=2.43.0",
-    "mcp>=1.28.0",
+    "fastapi>=0.138",
+    "uvicorn[standard]>=0.49",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.22",
+    "alembic>=1.18",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.14",
+    "sse-starlette>=3.4",
+    "httpx>=0.28",
+    "openai>=2.43",
+    "mcp>=1.28",
     "python-multipart>=0.0.32",
-    "pypdf>=6.13.3",
+    "pypdf>=6.13",
 ]
 
 [project.optional-dependencies]
-postgres = ["asyncpg>=0.31.0"]
+postgres = ["asyncpg>=0.31"]
 # Opt-in "Agents" mode: the GitHub Copilot SDK drives long-running agent
-# sessions. The SDK package is lightweight; it lazily downloads a native CLI
-# runtime binary on first use (or when Agents mode is enabled in Settings).
-agents = ["github-copilot-sdk>=1.0.3"]
+# sessions. Kept as an extra because the published 1.0.x wheels are
+# platform-specific and *bundle* the ~90 MB native Copilot CLI runtime binary
+# (there is no lightweight download-on-demand wheel for this API line yet), so
+# installing it is opt-in to avoid forcing that payload on every install.
+agents = ["github-copilot-sdk>=1.0"]
 dev = [
-    "ruff>=0.15.18",
-    "mypy>=2.1.0",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
-    "pytest-cov>=7.1.0",
-    "httpx>=0.28.1",
+    "ruff>=0.15",
+    "mypy>=2.1",
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "pytest-cov>=7.1",
+    "httpx>=0.28",
 ]
 
 [project.scripts]
