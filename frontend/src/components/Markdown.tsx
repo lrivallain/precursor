@@ -8,6 +8,7 @@ import { AlertTriangle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { SvgBlock } from "./SvgBlock";
 
 interface MarkdownProps {
   children: string;
@@ -57,6 +58,35 @@ function stripWarningMarker(node: ReactNode): ReactNode {
   return walk(node);
 }
 
+const FENCE_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g;
+const RAW_SVG_RE = /<svg[\s\S]*?<\/svg>/gi;
+
+/**
+ * Wrap standalone `<svg>…</svg>` markup that the model emits as raw text (not in
+ * a code fence) into a ```svg fence, so the `pre` override below renders it as
+ * an image. Fenced regions are left untouched.
+ */
+function wrapRawSvg(markdown: string): string {
+  if (!markdown.toLowerCase().includes("<svg")) return markdown;
+  return markdown
+    .split(FENCE_RE)
+    .map((part, index) => {
+      if (index % 2 === 1) return part; // captured fenced block
+      return part.replace(
+        RAW_SVG_RE,
+        (match) => `\n\n\`\`\`svg\n${match.trim()}\n\`\`\`\n\n`,
+      );
+    })
+    .join("");
+}
+
+/** Pull SVG source out of a `<pre>`'s `<code>` child, or null when not SVG. */
+function svgFromPre(children: ReactNode): string | null {
+  const text = flattenText(children).trim();
+  if (/^<svg[\s>]/i.test(text) && /<\/svg>\s*$/i.test(text)) return text;
+  return null;
+}
+
 /**
  * Single markdown renderer shared across the app so plugin config and styling
  * stay consistent. GFM (tables, task lists, strikethrough, autolinks) plus
@@ -69,6 +99,11 @@ export function Markdown({ children, className }: MarkdownProps) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
+          pre({ children: preChildren, ...props }) {
+            const svg = svgFromPre(preChildren);
+            if (svg) return <SvgBlock code={svg} />;
+            return <pre {...props}>{preChildren}</pre>;
+          },
           a({ href, children: linkChildren, ...props }) {
             const external = isExternalHref(href);
             return (
@@ -100,7 +135,7 @@ export function Markdown({ children, className }: MarkdownProps) {
           },
         }}
       >
-        {children || "\u200B"}
+        {wrapRawSvg(children) || "\u200B"}
       </ReactMarkdown>
     </div>
   );
