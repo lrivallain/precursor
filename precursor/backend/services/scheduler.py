@@ -37,7 +37,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.events import publish_topic_changed
 from precursor.backend.services.schedule_timing import compute_next_run
-from precursor.backend.services.turn import run_topic_turn_with_timeout
+from precursor.backend.services.scheduled_commands import run_scheduled_prompt_with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class Scheduler:
         status = "ok"
         error: str | None = None
         try:
-            await run_topic_turn_with_timeout(
+            await run_scheduled_prompt_with_timeout(
                 topic_id,
                 prompt,
                 timeout=float(run_timeout),

@@ -3,6 +3,11 @@
  *
  * Built-in commands are listed here; user-defined skills are appended at
  * runtime via the `extra` argument passed by ChatPanel.
+ *
+ * Scheduled topics run headlessly on the backend, which dispatches these same
+ * commands in `precursor/backend/services/scheduled_commands.py`. When adding a
+ * new `topic`-surface command, mirror it in that module's
+ * `BUILTIN_TOPIC_COMMANDS` set and add a handler so it works from a schedule.
  */
 
 /**
