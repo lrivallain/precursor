@@ -11,7 +11,8 @@ Responsibilities:
 * Lifespan ``start``/``stop`` (gated on the enabled preference + capability
   probe — a no-op when Agents mode is off or the SDK is absent).
 * Create/resume SDK sessions and attach the ``precursor`` MCP server so the
-  agent can read topic context and post results back (``post_message``).
+  agent can read topic context and post results back (``post_message``), plus
+  any user-defined MCP servers configured in Settings.
 * Bridge SDK events → DB status cache + ``agent.changed`` bus signals, and post a
   system message to the linked container when a task finishes.
 * Apply the permission policy: auto-approve read-only + precursor MCP; park
@@ -299,6 +300,58 @@ class AgentManager:
         )
         return {"precursor": config}
 
+    async def _user_mcp_configs(self) -> dict[str, Any]:
+        """Translate user-defined ``MCPServer`` rows into SDK MCP configs.
+
+        Mirrors the in-app ``MCPClientManager`` so an agent can call the same
+        user-configured tools as chat/topics. Rows whose transport the SDK can't
+        represent are skipped with a warning (same posture as
+        ``hydrate_user_entries``). Returns ``{}`` if the SDK isn't loadable.
+        """
+        try:
+            sdk = runtime.load_sdk()
+        except RuntimeError:
+            return {}
+
+        # Imported lazily to keep this module importable without the user-server
+        # service graph in the import path of the agents-unavailable case.
+        from precursor.backend.models import MCPServer
+        from precursor.backend.services.mcp.user_servers import (
+            _decode_args,
+            _decode_headers,
+        )
+
+        async with SessionLocal() as session:
+            rows = (await session.execute(select(MCPServer))).scalars().all()
+
+        configs: dict[str, Any] = {}
+        for row in rows:
+            try:
+                if row.transport == "stdio":
+                    if not row.command:
+                        raise ValueError("stdio server has no command")
+                    configs[row.name] = sdk.MCPStdioServerConfig(
+                        type="stdio",
+                        command=row.command,
+                        args=_decode_args(row.args_json),
+                        env=dict(os.environ),
+                        tools=["*"],
+                    )
+                elif row.transport == "streamable_http":
+                    if not row.url:
+                        raise ValueError("streamable_http server has no url")
+                    configs[row.name] = sdk.MCPHTTPServerConfig(
+                        type="http",
+                        url=row.url,
+                        headers=_decode_headers(row.headers_json) or None,
+                        tools=["*"],
+                    )
+                else:
+                    raise ValueError(f"unsupported transport {row.transport!r}")
+            except ValueError as exc:
+                logger.warning("Skipping user MCP server '%s': %s", row.name, exc)
+        return configs
+
     async def _topic_context(self, agent: AgentSession) -> str | None:
         """Build a system-message preamble binding the agent to its topic.
 
@@ -362,7 +415,18 @@ class AgentManager:
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
         mcp = self._precursor_mcp_config()
-        if mcp:
+        if mcp is not None:
+            user_mcp = await self._user_mcp_configs()
+            # Merge user servers, but never let one shadow the first-party
+            # 'precursor' entry — it's reserved and carries full access.
+            for name, cfg in user_mcp.items():
+                if name == "precursor":
+                    logger.warning(
+                        "Ignoring user MCP server named 'precursor' — the name is "
+                        "reserved for the built-in server."
+                    )
+                    continue
+                mcp[name] = cfg
             kwargs["mcp_servers"] = mcp
         preamble = await self._system_preamble(agent)
         if preamble:
