@@ -55,26 +55,29 @@ def test_enabling_agents_persists_and_is_reported(monkeypatch) -> None:
         assert reset.json()["agents_enabled"] is False
 
 
-async def _add_mcp_server(**fields) -> None:
+async def _set_mcp_enabled(mapping: dict[str, bool]) -> None:
+    import json
+
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import MCPServer
-    from precursor.backend.services.mcp.user_servers import get_row_by_name
+    from precursor.backend.models import AppSetting
 
     async with SessionLocal() as session:
-        existing = await get_row_by_name(session, fields["name"])
-        if existing is not None:
-            await session.delete(existing)
-            await session.commit()
-        session.add(MCPServer(**fields))
+        row = await session.get(AppSetting, "mcp_enabled")
+        encoded = json.dumps(mapping)
+        if row is None:
+            session.add(AppSetting(key="mcp_enabled", value=encoded))
+        else:
+            row.value = encoded
         await session.commit()
 
 
-async def test_user_mcp_configs_translate_rows_to_sdk() -> None:
-    """User MCP rows become SDK configs an agent session can attach."""
+async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
+    """Agents attach enabled catalog servers (built-in + user), never precursor."""
     import pytest
 
     from precursor.backend.services.agents import runtime
     from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
 
     if not runtime.sdk_installed():
         pytest.skip("github-copilot-sdk not installed")
@@ -83,63 +86,59 @@ async def test_user_mcp_configs_translate_rows_to_sdk() -> None:
     with TestClient(create_app()):
         pass
 
-    await _add_mcp_server(
-        name="my-stdio",
-        transport="stdio",
-        command="my-cmd",
-        args_json='["--flag", "value"]',
-        headers_json="{}",
-    )
-    await _add_mcp_server(
+    manager = get_mcp_client_manager()
+    # A user server with stored headers (exercises the secret-folding path) and
+    # a malformed stdio user server (no command → skipped, not raised).
+    manager.register_user_entry(
         name="my-http",
         transport="streamable_http",
         url="https://example.test/mcp",
-        args_json="[]",
-        headers_json='{"Authorization": "Bearer secret-token"}',
+        headers={"Authorization": "Bearer secret-token"},
     )
-    # A reserved name (must never shadow the built-in) and an unrepresentable
-    # transport (must be skipped, not raise).
-    await _add_mcp_server(
-        name="precursor",
+    manager.register_user_entry(
+        name="my-broken",
         transport="stdio",
-        command="evil",
-        args_json="[]",
-        headers_json="{}",
+        command=None,
     )
-    await _add_mcp_server(
-        name="bogus",
-        transport="websocket",
-        url="wss://example.test",
-        args_json="[]",
-        headers_json="{}",
-    )
+    try:
+        # Enable two built-ins (one stdio, one http), the user http server, and
+        # the broken one; leave 'workiq' disabled and 'precursor' enabled.
+        await _set_mcp_enabled(
+            {
+                "fetch": True,
+                "github": True,
+                "workiq": False,
+                "my-http": True,
+                "my-broken": True,
+                "precursor": True,
+            }
+        )
 
-    configs = await AgentManager()._user_mcp_configs()
+        configs = await AgentManager()._catalog_mcp_configs()
 
-    assert "bogus" not in configs  # unsupported transport skipped
-    stdio = configs["my-stdio"]
-    assert stdio["type"] == "stdio"
-    assert stdio["command"] == "my-cmd"
-    assert stdio["args"] == ["--flag", "value"]
-    assert stdio["tools"] == ["*"]
+        # precursor is attached separately with full access — never here.
+        assert "precursor" not in configs
+        # Disabled built-in excluded; malformed entry skipped.
+        assert "workiq" not in configs
+        assert "my-broken" not in configs
 
-    http = configs["my-http"]
-    assert http["type"] == "http"
-    assert http["url"] == "https://example.test/mcp"
-    assert http["headers"] == {"Authorization": "Bearer secret-token"}
-    assert http["tools"] == ["*"]
+        # Built-in stdio server.
+        fetch = configs["fetch"]
+        assert fetch["type"] == "stdio"
+        assert fetch["tools"] == ["*"]
 
-    # A user row named 'precursor' is present here, but merging in _ensure_live
-    # drops it; verify the helper at least surfaces it so the merge can reject it.
-    assert "precursor" in configs
+        # Built-in remote server.
+        github = configs["github"]
+        assert github["type"] == "http"
+        assert github["url"] == "https://api.githubcopilot.com/mcp/"
 
-    # Clean up so the rows don't leak into other tests sharing the DB.
-    for name in ("my-stdio", "my-http", "precursor", "bogus"):
-        from precursor.backend.db import SessionLocal
-        from precursor.backend.services.mcp.user_servers import get_row_by_name
-
-        async with SessionLocal() as session:
-            row = await get_row_by_name(session, name)
-            if row is not None:
-                await session.delete(row)
-                await session.commit()
+        # User server with its stored Authorization header folded in.
+        http = configs["my-http"]
+        assert http["type"] == "http"
+        assert http["url"] == "https://example.test/mcp"
+        assert http["headers"] == {"Authorization": "Bearer secret-token"}
+        assert http["tools"] == ["*"]
+    finally:
+        manager.unregister_user_entry("my-http")
+        manager.unregister_user_entry("my-broken")
+        await _set_mcp_enabled({})

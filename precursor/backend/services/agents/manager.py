@@ -12,7 +12,8 @@ Responsibilities:
   probe — a no-op when Agents mode is off or the SDK is absent).
 * Create/resume SDK sessions and attach the ``precursor`` MCP server so the
   agent can read topic context and post results back (``post_message``), plus
-  any user-defined MCP servers configured in Settings.
+  every other catalog MCP server (built-in or user-defined) the user has
+  enabled in Settings.
 * Bridge SDK events → DB status cache + ``agent.changed`` bus signals, and post a
   system message to the linked container when a task finishes.
 * Apply the permission policy: auto-approve read-only + precursor MCP; park
@@ -300,56 +301,78 @@ class AgentManager:
         )
         return {"precursor": config}
 
-    async def _user_mcp_configs(self) -> dict[str, Any]:
-        """Translate user-defined ``MCPServer`` rows into SDK MCP configs.
+    @staticmethod
+    def _entry_to_sdk_config(sdk: Any, entry: Any, github_token: str) -> Any:
+        """Translate one ``MCPServerEntry`` into an SDK MCP server config.
 
-        Mirrors the in-app ``MCPClientManager`` so an agent can call the same
-        user-configured tools as chat/topics. Rows whose transport the SDK can't
-        represent are skipped with a warning (same posture as
-        ``hydrate_user_entries``). Returns ``{}`` if the SDK isn't loadable.
+        Raises ``ValueError`` for entries the SDK can't represent (missing
+        command/url, unknown transport) so the caller can skip + log them.
+        """
+        if entry.transport == "stdio":
+            if not entry.command:
+                raise ValueError("stdio server has no command")
+            return sdk.MCPStdioServerConfig(
+                type="stdio",
+                command=entry.command,
+                args=list(entry.args),
+                # Built-ins set their own env (or None → inherit ours so PATH and
+                # the venv resolve); user entries always inherit ours.
+                env=entry.env if entry.env is not None else dict(os.environ),
+                tools=["*"],
+            )
+        if entry.transport == "streamable_http":
+            if not entry.url:
+                raise ValueError("streamable_http server has no url")
+            # headers_provider folds in per-request secrets — the GitHub bearer
+            # token for the built-in 'github' server, or a user entry's stored
+            # headers. Resolved here, never persisted in agent events.
+            headers = entry.headers_provider(github_token) if entry.headers_provider else None
+            return sdk.MCPHTTPServerConfig(
+                type="http",
+                url=entry.url,
+                headers=headers or None,
+                tools=["*"],
+            )
+        raise ValueError(f"unsupported transport {entry.transport!r}")
+
+    async def _catalog_mcp_configs(self) -> dict[str, Any]:
+        """SDK configs for every catalog MCP server the user has *enabled*.
+
+        Mirrors the chat/topics surface: both built-in servers (``github``,
+        ``fetch``, ``workspace-fs``, …) and user-defined ones are attached when
+        their ``mcp_enabled`` toggle is on, so an agent can call the same tools.
+        ``precursor`` is excluded here — it's attached separately with full
+        access in :meth:`_precursor_mcp_config`. Returns ``{}`` if the SDK isn't
+        loadable.
         """
         try:
             sdk = runtime.load_sdk()
         except RuntimeError:
             return {}
 
-        # Imported lazily to keep this module importable without the user-server
-        # service graph in the import path of the agents-unavailable case.
-        from precursor.backend.models import MCPServer
-        from precursor.backend.services.mcp.user_servers import (
-            _decode_args,
-            _decode_headers,
-        )
+        # Imported lazily to keep this module importable without the MCP service
+        # graph in the import path of the agents-unavailable case.
+        from precursor.backend.services.app_settings import resolve_mcp_enabled
+        from precursor.backend.services.github_auth import resolve_github_token
+        from precursor.backend.services.mcp.client import get_mcp_client_manager
 
         async with SessionLocal() as session:
-            rows = (await session.execute(select(MCPServer))).scalars().all()
+            enabled = await resolve_mcp_enabled(session)
+            github_token = await resolve_github_token(session)
 
+        manager = get_mcp_client_manager()
         configs: dict[str, Any] = {}
-        for row in rows:
+        for entry in manager.list_entries():
+            # 'precursor' is first-party and attached with full access elsewhere;
+            # never gate or duplicate it here.
+            if entry.name == "precursor":
+                continue
+            if not enabled.get(entry.name, False):
+                continue
             try:
-                if row.transport == "stdio":
-                    if not row.command:
-                        raise ValueError("stdio server has no command")
-                    configs[row.name] = sdk.MCPStdioServerConfig(
-                        type="stdio",
-                        command=row.command,
-                        args=_decode_args(row.args_json),
-                        env=dict(os.environ),
-                        tools=["*"],
-                    )
-                elif row.transport == "streamable_http":
-                    if not row.url:
-                        raise ValueError("streamable_http server has no url")
-                    configs[row.name] = sdk.MCPHTTPServerConfig(
-                        type="http",
-                        url=row.url,
-                        headers=_decode_headers(row.headers_json) or None,
-                        tools=["*"],
-                    )
-                else:
-                    raise ValueError(f"unsupported transport {row.transport!r}")
+                configs[entry.name] = self._entry_to_sdk_config(sdk, entry, github_token)
             except ValueError as exc:
-                logger.warning("Skipping user MCP server '%s': %s", row.name, exc)
+                logger.warning("Skipping MCP server '%s': %s", entry.name, exc)
         return configs
 
     async def _topic_context(self, agent: AgentSession) -> str | None:
@@ -416,17 +439,10 @@ class AgentManager:
             kwargs["session_id"] = agent.copilot_session_id
         mcp = self._precursor_mcp_config()
         if mcp is not None:
-            user_mcp = await self._user_mcp_configs()
-            # Merge user servers, but never let one shadow the first-party
-            # 'precursor' entry — it's reserved and carries full access.
-            for name, cfg in user_mcp.items():
-                if name == "precursor":
-                    logger.warning(
-                        "Ignoring user MCP server named 'precursor' — the name is "
-                        "reserved for the built-in server."
-                    )
-                    continue
-                mcp[name] = cfg
+            # Attach every enabled catalog server (built-in + user-defined).
+            # _catalog_mcp_configs already excludes 'precursor', so the
+            # first-party full-access entry can't be shadowed.
+            mcp.update(await self._catalog_mcp_configs())
             kwargs["mcp_servers"] = mcp
         preamble = await self._system_preamble(agent)
         if preamble:

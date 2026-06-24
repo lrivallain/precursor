@@ -312,6 +312,19 @@ async def resolve_mcp_http_enabled(session: AsyncSession) -> bool:
     return DEFAULT_MCP_HTTP_ENABLED
 
 
+async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:
+    """Per-server enable toggles for the MCP catalog (built-in + user-defined).
+
+    Keyed by server name; absent entries mean disabled. This is the same
+    ``mcp_enabled`` map the Settings UI writes and the chat/topics path reads, so
+    agents honour exactly what the user switched on.
+    """
+    db_value = await _get_db_value(session, "mcp_enabled")
+    if isinstance(db_value, dict):
+        return {str(k): bool(v) for k, v in db_value.items()}
+    return {}
+
+
 async def resolve_agents_enabled(session: AsyncSession) -> bool:
     """Whether Agents mode (Copilot SDK) is enabled.
 
