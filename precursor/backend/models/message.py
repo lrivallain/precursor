@@ -57,6 +57,12 @@ class Message(Base, TimestampMixin):
     # Optional serialized tool-call payload (JSON string) for assistant turns.
     tool_calls: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Optional JSON array of suggested follow-up replies the model offered at the
+    # end of an assistant turn (parsed out of a trailing ``suggest`` block). NULL
+    # for turns without suggestions and for non-assistant roles. The UI renders
+    # these as clickable chips that send the chosen text as the next user turn.
+    suggestions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Token usage reported by the provider for the round-trip that produced
     # this assistant message (NULL for user/tool/system turns and for runs
     # against providers that don't surface usage).

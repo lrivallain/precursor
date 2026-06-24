@@ -53,6 +53,10 @@ from precursor.backend.services.llm.base import (
 from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.roles import resolve_role_prompt
+from precursor.backend.services.suggestions import (
+    SUGGESTIONS_INSTRUCTION,
+    split_suggestions,
+)
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -187,6 +191,7 @@ async def _build_system_context(session: AsyncSession, topic: Topic) -> str:
                 parts.append(f"Issue body:\n{issue['body']}")
             for c in list(reversed(comments))[:10]:
                 parts.append(f"Comment by {c['user']} @ {c['updated_at']}:\n{c['body']}")
+    parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
 
 
@@ -221,6 +226,7 @@ async def _build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     # discussion-level context.
     if chat.description and not chat.description_as_system_prompt:
         parts.append(f"Chat description: {chat.description}")
+    parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
 
 
@@ -640,11 +646,14 @@ async def _run_message_stream(
                 assistant_text = "".join(text_chunks)
 
                 if not tool_calls:
-                    # Final assistant turn — persist and done.
+                    # Final assistant turn — split off any suggested follow-ups,
+                    # persist the clean text, and surface the chips separately.
+                    assistant_text, suggestions = split_suggestions(assistant_text)
                     async with SessionLocal() as ws:
                         assistant = Message(
                             role=MessageRole.ASSISTANT,
                             content=assistant_text,
+                            suggestions=json.dumps(suggestions) if suggestions else None,
                             prompt_tokens=round_usage.prompt_tokens if round_usage else None,
                             completion_tokens=round_usage.completion_tokens
                             if round_usage
@@ -654,6 +663,7 @@ async def _run_message_stream(
                         ws.add(assistant)
                         await ws.commit()
                         await ws.refresh(assistant)
+                        assistant_id = assistant.id
                         await _publish_container_changed(kind, container_id)
                         if round_usage is not None:
                             async with SessionLocal() as us:
@@ -681,6 +691,11 @@ async def _run_message_stream(
                         yield {
                             "event": "done",
                             "data": json.dumps({"id": assistant.id, "content": assistant_text}),
+                        }
+                    if suggestions:
+                        yield {
+                            "event": "suggestions",
+                            "data": json.dumps({"message_id": assistant_id, "items": suggestions}),
                         }
                     return
 

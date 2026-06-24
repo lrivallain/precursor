@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowRightCircle } from "lucide-react";
 import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
+import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
@@ -21,6 +22,7 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
+import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -494,6 +496,12 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       undefined,
       atts,
     );
+  }
+
+  function sendSuggestion(text: string): void {
+    if (streaming || !text.trim()) return;
+    historyIndexRef.current = null;
+    void streamStore.start(streamKey, text.trim());
   }
 
   function stop(): void {
@@ -1254,8 +1262,27 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             }
             return out;
           })()}
+          {!streaming &&
+            (() => {
+              const last = visibleMessages[visibleMessages.length - 1];
+              if (last?.role === "assistant" && last.suggestions?.length) {
+                return (
+                  <SuggestedReplies
+                    items={last.suggestions}
+                    onPick={sendSuggestion}
+                    disabled={streaming}
+                  />
+                );
+              }
+              return null;
+            })()}
           {streaming && (
-            <MessageBubble role="assistant" content={pendingContent} pending onStop={stop} />
+            <MessageBubble
+              role="assistant"
+              content={stripSuggestionBlock(pendingContent)}
+              pending
+              onStop={stop}
+            />
           )}
         </div>
       </div>
