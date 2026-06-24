@@ -6,6 +6,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Only raise a floor in pyproject.toml when the latest release no longer
+    # satisfies it (e.g. a real breaking floor) or for a security advisory.
+    # Routine minor/patch releases that already satisfy our coarse `>=` floors
+    # produce no manifest PR — the lockfile stays the source of exact versions.
+    versioning-strategy: increase-if-necessary
     groups:
       # Group only minor/patch bumps; majors get their own PR so a breaking
       # upgrade is never bundled with safe ones.
@@ -19,6 +24,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Same intent as the pip ecosystem: don't churn package.json for bumps the
+    # existing range already allows; only widen/raise when actually required.
+    versioning-strategy: increase-if-necessary
     groups:
       # Group only minor/patch bumps; majors (e.g. Tailwind v4, Vite, TS) get
       # their own PR so each migration is reviewed in isolation.

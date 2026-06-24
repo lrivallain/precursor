@@ -18,8 +18,9 @@ older ones.
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
 - **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
-  SDK agent attached to a topic/chat, followed in a workflow-style tab. Enable
-  it in **Settings → Agents** (needs the `agents` extra: `uv sync --extra agents`)
+  SDK agent attached to a topic/chat, followed in a workflow-style tab. Off by
+  default — needs the `agents` extra and a toggle in **Settings → Agents**
+  (see [Optional: Agents mode](#optional-agents-mode))
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Plugin-ready**: backend entry points + a frontend extension registry,
@@ -60,6 +61,26 @@ you already use `gh`, you don't need to set anything. A token needs the
 `models:read` fine-grained permission (or Copilot access) for real model
 responses. With **no** token at all, Precursor falls back to the `MockProvider`
 so the chat flow stays usable offline.
+
+### Optional: Agents mode
+
+**Agents mode** is **opt-in and off by default**. It is **not** installed by the
+`uv sync --extra dev` above — it lives behind its own `agents` extra:
+
+```bash
+uv sync --extra dev --extra agents   # adds github-copilot-sdk on top of the dev deps
+```
+
+> [!IMPORTANT]
+> The `github-copilot-sdk` wheel **bundles the native Copilot CLI runtime
+> binary** (~90 MB download, ~145 MB on disk), which is why it is kept out of
+> the default install. Installing the extra is the only step that pulls that
+> payload — there is no separate, smaller "download the runtime later" path for
+> the published `1.0.x` wheels.
+
+Installing the extra only makes the runtime *available*. Agents stay **disabled**
+until you turn them on in **Settings → Agents**, where the UI also reports
+whether the runtime resolved on your platform.
 
 ### Run it (one command)
 
