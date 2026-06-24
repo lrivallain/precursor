@@ -5,6 +5,16 @@
  * runtime via the `extra` argument passed by ChatPanel.
  */
 
+/**
+ * Surfaces a slash command can be used on. Each composer derives its handled /
+ * offered command set from these tags (see {@link commandsForSurface}), so the
+ * picker and the dispatcher can't drift from the catalog:
+ *  - `topic`: the topic chat composer (ChatPanel)
+ *  - `chat`:  the flat chat-session composer (ChatSessionPanel)
+ *  - `agent`: the agent-session composer (AgentView), intercepted by the backend
+ */
+export type CommandSurface = "topic" | "chat" | "agent";
+
 export interface SlashCommand {
   name: string;
   label: string;
@@ -13,6 +23,8 @@ export interface SlashCommand {
   argumentHint?: string;
   /** Marks commands that come from user-defined skills (vs. built-ins). */
   kind?: "builtin" | "skill";
+  /** Composers this command applies to. Omitted for runtime skills. */
+  surfaces?: CommandSurface[];
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
@@ -23,6 +35,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Draft a status comment on the linked GitHub issue. The text after the command is an instruction (e.g. 'ask the owner for an ETA').",
     argumentHint: "instruction (optional)",
     kind: "builtin",
+    surfaces: ["topic"],
   },
   {
     name: "gh-sync",
@@ -30,6 +43,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Force-refresh the linked GitHub issue. Invalidates the cached context so the Context tab regenerates next time.",
     kind: "builtin",
+    surfaces: ["topic"],
   },
   {
     name: "gh-create",
@@ -38,6 +52,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Create a new GitHub issue from this conversation and link it to the topic. Editable title + body before posting.",
     argumentHint: "instruction (optional)",
     kind: "builtin",
+    surfaces: ["topic"],
   },
   {
     name: "gh-close",
@@ -46,6 +61,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Close the linked GitHub issue, optionally with a closing comment. Editable before posting.",
     argumentHint: "instruction (optional)",
     kind: "builtin",
+    surfaces: ["topic"],
   },
   {
     name: "notes",
@@ -53,6 +69,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Open a scratch pad to capture freeform notes (e.g. during a meeting). Then choose: rephrase via AI, post as a GitHub comment, or add to the chat with or without an AI follow-up.",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "rename",
@@ -61,6 +78,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Rename this conversation. The text after the command becomes the new title.",
     argumentHint: "new title",
     kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
   },
   {
     name: "new",
@@ -69,18 +87,21 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Create a new topic nested under this one and switch to it. The text after the command is its title.",
     argumentHint: "title",
     kind: "builtin",
+    surfaces: ["topic"],
   },
   {
     name: "pin",
     label: "/pin",
     description: "Pin this conversation to the top of the sidebar.",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "unpin",
     label: "/unpin",
     description: "Remove this conversation from the pinned list.",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "reminder",
@@ -89,12 +110,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Schedule a reminder that resurfaces this conversation at a chosen date and time. One per conversation — setting a new one replaces it.",
     argumentHint: "note (optional)",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "reminder-cancel",
     label: "/reminder-cancel",
     description: "Cancel the pending reminder on this conversation.",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "done",
@@ -102,6 +125,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Mark a fired reminder as handled, removing it from the Reminders section.",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "clear",
@@ -109,6 +133,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Erase the entire transcript for this conversation (asks for confirmation).",
     kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
   },
   {
     name: "role",
@@ -117,6 +142,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Set the assistant role (persona) for this conversation. Pass a role name to switch directly, or run it bare to open the role picker.",
     argumentHint: "role name (optional)",
     kind: "builtin",
+    surfaces: ["topic", "chat"],
   },
   {
     name: "archive",
@@ -124,6 +150,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       "Archive this conversation and leave it. Restore it any time from the archive (your profile menu in the sidebar).",
     kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
   },
   {
     name: "agent",
@@ -132,8 +159,30 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       "Start an agent session from this topic with the text as its task. Pass an existing session id (UUID) first (e.g. '/agent 3f2a… keep going') to send the rest as a follow-up to that session instead.",
     argumentHint: "prompt — or: session-uuid prompt",
     kind: "builtin",
+    surfaces: ["topic"],
   },
 ];
+
+/**
+ * Names of built-in commands available on a surface. Derive each composer's
+ * handled-command set from this so it always tracks {@link SLASH_COMMANDS}.
+ */
+export function commandsForSurface(surface: CommandSurface): ReadonlySet<string> {
+  return new Set(
+    SLASH_COMMANDS.filter((c) => c.surfaces?.includes(surface)).map((c) => c.name),
+  );
+}
+
+/**
+ * Complement of {@link commandsForSurface}: built-in commands NOT available on a
+ * surface. Pass to the picker/parser as `excludeNames` so a composer never
+ * offers a command it can't handle (skills are added separately and unaffected).
+ */
+export function surfaceExcludes(surface: CommandSurface): ReadonlySet<string> {
+  return new Set(
+    SLASH_COMMANDS.filter((c) => !c.surfaces?.includes(surface)).map((c) => c.name),
+  );
+}
 
 export interface ParsedCommand {
   name: string;
@@ -191,13 +240,10 @@ export const GITHUB_SLASH_COMMANDS: ReadonlySet<string> = new Set([
 /**
  * Slash commands available inside an agent session. Everything else is disabled
  * there (the backend rejects unknown commands instead of forwarding them to the
- * SDK), so the composer only offers these three.
+ * SDK), so the composer only offers these. Derived from {@link SLASH_COMMANDS}
+ * so it can't drift from the catalog.
  */
-export const AGENT_SLASH_COMMANDS: ReadonlySet<string> = new Set([
-  "rename",
-  "clear",
-  "archive",
-]);
+export const AGENT_SLASH_COMMANDS: ReadonlySet<string> = commandsForSurface("agent");
 
 /**
  * Autocomplete matcher for the agent composer: like {@link matchSlashCommands}

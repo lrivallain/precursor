@@ -269,3 +269,11 @@ async def test_run_command_rejects_unknown() -> None:
 
     with pytest.raises(ValueError, match="isn't available"):
         await AgentManager().run_command(agent_id, "role", "assistant")
+
+
+def test_agent_command_registry_is_source_of_truth() -> None:
+    """The registry keys drive both validation and the rejection message."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    assert set(AgentManager.supported_commands()) == {"rename", "archive", "clear"}
+    assert set(AgentManager._COMMAND_HANDLERS) == set(AgentManager.supported_commands())

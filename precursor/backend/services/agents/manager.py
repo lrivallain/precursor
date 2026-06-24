@@ -34,9 +34,10 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import delete, select
 
@@ -683,32 +684,50 @@ class AgentManager:
     async def run_command(self, agent_id: int, name: str, argument: str) -> None:
         """Execute a system slash command for an agent (never forwarded to the SDK).
 
-        Handles ``rename`` (set title), ``clear`` (reset the conversation) and
-        ``archive`` (hide from the active list). The visible feedback is the state
-        change itself (header title, empty transcript, the session leaving the
-        list). Raises :class:`ValueError` for bad usage or an unknown command so
-        the caller can surface it.
+        Dispatches to a handler from :attr:`_COMMAND_HANDLERS` (rename/clear/
+        archive). The visible feedback is the state change itself (header title,
+        empty transcript, the session leaving the list). Raises
+        :class:`ValueError` for bad usage or an unknown command so the caller can
+        surface it. Adding a command is a single registry entry below.
         """
-        if name == "rename":
-            title = " ".join(argument.split())[:200]
-            if not title:
-                raise ValueError("Usage: /rename <new title>")
-            await self._patch(agent_id, title=title)
+        handler = self._COMMAND_HANDLERS.get(name)
+        if handler is None:
+            supported = ", ".join(f"/{cmd}" for cmd in self.supported_commands())
+            raise ValueError(
+                f"/{name} isn't available in agent sessions — only {supported} are supported."
+            )
+        await handler(self, agent_id, argument)
+
+    async def _cmd_rename(self, agent_id: int, argument: str) -> None:
+        title = " ".join(argument.split())[:200]
+        if not title:
+            raise ValueError("Usage: /rename <new title>")
+        await self._patch(agent_id, title=title)
+        await self._publish(agent_id)
+
+    async def _cmd_archive(self, agent_id: int, argument: str) -> None:
+        agent = await self._load(agent_id)
+        if agent is not None and agent.archived_at is None:
+            await self._patch(agent_id, archived_at=datetime.now(UTC))
             await self._publish(agent_id)
-            return
-        if name == "archive":
-            agent = await self._load(agent_id)
-            if agent is not None and agent.archived_at is None:
-                await self._patch(agent_id, archived_at=datetime.now(UTC))
-                await self._publish(agent_id)
-            return
-        if name == "clear":
-            await self.clear_session(agent_id)
-            return
-        raise ValueError(
-            f"/{name} isn't available in agent sessions — "
-            "only /rename, /clear and /archive are supported."
-        )
+
+    async def _cmd_clear(self, agent_id: int, argument: str) -> None:
+        await self.clear_session(agent_id)
+
+    # Registry of system slash commands available inside an agent session:
+    # name -> async handler. The set of supported names (used for validation and
+    # the rejection message) is derived from these keys, and the frontend picker
+    # mirrors it via AGENT_SLASH_COMMANDS, so a new command is a single entry.
+    _COMMAND_HANDLERS: ClassVar[dict[str, Callable[[AgentManager, int, str], Awaitable[None]]]] = {
+        "rename": _cmd_rename,
+        "archive": _cmd_archive,
+        "clear": _cmd_clear,
+    }
+
+    @classmethod
+    def supported_commands(cls) -> tuple[str, ...]:
+        """Names of slash commands an agent session accepts (registry keys)."""
+        return tuple(cls._COMMAND_HANDLERS)
 
     async def _publish(self, agent_id: int) -> None:
         """Emit an ``agent.changed`` signal for an agent by id (loads its links)."""

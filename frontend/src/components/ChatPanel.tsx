@@ -12,6 +12,7 @@ import {
   unsupportedAttachmentMessage,
 } from "../lib/attachments";
 import {
+  commandsForSurface,
   GITHUB_SLASH_COMMANDS,
   matchSlashCommands,
   parseSlashCommand,
@@ -65,24 +66,9 @@ interface PendingCommand {
   error: string | null;
 }
 
-const HANDLED_COMMANDS = new Set<string>([
-  "gh-update",
-  "gh-sync",
-  "gh-create",
-  "gh-close",
-  "notes",
-  "rename",
-  "new",
-  "pin",
-  "unpin",
-  "clear",
-  "archive",
-  "reminder",
-  "reminder-cancel",
-  "done",
-  "role",
-  "agent",
-]);
+// Topic composer handles every built-in command. Derived from the catalog so
+// it tracks SLASH_COMMANDS automatically (see lib/commands.ts).
+const HANDLED_COMMANDS = commandsForSurface("topic");
 
 function cardTitle(p: PendingCommand): string {
   switch (p.kind) {
