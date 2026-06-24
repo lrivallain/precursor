@@ -378,6 +378,9 @@ export interface MCPServerStatus {
   tools: MCPTool[];
   builtin: boolean;
   enabled: boolean;
+  // Workiq-only: hosted HTTP + OAuth (writes) when true, local stdio when false.
+  // null for servers where preview mode does not apply.
+  preview: boolean | null;
   // Populated for user-defined entries only.
   id: number | null;
   header_keys: string[];

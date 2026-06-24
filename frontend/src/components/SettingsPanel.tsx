@@ -372,6 +372,26 @@ export function SettingsPanel({ onClose }: Props) {
     }
   }
 
+  async function togglePreview(name: string, current: boolean): Promise<void> {
+    const nextValue = !current;
+    // Optimistic flip; the round-trip may trigger an OAuth browser sign-in.
+    setMcp((prev) =>
+      prev.map((s) => (s.name === name ? { ...s, preview: nextValue } : s)),
+    );
+    try {
+      const next = await api.setWorkiqPreview(nextValue);
+      setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
+    } catch (err) {
+      setMcp((prev) =>
+        prev.map((s) =>
+          s.name === name
+            ? { ...s, preview: current, state: "error", error: (err as Error).message }
+            : s,
+        ),
+      );
+    }
+  }
+
   // Esc closes the modal — convention shared with most settings dialogs
   // (VS Code, Linear, GitHub).
   useEffect(() => {
@@ -970,6 +990,11 @@ export function SettingsPanel({ onClose }: Props) {
                         key={s.name}
                         server={s}
                         onToggle={() => void toggleMcp(s.name, s.enabled)}
+                        onTogglePreview={
+                          s.preview != null
+                            ? () => void togglePreview(s.name, s.preview ?? false)
+                            : undefined
+                        }
                         onEdit={() => setMcpEditing(s)}
                         onDelete={async () => {
                           if (s.id == null) return;
@@ -1438,11 +1463,13 @@ function McpExposeCard({
 function McpServerCard({
   server,
   onToggle,
+  onTogglePreview,
   onEdit,
   onDelete,
 }: {
   server: MCPServerStatus;
   onToggle: () => void;
+  onTogglePreview?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
@@ -1489,6 +1516,20 @@ function McpServerCard({
           />
           <span className="text-muted">enabled</span>
         </label>
+        {onTogglePreview && (
+          <label
+            className="flex items-center gap-1 text-xs cursor-pointer"
+            data-tooltip="Use the hosted WorkIQ endpoint (OAuth sign-in) to enable writes"
+          >
+            <input
+              type="checkbox"
+              checked={server.preview ?? false}
+              onChange={onTogglePreview}
+              className="accent-accent"
+            />
+            <span className="text-muted">preview</span>
+          </label>
+        )}
         {!server.builtin && onEdit && (
           <button
             type="button"

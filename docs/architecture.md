@@ -168,7 +168,12 @@ streamable-HTTP: `github`, `workiq`, `fetch`, `workspace-fs`, `cmd-runner`, and
 `precursor` itself. Users add their own (`MCPServer` rows). Each server is
 toggled in Settings (the `mcp_enabled` map); sessions are opened per chat turn
 and their tools surfaced to the provider. A host-dependency *preflight* gates
-enabling (e.g. `cmd-runner` needs Docker when its jail is on).
+enabling (e.g. `cmd-runner` needs Docker when its jail is on). `workiq` also has
+a **preview** toggle (`mcp_workiq_preview`): off it runs the local stdio launcher
+(read-only `ask`); on it switches to the hosted, OAuth-protected HTTP endpoint
+(`https://workiq.svc.cloud.microsoft/mcp`) for the full read **and write**
+surface. The OAuth browser flow is driven via the SDK's `OAuthClientProvider`
+(`services/mcp/workiq_preview.py`), with tokens cached in `AppSetting`.
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,

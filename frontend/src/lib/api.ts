@@ -352,6 +352,11 @@ export const api = {
     request<MCPServerStatus>(`/api/mcp/servers/${name}/connect`, { method: "POST" }),
   disconnectMcpServer: (name: string) =>
     request<MCPServerStatus>(`/api/mcp/servers/${name}/disconnect`, { method: "POST" }),
+  setWorkiqPreview: (enabled: boolean) =>
+    request<MCPServerStatus>(`/api/mcp/servers/workiq/preview`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
   createMcpServer: (data: MCPServerCreate) =>
     request<MCPServerStatus>(`/api/mcp/servers/user`, {
       method: "POST",
