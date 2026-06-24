@@ -63,6 +63,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+    from precursor.backend.services.mcp.workiq_preview import (
+        build_oauth_provider,
+        resolve_workiq_preview,
+    )
+
+    if await resolve_workiq_preview():
+        get_mcp_client_manager().configure_workiq_preview(
+            True, auth_provider=build_oauth_provider()
+        )
     discover(app)
     from precursor.backend.services.scheduler import get_scheduler
 

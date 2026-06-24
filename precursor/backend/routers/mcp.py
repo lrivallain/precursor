@@ -160,6 +160,49 @@ async def disconnect_server(
     return _enrich_with_user_meta(base, row)
 
 
+class WorkiqPreviewToggle(BaseModel):
+    enabled: bool
+
+
+@router.post("/servers/workiq/preview")
+async def set_workiq_preview_mode(
+    payload: WorkiqPreviewToggle,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Switch the built-in ``workiq`` server between the local stdio launcher and
+    the hosted, OAuth-protected HTTP endpoint (full read+write surface).
+
+    Reconfigures the in-memory entry and retires any warm session so the next
+    connection picks up the new transport. We deliberately do **not** probe here:
+    the OAuth browser sign-in runs lazily on the next connect (toggling the
+    server) or first chat use, so flipping this checkbox never blocks on an
+    interactive login.
+    """
+    from precursor.backend.services.mcp.workiq_preview import (
+        build_oauth_provider,
+        set_workiq_preview,
+    )
+
+    manager = get_mcp_client_manager()
+    if manager.get("workiq") is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "WorkIQ MCP server not found")
+
+    await set_workiq_preview(payload.enabled)
+    manager.configure_workiq_preview(
+        payload.enabled,
+        auth_provider=build_oauth_provider() if payload.enabled else None,
+    )
+    await manager.retire_worker("workiq")
+
+    enabled = await _load_enabled(session)
+    is_enabled = enabled.get("workiq", False)
+
+    entry = manager.get("workiq")
+    assert entry is not None
+    base = manager.status_dict(entry, enabled=is_enabled)
+    return _enrich_with_user_meta(base, None)
+
+
 # --------- user-defined CRUD ---------
 
 

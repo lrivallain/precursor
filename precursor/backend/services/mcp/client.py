@@ -21,13 +21,16 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from precursor.backend.config import get_settings
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +74,10 @@ class MCPServerEntry:
     # default env. Built-ins that need the app's DB/config forward os.environ.
     env: dict[str, str] | None = None
     headers_provider: HeadersProvider | None = None
+    # Optional httpx auth driver for streamable_http transports (e.g. the
+    # WorkIQ preview OAuth provider). When set, the transport authenticates via
+    # this instead of (or in addition to) ``headers_provider``.
+    auth_provider: httpx.Auth | None = None
     builtin: bool = True
     state: ConnectionState = "disconnected"
     error: str | None = None
@@ -91,6 +98,9 @@ class MCPClientManager:
         # Strong refs to fire-and-forget worker-retirement tasks so the GC
         # doesn't cancel them mid-teardown.
         self._retiring: set[asyncio.Task[None]] = set()
+        # Whether the built-in ``workiq`` entry is in preview mode (hosted HTTP +
+        # OAuth + writes) rather than the default local stdio launcher.
+        self._workiq_preview: bool = False
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -210,6 +220,47 @@ class MCPClientManager:
         del self._servers[name]
         return True
 
+    @property
+    def workiq_preview(self) -> bool:
+        return self._workiq_preview
+
+    def configure_workiq_preview(self, enabled: bool, *, auth_provider: httpx.Auth | None) -> None:
+        """Switch the built-in ``workiq`` entry between stdio and hosted HTTP.
+
+        Preview mode points WorkIQ at the OAuth-protected hosted endpoint (full
+        read+write surface); off reverts to the local ``npx`` stdio launcher.
+        Mutates the entry in place and resets its transient state so the next
+        probe reflects the new transport.
+        """
+        from precursor.backend.services.mcp.workiq_preview import WORKIQ_PREVIEW_URL
+
+        entry = self._servers.get("workiq")
+        if entry is None:
+            return
+        self._workiq_preview = enabled
+        if enabled:
+            entry.transport = "streamable_http"
+            entry.url = WORKIQ_PREVIEW_URL
+            entry.command = None
+            entry.args = []
+            entry.auth_provider = auth_provider
+        else:
+            entry.transport = "stdio"
+            entry.url = None
+            entry.command = "npx"
+            entry.args = ["-y", "@microsoft/workiq@latest", "mcp"]
+            entry.auth_provider = None
+        entry.state = "disconnected"
+        entry.error = None
+        entry.tools = []
+
+    async def retire_worker(self, name: str) -> None:
+        """Close + drop any warm worker for ``name`` (e.g. after reconfiguring)."""
+        async with self._pool_lock:
+            worker = self._workers.pop(name, None)
+        if worker is not None:
+            await worker.aclose()
+
     @asynccontextmanager
     async def open_session(
         self, name: str, *, github_token: str = ""
@@ -244,12 +295,12 @@ class MCPClientManager:
                 if not entry.url:
                     raise RuntimeError(f"MCP server '{name}' has no URL configured")
                 headers = entry.headers_provider(github_token) if entry.headers_provider else None
-                if entry.headers_provider and headers is None:
+                if entry.headers_provider and headers is None and entry.auth_provider is None:
                     raise RuntimeError(
                         f"MCP server '{name}' has no credentials; configure them in Settings"
                     )
                 async with (
-                    streamablehttp_client(entry.url, headers=headers) as (
+                    streamablehttp_client(entry.url, headers=headers, auth=entry.auth_provider) as (
                         read,
                         write,
                         _get_session_id,
@@ -411,6 +462,9 @@ class MCPClientManager:
             "tools": [{"name": t.name, "description": t.description} for t in entry.tools],
             "builtin": entry.builtin,
             "enabled": enabled,
+            # Preview toggle is workiq-specific; None means "not applicable" so
+            # the UI only renders the extra checkbox for that server.
+            "preview": self._workiq_preview if entry.name == "workiq" else None,
         }
 
 
