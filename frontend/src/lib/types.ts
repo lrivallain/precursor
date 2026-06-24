@@ -234,6 +234,8 @@ export interface Message {
   completion_tokens?: number | null;
   created_at: string;
   attachments?: Attachment[];
+  /** Follow-up reply chips the assistant offered on this turn. */
+  suggestions?: string[];
 }
 
 export interface NotesDraft {

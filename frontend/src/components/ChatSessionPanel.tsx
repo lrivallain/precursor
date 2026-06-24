@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageBubble } from "./MessageBubble";
+import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
 import { Composer } from "./Composer";
@@ -20,6 +21,7 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
+import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -771,6 +773,11 @@ export function ChatSessionPanel({
     );
   }
 
+  function sendSuggestion(text: string): void {
+    if (streaming || !text.trim()) return;
+    void streamStore.start(streamKey, text.trim());
+  }
+
   function stop(): void {
     const partial = streamStore.pendingContent(streamKey).trim();
     stoppingRef.current = true;
@@ -842,8 +849,27 @@ export function ChatSessionPanel({
                 />
               );
             })}
+            {!streaming &&
+              (() => {
+                const last = visibleMessages[visibleMessages.length - 1];
+                if (last?.role === "assistant" && last.suggestions?.length) {
+                  return (
+                    <SuggestedReplies
+                      items={last.suggestions}
+                      onPick={sendSuggestion}
+                      disabled={streaming}
+                    />
+                  );
+                }
+                return null;
+              })()}
             {streaming && (
-              <MessageBubble role="assistant" content={pendingContent} pending onStop={stop} />
+              <MessageBubble
+                role="assistant"
+                content={stripSuggestionBlock(pendingContent)}
+                pending
+                onStop={stop}
+              />
             )}
           </div>
         </div>

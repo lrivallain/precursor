@@ -60,6 +60,10 @@ from precursor.backend.services.llm.base import (
 )
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.roles import resolve_role_prompt
+from precursor.backend.services.suggestions import (
+    SUGGESTIONS_INSTRUCTION,
+    split_suggestions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -509,6 +513,7 @@ async def chat_stream(
         system_prompt += (
             f"\n\nActive assistant role — adopt this persona for every reply:\n{role_prompt}"
         )
+    system_prompt += f"\n\n{SUGGESTIONS_INSTRUCTION}"
 
     base_messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
@@ -543,12 +548,20 @@ async def chat_stream(
             # No tools enabled → simple text stream (matches the old behaviour).
             if not provider_tools:
                 try:
+                    text_chunks: list[str] = []
                     async for delta in provider.stream_chat(model=model, messages=messages):
+                        text_chunks.append(delta)
                         yield {
                             "event": "delta",
                             "data": json.dumps({"content": delta}),
                         }
-                    yield {"event": "done", "data": "{}"}
+                    clean, suggestions = split_suggestions("".join(text_chunks))
+                    yield {"event": "done", "data": json.dumps({"content": clean})}
+                    if suggestions:
+                        yield {
+                            "event": "suggestions",
+                            "data": json.dumps({"items": suggestions}),
+                        }
                 except Exception as exc:
                     logger.exception("Workspace chat failed")
                     yield {"event": "error", "data": json.dumps({"message": str(exc)})}
@@ -556,7 +569,7 @@ async def chat_stream(
 
             try:
                 for _round in range(max_tool_rounds):
-                    text_chunks: list[str] = []
+                    text_chunks = []
                     tool_calls: list[Any] = []
 
                     async for event in provider.stream_chat_with_tools(
@@ -582,10 +595,16 @@ async def chat_stream(
                     assistant_text = "".join(text_chunks)
 
                     if not tool_calls:
+                        clean, suggestions = split_suggestions(assistant_text)
                         yield {
                             "event": "done",
-                            "data": json.dumps({"content": assistant_text}),
+                            "data": json.dumps({"content": clean}),
                         }
+                        if suggestions:
+                            yield {
+                                "event": "suggestions",
+                                "data": json.dumps({"items": suggestions}),
+                            }
                         return
 
                     openai_tool_calls = [

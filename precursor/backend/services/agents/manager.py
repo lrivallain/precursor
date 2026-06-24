@@ -57,6 +57,10 @@ from precursor.backend.services.events import (
     publish_message_changed,
     publish_message_changed_chat,
 )
+from precursor.backend.services.suggestions import (
+    SUGGESTIONS_INSTRUCTION,
+    split_suggestions,
+)
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -443,7 +447,7 @@ class AgentManager:
         async with SessionLocal() as session:
             custom = (await resolve_agents_system_prompt(session)).strip()
         topic = await self._topic_context(agent)
-        parts = [p for p in (custom, topic) if p]
+        parts = [p for p in (custom, topic, SUGGESTIONS_INSTRUCTION) if p]
         return "\n\n".join(parts) if parts else None
 
     # ------------------------------------------------------------------ sessions
@@ -1127,6 +1131,7 @@ class AgentManager:
         live.pending_prompt = None
 
         answer = (agent.result_summary or "").strip() or "Agent task finished."
+        answer, suggestions = split_suggestions(answer)
         async with SessionLocal() as session:
             session.add(
                 Message(
@@ -1143,6 +1148,7 @@ class AgentManager:
                     chat_id=agent.chat_id,
                     role=MessageRole.ASSISTANT,
                     content=answer,
+                    suggestions=json.dumps(suggestions) if suggestions else None,
                     agent_session_id=agent.id,
                 )
             )

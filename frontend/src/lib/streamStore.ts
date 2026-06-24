@@ -360,6 +360,17 @@ class StreamStore {
         created_at: now,
       });
       session.pendingContent = "";
+    } else if (ev.event === "suggestions") {
+      // Emitted right after `done`; patch the just-created assistant turn with
+      // the follow-up chips (matched by the persisted message id).
+      const messageId = payload.message_id as number | undefined;
+      const items = (payload.items as string[] | undefined) ?? [];
+      if (typeof messageId === "number") {
+        const idx = session.messages.findIndex((m) => m.id === messageId);
+        if (idx >= 0) {
+          session.messages[idx] = { ...session.messages[idx], suggestions: items };
+        }
+      }
     } else if (ev.event === "error") {
       session.messages.push({
         id: -Date.now(),

@@ -29,10 +29,12 @@ import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
 import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
+import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
+import { SuggestedReplies } from "./SuggestedReplies";
 import type {
   AgentEvent,
   AgentPermissionDecisionValue,
@@ -451,11 +453,15 @@ function MessageNode({
   category,
   isLastAnswer,
   user,
+  onPickSuggestion,
+  suggestionsDisabled,
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
   isLastAnswer: boolean;
   user?: { name: string; avatarUrl: string | null };
+  onPickSuggestion?: (text: string) => void;
+  suggestionsDisabled?: boolean;
 }) {
   const style = CATEGORY_STYLE[category];
   const box = isLastAnswer
@@ -470,6 +476,13 @@ function MessageNode({
   const isSystem = category === "system";
   const isAssistant = category === "assistant";
   const label = isUser && user ? user.name : style.label;
+  // Assistant turns may end with a `suggest` block; hide it from the rendered
+  // text and surface it as chips under the final answer instead.
+  const assistantText = isAssistant ? stripSuggestionBlock(event.text ?? "") : (event.text ?? "");
+  const suggestions =
+    isAssistant && isLastAnswer && onPickSuggestion
+      ? parseSuggestions(event.text ?? "")
+      : [];
   // The system message (the long base prompt) is collapsed to a few lines with
   // a Details toggle, like a tool box, so it never floods the timeline.
   const [open, setOpen] = useState(false);
@@ -480,7 +493,7 @@ function MessageNode({
   const copyTo = async (kind: "text" | "md") => {
     const value =
       kind === "md"
-        ? (event.text ?? "")
+        ? (isAssistant ? assistantText : (event.text ?? ""))
         : (contentRef.current?.textContent ?? event.text ?? "").trim();
     try {
       await navigator.clipboard.writeText(value);
@@ -541,7 +554,7 @@ function MessageNode({
         ) : isAssistant ? (
           <div ref={contentRef}>
             <Markdown className="mt-1 text-[11px] leading-relaxed text-muted">
-              {event.text}
+              {assistantText}
             </Markdown>
           </div>
         ) : (
@@ -578,6 +591,14 @@ function MessageNode({
             )}
           </button>
         </div>
+      )}
+      {suggestions.length > 0 && onPickSuggestion && (
+        <SuggestedReplies
+          items={suggestions}
+          onPick={onPickSuggestion}
+          disabled={suggestionsDisabled}
+          className="mt-2"
+        />
       )}
     </div>
   );
@@ -1120,9 +1141,10 @@ export function AgentView({
     }
   }
 
-  async function sendFollowUp(): Promise<void> {
-    if (!selected || !followUp.trim()) return;
-    const message = followUp.trim();
+  async function sendFollowUp(explicit?: string): Promise<void> {
+    if (!selected) return;
+    const message = (explicit ?? followUp).trim();
+    if (!message) return;
     // /clear erases the whole transcript on the backend — confirm first, mirroring
     // the topic/chat clear flow.
     if (
@@ -1135,7 +1157,7 @@ export function AgentView({
     setError(null);
     try {
       await api.sendToAgent(selected.id, message);
-      setFollowUp("");
+      if (explicit === undefined) setFollowUp("");
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1369,6 +1391,12 @@ export function AgentView({
                       category={seg.row.cat}
                       isLastAnswer={answerRows.has(seg.row)}
                       user={userPersona}
+                      onPickSuggestion={(text) => void sendFollowUp(text)}
+                      suggestionsDisabled={
+                        selected.status === "running" ||
+                        selected.status === "pending" ||
+                        selected.status === "needs_approval"
+                      }
                     />
                   ) : null}
                 </Fragment>

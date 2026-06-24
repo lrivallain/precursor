@@ -31,11 +31,13 @@ import { parseSlashCommand } from "../lib/commands";
 import { skillsStore } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamWorkspaceChat } from "../lib/sse";
+import { stripSuggestionBlock } from "../lib/suggestions";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
+import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import type {
   FileDiff,
@@ -1154,7 +1156,7 @@ function FileTree({
 // are display-only; only user/assistant text is sent back as history.
 type WorkspaceChatItem =
   | { kind: "user"; content: string }
-  | { kind: "assistant"; content: string }
+  | { kind: "assistant"; content: string; suggestions?: string[] }
   | {
       kind: "tool";
       name: string;
@@ -1203,10 +1205,10 @@ function WorkspaceChat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, pending]);
 
-  async function send(): Promise<void> {
-    const content = input.trim();
+  async function send(explicit?: string): Promise<void> {
+    const content = (explicit ?? input).trim();
     if (!content || streaming) return;
-    setInput("");
+    if (explicit === undefined) setInput("");
     setError(null);
 
     // Skills: a `/skill-name argument` invocation is expanded into the prompt
@@ -1260,6 +1262,7 @@ function WorkspaceChat({
     const controller = new AbortController();
     abortRef.current = controller;
     let acc = "";
+    let turnSuggestions: string[] = [];
     // Tool items emitted during this turn, keyed by tool_call_id so results can
     // be matched back to the call that produced them.
     const toolItems = new Map<string, WorkspaceChatItem & { kind: "tool" }>();
@@ -1287,7 +1290,8 @@ function WorkspaceChat({
               };
               setMessages((prev) => {
                 const next = [...prev];
-                if (acc.trim()) next.push({ kind: "assistant", content: acc });
+                if (acc.trim())
+                  next.push({ kind: "assistant", content: stripSuggestionBlock(acc) });
                 for (const call of calls) {
                   const item: WorkspaceChatItem & { kind: "tool" } = {
                     kind: "tool",
@@ -1317,6 +1321,9 @@ function WorkspaceChat({
                     : m,
                 ),
               );
+            } else if (e.event === "suggestions") {
+              const { items } = JSON.parse(e.data) as { items?: string[] };
+              turnSuggestions = items ?? [];
             } else if (e.event === "system") {
               const { message } = JSON.parse(e.data) as { message: string };
               setError(message);
@@ -1328,7 +1335,14 @@ function WorkspaceChat({
         },
       );
       if (acc.trim()) {
-        setMessages((m) => [...m, { kind: "assistant", content: acc }]);
+        setMessages((m) => [
+          ...m,
+          {
+            kind: "assistant",
+            content: stripSuggestionBlock(acc),
+            suggestions: turnSuggestions,
+          },
+        ]);
       }
     } catch (e) {
       if (!controller.signal.aborted) {
@@ -1388,7 +1402,23 @@ function WorkspaceChat({
             <ChatTurn key={i} role={m.kind} content={m.content} />
           ),
         )}
-        {streaming && pending && <ChatTurn role="assistant" content={pending} pending />}
+        {!streaming &&
+          (() => {
+            const last = messages[messages.length - 1];
+            if (last?.kind === "assistant" && last.suggestions?.length) {
+              return (
+                <SuggestedReplies
+                  items={last.suggestions}
+                  onPick={(t) => void send(t)}
+                  disabled={streaming}
+                />
+              );
+            }
+            return null;
+          })()}
+        {streaming && pending && (
+          <ChatTurn role="assistant" content={stripSuggestionBlock(pending)} pending />
+        )}
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
       <div className="relative border-t border-border p-2">
@@ -1418,7 +1448,7 @@ function WorkspaceChat({
           <button
             className="p-2 rounded bg-accent text-white disabled:opacity-50 shrink-0"
             disabled={!input.trim() || streaming}
-            onClick={send}
+            onClick={() => void send()}
             aria-label="Send"
           >
             {streaming ? (

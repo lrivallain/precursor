@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from precursor.backend.models.message import MessageRole
 
@@ -73,6 +74,24 @@ class MessageRead(BaseModel):
     completion_tokens: int | None = None
     created_at: datetime
     attachments: list[AttachmentRead] = Field(default_factory=list)
+    # Follow-up reply chips offered on this assistant turn. Stored as a JSON
+    # array string on the ORM model; parsed to a list here for the client.
+    suggestions: list[str] = Field(default_factory=list)
+
+    @field_validator("suggestions", mode="before")
+    @classmethod
+    def _parse_suggestions(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (ValueError, TypeError):
+                return []
+            return [str(s) for s in parsed] if isinstance(parsed, list) else []
+        if isinstance(value, list):
+            return [str(s) for s in value]
+        return []
 
 
 class ChatRequest(BaseModel):
