@@ -246,11 +246,40 @@ async def update_agent(
     payload: AgentUpdateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> AgentSession:
-    """Rename an agent session."""
+    """Rename an agent session and/or edit its task instructions.
+
+    Editing the task can't take effect on a live session: the task prompt is
+    delivered only once (``start_task``) and a resumed session keeps the old
+    instructions in its history. So a *changed* task re-establishes the SDK
+    session — replaying the new prompt — while preserving ``copilot_session_id``
+    so scheduled ``/agent <uuid>`` references keep resolving. Rejected mid-run to
+    avoid racing an active turn.
+    """
     agent = await _get_or_404(session, agent_id)
-    agent.title = payload.title.strip()[:200] or agent.title
+
+    if payload.title is not None:
+        agent.title = payload.title.strip()[:200] or agent.title
+
+    restart = False
+    if payload.task is not None:
+        new_task = payload.task.strip()
+        if new_task and new_task != agent.task_prompt:
+            if agent.status in {"pending", "running", "needs_approval"}:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Stop the agent before editing its instructions",
+                )
+            await _require_runtime(session)
+            agent.task_prompt = new_task
+            restart = True
+
     await session.commit()
     await session.refresh(agent)
+
+    if restart:
+        mgr = get_agent_manager()
+        mgr.enqueue(mgr.restart_with_task(agent.id))
+
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
     )

@@ -283,3 +283,63 @@ def test_agent_command_registry_is_source_of_truth() -> None:
         "memory-update",
     }
     assert set(AgentManager._COMMAND_HANDLERS) == set(AgentManager.supported_commands())
+
+
+async def test_update_agent_title_only_needs_no_runtime() -> None:
+    """A title-only PATCH never touches the runtime (no task replay)."""
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent(title="Old", task_prompt="seed", status="idle")
+
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent_id}", json={"title": "New name"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["title"] == "New name"
+        assert body["task_prompt"] == "seed"
+
+
+async def test_update_agent_task_requires_runtime() -> None:
+    """Editing the task replays it, so it's gated on Agents mode being usable."""
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent(task_prompt="old", status="idle")
+
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent_id}", json={"task": "new instructions"})
+        assert resp.status_code == 409
+        assert "disabled" in resp.json()["detail"].lower()
+
+
+async def test_update_agent_task_rejected_while_running() -> None:
+    """The task can't be replayed under an in-flight turn — rejected before any work."""
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent(task_prompt="old", status="running")
+
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent_id}", json={"task": "new"})
+        assert resp.status_code == 409
+        assert "stop the agent" in resp.json()["detail"].lower()
+
+
+async def test_restart_with_task_replays_and_keeps_session_id() -> None:
+    """Re-seeding drops the live session and replays the task, never minting a new
+    ``copilot_session_id`` (which would break scheduled ``/agent <uuid>`` nudges)."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    mgr = AgentManager()
+    calls: list[tuple[str, int, bool]] = []
+
+    async def fake_teardown(agent_id: int, *, forget: bool = False) -> None:
+        calls.append(("teardown", agent_id, forget))
+
+    async def fake_start(agent_id: int) -> None:
+        calls.append(("start", agent_id, False))
+
+    mgr.teardown_session = fake_teardown  # type: ignore[method-assign]
+    mgr.start_task = fake_start  # type: ignore[method-assign]
+
+    await mgr.restart_with_task(7)
+
+    assert calls == [("teardown", 7, False), ("start", 7, False)]
