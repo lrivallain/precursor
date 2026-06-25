@@ -6,6 +6,7 @@ import { ToolCallBubble } from "./ToolCallBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
 import { Composer } from "./Composer";
+import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { api } from "../lib/api";
 import {
@@ -1504,6 +1505,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             height={composerHeight}
             onResizeStart={onComposerResize}
             focusToken={composerFocusToken}
+            toolbarStart={<ComposerModelControls />}
             attachments={{
               pending: pendingAttachments,
               uploadingCount,

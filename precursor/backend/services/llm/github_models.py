@@ -39,6 +39,7 @@ class GitHubModelsProvider:
         *,
         model: str,
         messages: Sequence[ChatMessage],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
         # Any-typed kwargs so the create() overload resolves to a stream (the
         # explicit-arg form returns a ChatCompletion | AsyncStream union).
@@ -47,6 +48,8 @@ class GitHubModelsProvider:
             "messages": to_openai_messages(messages),
             "stream": True,
         }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
         stream = await self._client.chat.completions.create(**kwargs)
         async for chunk in stream:
             if not chunk.choices:
@@ -61,9 +64,14 @@ class GitHubModelsProvider:
         model: str,
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         async for event in stream_openai_tools(
-            client=self._client, model=model, messages=messages, tools=tools
+            client=self._client,
+            model=model,
+            messages=messages,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
         ):
             yield event
 
@@ -89,6 +97,10 @@ class GitHubModelsProvider:
                 or limits.get("max_prompt_tokens")
                 or item.get("max_input_tokens")
             )
+            # The catalog doesn't currently advertise a reasoning-effort set;
+            # read it best-effort so we pick it up automatically if it appears.
+            efforts = item.get("supported_reasoning_efforts")
+            efforts = [str(e) for e in efforts] if isinstance(efforts, list) else []
             models.append(
                 LLMModel(
                     id=mid,
@@ -97,6 +109,7 @@ class GitHubModelsProvider:
                     summary=item.get("summary", ""),
                     tags=list(item.get("tags") or []),
                     context_window=int(ctx) if isinstance(ctx, (int, float)) else None,
+                    supported_reasoning_efforts=efforts,
                 )
             )
         models.sort(key=lambda m: (m.publisher.lower(), m.name.lower()))

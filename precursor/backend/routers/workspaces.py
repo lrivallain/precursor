@@ -47,6 +47,7 @@ from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services import workspace_git as git
 from precursor.backend.services.app_settings import (
     resolve_llm_model,
+    resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
 from precursor.backend.services.context_budget import trim_messages
@@ -505,6 +506,7 @@ async def chat_stream(
 
     settings = get_settings()
     model = payload.model or await resolve_llm_model(session)
+    reasoning_effort = await resolve_llm_reasoning_effort(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
     enabled_servers = await _load_enabled_mcp_servers(session)
     provider = await get_llm_provider(session)
@@ -598,7 +600,9 @@ async def chat_stream(
             if not provider_tools:
                 try:
                     text_chunks: list[str] = []
-                    async for delta in provider.stream_chat(model=model, messages=messages):
+                    async for delta in provider.stream_chat(
+                        model=model, messages=messages, reasoning_effort=reasoning_effort
+                    ):
                         text_chunks.append(delta)
                         yield {
                             "event": "delta",
@@ -629,6 +633,7 @@ async def chat_stream(
                             per_message_max_tokens=settings.llm_max_tool_result_tokens,
                         ),
                         tools=provider_tools,
+                        reasoning_effort=reasoning_effort,
                     ):
                         if isinstance(event, TextDeltaEvent):
                             text_chunks.append(event.content)

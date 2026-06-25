@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, Paperclip, Send, StopCircle, X } from "lucide-react";
+import { Mic, Paperclip, Plus, Send, Square, StopCircle, X } from "lucide-react";
 import { api } from "../lib/api";
 import { ATTACHMENT_ACCEPT } from "../lib/attachments";
 import type { SlashCommand } from "../lib/commands";
@@ -44,6 +44,10 @@ interface Props {
   /** Disable text entry (e.g. while an agent turn is in flight). The
    *  send/stop button is unaffected so a Stop control stays clickable. */
   disabled?: boolean;
+  /** Optional controls rendered at the left of the bottom toolbar (e.g. the
+   *  model + reasoning-effort pickers). Omitted for surfaces that don't use the
+   *  global LLM model (e.g. SDK agent sessions). */
+  toolbarStart?: React.ReactNode;
 }
 
 const DEFAULT_PLACEHOLDER =
@@ -70,6 +74,7 @@ export function Composer({
   placeholder,
   focusToken,
   disabled = false,
+  toolbarStart,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -130,20 +135,18 @@ export function Composer({
             )}
           </div>
         )}
-      {speech.listening && (
-        <div className="flex items-start gap-2 text-[11px] text-muted px-1">
-          <span className="inline-block h-2 w-2 mt-1 shrink-0 rounded-full bg-red-500 animate-pulse" />
-          <span className="min-w-0 break-words max-h-20 overflow-y-auto">
-            Listening… {interimText && <span className="italic">{interimText}</span>}
-          </span>
-        </div>
-      )}
       {speech.error && (
         <div className="text-[11px] text-red-500 px-1">Dictation error: {speech.error}</div>
       )}
       <div
-        className={`relative flex items-end gap-2 ${
-          isDraggingFile ? "ring-2 ring-accent/60 rounded-md" : ""
+        className={`relative flex flex-col rounded-2xl border bg-surface transition-colors ${
+          speech.listening
+            ? "holo-active-rec border-transparent"
+            : streaming
+              ? "holo-active border-transparent"
+              : isDraggingFile
+                ? "border-accent ring-2 ring-accent/40"
+                : "border-border focus-within:border-accent"
         }`}
         onDragOver={(e) => {
           if (attachments && e.dataTransfer.types.includes("Files")) {
@@ -194,6 +197,7 @@ export function Composer({
             }}
           />
         )}
+        <div className="relative">
         <textarea
           ref={textareaRef}
           value={value}
@@ -295,59 +299,88 @@ export function Composer({
               // Shift+Enter falls through to a default textarea newline.
             }
           }}
-          placeholder={placeholder ?? DEFAULT_PLACEHOLDER}
+          placeholder={
+            speech.listening && interimText ? "" : (placeholder ?? DEFAULT_PLACEHOLDER)
+          }
           style={{ height }}
           disabled={disabled}
-          className="flex-1 resize-none bg-surface border border-border rounded p-2 text-sm outline-none focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full resize-none bg-transparent px-3 pt-3 pb-1 text-sm outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-muted"
         />
-        <div className={`flex gap-2 ${height >= 96 ? "flex-col" : "flex-row items-end"}`}>
-          {attachments && (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="px-2 py-2 rounded bg-surface border border-border text-muted hover:text-text hover:bg-bg"
-              aria-label="Attach file"
-              data-tooltip="Attach file (image/pdf/docx/pptx)"
-            >
-              <Paperclip size={18} />
-            </button>
-          )}
-          {speech.supported && (
-            <button
-              type="button"
-              onClick={speech.toggle}
-              className={`px-2 py-2 rounded border ${
-                speech.listening
-                  ? "bg-red-600 border-red-600 text-white animate-pulse"
-                  : "bg-surface border-border text-muted hover:text-text hover:bg-bg"
-              }`}
-              aria-label={speech.listening ? "Stop dictation" : "Dictate"}
-              aria-pressed={speech.listening}
-              data-tooltip={speech.listening ? "Stop dictation" : "Dictate (Azure Speech)"}
-            >
-              <Mic size={18} />
-            </button>
-          )}
-          {streaming ? (
-            <button
-              onClick={onStop}
-              className="px-3 py-2 rounded bg-surface border border-border hover:bg-bg"
-              aria-label="Stop generation"
-              data-tooltip="Stop generation"
-            >
-              <StopCircle size={18} />
-            </button>
-          ) : (
-            <button
-              onClick={triggerSend}
-              disabled={sendDisabled}
-              className="px-3 py-2 rounded bg-accent text-white disabled:opacity-40"
-              aria-label="Send"
-              data-tooltip="Send (Enter)"
-            >
-              <Send size={18} />
-            </button>
-          )}
+        {speech.listening && interimText && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 pt-3 pb-1 text-sm"
+          >
+            <span className="invisible">{value}</span>
+            <span className="italic text-muted">
+              {(value && !/\s$/.test(value) ? " " : "") + interimText}
+            </span>
+          </div>
+        )}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 pb-2 pt-1">
+          <div className="flex flex-wrap items-center gap-1 min-w-0 flex-1">
+            {attachments && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 rounded-lg text-muted hover:text-text hover:bg-bg"
+                aria-label="Attach file"
+                data-tooltip="Attach file (image/pdf/docx/pptx)"
+              >
+                <Plus size={18} />
+              </button>
+            )}
+            {toolbarStart}
+          </div>
+          <div className="flex items-center gap-1 shrink-0 ml-auto">
+            {speech.supported && speech.listening && (
+              <span className="flex items-center gap-1.5 pl-1 pr-1.5 text-[11px] text-red-500">
+                <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-red-500 animate-pulse" />
+                Listening…
+              </span>
+            )}
+            {speech.supported && (
+              <button
+                type="button"
+                onClick={speech.toggle}
+                className={`p-2 rounded-lg ${
+                  speech.listening
+                    ? "bg-red-600 text-white animate-pulse"
+                    : "text-muted hover:text-text hover:bg-bg"
+                }`}
+                aria-label={speech.listening ? "Stop dictation" : "Dictate"}
+                aria-pressed={speech.listening}
+                data-tooltip={speech.listening ? "Stop dictation" : "Dictate (Azure Speech)"}
+              >
+                {speech.listening ? (
+                  <Square size={18} />
+                ) : (
+                  <Mic size={18} />
+                )}
+              </button>
+            )}
+            {streaming ? (
+              <button
+                onClick={onStop}
+                className="p-2 rounded-lg text-muted hover:text-text hover:bg-bg"
+                aria-label="Stop generation"
+                data-tooltip="Stop generation"
+              >
+                <StopCircle size={18} />
+              </button>
+            ) : (
+              <button
+                onClick={triggerSend}
+                disabled={sendDisabled}
+                className="p-2 rounded-lg bg-accent text-white disabled:opacity-40 disabled:hover:bg-accent hover:bg-accent/90"
+                aria-label="Send"
+                data-tooltip="Send (Enter)"
+              >
+                <Send size={18} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </>

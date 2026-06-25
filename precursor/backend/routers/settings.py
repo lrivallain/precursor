@@ -21,13 +21,16 @@ from precursor.backend.services.app_settings import (
     DEFAULT_ISSUE_ASSOCIATIONS_ENABLED,
     DEFAULT_ISSUE_CONTEXT_TTL_MINUTES,
     DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_REASONING_EFFORT,
     DEFAULT_MAX_TOOL_ROUNDS,
     MAX_TOOL_ROUNDS_CEILING,
     azure_stt_ready,
     redact_llm_providers,
     resolve_agents_approval_policy,
+    resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_enabled,
+    resolve_agents_reasoning_effort,
     resolve_agents_system_prompt,
     resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
@@ -82,6 +85,7 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
     return SettingsRead(
         theme=data.get("theme", "system"),
         llm_model=data.get("llm_model", DEFAULT_LLM_MODEL),
+        llm_reasoning_effort=data.get("llm_reasoning_effort", DEFAULT_LLM_REASONING_EFFORT),
         github_repo=data.get("github_repo", DEFAULT_GITHUB_REPO),
         issue_context_ttl_minutes=data.get(
             "issue_context_ttl_minutes", DEFAULT_ISSUE_CONTEXT_TTL_MINUTES
@@ -136,6 +140,8 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_available": ok,
         "agents_unavailable_reason": None if ok else detail,
         "agents_default_model": await resolve_agents_default_model(session),
+        "agents_reasoning_effort": await resolve_agents_reasoning_effort(session),
+        "agents_context_tier": await resolve_agents_context_tier(session),
         "agents_approval_policy": await resolve_agents_approval_policy(session),
         "agents_system_prompt": await resolve_agents_system_prompt(session),
         "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
@@ -202,6 +208,17 @@ async def update_settings(
                 await manager.stop()
         except Exception:
             logger.exception("Agents runtime reconcile failed after settings update")
+
+    # Push model / reasoning-effort / context-tier changes onto idle live agent
+    # sessions so they apply on the next message instead of only new sessions.
+    if any(
+        k in data
+        for k in ("agents_default_model", "agents_reasoning_effort", "agents_context_tier")
+    ):
+        try:
+            await get_agent_manager().apply_session_overrides()
+        except Exception:
+            logger.exception("Applying agent session overrides failed after settings update")
 
     refreshed = await _load_all(session)
     system = await resolve_system_settings(session)

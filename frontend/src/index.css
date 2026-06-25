@@ -224,3 +224,104 @@ body {
 .dark .markdown .hljs-tag { color: #7ee787; }
 .dark .markdown .hljs-deletion { color: #ffdcd7; background: #67060c; }
 .dark .markdown .hljs-addition { color: #aff5b4; background: #033a16; }
+
+/* Holographic "running task" frame for the composer. While a turn streams, a
+   conic gradient rotates around the box's rounded border. The crisp ring
+   (::before) is masked so the gradient only paints a 2px frame; a blurred layer
+   (::after) sits behind the opaque surface so only its iridescent halo shows.
+   Honors prefers-reduced-motion (static gradient). @property drives the angle;
+   browsers without it degrade to a static frame. */
+@property --holo-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes holo-spin {
+  to {
+    --holo-angle: 360deg;
+  }
+}
+
+.holo-active::before,
+.holo-active::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--holo-angle),
+    #22d3ee,
+    #6366f1,
+    #a855f7,
+    #ec4899,
+    #22d3ee
+  );
+  animation: holo-spin 3s linear infinite;
+}
+
+.holo-active::before {
+  inset: 0;
+  padding: 2px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.holo-active::after {
+  inset: -4px;
+  z-index: -1;
+  filter: blur(10px);
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-active::before,
+  .holo-active::after {
+    animation: none;
+  }
+}
+
+/* Red variant of the holographic frame, shown while dictating from the mic. */
+.holo-active-rec::before,
+.holo-active-rec::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--holo-angle),
+    #7f1d1d,
+    #ef4444,
+    #fecaca,
+    #ef4444,
+    #7f1d1d
+  );
+  animation: holo-spin 3s linear infinite;
+}
+
+.holo-active-rec::before {
+  inset: 0;
+  padding: 2px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.holo-active-rec::after {
+  inset: -4px;
+  z-index: -1;
+  filter: blur(10px);
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-active-rec::before,
+  .holo-active-rec::after {
+    animation: none;
+  }
+}

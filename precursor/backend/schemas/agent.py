@@ -105,6 +105,10 @@ class AgentModelInfo(BaseModel):
 
     id: str
     name: str
+    # Max input tokens the model accepts (``None`` when the runtime omits it).
+    context_window: int | None = None
+    # Reasoning-effort values this model accepts (empty when not reasoning-capable).
+    supported_reasoning_efforts: list[str] = []
 
 
 class AgentPermissionGrant(BaseModel):

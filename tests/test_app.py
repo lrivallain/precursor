@@ -395,10 +395,10 @@ def test_topic_stream_passes_non_image_attachment_context_to_llm(monkeypatch) ->
     class EchoUserPromptProvider:
         name = "echo"
 
-        async def stream_chat(self, *, model, messages):
+        async def stream_chat(self, *, model, messages, reasoning_effort=None):
             yield ""
 
-        async def stream_chat_with_tools(self, *, model, messages, tools):
+        async def stream_chat_with_tools(self, *, model, messages, tools, reasoning_effort=None):
             _ = model, tools
             last_user = next((m for m in reversed(messages) if m.role == "user"), None)
             yield TextDeltaEvent(content=last_user.content if last_user else "")
@@ -451,10 +451,10 @@ def test_topic_stream_extracts_ooxml_header_and_notes_text(monkeypatch) -> None:
     class EchoUserPromptProvider:
         name = "echo"
 
-        async def stream_chat(self, *, model, messages):
+        async def stream_chat(self, *, model, messages, reasoning_effort=None):
             yield ""
 
-        async def stream_chat_with_tools(self, *, model, messages, tools):
+        async def stream_chat_with_tools(self, *, model, messages, tools, reasoning_effort=None):
             _ = model, tools
             last_user = next((m for m in reversed(messages) if m.role == "user"), None)
             yield TextDeltaEvent(content=last_user.content if last_user else "")

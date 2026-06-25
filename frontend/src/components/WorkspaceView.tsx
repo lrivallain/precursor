@@ -19,7 +19,6 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
-  Send,
   Square,
   SquareCheck,
   Trash2,
@@ -27,15 +26,20 @@ import {
   X,
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
-import { parseSlashCommand } from "../lib/commands";
+import { parseSlashCommand, SLASH_COMMANDS } from "../lib/commands";
+import type { SlashCommand } from "../lib/commands";
 import { mcpAuthStore } from "../lib/mcpAuth";
-import { skillsStore } from "../lib/skillsStore";
+import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
+import { useSettings } from "../lib/settingsStore";
 import { streamWorkspaceChat } from "../lib/sse";
 import { stripSuggestionBlock } from "../lib/suggestions";
+import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useConfirm } from "./ConfirmDialog";
+import { Composer } from "./Composer";
+import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { SuggestedReplies } from "./SuggestedReplies";
@@ -1202,6 +1206,49 @@ function WorkspaceChat({
       max: 320,
     });
 
+  const settings = useSettings();
+
+  // Live speech-to-text (when Azure is configured server-side).
+  const [interimText, setInterimText] = useState("");
+  const speech = useAzureSpeech({
+    onFinalChunk: (text) => {
+      const chunk = text.trim();
+      if (!chunk) return;
+      setInput((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
+      setInterimText("");
+    },
+    onInterim: setInterimText,
+    enabled: settings?.stt_azure_ready ?? false,
+    lang: settings?.azure_speech_language || undefined,
+  });
+  useEffect(() => {
+    if (!speech.listening) setInterimText("");
+  }, [speech.listening]);
+
+  // Autocomplete: only the commands this surface actually handles in `send`
+  // (skills + `/role`), so the picker never offers commands the backend rejects.
+  const skills = useSkills();
+  const wsCommands = useMemo<SlashCommand[]>(() => {
+    const role = SLASH_COMMANDS.find((c) => c.name === "role");
+    const skillCommands: SlashCommand[] = skills.map((s) => ({
+      name: s.name,
+      label: `/${s.name}`,
+      description: s.description ?? "",
+      kind: "skill" as const,
+      argumentHint: "input",
+    }));
+    return [...(role ? [role] : []), ...skillCommands];
+  }, [skills]);
+  const suggestions = useMemo<SlashCommand[]>(() => {
+    if (!input.startsWith("/") || /\s/.test(input)) return [];
+    const q = input.slice(1).toLowerCase();
+    return wsCommands.filter((c) => c.name.startsWith(q));
+  }, [input, wsCommands]);
+  const userHistory = useMemo(
+    () => messages.filter((m) => m.kind === "user").map((m) => m.content),
+    [messages],
+  );
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, pending]);
@@ -1428,43 +1475,22 @@ function WorkspaceChat({
         )}
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
-      <div className="relative border-t border-border p-2">
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          onMouseDown={onComposerResize}
-          title="Drag to resize"
-          className="absolute -top-2 left-0 right-0 h-2 cursor-row-resize group z-10"
-        >
-          <div className="h-px w-12 mx-auto mt-1 bg-border group-hover:bg-accent/60 transition-colors" />
-        </div>
-        <div className="flex items-end gap-2">
-          <textarea
-            className="flex-1 resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-            style={{ height: composerHeight }}
-            placeholder={activePath ? `Improve ${activePath}…` : "Ask the assistant…"}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <button
-            className="p-2 rounded bg-accent text-white disabled:opacity-50 shrink-0"
-            disabled={!input.trim() || streaming}
-            onClick={() => void send()}
-            aria-label="Send"
-          >
-            {streaming ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Send size={16} />
-            )}
-          </button>
-        </div>
+      <div className="border-t border-border p-2">
+        <Composer
+          value={input}
+          onChange={setInput}
+          onSend={() => void send()}
+          onStop={() => abortRef.current?.abort()}
+          streaming={streaming}
+          suggestions={suggestions}
+          userHistory={userHistory}
+          speech={speech}
+          interimText={interimText}
+          height={composerHeight}
+          onResizeStart={onComposerResize}
+          placeholder={activePath ? `Improve ${activePath}…` : "Ask the assistant…"}
+          toolbarStart={<ComposerModelControls />}
+        />
       </div>
     </aside>
   );

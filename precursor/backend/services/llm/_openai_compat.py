@@ -103,6 +103,7 @@ async def stream_openai_tools(
     model: str,
     messages: Sequence[ChatMessage],
     tools: Sequence[ToolDef],
+    reasoning_effort: str | None = None,
 ) -> AsyncIterator[ProviderEvent]:
     """Run a tool-aware streamed completion against an OpenAI-compatible API.
 
@@ -120,6 +121,8 @@ async def stream_openai_tools(
     }
     if tools:
         kwargs["tools"] = to_openai_tools(tools)
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
 
     try:
         stream = await client.chat.completions.create(**kwargs)

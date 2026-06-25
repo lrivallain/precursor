@@ -29,6 +29,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
     resolve_llm_model,
+    resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
 from precursor.backend.services.context_budget import trim_messages
@@ -580,6 +581,7 @@ async def _run_message_stream(
     history: list[ChatMessage],
     user_echo: dict[str, Any],
     model: str,
+    reasoning_effort: str,
     max_tool_rounds: int,
     max_input_tokens: int,
     max_tool_result_tokens: int,
@@ -680,6 +682,7 @@ async def _run_message_stream(
                         per_message_max_tokens=max_tool_result_tokens,
                     ),
                     tools=provider_tools,
+                    reasoning_effort=reasoning_effort,
                 ):
                     if isinstance(event, TextDeltaEvent):
                         text_chunks.append(event.content)
@@ -1017,6 +1020,7 @@ async def stream_chat(
 
     enabled_servers = await _load_enabled_mcp_servers(session)
     model = payload.model or await resolve_llm_model(session)
+    reasoning_effort = await resolve_llm_reasoning_effort(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
     max_input_tokens = await resolve_llm_max_input_tokens(session)
     max_tool_result_tokens = await resolve_llm_max_tool_result_tokens(session)
@@ -1047,6 +1051,7 @@ async def stream_chat(
         history=history,
         user_echo=user_echo,
         model=model,
+        reasoning_effort=reasoning_effort,
         max_tool_rounds=max_tool_rounds,
         max_input_tokens=max_input_tokens,
         max_tool_result_tokens=max_tool_result_tokens,

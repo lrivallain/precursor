@@ -33,6 +33,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
     resolve_llm_model,
+    resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
 from precursor.backend.services.context_budget import trim_messages
@@ -132,6 +133,7 @@ async def _run(
         # post_message-triggered turn recursively call post_message.
         enabled_servers = [s for s in enabled_servers if s != "precursor"]
         model = await resolve_llm_model(session)
+        reasoning_effort = await resolve_llm_reasoning_effort(session)
         max_tool_rounds = await resolve_max_tool_rounds(session)
         max_input_tokens = await resolve_llm_max_input_tokens(session)
         max_tool_result_tokens = await resolve_llm_max_tool_result_tokens(session)
@@ -162,6 +164,7 @@ async def _run(
                     per_message_max_tokens=max_tool_result_tokens,
                 ),
                 tools=provider_tools,
+                reasoning_effort=reasoning_effort,
             ):
                 if isinstance(event, TextDeltaEvent):
                     text_chunks.append(event.content)

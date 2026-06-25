@@ -17,6 +17,15 @@ from precursor.backend.services.cmd_runner import CmdRunnerConfig
 
 # Factory defaults — surface in the UI before the user has saved a preference.
 DEFAULT_LLM_MODEL = "claude-sonnet-4.5"
+# Reasoning effort hint for reasoning-capable models. "" means auto/off — the
+# request omits the param entirely (safe for models that don't support it).
+DEFAULT_LLM_REASONING_EFFORT = ""
+# Superset of reasoning-effort values across providers. Individual models
+# advertise their own subset (LLMModel.supported_reasoning_efforts); this set
+# only gates what the global setting may persist. OpenAI accepts
+# minimal/low/medium/high; GitHub Copilot additionally advertises xhigh/max for
+# some models. Any value outside this set is treated as auto/off.
+LLM_REASONING_EFFORTS: tuple[str, ...] = ("minimal", "low", "medium", "high", "xhigh", "max")
 DEFAULT_GITHUB_REPO = ""
 # How long a cached issue context (summary + state + labels) stays fresh
 # before being transparently refreshed on the next read. The user can always
@@ -79,6 +88,19 @@ async def resolve_llm_model(session: AsyncSession) -> str:
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
     return DEFAULT_LLM_MODEL
+
+
+async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:
+    """Return the selected reasoning-effort hint, or ``""`` (auto/off).
+
+    ``""`` means the chat request omits ``reasoning_effort`` entirely, which is
+    the safe default for models that don't support it. Any value outside the
+    known set is treated as auto/off.
+    """
+    db_value = await _get_db_value(session, "llm_reasoning_effort")
+    if isinstance(db_value, str) and db_value in LLM_REASONING_EFFORTS:
+        return db_value
+    return DEFAULT_LLM_REASONING_EFFORT
 
 
 async def resolve_llm_provider(session: AsyncSession) -> str:
@@ -345,6 +367,33 @@ async def resolve_agents_default_model(session: AsyncSession) -> str:
     if isinstance(db_value, str) and db_value.strip():
         return db_value
     return get_settings().agents_default_model
+
+
+# Reasoning-effort values the agents SDK accepts (ModelInfo advertises the
+# per-model subset; this set only gates what the global pref may persist).
+# Observed across models: low/medium/high/xhigh/max. "" means don't pass one —
+# the SDK uses the model default.
+DEFAULT_AGENTS_REASONING_EFFORT = ""
+AGENTS_REASONING_EFFORTS: tuple[str, ...] = ("minimal", "low", "medium", "high", "xhigh", "max")
+# Context-window tiers the agents SDK accepts. "default" leaves it unset.
+DEFAULT_AGENTS_CONTEXT_TIER = "default"
+AGENTS_CONTEXT_TIERS: tuple[str, ...] = ("default", "long_context")
+
+
+async def resolve_agents_reasoning_effort(session: AsyncSession) -> str:
+    """Reasoning effort applied to new agent sessions, or "" (SDK default)."""
+    db_value = await _get_db_value(session, "agents_reasoning_effort")
+    if isinstance(db_value, str) and db_value in AGENTS_REASONING_EFFORTS:
+        return db_value
+    return DEFAULT_AGENTS_REASONING_EFFORT
+
+
+async def resolve_agents_context_tier(session: AsyncSession) -> str:
+    """Context-window tier for new agent sessions: ``default`` or ``long_context``."""
+    db_value = await _get_db_value(session, "agents_context_tier")
+    if isinstance(db_value, str) and db_value in AGENTS_CONTEXT_TIERS:
+        return db_value
+    return DEFAULT_AGENTS_CONTEXT_TIER
 
 
 AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
