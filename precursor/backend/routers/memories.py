@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.db import get_session
 from precursor.backend.models import Memory
 from precursor.backend.schemas import MemoryCreate, MemoryRead, MemoryUpdate
+from precursor.backend.services import memories as memory_service
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
@@ -23,11 +24,7 @@ async def list_memories(session: AsyncSession = Depends(get_session)) -> list[Me
 async def create_memory(
     payload: MemoryCreate, session: AsyncSession = Depends(get_session)
 ) -> Memory:
-    memory = Memory(**payload.model_dump())
-    session.add(memory)
-    await session.commit()
-    await session.refresh(memory)
-    return memory
+    return await memory_service.create_memory(session, payload)
 
 
 @router.patch("/{memory_id}", response_model=MemoryRead)
@@ -36,14 +33,10 @@ async def update_memory(
     payload: MemoryUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> Memory:
-    memory = await session.get(Memory, memory_id)
-    if memory is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(memory, key, value)
-    await session.commit()
-    await session.refresh(memory)
-    return memory
+    try:
+        return await memory_service.update_memory(session, memory_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found") from exc
 
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)

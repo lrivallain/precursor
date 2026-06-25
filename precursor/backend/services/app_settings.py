@@ -43,6 +43,7 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "search",
     "skills",
     "memory",
+    "memory_write",
     "post_message",
     "schedules",
 )

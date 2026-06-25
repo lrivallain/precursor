@@ -20,8 +20,9 @@ from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import SessionLocal, get_session
-from precursor.backend.models import Attachment, Chat, Memory, Message, MessageRole, Topic
+from precursor.backend.models import Attachment, Chat, Message, MessageRole, Topic
 from precursor.backend.schemas import ChatRequest, MessageRead, StoppedTurn
+from precursor.backend.services import memories as memory_service
 from precursor.backend.services.app_settings import (
     resolve_global_github_repo,
     resolve_llm_max_input_tokens,
@@ -153,15 +154,9 @@ async def _build_system_context(session: AsyncSession, topic: Topic) -> str:
     if role_prompt:
         parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
-    memories_result = await session.execute(select(Memory).order_by(Memory.kind, Memory.created_at))
-    memories = list(memories_result.scalars().all())
-    if memories:
-        lines = [
-            "Long-term user memory — treat as standing context for every turn:",
-        ]
-        for m in memories:
-            lines.append(f"- [{m.kind.upper()}] {m.content.strip()}")
-        parts.append("\n".join(lines))
+    memory_block = await memory_service.build_memory_prompt(session)
+    if memory_block:
+        parts.append(memory_block)
 
     parts.append(f"Topic title: {topic.title}")
     if topic.description:
@@ -211,13 +206,9 @@ async def _build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     if role_prompt:
         parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
-    memories_result = await session.execute(select(Memory).order_by(Memory.kind, Memory.created_at))
-    memories = list(memories_result.scalars().all())
-    if memories:
-        lines = ["Long-term user memory — treat as standing context for every turn:"]
-        for m in memories:
-            lines.append(f"- [{m.kind.upper()}] {m.content.strip()}")
-        parts.append("\n".join(lines))
+    memory_block = await memory_service.build_memory_prompt(session)
+    if memory_block:
+        parts.append(memory_block)
 
     parts.append(f"Chat title: {chat.title}")
     # In system-prompt mode the description is enforced per user turn (see

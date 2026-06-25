@@ -61,6 +61,9 @@ BUILTIN_TOPIC_COMMANDS: frozenset[str] = frozenset(
         "role",
         "archive",
         "agent",
+        "memory-store",
+        "memory-list",
+        "memory-update",
     }
 )
 
@@ -366,6 +369,44 @@ async def _handle_reminder(topic_id: int, argument: str) -> None:
     )
 
 
+async def _handle_memory_store(topic_id: int, argument: str) -> None:
+    from precursor.backend.services import memories as memory_service
+
+    try:
+        payload = memory_service.parse_store_arg(argument)
+    except ValueError as exc:
+        await _record(topic_id, str(exc))
+        return
+    async with SessionLocal() as session:
+        memory = await memory_service.create_memory(session, payload)
+    await _record(topic_id, f"Saved memory #{memory.id} [{memory.kind}].")
+
+
+async def _handle_memory_update(topic_id: int, argument: str) -> None:
+    from precursor.backend.services import memories as memory_service
+
+    try:
+        memory_id, payload = memory_service.parse_update_arg(argument)
+    except ValueError as exc:
+        await _record(topic_id, str(exc))
+        return
+    async with SessionLocal() as session:
+        try:
+            memory = await memory_service.update_memory(session, memory_id, payload)
+        except LookupError as exc:
+            await _record(topic_id, str(exc))
+            return
+    await _record(topic_id, f"Updated memory #{memory.id} [{memory.kind}].")
+
+
+async def _handle_memory_list(topic_id: int, argument: str) -> None:
+    from precursor.backend.services import memories as memory_service
+
+    async with SessionLocal() as session:
+        listing = await memory_service.render_memory_list(session)
+    await _record(topic_id, listing)
+
+
 _BUILTIN_HANDLERS = {
     "agent": _handle_agent,
     "gh-sync": _handle_gh_sync,
@@ -383,6 +424,9 @@ _BUILTIN_HANDLERS = {
     "done": _handle_done,
     "notes": _handle_notes,
     "reminder": _handle_reminder,
+    "memory-store": _handle_memory_store,
+    "memory-list": _handle_memory_list,
+    "memory-update": _handle_memory_update,
 }
 
 

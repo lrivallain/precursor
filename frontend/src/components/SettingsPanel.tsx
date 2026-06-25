@@ -1354,6 +1354,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
   { key: "skills", label: "Skills", hint: "List skills & read their instructions." },
   { key: "memory", label: "Memory", hint: "Read long-term memory entries." },
   {
+    key: "memory_write",
+    label: "Edit memory",
+    hint: "Let callers add and edit long-term memory entries.",
+    danger: true,
+  },
+  {
     key: "post_message",
     label: "Post message",
     hint: "Let callers post to a topic and run a full assistant turn.",
@@ -1388,7 +1394,7 @@ function McpExposeCard({
 }) {
   const [open, setOpen] = useState(false);
   const anyOn = EXPOSE_SECTIONS.some((s) => expose[s.key]);
-  const anyWriteOn = expose.post_message || expose.schedules;
+  const anyWriteOn = expose.memory_write || expose.post_message || expose.schedules;
   return (
     <div className="border border-border rounded mb-4">
       <button

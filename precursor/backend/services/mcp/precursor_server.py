@@ -18,6 +18,7 @@ Sections → tools:
 - ``search``       → search
 - ``skills``       → list_skills, get_skill
 - ``memory``       → list_memories
+- ``memory_write`` → store_memory, update_memory (write — edits long-term memory)
 - ``post_message`` → post_message (write — runs a full assistant turn)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
@@ -385,6 +386,56 @@ async def list_memories() -> dict[str, Any]:
         "memories": [{"id": m.id, "kind": m.kind, "content": m.content} for m in rows],
         "count": len(rows),
     }
+
+
+@mcp.tool()
+async def store_memory(content: str, kind: str = "context") -> dict[str, Any]:
+    """Save a new long-term memory injected into every future conversation.
+
+    ``content`` is the standing fact/preference/context to remember; ``kind`` is a
+    short lowercase tag (e.g. "context", "preference", "fact") shown in the UI and
+    prepended to the line sent to the model. Returns the created entry.
+    """
+    if not await _section_enabled("memory_write"):
+        return {"error": _GATED.format(section="memory_write")}
+    from precursor.backend.schemas import MemoryCreate
+    from precursor.backend.services import memories as memory_service
+
+    try:
+        payload = MemoryCreate(kind=kind, content=content)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    async with SessionLocal() as session:
+        memory = await memory_service.create_memory(session, payload)
+        return {"id": memory.id, "kind": memory.kind, "content": memory.content}
+
+
+@mcp.tool()
+async def update_memory(
+    memory_id: int, content: str | None = None, kind: str | None = None
+) -> dict[str, Any]:
+    """Edit an existing long-term memory by id (from ``list_memories``).
+
+    Pass ``content`` and/or ``kind`` to change; omitted fields are left as-is.
+    Returns the updated entry, or an error if the id is unknown.
+    """
+    if not await _section_enabled("memory_write"):
+        return {"error": _GATED.format(section="memory_write")}
+    from precursor.backend.schemas import MemoryUpdate
+    from precursor.backend.services import memories as memory_service
+
+    if content is None and kind is None:
+        return {"error": "Provide content and/or kind to update"}
+    try:
+        payload = MemoryUpdate(content=content, kind=kind)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    async with SessionLocal() as session:
+        try:
+            memory = await memory_service.update_memory(session, memory_id, payload)
+        except LookupError:
+            return {"error": f"Memory {memory_id} not found"}
+        return {"id": memory.id, "kind": memory.kind, "content": memory.content}
 
 
 # --------------------------------------------------------------------------

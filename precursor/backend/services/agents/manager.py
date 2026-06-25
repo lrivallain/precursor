@@ -57,6 +57,7 @@ from precursor.backend.services.events import (
     publish_message_changed,
     publish_message_changed_chat,
 )
+from precursor.backend.services.memories import build_memory_prompt
 from precursor.backend.services.suggestions import (
     SUGGESTIONS_INSTRUCTION,
     split_suggestions,
@@ -438,16 +439,18 @@ class AgentManager:
         return "\n".join(lines)
 
     async def _system_preamble(self, agent: AgentSession) -> str | None:
-        """Combined system-message append: operator custom prompt + topic binding.
+        """Combined system-message append: operator custom prompt + memory + topic binding.
 
-        The SDK base prompt isn't ours to set, so both pieces are *appended*. The
-        custom prompt (Settings → Agents) comes first as general guidance; the
-        topic binding follows so the agent always knows which record it's on.
+        The SDK base prompt isn't ours to set, so each piece is *appended*. The
+        custom prompt (Settings → Agents) comes first as general guidance,
+        long-term memory follows as standing context (matching chat/topic turns),
+        then the topic binding so the agent always knows which record it's on.
         """
         async with SessionLocal() as session:
             custom = (await resolve_agents_system_prompt(session)).strip()
+            memory = await build_memory_prompt(session)
         topic = await self._topic_context(agent)
-        parts = [p for p in (custom, topic, SUGGESTIONS_INSTRUCTION) if p]
+        parts = [p for p in (custom, memory, topic, SUGGESTIONS_INSTRUCTION) if p]
         return "\n\n".join(parts) if parts else None
 
     # ------------------------------------------------------------------ sessions
@@ -718,6 +721,23 @@ class AgentManager:
     async def _cmd_clear(self, agent_id: int, argument: str) -> None:
         await self.clear_session(agent_id)
 
+    async def _cmd_memory_store(self, agent_id: int, argument: str) -> None:
+        from precursor.backend.services import memories as memory_service
+
+        payload = memory_service.parse_store_arg(argument)
+        async with SessionLocal() as session:
+            await memory_service.create_memory(session, payload)
+
+    async def _cmd_memory_update(self, agent_id: int, argument: str) -> None:
+        from precursor.backend.services import memories as memory_service
+
+        memory_id, payload = memory_service.parse_update_arg(argument)
+        async with SessionLocal() as session:
+            try:
+                await memory_service.update_memory(session, memory_id, payload)
+            except LookupError as exc:
+                raise ValueError(str(exc)) from exc
+
     # Registry of system slash commands available inside an agent session:
     # name -> async handler. The set of supported names (used for validation and
     # the rejection message) is derived from these keys, and the frontend picker
@@ -726,6 +746,8 @@ class AgentManager:
         "rename": _cmd_rename,
         "archive": _cmd_archive,
         "clear": _cmd_clear,
+        "memory-store": _cmd_memory_store,
+        "memory-update": _cmd_memory_update,
     }
 
     @classmethod

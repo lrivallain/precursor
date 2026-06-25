@@ -15,7 +15,11 @@ import {
 import {
   commandsForSurface,
   GITHUB_SLASH_COMMANDS,
+  formatMemoryList,
   matchSlashCommands,
+  nextSyntheticMessageId,
+  parseMemoryStoreArg,
+  parseMemoryUpdateArg,
   parseSlashCommand,
   type SlashCommand,
 } from "../lib/commands";
@@ -483,6 +487,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       : null;
     if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
       setDraft("");
+      echoCommand(content);
       await dispatchCommand(cmd.name, cmd.argument);
       return;
     }
@@ -625,6 +630,18 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runReminderClear(true);
       return;
     }
+    if (name === "memory-store") {
+      await runMemoryStore(argument);
+      return;
+    }
+    if (name === "memory-list") {
+      await runMemoryList();
+      return;
+    }
+    if (name === "memory-update") {
+      await runMemoryUpdate(argument);
+      return;
+    }
     if (name === "role") {
       await runRole(argument);
       return;
@@ -685,7 +702,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     setPersisted((prev) => [
       ...prev,
       {
-        id: -Date.now(),
+        id: nextSyntheticMessageId(),
         topic_id: topic.id,
         role: "system",
         content,
@@ -693,6 +710,55 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         created_at: new Date().toISOString(),
       },
     ]);
+  }
+
+  // Echo a locally-handled slash command into the transcript as a user turn so
+  // it stays visible and is recallable via ↑ history (these commands never hit
+  // the backend, so they aren't persisted server-side).
+  function echoCommand(content: string): void {
+    setPersisted((prev) => [
+      ...prev,
+      {
+        id: nextSyntheticMessageId(),
+        topic_id: topic.id,
+        role: "user",
+        content,
+        tool_calls: null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  }
+
+  async function runMemoryStore(argument: string): Promise<void> {
+    const parsed = parseMemoryStoreArg(argument);
+    if (!parsed) return systemNote("Usage: `/memory-store [kind] <content>`");
+    try {
+      const mem = await api.createMemory(parsed);
+      systemNote(`Saved memory #${mem.id} [${mem.kind}]. Manage in Settings → Memory.`);
+    } catch (err) {
+      systemNote(`Couldn't save memory: ${(err as Error).message}`);
+    }
+  }
+
+  async function runMemoryList(): Promise<void> {
+    try {
+      const memories = await api.listMemories();
+      systemNote(formatMemoryList(memories));
+    } catch (err) {
+      systemNote(`Couldn't list memories: ${(err as Error).message}`);
+    }
+  }
+
+  async function runMemoryUpdate(argument: string): Promise<void> {
+    const parsed = parseMemoryUpdateArg(argument);
+    if (!parsed) return systemNote("Usage: `/memory-update <id> [kind] <content>`");
+    const { id, ...patch } = parsed;
+    try {
+      const mem = await api.updateMemory(id, patch);
+      systemNote(`Updated memory #${mem.id} [${mem.kind}].`);
+    } catch (err) {
+      systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
+    }
   }
 
   async function runRole(argument: string): Promise<void> {
