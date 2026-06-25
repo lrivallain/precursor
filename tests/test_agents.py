@@ -114,8 +114,10 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
             }
         )
 
-        configs = await AgentManager()._catalog_mcp_configs()
+        configs, oauth_expiry = await AgentManager()._catalog_mcp_configs()
 
+        # No OAuth-protected server attached here (workiq disabled) → no expiry.
+        assert oauth_expiry is None
         # precursor is attached separately with full access — never here.
         assert "precursor" not in configs
         # Disabled built-in excluded; malformed entry skipped.
@@ -141,6 +143,189 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
     finally:
         manager.unregister_user_entry("my-http")
         manager.unregister_user_entry("my-broken")
+        await _set_mcp_enabled({})
+
+
+async def test_oauth_bearer_header_only_applies_to_workiq() -> None:
+    """Catalog servers without an OAuth provider never get a bearer header."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    assert await AgentManager()._oauth_bearer_header("github") is None
+    assert await AgentManager()._oauth_bearer_header("my-http") is None
+
+
+async def test_oauth_bearer_header_workiq_injects_token(monkeypatch) -> None:
+    """WorkIQ's OAuth token is folded into a static Authorization header."""
+    from datetime import UTC, datetime, timedelta
+
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    expires = datetime.now(UTC) + timedelta(hours=1)
+
+    async def _tok() -> tuple[str, datetime]:
+        return "wq-access-token", expires
+
+    monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
+    result = await AgentManager()._oauth_bearer_header("workiq")
+    assert result == ({"Authorization": "Bearer wq-access-token"}, expires)
+
+
+async def test_oauth_bearer_header_passes_through_unknown_expiry(monkeypatch) -> None:
+    """A resolvable token with unknown lifetime yields a header and a None expiry."""
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _tok() -> tuple[str, None]:
+        return "wq-access-token", None
+
+    monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
+    result = await AgentManager()._oauth_bearer_header("workiq")
+    assert result == ({"Authorization": "Bearer wq-access-token"}, None)
+
+
+async def test_oauth_bearer_header_workiq_without_token_is_none(monkeypatch) -> None:
+    """No stored credentials → no header, so the caller skips attaching WorkIQ."""
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _none() -> None:
+        return None
+
+    monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _none)
+    assert await AgentManager()._oauth_bearer_header("workiq") is None
+
+
+def test_oauth_stale_refreshes_within_margin() -> None:
+    """A live session is stale once its token expiry is inside the refresh margin."""
+    from datetime import UTC, datetime, timedelta
+
+    from precursor.backend.services.agents.manager import (
+        _OAUTH_REFRESH_MARGIN,
+        AgentManager,
+        _LiveSession,
+    )
+
+    now = datetime.now(UTC)
+    fresh = _LiveSession(sdk_session=object(), oauth_expires_at=now + timedelta(hours=1))
+    expiring = _LiveSession(
+        sdk_session=object(), oauth_expires_at=now + _OAUTH_REFRESH_MARGIN - timedelta(minutes=1)
+    )
+    no_oauth = _LiveSession(sdk_session=object(), oauth_expires_at=None)
+
+    assert AgentManager._oauth_stale(fresh) is False
+    assert AgentManager._oauth_stale(expiring) is True
+    # No OAuth server attached → never forced to rebuild.
+    assert AgentManager._oauth_stale(no_oauth) is False
+
+
+async def test_resolve_workiq_bearer_token_without_stored_tokens_is_none() -> None:
+    """With no persisted OAuth tokens we return None without opening a session."""
+    from precursor.backend.services.mcp.workiq_preview import (
+        clear_workiq_oauth_tokens,
+        resolve_workiq_bearer_token,
+    )
+
+    # Initialise the schema (alembic upgrade runs on app startup).
+    with TestClient(create_app()):
+        pass
+
+    await clear_workiq_oauth_tokens()
+    assert await resolve_workiq_bearer_token() is None
+
+
+async def test_stored_token_expiry_combines_issue_time_and_lifetime() -> None:
+    """set_tokens stamps issue time so we can recover an absolute expiry."""
+    from datetime import UTC, datetime
+
+    from mcp.shared.auth import OAuthToken
+
+    from precursor.backend.services.mcp.workiq_preview import (
+        DbTokenStorage,
+        _stored_token_expiry,
+        clear_workiq_oauth_tokens,
+    )
+
+    with TestClient(create_app()):
+        pass
+
+    await clear_workiq_oauth_tokens()
+    storage = DbTokenStorage()
+
+    # No issue stamp yet → expiry is unknown.
+    no_stamp = OAuthToken(access_token="t", token_type="Bearer", expires_in=3600)
+    assert await _stored_token_expiry(no_stamp) is None
+
+    before = datetime.now(UTC)
+    await storage.set_tokens(no_stamp)
+    expiry = await _stored_token_expiry(no_stamp)
+    assert expiry is not None
+    delta = (expiry - before).total_seconds()
+    # issued_at ~ now, lifetime 3600s → expiry roughly an hour out.
+    assert 3590 <= delta <= 3660
+
+    # A token without a declared lifetime stays unknown even once stamped.
+    no_lifetime = OAuthToken(access_token="t", token_type="Bearer")
+    assert await _stored_token_expiry(no_lifetime) is None
+
+    await clear_workiq_oauth_tokens()
+
+
+async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> None:
+    """WorkIQ preview is attached with a bearer header, or skipped when signed out."""
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+    import pytest
+
+    from precursor.backend.services.agents import runtime
+    from precursor.backend.services.agents.manager import _OAUTH_FALLBACK_TTL, AgentManager
+    from precursor.backend.services.mcp import workiq_preview as wp
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    if not runtime.sdk_installed():
+        pytest.skip("github-copilot-sdk not installed")
+
+    with TestClient(create_app()):
+        pass
+
+    manager = get_mcp_client_manager()
+    manager.configure_workiq_preview(True, auth_provider=httpx.Auth())
+    try:
+        await _set_mcp_enabled({"workiq": True})
+
+        expires = datetime.now(UTC) + timedelta(hours=1)
+
+        async def _tok() -> tuple[str, datetime]:
+            return "wq-token", expires
+
+        monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
+        configs, oauth_expiry = await AgentManager()._catalog_mcp_configs()
+        assert configs["workiq"]["type"] == "http"
+        assert configs["workiq"]["url"] == wp.WORKIQ_PREVIEW_URL
+        assert configs["workiq"]["headers"] == {"Authorization": "Bearer wq-token"}
+        # The token's real expiry is surfaced so the session can refresh in time.
+        assert oauth_expiry == expires
+
+        # Unknown lifetime → a conservative fallback TTL, not None.
+        async def _tok_no_exp() -> tuple[str, None]:
+            return "wq-token", None
+
+        monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok_no_exp)
+        before = datetime.now(UTC)
+        _, fallback_expiry = await AgentManager()._catalog_mcp_configs()
+        assert fallback_expiry is not None
+        assert before < fallback_expiry <= datetime.now(UTC) + _OAUTH_FALLBACK_TTL
+
+        async def _none() -> None:
+            return None
+
+        monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _none)
+        configs, oauth_expiry = await AgentManager()._catalog_mcp_configs()
+        assert "workiq" not in configs
+        assert oauth_expiry is None
+    finally:
+        manager.configure_workiq_preview(False, auth_provider=None)
         await _set_mcp_enabled({})
 
 
