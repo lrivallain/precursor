@@ -52,6 +52,7 @@ export function ChatSettingsPanel({
         description_as_system_prompt: asSystemPrompt,
       });
       onSaved(updated);
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -187,7 +188,7 @@ export function ChatSettingsPanel({
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
                 placeholder="Optional — steers the assistant's system context."
-                className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
               />
               <label className="flex items-start gap-2 mt-2 cursor-pointer select-none">
                 <input
