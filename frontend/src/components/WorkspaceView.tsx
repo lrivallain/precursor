@@ -118,10 +118,10 @@ export function WorkspaceView({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
-  // Which create dialog is open (replaces the old window.prompt flows). The
-  // modal offers a parent-folder selector + live path preview to make the
-  // file/folder hierarchy explicit.
-  const [createKind, setCreateKind] = useState<"file" | "folder" | null>(null);
+  // Which create dialog is open and the parent folder it targets ("" = root).
+  // The parent is chosen by *where* creation starts — the top toolbar (root) or
+  // a folder row's hover actions — rather than a dropdown inside the modal.
+  const [create, setCreate] = useState<{ kind: "file" | "folder"; parent: string } | null>(null);
 
   const dirty = content !== savedContent;
   const isGit = area.kind !== "local";
@@ -210,7 +210,8 @@ export function WorkspaceView({
   async function handleCreateEntry(path: string): Promise<void> {
     // Throws on failure so the modal can surface the error and stay open
     // (e.g. "already exists"); only closes once creation succeeds.
-    if (createKind === "file") {
+    if (!create) return;
+    if (create.kind === "file") {
       await api.createWorkspaceFile(area.id, path, "");
       await refreshFiles();
       await openFile(path);
@@ -218,7 +219,7 @@ export function WorkspaceView({
       await api.createWorkspaceFolder(area.id, path);
       await refreshFiles();
     }
-    setCreateKind(null);
+    setCreate(null);
   }
 
   async function copyFilePath(path: string): Promise<void> {
@@ -308,16 +309,16 @@ export function WorkspaceView({
               <button
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New folder"
-                data-tooltip="New folder"
-                onClick={() => setCreateKind("folder")}
+                data-tooltip="New folder (in root)"
+                onClick={() => setCreate({ kind: "folder", parent: "" })}
               >
                 <FolderPlus size={15} />
               </button>
               <button
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New file"
-                data-tooltip="New file"
-                onClick={() => setCreateKind("file")}
+                data-tooltip="New file (in root)"
+                onClick={() => setCreate({ kind: "file", parent: "" })}
               >
                 <FilePlus2 size={15} />
               </button>
@@ -329,16 +330,17 @@ export function WorkspaceView({
               activePath={activePath}
               statusByPath={statusMap(status)}
               onOpen={openFile}
+              onCreate={(kind, parent) => setCreate({ kind, parent })}
             />
           </div>
         </aside>
 
-        {createKind && (
+        {create && (
           <CreateEntryModal
-            kind={createKind}
+            kind={create.kind}
+            parent={create.parent}
             files={files}
-            defaultParent={activePath ? parentDir(activePath) : ""}
-            onClose={() => setCreateKind(null)}
+            onClose={() => setCreate(null)}
             onSubmit={handleCreateEntry}
           />
         )}
@@ -1056,11 +1058,13 @@ function FileTree({
   activePath,
   statusByPath,
   onOpen,
+  onCreate,
 }: {
   files: WorkspaceFileNode[];
   activePath: string | null;
   statusByPath: Map<string, string>;
   onOpen: (path: string) => void;
+  onCreate: (kind: "file" | "folder", parent: string) => void;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -1097,23 +1101,42 @@ function FileTree({
         const isCollapsed = collapsed.has(node.path);
         return (
           <div key={node.path}>
-            <button
-              className="w-full flex items-center gap-1 py-1 pr-2 text-sm text-left hover:bg-surface text-muted"
-              style={indent}
-              onClick={() => toggle(node.path)}
-            >
-              {isCollapsed ? (
-                <ChevronRight size={13} className="shrink-0" />
-              ) : (
-                <ChevronDown size={13} className="shrink-0" />
-              )}
-              {isCollapsed ? (
-                <Folder size={14} className="shrink-0" />
-              ) : (
-                <FolderOpen size={14} className="shrink-0" />
-              )}
-              <span className="truncate">{node.name}</span>
-            </button>
+            <div className="group flex items-center pr-1 hover:bg-surface" style={indent}>
+              <button
+                className="flex-1 flex items-center gap-1 py-1 text-sm text-left text-muted min-w-0"
+                onClick={() => toggle(node.path)}
+              >
+                {isCollapsed ? (
+                  <ChevronRight size={13} className="shrink-0" />
+                ) : (
+                  <ChevronDown size={13} className="shrink-0" />
+                )}
+                {isCollapsed ? (
+                  <Folder size={14} className="shrink-0" />
+                ) : (
+                  <FolderOpen size={14} className="shrink-0" />
+                )}
+                <span className="truncate">{node.name}</span>
+              </button>
+              <div className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <button
+                  className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
+                  aria-label={`New file in ${node.name}`}
+                  data-tooltip="New file here"
+                  onClick={() => onCreate("file", node.path)}
+                >
+                  <FilePlus2 size={13} />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
+                  aria-label={`New folder in ${node.name}`}
+                  data-tooltip="New folder here"
+                  onClick={() => onCreate("folder", node.path)}
+                >
+                  <FolderPlus size={13} />
+                </button>
+              </div>
+            </div>
             {!isCollapsed && renderNodes(tn.children, depth + 1)}
           </div>
         );
@@ -1520,38 +1543,23 @@ function ChatTurn({
 // Create-workspace modal
 // --------------------------------------------------------------------------
 
-// The directory portion of a relative path ("a/b/c.md" -> "a/b", "x.md" -> "").
-function parentDir(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
-}
-
-// In-app dialog for creating a file or folder. Replaces the old window.prompt:
-// a parent-folder <select> (built from the existing tree) plus a name field,
-// with a live preview of the full path so the hierarchy is explicit. The name
-// may itself contain slashes to nest deeper; missing folders are auto-created.
+// In-app dialog for creating a file or folder. The parent folder is fixed by
+// where creation started (the toolbar = root, or a folder row's hover action),
+// shown read-only as "Location"; the user just types the name. The name may
+// itself contain slashes to nest deeper; missing folders are auto-created.
 function CreateEntryModal({
   kind,
+  parent,
   files,
-  defaultParent,
   onClose,
   onSubmit,
 }: {
   kind: "file" | "folder";
+  parent: string;
   files: WorkspaceFileNode[];
-  defaultParent: string;
   onClose: () => void;
   onSubmit: (path: string) => Promise<void>;
 }) {
-  const dirs = useMemo(
-    () =>
-      files
-        .filter((f) => f.type === "dir")
-        .map((f) => f.path)
-        .sort((a, b) => a.localeCompare(b)),
-    [files],
-  );
-  const [parent, setParent] = useState(() => (dirs.includes(defaultParent) ? defaultParent : ""));
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1596,21 +1604,22 @@ function CreateEntryModal({
           {isFile ? "New file" : "New folder"}
         </h2>
 
-        <label className="block text-sm">
+        <div className="text-sm">
           <span className="text-muted">Location</span>
-          <select
-            className="mt-1 w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-            value={parent}
-            onChange={(e) => setParent(e.target.value)}
-          >
-            <option value="">/ (workspace root)</option>
-            {dirs.map((d) => (
-              <option key={d} value={d}>
-                {d}/
-              </option>
-            ))}
-          </select>
-        </label>
+          <div className="mt-1 flex items-center gap-1.5 rounded border border-border bg-surface px-2 py-1.5 text-sm">
+            {parent ? (
+              <>
+                <Folder size={14} className="shrink-0 text-muted" />
+                <span className="font-mono break-all">{parent}/</span>
+              </>
+            ) : (
+              <>
+                <FolderOpen size={14} className="shrink-0 text-muted" />
+                <span className="text-muted">workspace root</span>
+              </>
+            )}
+          </div>
+        </div>
 
         <label className="block text-sm">
           <span className="text-muted">{isFile ? "File name" : "Folder name"}</span>
