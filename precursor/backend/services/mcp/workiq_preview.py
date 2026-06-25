@@ -49,6 +49,41 @@ class WorkIQAuthInProgressError(RuntimeError):
     """An interactive WorkIQ sign-in is already running (single-flight guard)."""
 
 
+class _SuppressExpectedAuthError(logging.Filter):
+    """Drop the SDK's ERROR traceback for an *expected* WorkIQ sign-in prompt.
+
+    The MCP SDK logs ``logger.exception("OAuth flow error")`` for any exception
+    raised inside its auth flow, then re-raises. When a background connect hits
+    a sign-in it deliberately won't run, we raise :class:`WorkIQAuthRequiredError`
+    from the redirect handler on purpose — so that "error" is a normal, handled
+    ``needs_auth`` signal, not a failure. We already log it concisely at WARNING
+    in the client, so this filter strips the misleading full stack trace.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc_info = record.exc_info
+        if not exc_info:
+            return True
+        exc = exc_info[1]
+        seen: set[int] = set()
+        stack: list[BaseException | None] = [exc]
+        while stack:
+            node = stack.pop()
+            if node is None or id(node) in seen:
+                continue
+            seen.add(id(node))
+            if isinstance(node, WorkIQAuthRequiredError):
+                return False
+            if isinstance(node, BaseExceptionGroup):
+                stack.extend(node.exceptions)
+            stack.append(node.__cause__)
+            stack.append(node.__context__)
+        return True
+
+
+logging.getLogger("mcp.client.auth.oauth2").addFilter(_SuppressExpectedAuthError())
+
+
 # Hosted WorkIQ MCP endpoint (full read+write surface).
 WORKIQ_PREVIEW_URL = "https://workiq.svc.cloud.microsoft/mcp"
 # WorkIQ-published public OAuth client (same id the Copilot CLI plugin uses).
