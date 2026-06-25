@@ -16,18 +16,23 @@ interface Props {
 
 // Mirrors ChatSettingsPanel (drawer + Title + footer Save + destructive
 // archive/delete) so an agent session feels like the same surface as a topic or
-// chat. Agent-specific bits: the read-only task prompt (its "description") and
+// chat. Agent-specific bits: the editable task prompt (its "instructions") and
 // the associated-topic picker. Renaming and linking reuse the same endpoints
-// the header/timeline already drive.
+// the header/timeline already drive. Editing the task re-establishes the SDK
+// session server-side so the new instructions actually take effect.
 export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDeleted }: Props) {
   const confirmAction = useConfirm();
   const [title, setTitle] = useState(agent.title);
+  const [task, setTask] = useState(agent.task_prompt);
   const [topicId, setTopicId] = useState<number | null>(agent.topic_id);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The task can't be replayed while a turn is in flight; the server rejects it.
+  const taskLocked = ["pending", "running", "needs_approval"].includes(agent.status);
 
   useEffect(() => {
     void api
@@ -37,14 +42,18 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
   }, []);
 
   async function save(): Promise<void> {
-    const trimmed = title.trim();
-    if (!trimmed || saving) return;
+    const trimmedTitle = title.trim();
+    const trimmedTask = task.trim();
+    if (!trimmedTitle || saving) return;
     setSaving(true);
     setError(null);
     try {
       let updated = agent;
-      if (trimmed !== agent.title) {
-        updated = await api.renameAgent(agent.id, trimmed);
+      const patch: { title?: string; task?: string } = {};
+      if (trimmedTitle !== agent.title) patch.title = trimmedTitle;
+      if (trimmedTask && trimmedTask !== agent.task_prompt) patch.task = trimmedTask;
+      if (patch.title !== undefined || patch.task !== undefined) {
+        updated = await api.updateAgent(agent.id, patch);
       }
       if (topicId !== agent.topic_id) {
         updated = await api.linkAgent(agent.id, { topic_id: topicId, chat_id: null });
@@ -126,6 +135,23 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
                 <label className="block text-xs text-muted">Status</label>
                 <AgentStatusBadge status={agent.status} />
               </div>
+            </section>
+
+            <section>
+              <label className="block text-xs text-muted mb-1">Instructions (task)</label>
+              <textarea
+                value={task}
+                onChange={(e) => setTask(e.target.value)}
+                disabled={taskLocked || saving}
+                rows={10}
+                spellCheck={false}
+                className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm font-mono leading-snug outline-none focus:border-accent disabled:opacity-60 resize-y"
+              />
+              <p className="text-[11px] text-muted mt-1">
+                {taskLocked
+                  ? "Stop the agent before editing its instructions."
+                  : "Saving changed instructions re-establishes the session and replays them. The session id is kept, so scheduled /agent references keep working. To wipe prior context instead, use the agent's Clear action."}
+              </p>
             </section>
 
             <section>

@@ -510,6 +510,23 @@ class AgentManager:
         )
         await live.sdk_session.send(agent.task_prompt)
 
+    async def restart_with_task(self, agent_id: int) -> None:
+        """Re-establish the SDK session after the task prompt was edited.
+
+        The task is delivered only by :meth:`start_task`; a live or resumed
+        session keeps the *previous* instructions in its history, so an edited
+        ``task_prompt`` stays inert until it is replayed. Drop the in-memory
+        session (``forget=False`` keeps the visible timeline) so the next connect
+        refreshes the system preamble, then replay the new task.
+
+        ``copilot_session_id`` is deliberately left untouched: scheduled
+        ``/agent <uuid>`` nudges target that id, and recreating an agent (which
+        mints a new id) is exactly what silently breaks such schedules. Callers
+        that want a clean-slate context use the ``clear`` command instead.
+        """
+        await self.teardown_session(agent_id)
+        await self.start_task(agent_id)
+
     async def send_message(self, agent_id: int, text: str) -> None:
         agent = await self._load(agent_id)
         if agent is None:

@@ -58,9 +58,15 @@ class AgentSendRequest(BaseModel):
 
 
 class AgentUpdateRequest(BaseModel):
-    """Rename an agent session."""
+    """Rename an agent session and/or edit its task instructions.
 
-    title: str = Field(min_length=1, max_length=200)
+    Both fields are optional so a caller can patch either independently (the
+    Settings drawer sends ``title`` on rename and ``task`` when the instructions
+    are edited).
+    """
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    task: str | None = Field(default=None, min_length=1)
 
 
 class AgentLinkRequest(BaseModel):

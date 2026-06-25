@@ -259,6 +259,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ title }),
     }),
+  updateAgent: (id: number, payload: { title?: string; task?: string }) =>
+    request<AgentSession>(`/api/agents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   deleteAgent: (id: number) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
   listArchivedAgents: () => request<AgentSession[]>(`/api/agents/archived`),
   archiveAgent: (id: number) =>
