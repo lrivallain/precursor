@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import webbrowser
 from collections.abc import Awaitable, Callable
@@ -161,8 +162,10 @@ class DbTokenStorage(TokenStorage):
         encoded = tokens.model_dump_json()
         # The SDK calls this whenever it issues or refreshes tokens, so "now" is
         # the moment they became valid — stamp it so we can compute their real
-        # expiry later (``expires_in`` is relative to this instant).
-        issued_at = datetime.now(UTC).isoformat()
+        # expiry later (``expires_in`` is relative to this instant). Store it
+        # JSON-encoded so it satisfies the all-JSON ``AppSetting.value`` contract
+        # the settings router relies on (a raw ISO string isn't valid JSON).
+        issued_at = json.dumps(datetime.now(UTC).isoformat())
         async with SessionLocal() as session:
             row = await session.get(AppSetting, OAUTH_TOKENS_KEY)
             if row is None:
@@ -208,9 +211,14 @@ async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
         row = await session.get(AppSetting, OAUTH_ISSUED_AT_KEY)
     if row is None or not row.value:
         return None
+    # New rows are JSON-encoded; tolerate legacy rows saved as a raw ISO string.
     try:
-        issued = datetime.fromisoformat(row.value)
-    except ValueError:
+        stamp = json.loads(row.value)
+    except (ValueError, TypeError):
+        stamp = row.value
+    try:
+        issued = datetime.fromisoformat(stamp)
+    except (ValueError, TypeError):
         return None
     return issued + timedelta(seconds=token.expires_in)
 
