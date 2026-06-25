@@ -118,6 +118,10 @@ export function WorkspaceView({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
+  // Which create dialog is open (replaces the old window.prompt flows). The
+  // modal offers a parent-folder selector + live path preview to make the
+  // file/folder hierarchy explicit.
+  const [createKind, setCreateKind] = useState<"file" | "folder" | null>(null);
 
   const dirty = content !== savedContent;
   const isGit = area.kind !== "local";
@@ -203,35 +207,18 @@ export function WorkspaceView({
     }
   }
 
-  async function createFile(): Promise<void> {
-    const name = window.prompt(
-      "New file path (relative, e.g. notes/intro.md):",
-    );
-    if (!name) return;
-    setError(null);
-    try {
-      await api.createWorkspaceFile(area.id, name, "");
+  async function handleCreateEntry(path: string): Promise<void> {
+    // Throws on failure so the modal can surface the error and stay open
+    // (e.g. "already exists"); only closes once creation succeeds.
+    if (createKind === "file") {
+      await api.createWorkspaceFile(area.id, path, "");
       await refreshFiles();
-      await openFile(name);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  async function createFolder(): Promise<void> {
-    const name = window.prompt(
-      "New folder path (relative, e.g. notes/drafts):",
-    );
-    if (!name) return;
-    const folder = name.replace(/\/+$/, "");
-    if (!folder) return;
-    setError(null);
-    try {
-      await api.createWorkspaceFolder(area.id, folder);
+      await openFile(path);
+    } else {
+      await api.createWorkspaceFolder(area.id, path);
       await refreshFiles();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
     }
+    setCreateKind(null);
   }
 
   async function copyFilePath(path: string): Promise<void> {
@@ -322,7 +309,7 @@ export function WorkspaceView({
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New folder"
                 data-tooltip="New folder"
-                onClick={createFolder}
+                onClick={() => setCreateKind("folder")}
               >
                 <FolderPlus size={15} />
               </button>
@@ -330,7 +317,7 @@ export function WorkspaceView({
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New file"
                 data-tooltip="New file"
-                onClick={createFile}
+                onClick={() => setCreateKind("file")}
               >
                 <FilePlus2 size={15} />
               </button>
@@ -345,6 +332,16 @@ export function WorkspaceView({
             />
           </div>
         </aside>
+
+        {createKind && (
+          <CreateEntryModal
+            kind={createKind}
+            files={files}
+            defaultParent={activePath ? parentDir(activePath) : ""}
+            onClose={() => setCreateKind(null)}
+            onSubmit={handleCreateEntry}
+          />
+        )}
 
         <section className="flex-1 min-w-0 flex flex-col">
           {activePath ? (
@@ -1522,6 +1519,162 @@ function ChatTurn({
 // --------------------------------------------------------------------------
 // Create-workspace modal
 // --------------------------------------------------------------------------
+
+// The directory portion of a relative path ("a/b/c.md" -> "a/b", "x.md" -> "").
+function parentDir(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.slice(0, i);
+}
+
+// In-app dialog for creating a file or folder. Replaces the old window.prompt:
+// a parent-folder <select> (built from the existing tree) plus a name field,
+// with a live preview of the full path so the hierarchy is explicit. The name
+// may itself contain slashes to nest deeper; missing folders are auto-created.
+function CreateEntryModal({
+  kind,
+  files,
+  defaultParent,
+  onClose,
+  onSubmit,
+}: {
+  kind: "file" | "folder";
+  files: WorkspaceFileNode[];
+  defaultParent: string;
+  onClose: () => void;
+  onSubmit: (path: string) => Promise<void>;
+}) {
+  const dirs = useMemo(
+    () =>
+      files
+        .filter((f) => f.type === "dir")
+        .map((f) => f.path)
+        .sort((a, b) => a.localeCompare(b)),
+    [files],
+  );
+  const [parent, setParent] = useState(() => (dirs.includes(defaultParent) ? defaultParent : ""));
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const existing = useMemo(() => new Set(files.map((f) => f.path)), [files]);
+
+  // Join parent + name and normalise away stray/duplicate slashes so the
+  // preview and the submitted path always agree.
+  const fullPath = useMemo(() => {
+    const cleaned = name.replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    const base = parent ? `${parent}/${cleaned}` : cleaned;
+    return base.replace(/\/+$/g, "");
+  }, [parent, name]);
+
+  const conflict = fullPath.length > 0 && existing.has(fullPath);
+  const canSubmit = name.trim().length > 0 && fullPath.length > 0 && !conflict;
+  const isFile = kind === "file";
+
+  async function submit(): Promise<void> {
+    if (!canSubmit || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onSubmit(fullPath);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-[26rem] max-w-[92vw] rounded-lg border border-border bg-bg shadow-xl p-5 space-y-3">
+        <h2 className="font-medium flex items-center gap-2">
+          {isFile ? <FilePlus2 size={16} /> : <FolderPlus size={16} />}
+          {isFile ? "New file" : "New folder"}
+        </h2>
+
+        <label className="block text-sm">
+          <span className="text-muted">Location</span>
+          <select
+            className="mt-1 w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+            value={parent}
+            onChange={(e) => setParent(e.target.value)}
+          >
+            <option value="">/ (workspace root)</option>
+            {dirs.map((d) => (
+              <option key={d} value={d}>
+                {d}/
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-sm">
+          <span className="text-muted">{isFile ? "File name" : "Folder name"}</span>
+          <input
+            className="mt-1 w-full bg-surface border border-border rounded px-2 py-1.5 text-sm font-mono outline-none focus:border-accent"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder={isFile ? "intro.md" : "drafts"}
+            autoFocus
+            spellCheck={false}
+          />
+        </label>
+
+        <p className="text-[11px] text-muted">
+          Tip: type <code>sub/folder/name</code> to nest deeper — missing folders
+          are created automatically.
+        </p>
+
+        <div className="rounded border border-border bg-surface px-2 py-1.5 text-xs">
+          <span className="text-muted">Full path: </span>
+          {fullPath ? (
+            <span className="font-mono break-all">
+              {fullPath}
+              {!isFile && "/"}
+            </span>
+          ) : (
+            <span className="text-muted italic">…</span>
+          )}
+        </div>
+
+        {conflict && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            A file or folder already exists at this path.
+          </p>
+        )}
+        {error && <p className="text-sm text-red-500">{error}</p>}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            className="px-3 py-1.5 rounded border border-border text-sm hover:bg-surface"
+            onClick={onClose}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
+            onClick={() => void submit()}
+            disabled={busy || !canSubmit}
+          >
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function CreateWorkspaceModal({
   onClose,
