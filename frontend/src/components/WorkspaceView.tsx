@@ -118,10 +118,12 @@ export function WorkspaceView({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
-  // Which create dialog is open and the parent folder it targets ("" = root).
-  // The parent is chosen by *where* creation starts — the top toolbar (root) or
-  // a folder row's hover actions — rather than a dropdown inside the modal.
-  const [create, setCreate] = useState<{ kind: "file" | "folder"; parent: string } | null>(null);
+  // Inline create-in-tree state (VS Code style): an input row appears at the
+  // target parent ("" = root) until the user confirms or cancels. No modal.
+  const [pendingCreate, setPendingCreate] = useState<{
+    kind: "file" | "folder";
+    parent: string;
+  } | null>(null);
 
   const dirty = content !== savedContent;
   const isGit = area.kind !== "local";
@@ -207,19 +209,29 @@ export function WorkspaceView({
     }
   }
 
-  async function handleCreateEntry(path: string): Promise<void> {
-    // Throws on failure so the modal can surface the error and stay open
-    // (e.g. "already exists"); only closes once creation succeeds.
-    if (!create) return;
-    if (create.kind === "file") {
-      await api.createWorkspaceFile(area.id, path, "");
-      await refreshFiles();
-      await openFile(path);
-    } else {
-      await api.createWorkspaceFolder(area.id, path);
-      await refreshFiles();
+  async function submitCreate(name: string): Promise<void> {
+    if (!pendingCreate) return;
+    const cleaned = name.trim().replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    if (!cleaned) {
+      setPendingCreate(null);
+      return;
     }
-    setCreate(null);
+    const full = pendingCreate.parent ? `${pendingCreate.parent}/${cleaned}` : cleaned;
+    setError(null);
+    try {
+      if (pendingCreate.kind === "file") {
+        await api.createWorkspaceFile(area.id, full, "");
+        await refreshFiles();
+        await openFile(full);
+      } else {
+        await api.createWorkspaceFolder(area.id, full);
+        await refreshFiles();
+      }
+      setPendingCreate(null);
+    } catch (e) {
+      // Keep the input open so the user can correct the name (e.g. a conflict).
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function copyFilePath(path: string): Promise<void> {
@@ -310,7 +322,7 @@ export function WorkspaceView({
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New folder"
                 data-tooltip="New folder (in root)"
-                onClick={() => setCreate({ kind: "folder", parent: "" })}
+                onClick={() => setPendingCreate({ kind: "folder", parent: "" })}
               >
                 <FolderPlus size={15} />
               </button>
@@ -318,7 +330,7 @@ export function WorkspaceView({
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New file"
                 data-tooltip="New file (in root)"
-                onClick={() => setCreate({ kind: "file", parent: "" })}
+                onClick={() => setPendingCreate({ kind: "file", parent: "" })}
               >
                 <FilePlus2 size={15} />
               </button>
@@ -330,20 +342,13 @@ export function WorkspaceView({
               activePath={activePath}
               statusByPath={statusMap(status)}
               onOpen={openFile}
-              onCreate={(kind, parent) => setCreate({ kind, parent })}
+              pendingCreate={pendingCreate}
+              onStartCreate={(kind, parent) => setPendingCreate({ kind, parent })}
+              onSubmitCreate={submitCreate}
+              onCancelCreate={() => setPendingCreate(null)}
             />
           </div>
         </aside>
-
-        {create && (
-          <CreateEntryModal
-            kind={create.kind}
-            parent={create.parent}
-            files={files}
-            onClose={() => setCreate(null)}
-            onSubmit={handleCreateEntry}
-          />
-        )}
 
         <section className="flex-1 min-w-0 flex flex-col">
           {activePath ? (
@@ -1053,18 +1058,68 @@ function buildTree(files: WorkspaceFileNode[]): TreeNode[] {
   return roots;
 }
 
+// One inline "type the name here" row rendered in the tree at the create
+// target (VS Code style). Enter confirms, Escape or blur abandons.
+function CreateRow({
+  kind,
+  depth,
+  onSubmit,
+  onCancel,
+}: {
+  kind: "file" | "folder";
+  depth: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const indent = { paddingLeft: `${depth * 12 + 8}px` };
+  return (
+    <div className="flex items-center gap-1.5 pr-2 py-0.5" style={indent}>
+      {kind === "file" ? (
+        <FileText size={14} className="shrink-0 text-muted" />
+      ) : (
+        <Folder size={14} className="shrink-0 text-muted" />
+      )}
+      <input
+        autoFocus
+        spellCheck={false}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSubmit(value);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        onBlur={onCancel}
+        placeholder={kind === "file" ? "filename.md" : "folder-name"}
+        className="flex-1 min-w-0 bg-bg border border-accent rounded px-1.5 py-0.5 text-sm font-mono outline-none"
+      />
+    </div>
+  );
+}
+
 function FileTree({
   files,
   activePath,
   statusByPath,
   onOpen,
-  onCreate,
+  pendingCreate,
+  onStartCreate,
+  onSubmitCreate,
+  onCancelCreate,
 }: {
   files: WorkspaceFileNode[];
   activePath: string | null;
   statusByPath: Map<string, string>;
   onOpen: (path: string) => void;
-  onCreate: (kind: "file" | "folder", parent: string) => void;
+  pendingCreate: { kind: "file" | "folder"; parent: string } | null;
+  onStartCreate: (kind: "file" | "folder", parent: string) => void;
+  onSubmitCreate: (name: string) => void;
+  onCancelCreate: () => void;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -1080,8 +1135,35 @@ function FileTree({
     );
   }, [files]);
 
+  // Expand a folder the moment it becomes the create target so its inline
+  // input row is visible.
+  useEffect(() => {
+    const parent = pendingCreate?.parent;
+    if (!parent) return;
+    setCollapsed((prev) => {
+      if (!prev.has(parent)) return prev;
+      const next = new Set(prev);
+      next.delete(parent);
+      return next;
+    });
+  }, [pendingCreate]);
+
+  const renderCreateRow = (parent: string, depth: number): ReactNode =>
+    pendingCreate && pendingCreate.parent === parent ? (
+      <CreateRow
+        kind={pendingCreate.kind}
+        depth={depth}
+        onSubmit={onSubmitCreate}
+        onCancel={onCancelCreate}
+      />
+    ) : null;
+
   if (files.length === 0) {
-    return <p className="px-3 py-2 text-xs text-muted">No files.</p>;
+    return (
+      <div>
+        {renderCreateRow("", 0) ?? <p className="px-3 py-2 text-xs text-muted">No files.</p>}
+      </div>
+    );
   }
 
   function toggle(path: string): void {
@@ -1123,7 +1205,7 @@ function FileTree({
                   className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
                   aria-label={`New file in ${node.name}`}
                   data-tooltip="New file here"
-                  onClick={() => onCreate("file", node.path)}
+                  onClick={() => onStartCreate("file", node.path)}
                 >
                   <FilePlus2 size={13} />
                 </button>
@@ -1131,13 +1213,18 @@ function FileTree({
                   className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
                   aria-label={`New folder in ${node.name}`}
                   data-tooltip="New folder here"
-                  onClick={() => onCreate("folder", node.path)}
+                  onClick={() => onStartCreate("folder", node.path)}
                 >
                   <FolderPlus size={13} />
                 </button>
               </div>
             </div>
-            {!isCollapsed && renderNodes(tn.children, depth + 1)}
+            {!isCollapsed && (
+              <>
+                {renderCreateRow(node.path, depth + 1)}
+                {renderNodes(tn.children, depth + 1)}
+              </>
+            )}
           </div>
         );
       }
@@ -1170,7 +1257,12 @@ function FileTree({
       );
     });
 
-  return <div>{renderNodes(tree, 0)}</div>;
+  return (
+    <div>
+      {renderCreateRow("", 0)}
+      {renderNodes(tree, 0)}
+    </div>
+  );
 }
 
 // --------------------------------------------------------------------------
@@ -1542,148 +1634,6 @@ function ChatTurn({
 // --------------------------------------------------------------------------
 // Create-workspace modal
 // --------------------------------------------------------------------------
-
-// In-app dialog for creating a file or folder. The parent folder is fixed by
-// where creation started (the toolbar = root, or a folder row's hover action),
-// shown read-only as "Location"; the user just types the name. The name may
-// itself contain slashes to nest deeper; missing folders are auto-created.
-function CreateEntryModal({
-  kind,
-  parent,
-  files,
-  onClose,
-  onSubmit,
-}: {
-  kind: "file" | "folder";
-  parent: string;
-  files: WorkspaceFileNode[];
-  onClose: () => void;
-  onSubmit: (path: string) => Promise<void>;
-}) {
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const existing = useMemo(() => new Set(files.map((f) => f.path)), [files]);
-
-  // Join parent + name and normalise away stray/duplicate slashes so the
-  // preview and the submitted path always agree.
-  const fullPath = useMemo(() => {
-    const cleaned = name.replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
-    const base = parent ? `${parent}/${cleaned}` : cleaned;
-    return base.replace(/\/+$/g, "");
-  }, [parent, name]);
-
-  const conflict = fullPath.length > 0 && existing.has(fullPath);
-  const canSubmit = name.trim().length > 0 && fullPath.length > 0 && !conflict;
-  const isFile = kind === "file";
-
-  async function submit(): Promise<void> {
-    if (!canSubmit || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onSubmit(fullPath);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="w-[26rem] max-w-[92vw] rounded-lg border border-border bg-bg shadow-xl p-5 space-y-3">
-        <h2 className="font-medium flex items-center gap-2">
-          {isFile ? <FilePlus2 size={16} /> : <FolderPlus size={16} />}
-          {isFile ? "New file" : "New folder"}
-        </h2>
-
-        <div className="text-sm">
-          <span className="text-muted">Location</span>
-          <div className="mt-1 flex items-center gap-1.5 rounded border border-border bg-surface px-2 py-1.5 text-sm">
-            {parent ? (
-              <>
-                <Folder size={14} className="shrink-0 text-muted" />
-                <span className="font-mono break-all">{parent}/</span>
-              </>
-            ) : (
-              <>
-                <FolderOpen size={14} className="shrink-0 text-muted" />
-                <span className="text-muted">workspace root</span>
-              </>
-            )}
-          </div>
-        </div>
-
-        <label className="block text-sm">
-          <span className="text-muted">{isFile ? "File name" : "Folder name"}</span>
-          <input
-            className="mt-1 w-full bg-surface border border-border rounded px-2 py-1.5 text-sm font-mono outline-none focus:border-accent"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder={isFile ? "intro.md" : "drafts"}
-            autoFocus
-            spellCheck={false}
-          />
-        </label>
-
-        <p className="text-[11px] text-muted">
-          Tip: type <code>sub/folder/name</code> to nest deeper — missing folders
-          are created automatically.
-        </p>
-
-        <div className="rounded border border-border bg-surface px-2 py-1.5 text-xs">
-          <span className="text-muted">Full path: </span>
-          {fullPath ? (
-            <span className="font-mono break-all">
-              {fullPath}
-              {!isFile && "/"}
-            </span>
-          ) : (
-            <span className="text-muted italic">…</span>
-          )}
-        </div>
-
-        {conflict && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            A file or folder already exists at this path.
-          </p>
-        )}
-        {error && <p className="text-sm text-red-500">{error}</p>}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            className="px-3 py-1.5 rounded border border-border text-sm hover:bg-surface"
-            onClick={onClose}
-            disabled={busy}
-          >
-            Cancel
-          </button>
-          <button
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
-            onClick={() => void submit()}
-            disabled={busy || !canSubmit}
-          >
-            {busy && <Loader2 size={14} className="animate-spin" />}
-            Create
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function CreateWorkspaceModal({
   onClose,
