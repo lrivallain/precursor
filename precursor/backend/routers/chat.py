@@ -527,7 +527,15 @@ def _format_tool_result(payload: Any) -> str:
             blocks.append(text)
         else:
             blocks.append(json.dumps(getattr(block, "model_dump", lambda: {})(), default=str))
-    return "\n\n".join(blocks) if blocks else "(empty result)"
+    if blocks:
+        return "\n\n".join(blocks)
+    # Some MCP servers (e.g. the hosted WorkIQ endpoint) return no text content
+    # blocks and put the payload in ``structuredContent`` instead. Falling back
+    # to it keeps reads from looking empty to the model.
+    structured = getattr(payload, "structuredContent", None)
+    if structured is not None:
+        return json.dumps(structured, default=str)
+    return "(empty result)"
 
 
 # Container abstraction: a message belongs to exactly one of a topic or a chat.
