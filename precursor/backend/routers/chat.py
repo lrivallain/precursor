@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -51,7 +52,11 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
-from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+from precursor.backend.services.mcp.client import (
+    AUTH_PAUSE_TIMEOUT_SECONDS,
+    MCPToolDef,
+    get_mcp_client_manager,
+)
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import (
@@ -594,6 +599,53 @@ async def _run_message_stream(
         "event": "user_message",
         "data": json.dumps(user_echo),
     }
+
+    # Pause-and-resume gate: if an enabled server needs an interactive sign-in,
+    # don't proceed to the LLM with its tools missing (that yields confident,
+    # hallucinated answers). Surface the auth prompt and wait for the user to
+    # sign in, then retry acquiring so the turn resumes with the real tools.
+    if enabled_servers:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + AUTH_PAUSE_TIMEOUT_SECONDS
+        announced: set[str] = set()
+        while True:
+            async with manager.acquired(enabled_servers, github_token=github_token) as probe:
+                blocked = manager.auth_blocked_servers([n for n, _ in probe.unavailable])
+            if not blocked:
+                break
+            for name in blocked:
+                if name in announced:
+                    continue
+                announced.add(name)
+                entry = manager.get(name)
+                yield {
+                    "event": "mcp_auth_required",
+                    "data": json.dumps(
+                        {
+                            "server": name,
+                            "message": (entry.error if entry else None) or "Sign-in required.",
+                        }
+                    ),
+                }
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                yield {
+                    "event": "system",
+                    "data": json.dumps(
+                        {
+                            "message": (
+                                "Sign-in wasn't completed in time, so I stopped instead of "
+                                "answering without "
+                                f"{', '.join(sorted(announced))}. Send your message again "
+                                "after signing in."
+                            )
+                        }
+                    ),
+                }
+                return
+            # Wake promptly on sign-in; cap the wait so a missed signal still
+            # re-checks within a few seconds.
+            await manager.wait_for_auth(timeout=min(remaining, 10.0))
 
     async with manager.acquired(enabled_servers, github_token=github_token) as active:
         # Warm MCP sessions for the enabled servers (reused across turns). Each

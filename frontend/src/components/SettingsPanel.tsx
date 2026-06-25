@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
+import { mcpAuthStore } from "../lib/mcpAuth";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { modelsStore } from "../lib/modelsStore";
 import { settingsStore } from "../lib/settingsStore";
@@ -403,6 +404,7 @@ export function SettingsPanel({ onClose }: Props) {
     try {
       const next = await api.reauthenticateWorkiq();
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
+      mcpAuthStore.clear();
     } catch (err) {
       setMcp((prev) =>
         prev.map((s) =>

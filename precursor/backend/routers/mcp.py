@@ -249,6 +249,9 @@ async def reauthenticate_workiq_server(
 
     entry = manager.get("workiq")
     assert entry is not None
+    # Wake any chat turn paused waiting for this sign-in so it resumes with the
+    # freshly authenticated tools instead of timing out.
+    manager.signal_auth_resolved()
     base = manager.status_dict(entry, enabled=is_enabled)
     return _enrich_with_user_meta(base, None)
 

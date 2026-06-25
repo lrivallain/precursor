@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { mcpAuthStore } from "./mcpAuth";
 import { streamChat, streamChatSession } from "./sse";
 import type { Attachment, Message } from "./types";
 
@@ -346,6 +347,13 @@ class StreamStore {
         tool_calls: null,
         created_at: now,
       });
+    } else if (ev.event === "mcp_auth_required") {
+      // A background MCP connect needs an interactive sign-in. Surface it via
+      // the app-global banner rather than as an inert system message.
+      mcpAuthStore.report(
+        (payload.server as string) ?? "workiq",
+        (payload.message as string) ?? "Sign-in required.",
+      );
     } else if (ev.event === "done") {
       const usage = session.pendingUsage;
       session.pendingUsage = null;
