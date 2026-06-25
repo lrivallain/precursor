@@ -3,8 +3,11 @@ import type { ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  Check,
   ClipboardCheck,
   ClipboardCopy,
+  Code2,
+  Copy,
   Download,
   ExternalLink,
   Eye,
@@ -1617,16 +1620,71 @@ function ChatTurn({
   content: string;
   pending?: boolean;
 }) {
+  const [hover, setHover] = useState(false);
+  const [copied, setCopied] = useState<null | "text" | "md">(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Copy the rendered text (markdown stripped) or the raw markdown source —
+  // mirrors the main chat's MessageBubble actions.
+  const copyTo = async (kind: "text" | "md") => {
+    const value =
+      kind === "md" ? content : (contentRef.current?.textContent ?? content).trim();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1200);
+    } catch {
+      // Clipboard may be unavailable (e.g. insecure context); fail silently.
+    }
+  };
+
+  const showActions = role === "assistant" && !pending && !!content;
+
   return (
     <div
-      className={`rounded-lg px-3 py-2 text-sm ${
-        role === "user"
-          ? "bg-accent/10 ml-6"
-          : "bg-surface mr-6"
+      className={`group relative rounded-lg px-3 py-2 text-sm ${
+        role === "user" ? "bg-accent/10 ml-6" : "bg-surface mr-6"
       }`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
-      <Markdown className="leading-relaxed">{content || "\u200B"}</Markdown>
+      <div ref={contentRef}>
+        <Markdown className="leading-relaxed">{content || "\u200B"}</Markdown>
+      </div>
       {pending && <span className="text-[11px] text-muted italic">streaming…</span>}
+      {showActions && (
+        <div
+          style={{ opacity: hover ? 1 : 0, transition: "opacity 120ms ease-out" }}
+          className="absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm"
+        >
+          <button
+            type="button"
+            onClick={() => copyTo("text")}
+            className="p-1 rounded-full text-muted hover:text-accent"
+            aria-label="Copy message"
+            data-tooltip="Copy message"
+          >
+            {copied === "text" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Copy size={12} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => copyTo("md")}
+            className="p-1 rounded-full text-muted hover:text-accent"
+            aria-label="Copy raw markdown"
+            data-tooltip="Copy raw markdown"
+          >
+            {copied === "md" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Code2 size={12} />
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
