@@ -375,7 +375,14 @@ export interface MCPServerStatus {
   command_bin: string | null;
   args: string[];
   url: string | null;
-  state: "disconnected" | "connecting" | "connected" | "ready" | "error" | "disabled";
+  state:
+    | "disconnected"
+    | "connecting"
+    | "connected"
+    | "ready"
+    | "error"
+    | "needs_auth"
+    | "disabled";
   error: string | null;
   tools: MCPTool[];
   builtin: boolean;

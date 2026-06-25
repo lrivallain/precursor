@@ -357,6 +357,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
+  reauthenticateWorkiq: () =>
+    request<MCPServerStatus>(`/api/mcp/servers/workiq/reauthenticate`, {
+      method: "POST",
+    }),
   createMcpServer: (data: MCPServerCreate) =>
     request<MCPServerStatus>(`/api/mcp/servers/user`, {
       method: "POST",

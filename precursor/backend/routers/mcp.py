@@ -203,6 +203,56 @@ async def set_workiq_preview_mode(
     return _enrich_with_user_meta(base, None)
 
 
+@router.post("/servers/workiq/reauthenticate")
+async def reauthenticate_workiq_server(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Restart the WorkIQ OAuth sign-in on an explicit user action.
+
+    Background connects never pop a browser (they surface ``needs_auth``); this
+    endpoint runs the interactive authorization-code grant, persists the fresh
+    tokens, then rebuilds the background provider and re-probes so the next chat
+    turn reuses the new session. Blocks until the browser flow completes.
+    """
+    from precursor.backend.services.mcp.workiq_preview import (
+        WorkIQAuthInProgressError,
+        build_oauth_provider,
+        reauthenticate_workiq,
+        resolve_workiq_preview,
+    )
+
+    manager = get_mcp_client_manager()
+    if manager.get("workiq") is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "WorkIQ MCP server not found")
+    if not await resolve_workiq_preview():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Enable WorkIQ preview mode before signing in.",
+        )
+
+    try:
+        await reauthenticate_workiq()
+    except WorkIQAuthInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"WorkIQ sign-in failed: {exc}") from exc
+
+    # Swap in a fresh background (non-interactive) provider so it reads the newly
+    # persisted tokens, drop the stale warm worker, then refresh the catalog.
+    manager.configure_workiq_preview(True, auth_provider=build_oauth_provider())
+    await manager.retire_worker("workiq")
+
+    enabled = await _load_enabled(session)
+    is_enabled = enabled.get("workiq", False)
+    if is_enabled:
+        await manager.probe("workiq", github_token=await resolve_github_token(session))
+
+    entry = manager.get("workiq")
+    assert entry is not None
+    base = manager.status_dict(entry, enabled=is_enabled)
+    return _enrich_with_user_meta(base, None)
+
+
 # --------- user-defined CRUD ---------
 
 
