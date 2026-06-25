@@ -17,6 +17,7 @@ import {
   Mic,
   BarChart3,
   Bot,
+  LogIn,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -386,6 +387,27 @@ export function SettingsPanel({ onClose }: Props) {
         prev.map((s) =>
           s.name === name
             ? { ...s, preview: current, state: "error", error: (err as Error).message }
+            : s,
+        ),
+      );
+    }
+  }
+
+  async function reauthenticateWorkiq(name: string): Promise<void> {
+    // Drives the interactive browser sign-in; blocks until the user finishes.
+    setMcp((prev) =>
+      prev.map((s) =>
+        s.name === name ? { ...s, state: "connecting", error: null } : s,
+      ),
+    );
+    try {
+      const next = await api.reauthenticateWorkiq();
+      setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
+    } catch (err) {
+      setMcp((prev) =>
+        prev.map((s) =>
+          s.name === name
+            ? { ...s, state: "needs_auth", error: (err as Error).message }
             : s,
         ),
       );
@@ -995,6 +1017,11 @@ export function SettingsPanel({ onClose }: Props) {
                             ? () => void togglePreview(s.name, s.preview ?? false)
                             : undefined
                         }
+                        onReauthenticate={
+                          s.preview
+                            ? () => void reauthenticateWorkiq(s.name)
+                            : undefined
+                        }
                         onEdit={() => setMcpEditing(s)}
                         onDelete={async () => {
                           if (s.id == null) return;
@@ -1464,12 +1491,14 @@ function McpServerCard({
   server,
   onToggle,
   onTogglePreview,
+  onReauthenticate,
   onEdit,
   onDelete,
 }: {
   server: MCPServerStatus;
   onToggle: () => void;
   onTogglePreview?: () => void;
+  onReauthenticate?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
@@ -1479,9 +1508,11 @@ function McpServerCard({
       ? "text-green-500"
       : server.state === "error"
         ? "text-red-500"
-        : server.state === "connecting"
+        : server.state === "needs_auth"
           ? "text-amber-500"
-          : "text-muted";
+          : server.state === "connecting"
+            ? "text-amber-500"
+            : "text-muted";
 
   return (
     <li className="border border-border rounded">
@@ -1530,6 +1561,22 @@ function McpServerCard({
             <span className="text-muted">preview</span>
           </label>
         )}
+        {onReauthenticate && server.preview && (
+          <button
+            type="button"
+            onClick={onReauthenticate}
+            disabled={server.state === "connecting"}
+            data-tooltip="Open the WorkIQ browser sign-in to refresh expired credentials"
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs whitespace-nowrap disabled:opacity-50 ${
+              server.state === "needs_auth"
+                ? "bg-accent text-white"
+                : "border border-border text-muted hover:text-text"
+            }`}
+          >
+            <LogIn size={12} />
+            {server.state === "needs_auth" ? "Sign in" : "Re-authenticate"}
+          </button>
+        )}
         {!server.builtin && onEdit && (
           <button
             type="button"
@@ -1568,15 +1615,21 @@ function McpServerCard({
             </div>
           )}
           {server.error && (
-            <div className="text-red-500 whitespace-pre-wrap break-words">
+            <div
+              className={`whitespace-pre-wrap break-words ${
+                server.state === "needs_auth" ? "text-amber-500" : "text-red-500"
+              }`}
+            >
               {server.error}
             </div>
           )}
           {server.tools.length === 0 ? (
             <div className="text-muted italic">
-              {server.enabled
-                ? "Toggle off and on again to refresh the tool catalogue."
-                : "Enable the server to discover its tools."}
+              {server.state === "needs_auth"
+                ? "WorkIQ sign-in expired — select Sign in to re-authenticate."
+                : server.enabled
+                  ? "Toggle off and on again to refresh the tool catalogue."
+                  : "Enable the server to discover its tools."}
             </div>
           ) : (
             <div>

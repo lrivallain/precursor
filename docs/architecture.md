@@ -173,7 +173,12 @@ a **preview** toggle (`mcp_workiq_preview`): off it runs the local stdio launche
 (read-only `ask`); on it switches to the hosted, OAuth-protected HTTP endpoint
 (`https://workiq.svc.cloud.microsoft/mcp`) for the full read **and write**
 surface. The OAuth browser flow is driven via the SDK's `OAuthClientProvider`
-(`services/mcp/workiq_preview.py`), with tokens cached in `AppSetting`.
+(`services/mcp/workiq_preview.py`), with tokens cached in `AppSetting`. Tokens
+are refreshed silently when possible; background connects (catalog probes,
+warm-pool workers, chat turns) use a *non-interactive* provider that never pops
+a browser — when a full sign-in is required they fail fast with a `needs_auth`
+state. The user restarts the browser flow on demand from Settings
+(`POST /api/mcp/servers/workiq/reauthenticate`, single-flight guarded).
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,

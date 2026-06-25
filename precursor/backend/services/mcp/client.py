@@ -40,6 +40,7 @@ ConnectionState = Literal[
     "connected",
     "ready",
     "error",
+    "needs_auth",
     "disabled",
 ]
 
@@ -332,7 +333,12 @@ class MCPClientManager:
                     f"MCP server '{name}' has unsupported transport {entry.transport!r}"
                 )
         except Exception as exc:
-            entry.state = "error"
+            # A WorkIQ preview connect that needs an interactive sign-in is a
+            # distinct, recoverable state (surface a "Re-authenticate" prompt)
+            # rather than a generic transport failure.
+            from precursor.backend.services.mcp.workiq_preview import WorkIQAuthRequiredError
+
+            entry.state = "needs_auth" if isinstance(exc, WorkIQAuthRequiredError) else "error"
             entry.error = str(exc)
             logger.warning("MCP session for %s failed: %s", name, exc)
             raise
