@@ -450,8 +450,9 @@ function AgentInsightsPanel({
   model: string | null;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(SHOW_PANEL_KEY) === "1";
+    if (typeof window === "undefined") return true;
+    // Hidden by default — only stay open when the user explicitly expanded it.
+    return window.localStorage.getItem(SHOW_PANEL_KEY) !== "0";
   });
   useEffect(() => {
     window.localStorage.setItem(SHOW_PANEL_KEY, collapsed ? "1" : "0");

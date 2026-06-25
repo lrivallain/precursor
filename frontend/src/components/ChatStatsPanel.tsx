@@ -83,8 +83,9 @@ const STORAGE_KEY = "precursor:chat-stats:collapsed";
 
 export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(STORAGE_KEY) === "1";
+    if (typeof window === "undefined") return true;
+    // Hidden by default — only stay open when the user explicitly expanded it.
+    return window.localStorage.getItem(STORAGE_KEY) !== "0";
   });
   const [showRounds, setShowRounds] = useState(false);
 
