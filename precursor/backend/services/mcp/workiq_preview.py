@@ -20,6 +20,7 @@ import contextlib
 import logging
 import webbrowser
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 from mcp import ClientSession
@@ -63,6 +64,10 @@ WORKIQ_OAUTH_REDIRECT_URI = (
 # AppSetting keys.
 PREVIEW_FLAG_KEY = "mcp_workiq_preview"
 OAUTH_TOKENS_KEY = "workiq_oauth_tokens"
+# When the current tokens were last issued/refreshed. The SDK persists tokens
+# without an absolute expiry, so we stamp the write time here and combine it
+# with the token's relative ``expires_in`` to recover a real expiry instant.
+OAUTH_ISSUED_AT_KEY = "workiq_oauth_issued_at"
 
 _CALLBACK_TIMEOUT_SECONDS = 300.0
 
@@ -119,12 +124,21 @@ class DbTokenStorage(TokenStorage):
 
     async def set_tokens(self, tokens: OAuthToken) -> None:
         encoded = tokens.model_dump_json()
+        # The SDK calls this whenever it issues or refreshes tokens, so "now" is
+        # the moment they became valid — stamp it so we can compute their real
+        # expiry later (``expires_in`` is relative to this instant).
+        issued_at = datetime.now(UTC).isoformat()
         async with SessionLocal() as session:
             row = await session.get(AppSetting, OAUTH_TOKENS_KEY)
             if row is None:
                 session.add(AppSetting(key=OAUTH_TOKENS_KEY, value=encoded))
             else:
                 row.value = encoded
+            issued_row = await session.get(AppSetting, OAUTH_ISSUED_AT_KEY)
+            if issued_row is None:
+                session.add(AppSetting(key=OAUTH_ISSUED_AT_KEY, value=issued_at))
+            else:
+                issued_row.value = issued_at
             await session.commit()
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
@@ -138,10 +152,32 @@ class DbTokenStorage(TokenStorage):
 async def clear_workiq_oauth_tokens() -> None:
     """Forget any stored tokens so the next connect re-runs the browser login."""
     async with SessionLocal() as session:
-        row = await session.get(AppSetting, OAUTH_TOKENS_KEY)
-        if row is not None:
-            await session.delete(row)
-            await session.commit()
+        for key in (OAUTH_TOKENS_KEY, OAUTH_ISSUED_AT_KEY):
+            row = await session.get(AppSetting, key)
+            if row is not None:
+                await session.delete(row)
+        await session.commit()
+
+
+async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
+    """Absolute expiry of the stored tokens, or ``None`` when it can't be known.
+
+    Combines the ``issued_at`` stamp written by :meth:`DbTokenStorage.set_tokens`
+    with the token's relative ``expires_in``. Returns ``None`` for legacy tokens
+    saved before the stamp existed or tokens that omit ``expires_in`` — callers
+    then fall back to a conservative time-to-live.
+    """
+    if token.expires_in is None:
+        return None
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, OAUTH_ISSUED_AT_KEY)
+    if row is None or not row.value:
+        return None
+    try:
+        issued = datetime.fromisoformat(row.value)
+    except ValueError:
+        return None
+    return issued + timedelta(seconds=token.expires_in)
 
 
 async def _redirect_handler(authorization_url: str) -> None:
@@ -256,6 +292,43 @@ def build_oauth_provider(*, interactive: bool = False) -> OAuthClientProvider:
         redirect_handler=_make_redirect_handler(interactive),
         callback_handler=_callback_handler,
     )
+
+
+async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
+    """Resolve a current WorkIQ access token plus its expiry, or ``None``.
+
+    The Copilot SDK's HTTP MCP config only accepts *static* headers — it can't
+    drive an OAuth ``httpx.Auth`` the way the in-app client does. To let an agent
+    reach hosted WorkIQ we therefore have to hand it a concrete bearer token.
+
+    We open a one-shot, non-interactive session first: that lets the OAuth
+    provider silently refresh an expired access token and persist the fresh one
+    to :class:`DbTokenStorage` before we read it back. Returns ``None`` (so the
+    caller can simply skip attaching WorkIQ) when there are no stored tokens or
+    the silent refresh needs an interactive sign-in. On success returns
+    ``(access_token, expires_at)``; ``expires_at`` is ``None`` when the lifetime
+    can't be determined (legacy token / no ``expires_in``).
+    """
+    storage = DbTokenStorage()
+    if await storage.get_tokens() is None:
+        return None
+    try:
+        provider = build_oauth_provider(interactive=False)
+        async with (
+            streamablehttp_client(WORKIQ_PREVIEW_URL, auth=provider) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+    except WorkIQAuthRequiredError:
+        return None
+    except Exception as exc:  # pragma: no cover - network/transport dependent
+        # A transient connect failure shouldn't strand the agent: fall back to
+        # whatever token we already have stored.
+        logger.warning("WorkIQ token refresh for agent attach failed: %s", exc)
+    tokens = await storage.get_tokens()
+    if tokens is None:
+        return None
+    return tokens.access_token, await _stored_token_expiry(tokens)
 
 
 async def reauthenticate_workiq() -> None:

@@ -95,6 +95,15 @@ _START_TIMEOUT_SECONDS = 30.0
 # How often the watchdog sweeps for stalled running sessions.
 _WATCHDOG_INTERVAL_SECONDS = 60.0
 
+# Long-lived agent SDK sessions bake an OAuth bearer header in at create time
+# (the SDK can't refresh a static header). We rebuild the session a little before
+# the token actually expires so a transparent re-mint never races a live call.
+_OAUTH_REFRESH_MARGIN = timedelta(minutes=5)
+
+# Conservative time-to-live when a token's real expiry can't be determined
+# (legacy token saved before we stamped issue time, or no ``expires_in``).
+_OAUTH_FALLBACK_TTL = timedelta(minutes=30)
+
 
 @dataclass
 class _LiveSession:
@@ -125,6 +134,11 @@ class _LiveSession:
     # *every* turn's exchange to the topic/chat (not just the first), keyed to
     # the right prompt rather than always the initial ``task_prompt``.
     pending_prompt: str | None = None
+    # Soonest expiry across any OAuth-protected MCP server attached to this SDK
+    # session (today only WorkIQ preview). The bearer header is static, so once
+    # this passes we rebuild the session to re-mint it. ``None`` means nothing
+    # attached needs refreshing.
+    oauth_expires_at: datetime | None = None
 
 
 class AgentManager:
@@ -365,20 +379,25 @@ class AgentManager:
             )
         raise ValueError(f"unsupported transport {entry.transport!r}")
 
-    async def _catalog_mcp_configs(self) -> dict[str, Any]:
+    async def _catalog_mcp_configs(self) -> tuple[dict[str, Any], datetime | None]:
         """SDK configs for every catalog MCP server the user has *enabled*.
 
         Mirrors the chat/topics surface: both built-in servers (``github``,
         ``fetch``, ``workspace-fs``, …) and user-defined ones are attached when
         their ``mcp_enabled`` toggle is on, so an agent can call the same tools.
         ``precursor`` is excluded here — it's attached separately with full
-        access in :meth:`_precursor_mcp_config`. Returns ``{}`` if the SDK isn't
-        loadable.
+        access in :meth:`_precursor_mcp_config`.
+
+        Returns ``(configs, oauth_expires_at)``: the second item is the soonest
+        expiry across any OAuth-protected server whose bearer token we baked into
+        a static header, so the caller can refresh the session before it lapses
+        (``None`` when nothing attached needs it). Returns ``({}, None)`` if the
+        SDK isn't loadable.
         """
         try:
             sdk = runtime.load_sdk()
         except RuntimeError:
-            return {}
+            return {}, None
 
         # Imported lazily to keep this module importable without the MCP service
         # graph in the import path of the agents-unavailable case.
@@ -392,6 +411,7 @@ class AgentManager:
 
         manager = get_mcp_client_manager()
         configs: dict[str, Any] = {}
+        oauth_expires_at: datetime | None = None
         for entry in manager.list_entries():
             # 'precursor' is first-party and attached with full access elsewhere;
             # never gate or duplicate it here.
@@ -400,10 +420,59 @@ class AgentManager:
             if not enabled.get(entry.name, False):
                 continue
             try:
-                configs[entry.name] = self._entry_to_sdk_config(sdk, entry, github_token)
+                config = self._entry_to_sdk_config(sdk, entry, github_token)
             except ValueError as exc:
                 logger.warning("Skipping MCP server '%s': %s", entry.name, exc)
-        return configs
+                continue
+            # OAuth-protected catalog servers (WorkIQ preview) authenticate via an
+            # httpx.Auth provider that the SDK's static-header HTTP config can't
+            # carry. Mint a concrete bearer token and inject it, or skip the
+            # server entirely when sign-in is required — attaching it without
+            # credentials would just surface 401s as missing tools to the agent.
+            if entry.transport == "streamable_http" and entry.auth_provider is not None:
+                bearer = await self._oauth_bearer_header(entry.name)
+                if bearer is None:
+                    logger.warning(
+                        "Skipping MCP server '%s' for agent: no valid credentials "
+                        "(re-authenticate it in Settings)",
+                        entry.name,
+                    )
+                    continue
+                header, expires_at = bearer
+                # Unknown lifetime → assume a conservative TTL so we still rebuild
+                # the session periodically rather than letting a stale header rot.
+                if expires_at is None:
+                    expires_at = datetime.now(UTC) + _OAUTH_FALLBACK_TTL
+                oauth_expires_at = (
+                    expires_at if oauth_expires_at is None else min(oauth_expires_at, expires_at)
+                )
+                existing = dict(config.get("headers") or {})
+                existing.update(header)
+                config["headers"] = existing
+            configs[entry.name] = config
+        return configs, oauth_expires_at
+
+    @staticmethod
+    async def _oauth_bearer_header(name: str) -> tuple[dict[str, str], datetime | None] | None:
+        """Resolve a static ``Authorization`` header for an OAuth catalog server.
+
+        Only WorkIQ preview uses an ``auth_provider`` today; return ``None`` for
+        anything else (or when no valid token is available) so the caller skips
+        attaching it rather than handing the agent an unauthenticated endpoint.
+        On success returns ``(header, expires_at)`` where ``expires_at`` may be
+        ``None`` if the token's lifetime can't be determined.
+        """
+        if name != "workiq":
+            return None
+        from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
+
+        resolved = await resolve_workiq_bearer_token()
+        if resolved is None:
+            return None
+        token, expires_at = resolved
+        if not token:
+            return None
+        return {"Authorization": f"Bearer {token}"}, expires_at
 
     async def _topic_context(self, agent: AgentSession) -> str | None:
         """Build a system-message preamble binding the agent to its topic.
@@ -456,11 +525,26 @@ class AgentManager:
     # ------------------------------------------------------------------ sessions
 
     async def _ensure_live(self, agent: AgentSession) -> _LiveSession:
-        """Return the live SDK session for ``agent``, creating/resuming it."""
+        """Return the live SDK session for ``agent``, creating/resuming it.
+
+        A cached session is reused unless its baked-in OAuth bearer header is
+        about to expire (see :meth:`_oauth_stale`): the SDK can't refresh a static
+        header, so we transparently tear the session down and recreate it, which
+        re-mints the token while resuming the same conversation via
+        ``copilot_session_id``. We never refresh mid-turn — only when the agent is
+        idle, so an in-flight run is left untouched until its next dispatch.
+        """
         self._require_ready()
         live = self._live.get(agent.id)
         if live is not None:
-            return live
+            if not self._oauth_stale(live):
+                return live
+            if agent.status in {"running", "needs_approval", "pending"}:
+                # A turn is in flight — don't disrupt it; refresh on the next
+                # idle dispatch instead.
+                return live
+            logger.info("Rebuilding agent %s session to refresh an expiring OAuth token", agent.id)
+            await self.teardown_session(agent.id, forget=False)
 
         assert self._client is not None
         kwargs: dict[str, Any] = {
@@ -470,11 +554,13 @@ class AgentManager:
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
         mcp = self._precursor_mcp_config()
+        oauth_expires_at: datetime | None = None
         if mcp is not None:
             # Attach every enabled catalog server (built-in + user-defined).
             # _catalog_mcp_configs already excludes 'precursor', so the
             # first-party full-access entry can't be shadowed.
-            mcp.update(await self._catalog_mcp_configs())
+            catalog, oauth_expires_at = await self._catalog_mcp_configs()
+            mcp.update(catalog)
             kwargs["mcp_servers"] = mcp
         preamble = await self._system_preamble(agent)
         if preamble:
@@ -483,7 +569,7 @@ class AgentManager:
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
         sdk_session = await self._client.create_session(**kwargs)
-        live = _LiveSession(sdk_session=sdk_session)
+        live = _LiveSession(sdk_session=sdk_session, oauth_expires_at=oauth_expires_at)
         self._live[agent.id] = live
 
         # Wire the event stream. The SDK invokes this synchronously; defer the
@@ -495,6 +581,14 @@ class AgentManager:
         if sid and not agent.copilot_session_id:
             await self._patch(agent.id, copilot_session_id=str(sid))
         return live
+
+    @staticmethod
+    def _oauth_stale(live: _LiveSession) -> bool:
+        """True when ``live``'s baked-in OAuth token is at/within the refresh margin."""
+        expires_at = live.oauth_expires_at
+        if expires_at is None:
+            return False
+        return datetime.now(UTC) >= expires_at - _OAUTH_REFRESH_MARGIN
 
     async def start_task(self, agent_id: int) -> None:
         agent = await self._load(agent_id)
