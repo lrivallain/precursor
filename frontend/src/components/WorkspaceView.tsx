@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
 import { parseSlashCommand } from "../lib/commands";
+import { mcpAuthStore } from "../lib/mcpAuth";
 import { skillsStore } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamWorkspaceChat } from "../lib/sse";
@@ -1324,6 +1325,12 @@ function WorkspaceChat({
             } else if (e.event === "suggestions") {
               const { items } = JSON.parse(e.data) as { items?: string[] };
               turnSuggestions = items ?? [];
+            } else if (e.event === "mcp_auth_required") {
+              const { server, message } = JSON.parse(e.data) as {
+                server: string;
+                message: string;
+              };
+              mcpAuthStore.report(server ?? "workiq", message ?? "Sign-in required.");
             } else if (e.event === "system") {
               const { message } = JSON.parse(e.data) as { message: string };
               setError(message);

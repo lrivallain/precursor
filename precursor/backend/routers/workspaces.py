@@ -8,6 +8,7 @@ file's content.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -58,7 +59,10 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
-from precursor.backend.services.mcp.client import get_mcp_client_manager
+from precursor.backend.services.mcp.client import (
+    AUTH_PAUSE_TIMEOUT_SECONDS,
+    get_mcp_client_manager,
+)
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import (
     SUGGESTIONS_INSTRUCTION,
@@ -527,6 +531,51 @@ async def chat_stream(
     )
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
+        # Pause-and-resume gate: if an enabled server needs an interactive
+        # sign-in, hold the turn and surface the auth prompt instead of running
+        # the LLM with its tools missing (which yields confident, hallucinated
+        # answers). Resume once the user signs in. Mirrors the topic/chat flow.
+        if enabled_servers:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + AUTH_PAUSE_TIMEOUT_SECONDS
+            announced: set[str] = set()
+            while True:
+                async with manager.acquired(enabled_servers, github_token=github_token) as probe:
+                    blocked = manager.auth_blocked_servers([n for n, _ in probe.unavailable])
+                if not blocked:
+                    break
+                for name in blocked:
+                    if name in announced:
+                        continue
+                    announced.add(name)
+                    entry = manager.get(name)
+                    yield {
+                        "event": "mcp_auth_required",
+                        "data": json.dumps(
+                            {
+                                "server": name,
+                                "message": (entry.error if entry else None) or "Sign-in required.",
+                            }
+                        ),
+                    }
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    yield {
+                        "event": "system",
+                        "data": json.dumps(
+                            {
+                                "message": (
+                                    "Sign-in wasn't completed in time, so I stopped instead of "
+                                    "answering without "
+                                    f"{', '.join(sorted(announced))}. Send your message again "
+                                    "after signing in."
+                                )
+                            }
+                        ),
+                    }
+                    return
+                await manager.wait_for_auth(timeout=min(remaining, 10.0))
+
         async with manager.acquired(enabled_servers, github_token=github_token) as active:
             tool_to_server = active.tool_to_server
             for server_name, err in active.unavailable:

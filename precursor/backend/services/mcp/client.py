@@ -34,6 +34,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How long a chat turn waits for an interactive MCP sign-in before giving up
+# rather than answering without the required tools. Matches the OAuth callback
+# window. Shared by the topic/chat and workspace streaming routers.
+AUTH_PAUSE_TIMEOUT_SECONDS = 300.0
+
+
+def _find_in_exception(exc: BaseException, exc_type: type[BaseException]) -> BaseException | None:
+    """Locate an ``exc_type`` instance within ``exc``.
+
+    The MCP SDK's streamable-http transport runs inside an anyio task group, so
+    an exception raised in a callback (e.g. our ``WorkIQAuthRequiredError`` from
+    the OAuth redirect handler) surfaces wrapped in a ``BaseExceptionGroup``.
+    Walk the group members plus the ``__cause__``/``__context__`` chain so the
+    real cause is still recognised instead of degrading to a generic error.
+    """
+    seen: set[int] = set()
+
+    def _walk(node: BaseException | None) -> BaseException | None:
+        if node is None or id(node) in seen:
+            return None
+        seen.add(id(node))
+        if isinstance(node, exc_type):
+            return node
+        if isinstance(node, BaseExceptionGroup):
+            for sub in node.exceptions:
+                hit = _walk(sub)
+                if hit is not None:
+                    return hit
+        for chained in (node.__cause__, node.__context__):
+            hit = _walk(chained)
+            if hit is not None:
+                return hit
+        return None
+
+    return _walk(exc)
+
+
 ConnectionState = Literal[
     "disconnected",
     "connecting",
@@ -102,6 +139,10 @@ class MCPClientManager:
         # Whether the built-in ``workiq`` entry is in preview mode (hosted HTTP +
         # OAuth + writes) rather than the default local stdio launcher.
         self._workiq_preview: bool = False
+        # Turns that paused on an interactive sign-in park an event here; the
+        # re-authenticate endpoint sets them so the paused turn wakes and
+        # retries acquiring its tools instead of answering without them.
+        self._auth_waiters: set[asyncio.Event] = set()
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -179,6 +220,35 @@ class MCPClientManager:
 
     def list_entries(self) -> list[MCPServerEntry]:
         return list(self._servers.values())
+
+    def auth_blocked_servers(self, names: list[str]) -> list[str]:
+        """Subset of ``names`` currently parked in the ``needs_auth`` state."""
+        blocked: list[str] = []
+        for name in names:
+            entry = self._servers.get(name)
+            if entry is not None and entry.state == "needs_auth":
+                blocked.append(name)
+        return blocked
+
+    def signal_auth_resolved(self) -> None:
+        """Wake any turns paused waiting for an interactive MCP sign-in."""
+        for event in list(self._auth_waiters):
+            event.set()
+
+    async def wait_for_auth(self, timeout: float) -> None:
+        """Block until :meth:`signal_auth_resolved` fires or ``timeout`` elapses.
+
+        Used by a paused chat turn so it retries acquiring its tools promptly
+        once the user finishes the browser sign-in, rather than busy-polling.
+        """
+        event = asyncio.Event()
+        self._auth_waiters.add(event)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+        except TimeoutError:
+            pass
+        finally:
+            self._auth_waiters.discard(event)
 
     def register_user_entry(
         self,
@@ -335,12 +405,18 @@ class MCPClientManager:
         except Exception as exc:
             # A WorkIQ preview connect that needs an interactive sign-in is a
             # distinct, recoverable state (surface a "Re-authenticate" prompt)
-            # rather than a generic transport failure.
+            # rather than a generic transport failure. The error may arrive
+            # wrapped in an anyio ExceptionGroup, so unwrap to find it.
             from precursor.backend.services.mcp.workiq_preview import WorkIQAuthRequiredError
 
-            entry.state = "needs_auth" if isinstance(exc, WorkIQAuthRequiredError) else "error"
-            entry.error = str(exc)
-            logger.warning("MCP session for %s failed: %s", name, exc)
+            auth_exc = _find_in_exception(exc, WorkIQAuthRequiredError)
+            if auth_exc is not None:
+                entry.state = "needs_auth"
+                entry.error = str(auth_exc)
+            else:
+                entry.state = "error"
+                entry.error = str(exc)
+            logger.warning("MCP session for %s failed: %s", name, entry.error)
             raise
         finally:
             # The transport session is closed when the context exits, but for

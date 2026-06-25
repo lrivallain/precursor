@@ -13,6 +13,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
 import { ChatSessionPanel } from "./components/ChatSessionPanel";
 import { ChatSettingsPanel } from "./components/ChatSettingsPanel";
+import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TopicCreateModal } from "./components/TopicCreateModal";
 import { ScheduleModal } from "./components/ScheduleModal";
@@ -1122,6 +1123,8 @@ export default function App() {
             />
           )}
         </header>
+
+        <McpAuthBanner />
 
         <div className="flex-1 min-h-0">
           {sidebarMode === "topics" ? (

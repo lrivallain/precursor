@@ -164,10 +164,7 @@ def _make_redirect_handler(interactive: bool) -> Callable[[str], Awaitable[None]
 
     async def _handler(authorization_url: str) -> None:
         if not interactive:
-            raise WorkIQAuthRequiredError(
-                "WorkIQ needs you to sign in again. Open Settings → MCP and select "
-                "Re-authenticate to restart the WorkIQ sign-in."
-            )
+            raise WorkIQAuthRequiredError("WorkIQ needs you to sign in again to continue.")
         await _redirect_handler(authorization_url)
 
     return _handler
