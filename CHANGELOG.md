@@ -11,6 +11,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Detach the Notes / GitHub draft panel into its own window**: the shared
+  command panel (used by `/notes`, GitHub issue/comment create, and issue update
+  drafts) now has a pop-out button in its header that hands the panel off to a
+  separate native browser window so it can live outside the current tab while you
+  keep editing. The detached window **survives navigating to another topic or
+  chat** in the main app — it stays fully functional and bound to its *original*
+  conversation, so every action (add to chat, add & ask AI, post comment, save
+  draft, attachments, rephrase, GitHub create/update/close) still targets the
+  container it was popped out from. The window mirrors the app's stylesheets and
+  theme (incl. dark mode) and closes automatically once you take a terminal
+  action. Closing a notes window saves the in-progress text as a recoverable
+  server-side draft; GitHub draft windows discard on close. Implemented with an
+  app-level host (`DetachedDraftHost`) backed by a global store
+  (`detachedDraftStore`) plus self-contained controllers, rendered through a
+  dedicated React root inside the popup (`DetachedWindowPortal`) so typing and
+  button clicks work across the window boundary.
 - **Chat description as context or system prompt**: a chat's description now
   feeds the model. By default it's injected once as discussion-level context; a
   new **"Use as system prompt"** checkbox next to the description (in chat

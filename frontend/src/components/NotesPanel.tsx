@@ -51,6 +51,12 @@ interface Props {
    * owns the seed, this component owns the live edits.
    */
   rephrasedText?: string;
+  /** Layout mode forwarded to the shared panel shell. */
+  variant?: "floating" | "embedded";
+  /** Hand the current note off to a separate window (floating variant only). */
+  onPopOut?: (text: string) => void;
+  /** Mirror live text edits up (used by the detached-window controller). */
+  onTextChange?: (text: string) => void;
 }
 
 export function NotesPanel({
@@ -72,6 +78,9 @@ export function NotesPanel({
   onCancel,
   initialText,
   rephrasedText,
+  variant,
+  onPopOut,
+  onTextChange,
 }: Props) {
   const [text, setText] = useState(initialText ?? "");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -91,6 +100,7 @@ export function NotesPanel({
     prevRephrasingRef.current = rephrasing;
     if (justFinished && !error && rephrasedText !== undefined) {
       setText(rephrasedText);
+      onTextChange?.(rephrasedText);
     }
   }, [rephrasing, error, rephrasedText]);
 
@@ -105,8 +115,13 @@ export function NotesPanel({
       subtitle="scratch pad — not posted until you choose an action"
       onClose={() => void onCancel(text)}
       closeLabel="Discard notes"
+      variant={variant}
+      onPopOut={onPopOut ? (snap) => onPopOut(snap.body) : undefined}
       body={text}
-      onBodyChange={setText}
+      onBodyChange={(value) => {
+        setText(value);
+        onTextChange?.(value);
+      }}
       onBodyPaste={(e) => {
         const items = e.clipboardData?.items;
         if (!items) return;
