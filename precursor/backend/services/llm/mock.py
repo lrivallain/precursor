@@ -32,7 +32,9 @@ class MockProvider:
         *,
         model: str,
         messages: Sequence[ChatMessage],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
+        _ = reasoning_effort
         last_user = next(
             (m.content for m in reversed(messages) if m.role == "user"),
             "(no user message)",
@@ -51,9 +53,11 @@ class MockProvider:
         model: str,
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         # Mock never issues tool calls; replay the plain text path.
         _ = tools
+        _ = reasoning_effort
         chunks: list[str] = []
         async for chunk in self.stream_chat(model=model, messages=messages):
             chunks.append(chunk)
@@ -75,5 +79,6 @@ class MockProvider:
                 publisher="precursor",
                 summary="Deterministic offline echo provider.",
                 context_window=8000,
+                supported_reasoning_efforts=["low", "medium", "high"],
             )
         ]

@@ -53,6 +53,7 @@ class GitHubCopilotProvider:
         *,
         model: str,
         messages: Sequence[ChatMessage],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
         # Any-typed kwargs so the create() overload resolves to a stream (the
         # explicit-arg form returns a ChatCompletion | AsyncStream union).
@@ -61,6 +62,8 @@ class GitHubCopilotProvider:
             "messages": to_openai_messages(messages),
             "stream": True,
         }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
         stream = await self._client.chat.completions.create(**kwargs)
         async for chunk in stream:
             if not chunk.choices:
@@ -75,9 +78,14 @@ class GitHubCopilotProvider:
         model: str,
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         async for event in stream_openai_tools(
-            client=self._client, model=model, messages=messages, tools=tools
+            client=self._client,
+            model=model,
+            messages=messages,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
         ):
             yield event
 
@@ -105,6 +113,9 @@ class GitHubCopilotProvider:
                 continue
             limits = capabilities.get("limits") or {}
             ctx = limits.get("max_prompt_tokens") or limits.get("max_context_window_tokens")
+            supports = capabilities.get("supports") or {}
+            efforts = supports.get("reasoning_effort")
+            efforts = [str(e) for e in efforts] if isinstance(efforts, list) else []
             models.append(
                 LLMModel(
                     id=mid,
@@ -113,6 +124,7 @@ class GitHubCopilotProvider:
                     summary=item.get("version", ""),
                     tags=[],
                     context_window=int(ctx) if isinstance(ctx, (int, float)) else None,
+                    supported_reasoning_efforts=efforts,
                 )
             )
         models.sort(key=lambda m: (m.publisher.lower(), m.name.lower()))

@@ -4,6 +4,7 @@ import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
 import { Composer } from "./Composer";
+import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { api } from "../lib/api";
@@ -1040,6 +1041,7 @@ export function ChatSessionPanel({
               interimText={interimText}
               height={composerHeight}
               onResizeStart={onComposerResize}
+              toolbarStart={<ComposerModelControls />}
               attachments={{
                 pending: pendingAttachments,
                 uploadingCount,

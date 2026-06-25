@@ -15,6 +15,9 @@ class SettingsPayload(BaseModel):
 
     theme: Theme | None = None
     llm_model: str | None = None
+    # Reasoning effort hint for reasoning-capable models: "" (auto/off — the
+    # param is omitted), "low", "medium", or "high".
+    llm_reasoning_effort: str | None = None
     # Active LLM provider id (see services/llm/registry.py).
     llm_provider: str | None = None
     # Per-provider config maps, e.g. {"azure_foundry": {"endpoint": ..., "key": ...}}.
@@ -65,6 +68,8 @@ class SettingsPayload(BaseModel):
     # Agents mode (Copilot SDK). Opt-in; download/runtime gated by availability.
     agents_enabled: bool | None = None
     agents_default_model: str | None = None
+    agents_reasoning_effort: str | None = None
+    agents_context_tier: str | None = None
     agents_approval_policy: str | None = None
     agents_system_prompt: str | None = None
     agents_watchdog_timeout_seconds: int | None = None
@@ -73,6 +78,8 @@ class SettingsPayload(BaseModel):
 class SettingsRead(BaseModel):
     theme: Theme = "system"
     llm_model: str = "claude-sonnet-4.5"
+    # "" => auto/off (no reasoning_effort sent); otherwise low|medium|high.
+    llm_reasoning_effort: str = ""
     github_repo: str = ""
     issue_context_ttl_minutes: int = 60
     show_chat_stats: bool = True
@@ -124,6 +131,10 @@ class SettingsRead(BaseModel):
     agents_available: bool = False
     agents_unavailable_reason: str | None = None
     agents_default_model: str = "claude-sonnet-4.5"
+    # Reasoning effort + context tier applied to new agent sessions. "" effort
+    # and "default" tier leave the SDK defaults unchanged.
+    agents_reasoning_effort: str = ""
+    agents_context_tier: str = "default"
     # Default approval policy for agent actions: manual | balanced | autonomous.
     agents_approval_policy: str = "balanced"
     # Extra system-message preamble appended to every agent session.

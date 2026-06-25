@@ -137,7 +137,6 @@ export function SettingsPanel({ onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mcp, setMcp] = useState<MCPServerStatus[]>([]);
   const [theme, setThemeState] = useState<Theme>(getStoredTheme());
-  const [model, setModel] = useState("");
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -180,22 +179,17 @@ export function SettingsPanel({ onClose }: Props) {
     }
   }
 
-  async function loadModels(providerOverride?: string): Promise<void> {
+  async function loadModels(providerOverride?: string): Promise<LLMModel[]> {
     setModelsLoading(true);
     setModelsError(null);
     try {
       const list = await api.listModels(providerOverride);
       setModels(list);
-      // When a catalog exists, the model MUST come from it — if the current
-      // selection isn't in the list (e.g. it belonged to another provider),
-      // snap to the first available model so the picker never shows a stale,
-      // "(not in catalog)" id.
-      if (list.length > 0) {
-        setModel((cur) => (list.some((m) => m.id === cur) ? cur : list[0].id));
-      }
+      return list;
     } catch (e) {
       setModels([]);
       setModelsError(e instanceof Error ? e.message : String(e));
+      return [];
     } finally {
       setModelsLoading(false);
     }
@@ -213,7 +207,6 @@ export function SettingsPanel({ onClose }: Props) {
     void (async () => {
       const s = await api.getSettings();
       setSettings(s);
-      setModel(s.llm_model);
       setProvider(s.llm_provider);
       setProviderConfig(s.llm_providers ?? {});
       setRepo(s.github_repo);
@@ -270,21 +263,30 @@ export function SettingsPanel({ onClose }: Props) {
     return out;
   }
 
-  // Persist provider + model + per-provider config, then refresh the catalog —
-  // without closing the panel (so the user can verify discovery).
-  async function applyModelSettings(): Promise<void> {
+  // Persist the provider + its config, then refresh the catalog — without
+  // closing the panel (so the user can verify discovery). Model and reasoning
+  // effort are chosen in the composer now, not here; but if the previously
+  // selected global model isn't in the new provider's catalog we snap it to a
+  // valid one so the composer never points at a stale id.
+  async function applyProviderSettings(): Promise<void> {
     setModelsLoading(true);
     try {
       const updated = await api.updateSettings({
         llm_provider: provider,
-        llm_model: model,
         llm_providers: buildLlmProvidersPayload(),
       });
       setSettings(updated);
       setProviderConfig(updated.llm_providers ?? {});
-      modelsStore.applySettings(updated);
       settingsStore.set(updated);
-      await loadModels(provider);
+      const list = await loadModels(provider);
+      if (list.length > 0 && !list.some((m) => m.id === updated.llm_model)) {
+        const snapped = await api.updateSettings({ llm_model: list[0].id });
+        setSettings(snapped);
+        settingsStore.set(snapped);
+        modelsStore.applySettings(snapped);
+      } else {
+        modelsStore.applySettings(updated);
+      }
     } catch (e) {
       setModelsError(e instanceof Error ? e.message : String(e));
       setModelsLoading(false);
@@ -296,7 +298,6 @@ export function SettingsPanel({ onClose }: Props) {
     try {
       const payload: Parameters<typeof api.updateSettings>[0] = {
         theme,
-        llm_model: model,
         llm_provider: provider,
         github_repo: repo,
         issue_context_ttl_minutes: ttlMinutes,
@@ -657,47 +658,10 @@ export function SettingsPanel({ onClose }: Props) {
                   );
                 })()}
 
-                <h3 className="text-sm font-medium mt-6 mb-2">Model</h3>
-                {models.length > 0 ? (
-                  <select
-                    value={models.some((m) => m.id === model) ? model : ""}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                  >
-                    {!models.some((m) => m.id === model) && (
-                      <option value="" disabled>
-                        {model ? `${model} (not in catalog)` : "Select a model\u2026"}
-                      </option>
-                    )}
-                    {Object.entries(
-                      models.reduce<Record<string, LLMModel[]>>((acc, m) => {
-                        const k = m.publisher || "Other";
-                        (acc[k] ||= []).push(m);
-                        return acc;
-                      }, {}),
-                    ).map(([publisher, list]) => (
-                      <optgroup key={publisher} label={publisher}>
-                        {list.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name} ({m.id})
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder="e.g. gpt-4o-mini"
-                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                )}
-                <div className="flex items-center gap-2 mt-2">
+                <div className="flex items-center gap-2 mt-4">
                   <button
                     type="button"
-                    onClick={() => void applyModelSettings()}
+                    onClick={() => void applyProviderSettings()}
                     disabled={modelsLoading}
                     className="px-3 py-1.5 rounded text-xs border border-border hover:bg-bg disabled:opacity-50"
                   >
@@ -705,44 +669,17 @@ export function SettingsPanel({ onClose }: Props) {
                   </button>
                   <span className="text-[11px] text-muted">
                     {modelsError
-                      ? `Catalog unavailable: ${modelsError}. Type a model id manually.`
+                      ? `Catalog unavailable: ${modelsError}.`
                       : models.length > 0
                         ? `${models.length} models`
-                        : "No catalog — enter a model id manually."}
+                        : "No catalog for this provider."}
                   </span>
                 </div>
+                <p className="text-[11px] text-muted mt-2">
+                  Pick the model, reasoning effort and context size from the
+                  composer toolbar — they apply to every conversation.
+                </p>
 
-                {(() => {
-                  const selected = models.find((m) => m.id === model);
-                  if (!selected) return null;
-                  return (
-                    <div className="mt-3 text-[11px] text-muted space-y-1">
-                      {selected.summary && (
-                        <p className="text-text/80">{selected.summary}</p>
-                      )}
-                      <div className="flex flex-wrap gap-x-3 gap-y-1">
-                        {selected.context_window != null && (
-                          <span>
-                            Context: {selected.context_window.toLocaleString()} tokens
-                          </span>
-                        )}
-                        {selected.publisher && <span>By {selected.publisher}</span>}
-                      </div>
-                      {selected.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 pt-0.5">
-                          {selected.tags.map((t) => (
-                            <span
-                              key={t}
-                              className="px-1.5 py-0.5 rounded bg-surface border border-border"
-                            >
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
                 {sys && (
                   <div className="mt-6 space-y-3">
                     <h3 className="text-sm font-medium">Prompt budgeting</h3>

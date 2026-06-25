@@ -33,6 +33,7 @@ import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
+import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
 import { SuggestedReplies } from "./SuggestedReplies";
 import type {
@@ -1274,6 +1275,7 @@ export function AgentView({
           height={composerHeight}
           onResizeStart={onComposerResize}
           placeholder="e.g. Investigate the flaky CI test and propose a fix…"
+          toolbarStart={<ComposerModelControls variant="agents" />}
         />
       </div>
     );
@@ -1436,6 +1438,7 @@ export function AgentView({
                   ? "Agent is working… use Stop to interrupt"
                   : "Send a follow-up message…"
               }
+              toolbarStart={<ComposerModelControls variant="agents" />}
             />
           </div>
         );

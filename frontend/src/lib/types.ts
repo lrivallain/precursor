@@ -193,6 +193,8 @@ export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "
 export interface AgentModelInfo {
   id: string;
   name: string;
+  context_window?: number | null;
+  supported_reasoning_efforts?: string[];
 }
 
 // An active "approve for session" grant, shown in the Settings security recap.
@@ -262,6 +264,8 @@ export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 export interface Settings {
   theme: "light" | "dark" | "system";
   llm_model: string;
+  // "" => auto/off; otherwise "low" | "medium" | "high".
+  llm_reasoning_effort: string;
   github_repo: string;
   issue_context_ttl_minutes: number;
   show_chat_stats: boolean;
@@ -307,6 +311,8 @@ export interface Settings {
   agents_available: boolean;
   agents_unavailable_reason: string | null;
   agents_default_model: string;
+  agents_reasoning_effort: string;
+  agents_context_tier: string;
   agents_approval_policy: AgentApprovalPolicy;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
@@ -315,6 +321,7 @@ export interface Settings {
 export interface SettingsUpdate {
   theme?: Settings["theme"];
   llm_model?: string;
+  llm_reasoning_effort?: string;
   github_repo?: string;
   issue_context_ttl_minutes?: number;
   show_chat_stats?: boolean;
@@ -343,6 +350,8 @@ export interface SettingsUpdate {
   cmd_runner_cpus?: string;
   agents_enabled?: boolean;
   agents_default_model?: string;
+  agents_reasoning_effort?: string;
+  agents_context_tier?: string;
   agents_approval_policy?: AgentApprovalPolicy;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
@@ -420,6 +429,9 @@ export interface LLMModel {
   summary: string;
   tags: string[];
   context_window?: number | null;
+  /** Reasoning-effort values this model accepts, ascending. Empty when the
+   *  model isn't reasoning-capable (the composer hides the effort picker). */
+  supported_reasoning_efforts?: string[];
 }
 
 export interface LLMProviderField {

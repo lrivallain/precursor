@@ -10,6 +10,7 @@ class LLMModelRead(BaseModel):
     summary: str = ""
     tags: list[str] = []
     context_window: int | None = None
+    supported_reasoning_efforts: list[str] = []
 
 
 class ProviderFieldRead(BaseModel):

@@ -48,7 +48,10 @@ from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.app_settings import (
     resolve_agents_approval_policy,
+    resolve_agents_context_tier,
+    resolve_agents_default_model,
     resolve_agents_enabled,
+    resolve_agents_reasoning_effort,
     resolve_agents_system_prompt,
     resolve_agents_watchdog_timeout,
 )
@@ -551,6 +554,17 @@ class AgentManager:
             "model": agent.model or get_settings().agents_default_model,
             "on_permission_request": self._make_permission_handler(agent.id),
         }
+        # Reasoning effort + context tier are global agent prefs (Settings →
+        # Agents / composer toolbar). Applied at session creation, mirroring how
+        # the model is chosen — a change takes effect on the next new/rebuilt
+        # session. The frontend only offers efforts the chosen model supports.
+        async with SessionLocal() as s:
+            effort = await resolve_agents_reasoning_effort(s)
+            tier = await resolve_agents_context_tier(s)
+        if effort:
+            kwargs["reasoning_effort"] = effort
+        if tier and tier != "default":
+            kwargs["context_tier"] = tier
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
         mcp = self._precursor_mcp_config()
@@ -875,11 +889,12 @@ class AgentManager:
             chat_id=agent.chat_id if agent else None,
         )
 
-    async def list_models(self) -> list[dict[str, str]]:
-        """Return the runtime's available models (``id``/``name``), or empty.
+    async def list_models(self) -> list[dict[str, Any]]:
+        """Return the runtime's available models, or empty.
 
-        Used to populate the Settings default-model picker. The SDK caches the
-        result after the first call, so this is cheap to poll.
+        Used to populate the model picker. Surfaces each model's context window
+        and advertised reasoning-effort set so the composer can adapt its
+        controls. The SDK caches the result after the first call.
         """
         if not self._ready or self._client is None:
             return []
@@ -888,13 +903,74 @@ class AgentManager:
         except Exception:
             logger.debug("list_models failed", exc_info=True)
             return []
-        out: list[dict[str, str]] = []
+        out: list[dict[str, Any]] = []
         for m in models or []:
             mid = getattr(m, "id", None)
             if not mid:
                 continue
-            out.append({"id": str(mid), "name": str(getattr(m, "name", None) or mid)})
+            caps = getattr(m, "capabilities", None)
+            limits = getattr(caps, "limits", None) if caps is not None else None
+            ctx = None
+            if limits is not None:
+                ctx = getattr(limits, "max_prompt_tokens", None) or getattr(
+                    limits, "max_context_window_tokens", None
+                )
+            efforts = getattr(m, "supported_reasoning_efforts", None) or []
+            out.append(
+                {
+                    "id": str(mid),
+                    "name": str(getattr(m, "name", None) or mid),
+                    "context_window": int(ctx) if isinstance(ctx, (int, float)) else None,
+                    "supported_reasoning_efforts": [str(e) for e in efforts],
+                }
+            )
         return out
+
+    async def apply_session_overrides(self) -> None:
+        """Apply the current global model / reasoning-effort / context-tier prefs
+        onto idle live sessions.
+
+        Lets a change in the composer (or Settings → Agents) take effect on the
+        next message of an in-progress conversation instead of only new sessions.
+        Uses the SDK's ``set_model`` — history-preserving, effective next turn.
+        Skips sessions with a turn in flight, where switching the model is unsafe;
+        those pick the change up on their next idle dispatch.
+        """
+        if not self._ready:
+            return
+        live_ids = list(self._live.keys())
+        if not live_ids:
+            return
+        async with SessionLocal() as s:
+            default_model = await resolve_agents_default_model(s)
+            effort = await resolve_agents_reasoning_effort(s)
+            tier = await resolve_agents_context_tier(s)
+            rows = (
+                (await s.execute(select(AgentSession).where(AgentSession.id.in_(live_ids))))
+                .scalars()
+                .all()
+            )
+        by_id = {a.id: a for a in rows}
+        for agent_id in live_ids:
+            live = self._live.get(agent_id)
+            agent = by_id.get(agent_id)
+            if live is None or agent is None:
+                continue
+            if agent.status in {"running", "needs_approval", "pending"}:
+                continue
+            model = agent.model or default_model
+            if not model:
+                continue
+            # Always send the tier (incl. "default") so toggling back resets it;
+            # a falsy effort is sent as None so the runtime restores the model
+            # default rather than pinning a stale level.
+            kwargs: dict[str, Any] = {"context_tier": tier or "default"}
+            if effort:
+                kwargs["reasoning_effort"] = effort
+            try:
+                await live.sdk_session.set_model(model, **kwargs)
+            except Exception:
+                logger.debug("set_model failed for agent %s", agent_id, exc_info=True)
 
     def _make_permission_handler(self, agent_id: int) -> Any:
         async def handler(request: Any, invocation: Any) -> Any:

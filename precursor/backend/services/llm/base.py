@@ -32,6 +32,11 @@ class LLMModel:
     # Maximum input tokens the model accepts. ``None`` when unknown
     # (provider didn't advertise it).
     context_window: int | None = None
+    # Reasoning-effort values this model accepts, in ascending order
+    # (e.g. ``["low", "medium", "high", "max"]``). Empty when the model isn't
+    # reasoning-capable or the provider doesn't advertise the set — the UI hides
+    # the effort picker in that case.
+    supported_reasoning_efforts: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -108,6 +113,7 @@ class LLMProvider(Protocol):
         *,
         model: str,
         messages: Sequence[ChatMessage],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
         """Yield text deltas for a tool-less assistant reply."""
         ...
@@ -118,6 +124,7 @@ class LLMProvider(Protocol):
         model: str,
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Yield typed events for a tool-capable assistant reply.
 
