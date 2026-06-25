@@ -6,11 +6,15 @@ Covers:
   ``needs_auth`` banner from ever firing in the real path).
 - The pause/resume primitives a held chat turn relies on:
   ``auth_blocked_servers`` / ``wait_for_auth`` / ``signal_auth_resolved``.
+- The logging filter that suppresses the SDK's misleading ERROR traceback for
+  an *expected* WorkIQ sign-in prompt while preserving genuine failures.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 import time
 
 from precursor.backend.services.mcp.client import (
@@ -18,7 +22,10 @@ from precursor.backend.services.mcp.client import (
     MCPServerEntry,
     _find_in_exception,
 )
-from precursor.backend.services.mcp.workiq_preview import WorkIQAuthRequiredError
+from precursor.backend.services.mcp.workiq_preview import (
+    WorkIQAuthRequiredError,
+    _SuppressExpectedAuthError,
+)
 
 
 def test_find_in_exception_bare() -> None:
@@ -102,3 +109,36 @@ async def test_wait_for_auth_times_out_and_cleans_up() -> None:
 def test_signal_with_no_waiters_is_noop() -> None:
     manager = MCPClientManager()
     manager.signal_auth_resolved()  # must not raise
+
+
+def _oauth_flow_error_record(exc: BaseException) -> logging.LogRecord:
+    """Build the log record the SDK's ``logger.exception("OAuth flow error")`` emits."""
+    try:
+        raise exc
+    except BaseException:
+        exc_info = sys.exc_info()
+    return logging.LogRecord(
+        name="mcp.client.auth.oauth2",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=0,
+        msg="OAuth flow error",
+        args=(),
+        exc_info=exc_info,
+    )
+
+
+def test_expected_auth_error_traceback_is_suppressed() -> None:
+    # The SDK wraps callback errors in an anyio task group; the filter must still
+    # recognise our expected sign-in prompt and drop the noisy stack trace.
+    wrapped = BaseExceptionGroup(
+        "unhandled errors in a TaskGroup (1 sub-exception)",
+        [WorkIQAuthRequiredError("sign in")],
+    )
+    record = _oauth_flow_error_record(wrapped)
+    assert _SuppressExpectedAuthError().filter(record) is False
+
+
+def test_genuine_oauth_error_is_still_logged() -> None:
+    record = _oauth_flow_error_record(RuntimeError("real transport failure"))
+    assert _SuppressExpectedAuthError().filter(record) is True
