@@ -470,6 +470,49 @@ def test_agent_command_registry_is_source_of_truth() -> None:
     assert set(AgentManager._COMMAND_HANDLERS) == set(AgentManager.supported_commands())
 
 
+def test_normalise_usage_event_captures_token_counts() -> None:
+    """`AssistantUsageData` rounds surface their tokens so the side panel can
+    aggregate per-agent usage from the timeline."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    class AssistantUsageData:
+        def __init__(self) -> None:
+            self.model = "gpt-x"
+            self.input_tokens = 1200
+            self.output_tokens = 340
+            self.reasoning_tokens = 50
+
+    event = AgentManager()._normalise(AssistantUsageData())
+
+    assert event.kind == "usage"
+    assert event.data is not None
+    assert event.data["input_tokens"] == 1200
+    assert event.data["output_tokens"] == 340
+    assert event.data["reasoning_tokens"] == 50
+    # Stored as raw ints (not JSON-stringified) so the UI can do arithmetic.
+    assert isinstance(event.data["input_tokens"], int)
+
+
+def test_normalise_context_usage_event_captures_window() -> None:
+    """`SessionUsageInfoData` maps to a ``context_usage`` step carrying the live
+    context-window occupancy for the side-panel progress bar."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    class SessionUsageInfoData:
+        def __init__(self) -> None:
+            self.current_tokens = 8000
+            self.token_limit = 128000
+            self.conversation_tokens = 7500
+
+    event = AgentManager()._normalise(SessionUsageInfoData())
+
+    assert event.kind == "context_usage"
+    assert event.data is not None
+    assert event.data["current_tokens"] == 8000
+    assert event.data["token_limit"] == 128000
+    assert event.data["conversation_tokens"] == 7500
+
+
 async def test_update_agent_title_only_needs_no_runtime() -> None:
     """A title-only PATCH never touches the runtime (no task replay)."""
     with TestClient(create_app()):

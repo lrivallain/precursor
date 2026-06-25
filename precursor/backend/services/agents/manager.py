@@ -1405,6 +1405,21 @@ class AgentManager:
             if attr in ("result", "output"):
                 val = self._unwrap_result(val)
             extra[attr] = val if isinstance(val, str) else self._jsonify(val)
+        # Usage events carry token counts, not tool I/O. Capture them verbatim
+        # (as raw ints, not JSON-stringified) so the workflow timeline can drive
+        # the per-agent usage stats in the side panel: ``AssistantUsageData``
+        # meters each LLM round, ``SessionUsageInfoData`` reports the live
+        # context-window occupancy.
+        if name == "AssistantUsageData":
+            for attr in ("input_tokens", "output_tokens", "reasoning_tokens"):
+                val = getattr(data, attr, None)
+                if val is not None:
+                    extra[attr] = int(val)
+        elif name == "SessionUsageInfoData":
+            for attr in ("current_tokens", "token_limit", "conversation_tokens"):
+                val = getattr(data, attr, None)
+                if val is not None:
+                    extra[attr] = int(val)
         return AgentEvent(
             kind=kind,
             text=str(text) if text is not None else None,
@@ -1463,6 +1478,7 @@ _EVENT_KINDS: dict[str, str] = {
     "AssistantTurnStartData": "turn_start",
     "AssistantTurnEndData": "turn_end",
     "AssistantUsageData": "usage",
+    "SessionUsageInfoData": "context_usage",
     "SessionIdleData": "idle",
     "AbortData": "aborted",
 }
