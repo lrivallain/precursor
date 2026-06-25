@@ -182,7 +182,8 @@ state. The user restarts the browser flow on demand from Settings
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,
-memory, `post_message` (runs a full turn), and schedules. Every tool is gated by
+memory (read + `memory_write` to store/edit entries), `post_message` (runs a full
+turn), and schedules. Every tool is gated by
 a per-section `mcp_expose` toggle (default **off** — exposing conversation
 history outbound is opt-in). Two transports, same tools:
 
@@ -231,8 +232,13 @@ the server preflights Docker availability against the effective jail setting.
 
 - **Skills** (`Skill`, `routers/skills.py`) — reusable prompt presets invoked as
   `/name` in chat; the SPA expands them inline.
-- **Memory** (`Memory`, `routers/memories.py`) — long-term notes injected into
-  the system prompt so context persists across topics.
+- **Memory** (`Memory`, `routers/memories.py`, `services/memories.py`) —
+  long-term notes injected into the system prompt of topic chats, flat chats, and
+  agent sessions so context persists across conversations. Editable from Settings,
+  from chat via `/memory-store`, `/memory-list`, and `/memory-update`
+  (store/update on the topic/chat/agent surfaces; `/memory-list` on topic/chat),
+  or by the model itself through the `list_memories`/`store_memory`/`update_memory`
+  MCP tools.
 
 ## SPA
 

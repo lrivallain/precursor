@@ -166,6 +166,32 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     kind: "builtin",
     surfaces: ["topic"],
   },
+  {
+    name: "memory-store",
+    label: "/memory-store",
+    description:
+      "Save a long-term memory injected into every future conversation. Optionally lead with a [kind] tag, e.g. '/memory-store [preference] I prefer concise answers'.",
+    argumentHint: "[kind] content",
+    kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
+  },
+  {
+    name: "memory-list",
+    label: "/memory-list",
+    description:
+      "List long-term memories with their ids (and kinds) so you can pick one to edit with /memory-update.",
+    kind: "builtin",
+    surfaces: ["topic", "chat"],
+  },
+  {
+    name: "memory-update",
+    label: "/memory-update",
+    description:
+      "Edit an existing long-term memory by id (see /memory-list or Settings → Memory). Optionally change its [kind] too, e.g. '/memory-update 3 [fact] Updated text'.",
+    argumentHint: "<id> [kind] content",
+    kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
+  },
 ];
 
 /**
@@ -211,6 +237,24 @@ export function parseSlashCommand(
   if (excludeNames.has(name)) return null;
   if (![...SLASH_COMMANDS, ...extra].some((c) => c.name === name)) return null;
   return { name, argument: match[2].trim() };
+}
+
+/**
+ * Recognise a built-in (non-skill) slash command at the start of a *persisted*
+ * message, so the transcript can render the command name as a pill with the
+ * arguments as plain text. Unlike {@link parseSlashCommand} this isn't
+ * surface-scoped and ignores skills — it only matches the built-in catalog.
+ */
+export function matchBuiltinCommand(
+  content: string,
+): { name: string; argument: string } | null {
+  const match = content.match(/^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+  const name = match[1].toLowerCase();
+  if (!SLASH_COMMANDS.some((c) => c.name === name && c.kind !== "skill")) {
+    return null;
+  }
+  return { name, argument: (match[2] ?? "").trim() };
 }
 
 /**
@@ -261,4 +305,91 @@ export function matchAgentSlashCommands(input: string): SlashCommand[] | null {
   return SLASH_COMMANDS.filter(
     (c) => AGENT_SLASH_COMMANDS.has(c.name) && c.name.startsWith(query),
   );
+}
+
+const MEMORY_BRACKET_KIND_RE = /^\[([^\]]*)\]\s*([\s\S]*)$/;
+
+/**
+ * Peel an optional leading `[kind]` token off a memory command argument.
+ * Returns `{ kind, content }`; `kind` is `null` when no bracket prefix is given.
+ * The kind is returned verbatim — the backend normalises/validates it.
+ */
+function splitMemoryKind(argument: string): { kind: string | null; content: string } {
+  const match = argument.trim().match(MEMORY_BRACKET_KIND_RE);
+  if (!match) return { kind: null, content: argument.trim() };
+  return { kind: match[1].trim(), content: match[2].trim() };
+}
+
+export interface ParsedMemoryStore {
+  kind: string;
+  content: string;
+}
+
+/**
+ * Parse a `/memory-store [kind] content` argument. Returns `null` when there's
+ * no content to store (the caller surfaces a usage hint).
+ */
+export function parseMemoryStoreArg(argument: string): ParsedMemoryStore | null {
+  const { kind, content } = splitMemoryKind(argument);
+  if (!content) return null;
+  return { kind: kind || "context", content };
+}
+
+export interface ParsedMemoryUpdate {
+  id: number;
+  kind?: string;
+  content?: string;
+}
+
+/**
+ * Parse a `/memory-update <id> [kind] content` argument. Returns `null` when the
+ * id is missing/non-numeric or nothing is provided to change.
+ */
+export function parseMemoryUpdateArg(argument: string): ParsedMemoryUpdate | null {
+  const trimmed = argument.trim();
+  const space = trimmed.indexOf(" ");
+  const head = space === -1 ? trimmed : trimmed.slice(0, space);
+  const tail = space === -1 ? "" : trimmed.slice(space + 1);
+  if (!/^\d+$/.test(head)) return null;
+  const id = Number(head);
+  const { kind, content } = splitMemoryKind(tail);
+  if (!content && kind === null) return null;
+  const out: ParsedMemoryUpdate = { id };
+  if (kind) out.kind = kind;
+  if (content) out.content = content;
+  return out;
+}
+
+/**
+ * Render long-term memories as a chat system-note. Shared by the topic and chat
+ * `/memory-list` handlers so the listing reads the same in both. Renders a
+ * GitHub-flavoured Markdown table so ids (needed by `/memory-update`), kinds, and
+ * content stay aligned and readable.
+ */
+export function formatMemoryList(
+  memories: ReadonlyArray<{ id: number; kind: string; content: string }>,
+): string {
+  if (memories.length === 0) {
+    return "No memories yet. Add one with `/memory-store [kind] <content>`.";
+  }
+  const cell = (value: string) => value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  const rows = memories.map((m) => `| #${m.id} | ${cell(m.kind)} | ${cell(m.content)} |`);
+  return [
+    "**Long-term memories** — edit with `/memory-update <id> [kind] <content>`:",
+    "",
+    "| ID | Kind | Memory |",
+    "| --- | --- | --- |",
+    ...rows,
+  ].join("\n");
+}
+
+/**
+ * Monotonically-decreasing ids for client-only transcript rows (command echoes
+ * and system notes). Keeps React keys unique even when several are appended in
+ * the same millisecond, where `-Date.now()` alone would collide.
+ */
+let syntheticIdSeq = 0;
+export function nextSyntheticMessageId(): number {
+  syntheticIdSeq += 1;
+  return -(Date.now() * 1000 + syntheticIdSeq);
 }

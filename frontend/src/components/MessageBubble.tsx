@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { matchBuiltinCommand } from "../lib/commands";
 import { useSkills } from "../lib/skillsStore";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
 import { Markdown } from "./Markdown";
@@ -61,6 +62,8 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const skills = useSkills();
   const skillInvocation =
     isUser && !pending ? matchSkillInvocation(content, skills) : null;
+  const builtinCommand =
+    isUser && !pending && !skillInvocation ? matchBuiltinCommand(content) : null;
   const showThinking = pending && !content;
   const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
@@ -87,8 +90,19 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const showActions = !pending && !!content && (role === "assistant" || onDelete);
 
   // Persisted SYSTEM rows are UI-only notices (e.g. the "Run now accepted"
-  // confirmation). Render them as a compact green, user-aligned acknowledgement.
+  // confirmation). Short notes render as a compact green, user-aligned
+  // acknowledgement; multi-line notes (e.g. the `/memory-list` table) render as
+  // a Markdown block so lists and tables stay readable.
   if (role === "system") {
+    if (content.includes("\n")) {
+      return (
+        <div className="flex flex-col items-end gap-1">
+          <div className="max-w-full overflow-x-auto rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300">
+            <Markdown className="text-sm leading-relaxed">{content}</Markdown>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-end gap-1">
         <div className="inline-flex items-center gap-1.5 max-w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-700 dark:text-emerald-300">
@@ -249,6 +263,11 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
             skill={skillInvocation.skill}
             argument={skillInvocation.argument}
           />
+        ) : builtinCommand ? (
+          <CommandInvocation
+            name={builtinCommand.name}
+            argument={builtinCommand.argument}
+          />
         ) : (
           <>
             {imageAttachments.length > 0 && (
@@ -365,6 +384,22 @@ function SkillInvocation({ skill, argument }: { skill: Skill; argument: string }
           </pre>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Render a built-in slash command echoed into the transcript: the `/command`
+ * name as a mono accent pill so it reads unmistakably as a command, with any
+ * arguments following as plain text.
+ */
+function CommandInvocation({ name, argument }: { name: string; argument: string }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap text-sm leading-relaxed">
+      <code className="inline-flex items-center rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[0.8125rem] leading-none text-accent">
+        /{name}
+      </code>
+      {argument && <span className="whitespace-pre-wrap break-words">{argument}</span>}
     </div>
   );
 }

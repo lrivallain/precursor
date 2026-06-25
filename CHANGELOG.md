@@ -11,6 +11,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Memory management commands**: long-term memories can now be created, listed,
+  and edited without leaving a conversation. New `/memory-store [kind] <content>`,
+  `/memory-list`, and `/memory-update <id> [kind] <content>` slash commands work
+  on the topic and chat surfaces (store/update also on agent sessions and headless
+  scheduled topic runs; `/memory-list` surfaces the ids needed by `/memory-update`).
+  The built-in `precursor` MCP server gained `store_memory` / `update_memory`
+  tools — gated by a new `memory_write` capability toggle, alongside the existing
+  `list_memories` read tool — so the model itself can record or refine memories.
+  Memories are now also injected into **agent** sessions' system context (they
+  already fed topic and chat turns), so standing preferences and facts follow you
+  everywhere. Shared parsing/persistence lives in `services/memories.py`.
 - **Detach the Notes / GitHub draft panel into its own window**: the shared
   command panel (used by `/notes`, GitHub issue/comment create, and issue update
   drafts) now has a pop-out button in its header that hands the panel off to a

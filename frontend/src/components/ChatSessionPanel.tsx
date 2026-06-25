@@ -13,7 +13,11 @@ import {
 } from "../lib/attachments";
 import {
   commandsForSurface,
+  formatMemoryList,
   matchSlashCommands,
+  nextSyntheticMessageId,
+  parseMemoryStoreArg,
+  parseMemoryUpdateArg,
   parseSlashCommand,
   surfaceExcludes,
   type SlashCommand,
@@ -361,10 +365,28 @@ export function ChatSessionPanel({
     setPersisted((prev) => [
       ...prev,
       {
-        id: -Date.now(),
+        id: nextSyntheticMessageId(),
         topic_id: null,
         chat_id: chat.id,
         role: "system",
+        content,
+        tool_calls: null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  }
+
+  // Echo a locally-handled slash command into the transcript as a user turn so
+  // it stays visible and is recallable via ↑ history (these commands never hit
+  // the backend, so they aren't persisted server-side).
+  function echoCommand(content: string): void {
+    setPersisted((prev) => [
+      ...prev,
+      {
+        id: nextSyntheticMessageId(),
+        topic_id: null,
+        chat_id: chat.id,
+        role: "user",
         content,
         tool_calls: null,
         created_at: new Date().toISOString(),
@@ -496,6 +518,18 @@ export function ChatSessionPanel({
       await runReminderClear(true);
       return;
     }
+    if (name === "memory-store") {
+      await runMemoryStore(argument);
+      return;
+    }
+    if (name === "memory-list") {
+      await runMemoryList();
+      return;
+    }
+    if (name === "memory-update") {
+      await runMemoryUpdate(argument);
+      return;
+    }
     if (name === "role") {
       const arg = argument.trim();
       if (!arg) {
@@ -514,6 +548,38 @@ export function ChatSessionPanel({
       } catch (err) {
         systemNote(`Role change failed: ${(err as Error).message}`);
       }
+    }
+  }
+
+  async function runMemoryStore(argument: string): Promise<void> {
+    const parsed = parseMemoryStoreArg(argument);
+    if (!parsed) return systemNote("Usage: `/memory-store [kind] <content>`");
+    try {
+      const mem = await api.createMemory(parsed);
+      systemNote(`Saved memory #${mem.id} [${mem.kind}]. Manage in Settings → Memory.`);
+    } catch (err) {
+      systemNote(`Couldn't save memory: ${(err as Error).message}`);
+    }
+  }
+
+  async function runMemoryList(): Promise<void> {
+    try {
+      const memories = await api.listMemories();
+      systemNote(formatMemoryList(memories));
+    } catch (err) {
+      systemNote(`Couldn't list memories: ${(err as Error).message}`);
+    }
+  }
+
+  async function runMemoryUpdate(argument: string): Promise<void> {
+    const parsed = parseMemoryUpdateArg(argument);
+    if (!parsed) return systemNote("Usage: `/memory-update <id> [kind] <content>`");
+    const { id, ...patch } = parsed;
+    try {
+      const mem = await api.updateMemory(id, patch);
+      systemNote(`Updated memory #${mem.id} [${mem.kind}].`);
+    } catch (err) {
+      systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
     }
   }
 
@@ -749,6 +815,7 @@ export function ChatSessionPanel({
       : null;
     if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
       setDraft("");
+      echoCommand(content);
       await dispatchCommand(cmd.name, cmd.argument);
       return;
     }
