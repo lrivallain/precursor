@@ -186,6 +186,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- The Settings endpoint no longer returns **500 Internal Server Error** after
+  signing in to the WorkIQ preview (e.g. when toggling Agents mode). The WorkIQ
+  OAuth token store wrote its `issued_at` stamp as a raw ISO string into the
+  shared `AppSetting` table, but that table's values are all JSON — so
+  `_load_all` crashed on `json.loads` of the bare string, taking down every
+  read and write of `/api/settings`. The stamp is now JSON-encoded on write and
+  decoded on read (with a fallback for legacy raw rows).
 - The favicon (and any other top-level file in the SPA build, e.g. assets Vite
   copies from `public/`) is now served in the single-process production build.
   The SPA fallback previously returned `index.html` for everything except
