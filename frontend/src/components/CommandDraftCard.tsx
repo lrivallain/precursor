@@ -27,6 +27,10 @@ interface Props {
   confirmHint?: string;
   onSend: (payload: CommandDraftPayload) => void | Promise<void>;
   onCancel: () => void;
+  /** Layout mode forwarded to the shared panel shell. */
+  variant?: "floating" | "embedded";
+  /** Hand the current draft off to a separate window (floating variant only). */
+  onPopOut?: (snapshot: { body: string; title?: string }) => void;
 }
 
 export function CommandDraftCard({
@@ -45,6 +49,8 @@ export function CommandDraftCard({
   confirmHint,
   onSend,
   onCancel,
+  variant,
+  onPopOut,
 }: Props) {
   const hasTitleField = initialTitle !== undefined;
   const [titleValue, setTitleValue] = useState(initialTitle ?? "");
@@ -72,6 +78,8 @@ export function CommandDraftCard({
       onClose={onCancel}
       closeLabel="Cancel draft"
       loading={loading}
+      variant={variant}
+      onPopOut={onPopOut}
       titleField={
         hasTitleField
           ? { value: titleValue, onChange: setTitleValue, label: titleLabel }

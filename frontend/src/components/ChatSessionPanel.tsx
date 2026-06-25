@@ -21,6 +21,7 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
+import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -941,6 +942,23 @@ export function ChatSessionPanel({
                 onAttachFiles={uploadNoteAttachments}
                 onRemoveAttachment={removeNoteAttachment}
                 onCancel={closeNotesPad}
+                onPopOut={
+                  pendingNotes.loadingDraft
+                    ? undefined
+                    : (text) => {
+                        detachedDraftStore.open({
+                          kind: "notes",
+                          container: "chat",
+                          containerId: chat.id,
+                          title: `Notes — ${chat.title}`,
+                          hasIssue: false,
+                          allowPostComment: false,
+                          initialText: text,
+                          initialAttachments: pendingNotes.attachments,
+                        });
+                        setPendingNotes(null);
+                      }
+                }
               />
             )}
             <Composer

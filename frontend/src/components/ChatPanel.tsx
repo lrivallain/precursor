@@ -22,6 +22,7 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
+import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -109,6 +110,18 @@ function cardPostingLabel(kind: PendingKind): string {
     case "gh-close":
       return "Closing…";
   }
+}
+
+function cardBodyPlaceholder(kind: PendingKind): string {
+  return kind === "gh-close"
+    ? "Optional closing comment in GitHub-Flavored Markdown… (leave empty to close without a comment)"
+    : "Write in GitHub-Flavored Markdown…";
+}
+
+function cardConfirmHint(kind: PendingKind): string | undefined {
+  if (kind === "gh-close") return "This will close the issue on GitHub.";
+  if (kind === "gh-create") return "A new issue will be created and linked to this topic.";
+  return undefined;
 }
 
 interface ParsedToolMeta {
@@ -1348,6 +1361,24 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               onAttachFiles={uploadNoteAttachments}
               onRemoveAttachment={removeNoteAttachment}
               onCancel={closeNotesPad}
+              onPopOut={
+                pendingNotes.loadingDraft
+                  ? undefined
+                  : (text) => {
+                      detachedDraftStore.open({
+                        kind: "notes",
+                        container: "topic",
+                        containerId: topic.id,
+                        title: `Notes — ${topic.title}`,
+                        hasIssue:
+                          issueAssociationsEnabled && topic.github_issue_number !== null,
+                        allowPostComment: true,
+                        initialText: text,
+                        initialAttachments: pendingNotes.attachments,
+                      });
+                      setPendingNotes(null);
+                    }
+              }
             />
           )}
           {pendingCommand && (
@@ -1359,26 +1390,39 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 pendingCommand.kind === "gh-create" ? pendingCommand.title ?? "" : undefined
               }
               titleLabel="Issue title"
-              bodyPlaceholder={
-                pendingCommand.kind === "gh-close"
-                  ? "Optional closing comment in GitHub-Flavored Markdown… (leave empty to close without a comment)"
-                  : "Write in GitHub-Flavored Markdown…"
-              }
+              bodyPlaceholder={cardBodyPlaceholder(pendingCommand.kind)}
               bodyRequired={pendingCommand.kind !== "gh-close"}
               loading={pendingCommand.loading}
               posting={pendingCommand.posting}
               error={pendingCommand.error}
               sendLabel={cardSendLabel(pendingCommand.kind)}
               postingLabel={cardPostingLabel(pendingCommand.kind)}
-              confirmHint={
-                pendingCommand.kind === "gh-close"
-                  ? "This will close the issue on GitHub."
-                  : pendingCommand.kind === "gh-create"
-                    ? "A new issue will be created and linked to this topic."
-                    : undefined
-              }
+              confirmHint={cardConfirmHint(pendingCommand.kind)}
               onSend={postCommandDraft}
               onCancel={() => setPendingCommand(null)}
+              onPopOut={
+                pendingCommand.loading
+                  ? undefined
+                  : ({ body, title }) => {
+                      const kind = pendingCommand.kind;
+                      detachedDraftStore.open({
+                        kind,
+                        container: "topic",
+                        containerId: topic.id,
+                        title: cardTitle(pendingCommand),
+                        subtitle: cardSubtitle(pendingCommand),
+                        initialText: body,
+                        initialTitle: title,
+                        titleLabel: "Issue title",
+                        bodyPlaceholder: cardBodyPlaceholder(kind),
+                        bodyRequired: kind !== "gh-close",
+                        sendLabel: cardSendLabel(kind),
+                        postingLabel: cardPostingLabel(kind),
+                        confirmHint: cardConfirmHint(kind),
+                      });
+                      setPendingCommand(null);
+                    }
+              }
             />
           )}
           <Composer
