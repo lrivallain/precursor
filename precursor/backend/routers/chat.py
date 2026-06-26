@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import re
+import time
 import zipfile
 from collections.abc import AsyncIterator
 from typing import Any, Literal
@@ -669,6 +670,7 @@ async def _run_message_stream(
         ]
 
         try:
+            turn_started = time.monotonic()
             for _round in range(max_tool_rounds):
                 text_chunks: list[str] = []
                 tool_calls: list[Any] = []
@@ -703,6 +705,7 @@ async def _run_message_stream(
                     # Final assistant turn — split off any suggested follow-ups,
                     # persist the clean text, and surface the chips separately.
                     assistant_text, suggestions = split_suggestions(assistant_text)
+                    elapsed_ms = int((time.monotonic() - turn_started) * 1000)
                     async with SessionLocal() as ws:
                         assistant = Message(
                             role=MessageRole.ASSISTANT,
@@ -712,6 +715,8 @@ async def _run_message_stream(
                             completion_tokens=round_usage.completion_tokens
                             if round_usage
                             else None,
+                            model=model,
+                            elapsed_ms=elapsed_ms,
                             **_container_message_kwargs(kind, container_id),
                         )
                         ws.add(assistant)
@@ -744,7 +749,14 @@ async def _run_message_stream(
                             }
                         yield {
                             "event": "done",
-                            "data": json.dumps({"id": assistant.id, "content": assistant_text}),
+                            "data": json.dumps(
+                                {
+                                    "id": assistant.id,
+                                    "content": assistant_text,
+                                    "model": model,
+                                    "elapsed_ms": elapsed_ms,
+                                }
+                            ),
                         }
                     if suggestions:
                         yield {

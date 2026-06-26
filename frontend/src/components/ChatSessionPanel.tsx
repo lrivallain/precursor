@@ -916,6 +916,9 @@ export function ChatSessionPanel({
                   content={m.content}
                   attachments={m.attachments}
                   agentSessionId={m.agent_session_id}
+                  createdAt={m.created_at}
+                  model={m.model}
+                  elapsedMs={m.elapsed_ms}
                   onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
                 />
               );
