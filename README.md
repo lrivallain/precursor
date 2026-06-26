@@ -89,12 +89,12 @@ uv run precursor --dev        # uvicorn --reload + Vite HMR (Ctrl-C stops both)
 # or:  make dev
 ```
 
-On startup Precursor prints a banner with the URL to open. In `--dev` the UI
-runs on the **API port + 1** (Vite proxies `/api` to the backend), so a single
-`--port` controls everything:
+On startup Precursor prints a banner with the URL to open. `--port` is always
+the URL you open in your browser — in `--dev` the UI runs there and Vite proxies
+`/api` to the backend (which sits on a hidden port, by default `--port` + 1):
 
 ```bash
-uv run precursor --dev --port 9000   # UI on :9001, API on :9000
+uv run precursor --dev --port 9000   # open :9000 (UI); API on :9001 behind it
 uv run precursor --port 8100 --open  # prod-style, opens the browser when ready
 ```
 
