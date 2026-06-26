@@ -160,6 +160,36 @@ async def disconnect_server(
     return _enrich_with_user_meta(base, row)
 
 
+@router.post("/servers/{name}/refresh")
+async def refresh_server(
+    name: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Re-probe an already-enabled server to refresh its tool catalog.
+
+    Lets the UI reload the tool list without the disable/enable round-trip. We
+    retire any warm worker first so the probe spins up a fresh session (and, for
+    stdio servers, a fresh process) rather than reusing a stale catalogue.
+    """
+    manager = get_mcp_client_manager()
+    entry = manager.get(name)
+    if entry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "MCP server not found")
+
+    enabled = await _load_enabled(session)
+    if not enabled.get(name, False):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Enable the server before reloading its tools.",
+        )
+
+    await manager.retire_worker(name)
+    entry = await manager.probe(name, github_token=await resolve_github_token(session))
+    base = manager.status_dict(entry, enabled=True)
+    row = None if entry.builtin else await get_row_by_name(session, name)
+    return _enrich_with_user_meta(base, row)
+
+
 class WorkiqPreviewToggle(BaseModel):
     enabled: bool
 

@@ -83,3 +83,29 @@ def test_connect_allowed_when_jail_disabled_in_db() -> None:
         r = client.post("/api/mcp/servers/cmd-runner/connect")
         assert r.status_code == 200
         assert r.json()["enabled"] is True
+
+
+def test_refresh_unknown_server_returns_404() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.post("/api/mcp/servers/does-not-exist/refresh")
+        assert r.status_code == 404
+
+
+def test_refresh_disabled_server_returns_409() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        # Ensure cmd-runner is disabled regardless of earlier tests' state.
+        client.post("/api/mcp/servers/cmd-runner/disconnect")
+        r = client.post("/api/mcp/servers/cmd-runner/refresh")
+        assert r.status_code == 409
+
+
+def test_refresh_enabled_server_succeeds() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        client.put("/api/settings", json={"cmd_runner_jail": False})
+        assert client.post("/api/mcp/servers/cmd-runner/connect").status_code == 200
+        r = client.post("/api/mcp/servers/cmd-runner/refresh")
+        assert r.status_code == 200
+        assert r.json()["enabled"] is True
