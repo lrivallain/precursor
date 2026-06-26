@@ -131,3 +131,23 @@ def delete_file(root: Path, rel: str) -> None:
     if target.is_dir():
         raise IsADirectoryError(rel)
     target.unlink()
+
+
+def rename(root: Path, src_rel: str, dst_rel: str) -> None:
+    """Rename/move a file or directory from ``src_rel`` to ``dst_rel``.
+
+    Both paths are validated against the root (no traversal, no ``.git``).
+    Missing intermediate folders in the destination are created. Raises
+    ``FileNotFoundError`` if the source is missing and ``FileExistsError`` if
+    something already lives at the destination.
+    """
+    src = safe_join(root, src_rel)
+    dst = safe_join(root, dst_rel)
+    if not src.exists():
+        raise FileNotFoundError(src_rel)
+    if src.resolve() == dst.resolve():
+        return
+    if dst.exists():
+        raise FileExistsError(dst_rel)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)

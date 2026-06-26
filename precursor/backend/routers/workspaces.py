@@ -33,6 +33,7 @@ from precursor.backend.schemas import (
     FileCreate,
     FileDiff,
     FileNode,
+    FileRename,
     FileWrite,
     FolderCreate,
     GitActionResult,
@@ -336,6 +337,30 @@ async def delete_file_endpoint(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except (FileNotFoundError, IsADirectoryError) as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found") from exc
+
+
+@router.post("/{workspace_id}/rename", response_model=FileNode)
+async def rename_endpoint(
+    workspace_id: int,
+    payload: FileRename,
+    session: AsyncSession = Depends(get_session),
+) -> FileNode:
+    ws = await _get_workspace(workspace_id, session)
+    src = payload.path.strip().strip("/")
+    dst = payload.new_path.strip().strip("/")
+    root = browse_root(ws)
+    try:
+        fs.rename(root, src, dst)
+        node_type = "dir" if fs.safe_join(root, dst).is_dir() else "file"
+    except fs.UnsafePathError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found") from exc
+    except FileExistsError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "A file or folder already exists at the destination"
+        ) from exc
+    return FileNode(path=dst, name=dst.rsplit("/", 1)[-1], type=node_type)
 
 
 # --------------------------------------------------------------------------

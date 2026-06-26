@@ -568,6 +568,11 @@ export const api = {
       `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
       { method: "DELETE" },
     ),
+  renameWorkspaceEntry: (workspaceId: number, path: string, newPath: string) =>
+    request<WorkspaceFileNode>(`/api/workspaces/${workspaceId}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ path, new_path: newPath }),
+    }),
   workspaceGitStatus: (workspaceId: number) =>
     request<GitStatus>(`/api/workspaces/${workspaceId}/git/status`),
   workspaceGitPull: (workspaceId: number) =>
