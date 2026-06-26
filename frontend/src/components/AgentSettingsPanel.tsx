@@ -59,6 +59,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
         updated = await api.linkAgent(agent.id, { topic_id: topicId, chat_id: null });
       }
       onSaved(updated);
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

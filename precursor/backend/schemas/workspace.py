@@ -67,6 +67,13 @@ class FolderCreate(BaseModel):
     path: str = Field(min_length=1)
 
 
+class FileRename(BaseModel):
+    """Rename/move a file or folder. ``new_path`` is a full relative path."""
+
+    path: str = Field(min_length=1)
+    new_path: str = Field(min_length=1)
+
+
 class CommitRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     # When provided, only these paths are staged and committed; otherwise all

@@ -54,6 +54,11 @@ body {
 .markdown :where(p, ul, ol, pre, blockquote, table, h1, h2, h3, h4, h5, h6, hr):not(:last-child) {
   margin-bottom: 0.6rem;
 }
+/* The copy-button wrapper around a fenced code block keeps the same
+   inter-block spacing the bare <pre> used to get. */
+.markdown .md-code:not(:last-child) {
+  margin-bottom: 0.6rem;
+}
 
 /* Headings */
 .markdown h1,

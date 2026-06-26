@@ -142,6 +142,7 @@ export function TopicSettingsPanel({
           enabled,
         });
         onSaved(updated);
+        onClose();
         return;
       }
       const updated = await api.updateTopic(topic.id, {
@@ -153,6 +154,7 @@ export function TopicSettingsPanel({
         github_issue_number: issueNumber.trim() ? Number(issueNumber.trim()) : null,
       });
       onSaved(updated);
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -306,14 +308,14 @@ export function TopicSettingsPanel({
                     onChange={(e) => setPrompt(e.target.value)}
                     rows={4}
                     placeholder="What should the assistant do on every run?"
-                    className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                   />
                 ) : (
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     rows={4}
-                    className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                   />
                 )}
                 {isScheduled && (

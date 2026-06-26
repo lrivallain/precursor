@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  BarChart3,
   Bot,
   Brain,
   Check,
@@ -258,20 +259,200 @@ function ToggleChip({
   );
 }
 
-// Collapsible right-hand panel holding the workflow "Show" filters — mirrors
-// the conversation-stats aside on topics/chats. Collapse state is persisted.
+// Per-agent token usage distilled from the workflow timeline. `usage` events
+// (one per metered LLM round) carry input/output tokens; `context_usage` events
+// report the live context-window occupancy. Mirrors the conversation-stats
+// aside on topics/chats, but sourced from the agent's own event stream.
+interface AgentUsage {
+  lastInput: number;
+  lastOutput: number;
+  totalInput: number;
+  totalOutput: number;
+  rounds: number;
+  contextUsed: number | null;
+  contextLimit: number | null;
+}
+
+function numField(data: Record<string, unknown> | null, key: string): number {
+  const v = data?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+function computeAgentUsage(events: AgentEvent[]): AgentUsage {
+  let lastInput = 0;
+  let lastOutput = 0;
+  let totalInput = 0;
+  let totalOutput = 0;
+  let rounds = 0;
+  let contextUsed: number | null = null;
+  let contextLimit: number | null = null;
+  for (const ev of events) {
+    const kind = ev.kind.toLowerCase();
+    if (kind === "usage") {
+      const input = numField(ev.data, "input_tokens");
+      const output = numField(ev.data, "output_tokens");
+      // Skip rounds that reported no tokens so they don't reset "last turn".
+      if (input === 0 && output === 0) continue;
+      totalInput += input;
+      totalOutput += output;
+      lastInput = input;
+      lastOutput = output;
+      rounds += 1;
+    } else if (kind === "context_usage") {
+      const limit = numField(ev.data, "token_limit");
+      if (limit > 0) {
+        contextUsed = numField(ev.data, "current_tokens");
+        contextLimit = limit;
+      }
+    }
+  }
+  return { lastInput, lastOutput, totalInput, totalOutput, rounds, contextUsed, contextLimit };
+}
+
+function formatTokens(n: number): string {
+  return n.toLocaleString();
+}
+
+function compactTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10_000) return (n / 1000).toFixed(1) + "k";
+  if (n < 1_000_000) return Math.round(n / 1000) + "k";
+  return (n / 1_000_000).toFixed(1) + "M";
+}
+
+function UsageStat({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-muted">{label}</span>
+      <span className={`tabular-nums ${emphasis ? "font-semibold" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+function UsageGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">{title}</div>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+// Context-window occupancy bar — green/amber/rose as it fills, like the
+// topic/chat conversation stats.
+function ContextWindowBar({
+  used,
+  limit,
+  model,
+}: {
+  used: number;
+  limit: number;
+  model: string | null;
+}) {
+  const pct = Math.min(100, Math.max(0, (used / limit) * 100));
+  const tone = pct >= 85 ? "bg-rose-500" : pct >= 60 ? "bg-amber-500" : "bg-emerald-500";
+  return (
+    <div>
+      <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">Context window</div>
+      <div
+        className="h-2 w-full overflow-hidden rounded bg-border"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={limit}
+        aria-valuenow={used}
+        aria-label={`Context window used: ${used} of ${limit} tokens`}
+      >
+        <div className={`h-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted">
+        <span>
+          {compactTokens(used)} / {compactTokens(limit)}
+        </span>
+        <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
+      </div>
+      {model && (
+        <div className="mt-0.5 truncate text-[10px] text-muted" title={model}>
+          {model}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentUsageSection({
+  events,
+  model,
+}: {
+  events: AgentEvent[];
+  model: string | null;
+}) {
+  const usage = useMemo(() => computeAgentUsage(events), [events]);
+  const hasUsage = usage.rounds > 0 || usage.contextLimit !== null;
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="flex items-center gap-1.5 text-sm font-medium">
+        <BarChart3 size={14} />
+        <span>Usage</span>
+      </div>
+      {!hasUsage ? (
+        <p className="text-[11px] text-muted">No usage reported yet.</p>
+      ) : (
+        <>
+          {usage.contextLimit !== null && usage.contextUsed !== null && (
+            <ContextWindowBar
+              used={usage.contextUsed}
+              limit={usage.contextLimit}
+              model={model}
+            />
+          )}
+          <UsageGroup title="Last turn">
+            <UsageStat label="Input" value={formatTokens(usage.lastInput)} />
+            <UsageStat label="Output" value={formatTokens(usage.lastOutput)} />
+          </UsageGroup>
+          <UsageGroup title="Cumulative">
+            <UsageStat label="Input" value={formatTokens(usage.totalInput)} />
+            <UsageStat label="Output" value={formatTokens(usage.totalOutput)} />
+            <UsageStat
+              label="Total"
+              value={formatTokens(usage.totalInput + usage.totalOutput)}
+              emphasis
+            />
+            <UsageStat label="Rounds" value={String(usage.rounds)} />
+          </UsageGroup>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Collapsible right-hand panel mirroring the conversation-stats aside on
+// topics/chats: a token-usage readout plus the workflow "Show" filters.
+// Collapse state is persisted.
 const SHOW_PANEL_KEY = "precursor:agent-show-panel:collapsed";
 
-function AgentShowPanel({
+function AgentInsightsPanel({
   showPrefs,
   toggleShow,
+  events,
+  model,
 }: {
   showPrefs: ShowPrefs;
   toggleShow: (k: keyof ShowPrefs) => void;
+  events: AgentEvent[];
+  model: string | null;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(SHOW_PANEL_KEY) === "1";
+    if (typeof window === "undefined") return true;
+    // Hidden by default — only stay open when the user explicitly expanded it.
+    return window.localStorage.getItem(SHOW_PANEL_KEY) !== "0";
   });
   useEffect(() => {
     window.localStorage.setItem(SHOW_PANEL_KEY, collapsed ? "1" : "0");
@@ -284,51 +465,65 @@ function AgentShowPanel({
           type="button"
           onClick={() => setCollapsed(false)}
           className="rounded p-1.5 text-muted hover:bg-surface"
-          data-tooltip="Show workflow filters"
-          aria-label="Show workflow filters"
+          data-tooltip="Show usage & filters"
+          aria-label="Show usage and workflow filters"
         >
           <ChevronLeft size={16} />
         </button>
+        <BarChart3 size={16} className="mt-2 text-muted" />
         <Eye size={16} className="mt-2 text-muted" />
       </aside>
     );
   }
 
   return (
-    <aside className="flex w-52 shrink-0 flex-col border-l border-border bg-surface/30">
+    <aside className="flex w-60 shrink-0 flex-col border-l border-border bg-surface/30">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <div className="flex items-center gap-1.5 text-sm font-medium">
-          <Eye size={14} />
-          <span>Show</span>
+          <span>Insights</span>
         </div>
         <button
           type="button"
           onClick={() => setCollapsed(true)}
           className="rounded p-1 text-muted hover:bg-surface"
-          data-tooltip="Collapse filters"
-          aria-label="Collapse filters"
+          data-tooltip="Collapse panel"
+          aria-label="Collapse panel"
         >
           <ChevronRight size={16} />
         </button>
       </div>
-      <div className="flex flex-col items-start gap-1.5 p-3">
-        <ToggleChip active={showPrefs.system} onClick={() => toggleShow("system")} label="System" />
-        <ToggleChip
-          active={showPrefs.assistant}
-          onClick={() => toggleShow("assistant")}
-          label="Assistant"
-        />
-        <ToggleChip
-          active={showPrefs.thinking}
-          onClick={() => toggleShow("thinking")}
-          label="Thinking"
-        />
-        <ToggleChip active={showPrefs.tool} onClick={() => toggleShow("tool")} label="Tool" />
-        <ToggleChip
-          active={showPrefs.lifecycle}
-          onClick={() => toggleShow("lifecycle")}
-          label="Lifecycle"
-        />
+      <div className="flex flex-col gap-4 overflow-y-auto p-3">
+        <AgentUsageSection events={events} model={model} />
+        <div className="border-t border-border" />
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <Eye size={14} />
+            <span>Show</span>
+          </div>
+          <div className="flex flex-col items-start gap-1.5">
+            <ToggleChip
+              active={showPrefs.system}
+              onClick={() => toggleShow("system")}
+              label="System"
+            />
+            <ToggleChip
+              active={showPrefs.assistant}
+              onClick={() => toggleShow("assistant")}
+              label="Assistant"
+            />
+            <ToggleChip
+              active={showPrefs.thinking}
+              onClick={() => toggleShow("thinking")}
+              label="Thinking"
+            />
+            <ToggleChip active={showPrefs.tool} onClick={() => toggleShow("tool")} label="Tool" />
+            <ToggleChip
+              active={showPrefs.lifecycle}
+              onClick={() => toggleShow("lifecycle")}
+              label="Lifecycle"
+            />
+          </div>
+        </div>
       </div>
     </aside>
   );
@@ -1444,7 +1639,12 @@ export function AgentView({
         );
       })()}
       </div>
-      <AgentShowPanel showPrefs={showPrefs} toggleShow={toggleShow} />
+      <AgentInsightsPanel
+        showPrefs={showPrefs}
+        toggleShow={toggleShow}
+        events={events}
+        model={selected.model ?? null}
+      />
     </div>
   );
 }

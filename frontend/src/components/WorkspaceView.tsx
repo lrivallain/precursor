@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  Check,
   ClipboardCheck,
   ClipboardCopy,
+  Code2,
+  Copy,
   Download,
   ExternalLink,
   Eye,
@@ -15,6 +19,7 @@ import {
   FolderPlus,
   GitBranch,
   Loader2,
+  MessageSquare,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -40,6 +45,7 @@ import { useResizableWidth } from "../lib/useResizableWidth";
 import { useConfirm } from "./ConfirmDialog";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
+import { InlineTitle } from "./InlineTitle";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { SuggestedReplies } from "./SuggestedReplies";
@@ -118,6 +124,12 @@ export function WorkspaceView({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
+  // Inline create-in-tree state (VS Code style): an input row appears at the
+  // target parent ("" = root) until the user confirms or cancels. No modal.
+  const [pendingCreate, setPendingCreate] = useState<{
+    kind: "file" | "folder";
+    parent: string;
+  } | null>(null);
 
   const dirty = content !== savedContent;
   const isGit = area.kind !== "local";
@@ -203,33 +215,65 @@ export function WorkspaceView({
     }
   }
 
-  async function createFile(): Promise<void> {
-    const name = window.prompt(
-      "New file path (relative, e.g. notes/intro.md):",
-    );
-    if (!name) return;
+  async function applyPathChange(oldPath: string, newPath: string): Promise<void> {
+    if (!newPath || newPath === oldPath) return;
     setError(null);
     try {
-      await api.createWorkspaceFile(area.id, name, "");
+      await api.renameWorkspaceEntry(area.id, oldPath, newPath);
       await refreshFiles();
-      await openFile(name);
+      await refreshStatus();
+      // Keep the editor pointed at the moved/renamed file (or a file inside a
+      // moved/renamed folder), preserving any unsaved buffer.
+      if (activePath === oldPath) {
+        setActivePath(newPath);
+        onPathChange(newPath);
+      } else if (activePath && activePath.startsWith(`${oldPath}/`)) {
+        const moved = newPath + activePath.slice(oldPath.length);
+        setActivePath(moved);
+        onPathChange(moved);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      throw e;
     }
   }
 
-  async function createFolder(): Promise<void> {
-    const name = window.prompt(
-      "New folder path (relative, e.g. notes/drafts):",
-    );
-    if (!name) return;
-    const folder = name.replace(/\/+$/, "");
-    if (!folder) return;
+  async function handleRename(oldPath: string, newName: string): Promise<void> {
+    const cleaned = newName.trim().replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    const slash = oldPath.lastIndexOf("/");
+    const parent = slash === -1 ? "" : oldPath.slice(0, slash);
+    const newPath = parent ? `${parent}/${cleaned}` : cleaned;
+    if (!cleaned) return;
+    await applyPathChange(oldPath, newPath);
+  }
+
+  async function handleMove(src: string, targetDir: string): Promise<void> {
+    const name = src.slice(src.lastIndexOf("/") + 1);
+    const newPath = targetDir ? `${targetDir}/${name}` : name;
+    await applyPathChange(src, newPath);
+  }
+
+  async function submitCreate(name: string): Promise<void> {
+    if (!pendingCreate) return;
+    const cleaned = name.trim().replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    if (!cleaned) {
+      setPendingCreate(null);
+      return;
+    }
+    const full = pendingCreate.parent ? `${pendingCreate.parent}/${cleaned}` : cleaned;
     setError(null);
     try {
-      await api.createWorkspaceFolder(area.id, folder);
-      await refreshFiles();
+      if (pendingCreate.kind === "file") {
+        await api.createWorkspaceFile(area.id, full, "");
+        await refreshFiles();
+        await openFile(full);
+      } else {
+        await api.createWorkspaceFolder(area.id, full);
+        await refreshFiles();
+      }
+      setPendingCreate(null);
     } catch (e) {
+      // Keep the input open so the user can correct the name (e.g. a conflict).
       setError(e instanceof Error ? e.message : String(e));
     }
   }
@@ -321,16 +365,16 @@ export function WorkspaceView({
               <button
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New folder"
-                data-tooltip="New folder"
-                onClick={createFolder}
+                data-tooltip="New folder (in root)"
+                onClick={() => setPendingCreate({ kind: "folder", parent: "" })}
               >
                 <FolderPlus size={15} />
               </button>
               <button
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
                 aria-label="New file"
-                data-tooltip="New file"
-                onClick={createFile}
+                data-tooltip="New file (in root)"
+                onClick={() => setPendingCreate({ kind: "file", parent: "" })}
               >
                 <FilePlus2 size={15} />
               </button>
@@ -342,6 +386,12 @@ export function WorkspaceView({
               activePath={activePath}
               statusByPath={statusMap(status)}
               onOpen={openFile}
+              pendingCreate={pendingCreate}
+              onStartCreate={(kind, parent) => setPendingCreate({ kind, parent })}
+              onSubmitCreate={submitCreate}
+              onCancelCreate={() => setPendingCreate(null)}
+              onRename={handleRename}
+              onMove={handleMove}
             />
           </div>
         </aside>
@@ -1054,19 +1104,131 @@ function buildTree(files: WorkspaceFileNode[]): TreeNode[] {
   return roots;
 }
 
+// One inline "type the name here" row rendered in the tree at the create
+// target (VS Code style). Enter confirms, Escape or blur abandons.
+function CreateRow({
+  kind,
+  depth,
+  onSubmit,
+  onCancel,
+}: {
+  kind: "file" | "folder";
+  depth: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const indent = { paddingLeft: `${depth * 12 + 8}px` };
+  return (
+    <div className="flex items-center gap-1.5 pr-2 py-0.5" style={indent}>
+      {kind === "file" ? (
+        <FileText size={14} className="shrink-0 text-muted" />
+      ) : (
+        <Folder size={14} className="shrink-0 text-muted" />
+      )}
+      <input
+        autoFocus
+        spellCheck={false}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSubmit(value);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        onBlur={onCancel}
+        placeholder={kind === "file" ? "filename.md" : "folder-name"}
+        className="flex-1 min-w-0 bg-bg border border-accent rounded px-1.5 py-0.5 text-sm font-mono outline-none"
+      />
+    </div>
+  );
+}
+
 function FileTree({
   files,
   activePath,
   statusByPath,
   onOpen,
+  pendingCreate,
+  onStartCreate,
+  onSubmitCreate,
+  onCancelCreate,
+  onRename,
+  onMove,
 }: {
   files: WorkspaceFileNode[];
   activePath: string | null;
   statusByPath: Map<string, string>;
   onOpen: (path: string) => void;
+  pendingCreate: { kind: "file" | "folder"; parent: string } | null;
+  onStartCreate: (kind: "file" | "folder", parent: string) => void;
+  onSubmitCreate: (name: string) => void;
+  onCancelCreate: () => void;
+  onRename: (path: string, newName: string) => Promise<void>;
+  onMove: (src: string, targetDir: string) => Promise<void>;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Drag-and-drop move state: the path being dragged and the folder ("" = root)
+  // currently hovered as a drop target.
+  const [dragSrc, setDragSrc] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+
+  // A drop is valid unless it targets the item itself, one of its descendants,
+  // or the folder it already lives in (a no-op).
+  const canDrop = (src: string | null, targetDir: string): boolean => {
+    if (!src) return false;
+    if (targetDir === src || targetDir.startsWith(`${src}/`)) return false;
+    const slash = src.lastIndexOf("/");
+    const parent = slash === -1 ? "" : src.slice(0, slash);
+    return parent !== targetDir;
+  };
+
+  const handleDrop = (targetDir: string): void => {
+    const src = dragSrc;
+    setDragSrc(null);
+    setDropTarget(null);
+    if (canDrop(src, targetDir) && src) void onMove(src, targetDir).catch(() => {});
+  };
+
+  // Drag handlers shared by file and folder rows. Renaming inputs are excluded
+  // so text selection inside InlineTitle isn't hijacked by row dragging.
+  const dragProps = (path: string) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      if ((e.target as HTMLElement).tagName === "INPUT") {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", path);
+      setDragSrc(path);
+    },
+    onDragEnd: () => {
+      setDragSrc(null);
+      setDropTarget(null);
+    },
+  });
+
+  // Drop handlers for a folder ("" = the root container).
+  const dropProps = (targetDir: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!canDrop(dragSrc, targetDir)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      setDropTarget(targetDir);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleDrop(targetDir);
+    },
+  });
 
   // Collapse all folders once when the area's files first load. FileTree is
   // keyed by area id (it remounts on area switch), so this runs per area.
@@ -1079,8 +1241,35 @@ function FileTree({
     );
   }, [files]);
 
+  // Expand a folder the moment it becomes the create target so its inline
+  // input row is visible.
+  useEffect(() => {
+    const parent = pendingCreate?.parent;
+    if (!parent) return;
+    setCollapsed((prev) => {
+      if (!prev.has(parent)) return prev;
+      const next = new Set(prev);
+      next.delete(parent);
+      return next;
+    });
+  }, [pendingCreate]);
+
+  const renderCreateRow = (parent: string, depth: number): ReactNode =>
+    pendingCreate && pendingCreate.parent === parent ? (
+      <CreateRow
+        kind={pendingCreate.kind}
+        depth={depth}
+        onSubmit={onSubmitCreate}
+        onCancel={onCancelCreate}
+      />
+    ) : null;
+
   if (files.length === 0) {
-    return <p className="px-3 py-2 text-xs text-muted">No files.</p>;
+    return (
+      <div>
+        {renderCreateRow("", 0) ?? <p className="px-3 py-2 text-xs text-muted">No files.</p>}
+      </div>
+    );
   }
 
   function toggle(path: string): void {
@@ -1098,12 +1287,17 @@ function FileTree({
       const indent = { paddingLeft: `${depth * 12 + 8}px` };
       if (node.type === "dir") {
         const isCollapsed = collapsed.has(node.path);
+        const isDropHere = dropTarget === node.path;
         return (
           <div key={node.path}>
-            <button
-              className="w-full flex items-center gap-1 py-1 pr-2 text-sm text-left hover:bg-surface text-muted"
+            <div
+              className={`group flex items-center gap-1 pr-1 text-sm text-muted cursor-pointer ${
+                isDropHere ? "bg-accent/15 ring-1 ring-inset ring-accent/50" : "hover:bg-surface"
+              }`}
               style={indent}
               onClick={() => toggle(node.path)}
+              {...dragProps(node.path)}
+              {...dropProps(node.path)}
             >
               {isCollapsed ? (
                 <ChevronRight size={13} className="shrink-0" />
@@ -1115,9 +1309,42 @@ function FileTree({
               ) : (
                 <FolderOpen size={14} className="shrink-0" />
               )}
-              <span className="truncate">{node.name}</span>
-            </button>
-            {!isCollapsed && renderNodes(tn.children, depth + 1)}
+              <InlineTitle
+                title={node.name}
+                onRename={(name) => onRename(node.path, name)}
+                className="flex-1 truncate py-1"
+              />
+              <div className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <button
+                  className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
+                  aria-label={`New file in ${node.name}`}
+                  data-tooltip="New file here"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartCreate("file", node.path);
+                  }}
+                >
+                  <FilePlus2 size={13} />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
+                  aria-label={`New folder in ${node.name}`}
+                  data-tooltip="New folder here"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartCreate("folder", node.path);
+                  }}
+                >
+                  <FolderPlus size={13} />
+                </button>
+              </div>
+            </div>
+            {!isCollapsed && (
+              <>
+                {renderCreateRow(node.path, depth + 1)}
+                {renderNodes(tn.children, depth + 1)}
+              </>
+            )}
           </div>
         );
       }
@@ -1126,31 +1353,43 @@ function FileTree({
       return (
         <div
           key={node.path}
-          className={`flex items-center gap-1 pr-2 ${
+          className={`group flex items-center gap-1.5 pr-2 py-1 text-sm cursor-pointer ${
             active ? "bg-surface" : "hover:bg-surface/60"
           }`}
           style={indent}
+          onClick={() => onOpen(node.path)}
+          {...dragProps(node.path)}
         >
-          <button
-            className="flex-1 flex items-center gap-1.5 py-1 text-sm text-left min-w-0"
-            onClick={() => onOpen(node.path)}
-          >
-            <FileText size={14} className="shrink-0 text-muted" />
-            <span className="truncate">{node.name}</span>
-            {code && (
-              <span
-                className="ml-auto text-[10px] font-mono text-amber-500 shrink-0"
-                title={`git: ${code.trim() || code}`}
-              >
-                {code.trim() === "??" ? "U" : code.trim() || "M"}
-              </span>
-            )}
-          </button>
+          <FileText size={14} className="shrink-0 text-muted" />
+          <InlineTitle
+            title={node.name}
+            onRename={(name) => onRename(node.path, name)}
+            className="flex-1 truncate"
+          />
+          {code && (
+            <span
+              className="text-[10px] font-mono text-amber-500 shrink-0"
+              title={`git: ${code.trim() || code}`}
+            >
+              {code.trim() === "??" ? "U" : code.trim() || "M"}
+            </span>
+          )}
         </div>
       );
     });
 
-  return <div>{renderNodes(tree, 0)}</div>;
+  // The whole tree is a root drop zone: dropping outside any folder moves the
+  // item to the workspace root. A subtle ring shows when root is the target.
+  const rootActive = dragSrc !== null && dropTarget === "" && canDrop(dragSrc, "");
+  return (
+    <div
+      className={`min-h-full ${rootActive ? "ring-1 ring-inset ring-accent/40" : ""}`}
+      {...dropProps("")}
+    >
+      {renderCreateRow("", 0)}
+      {renderNodes(tree, 0)}
+    </div>
+  );
 }
 
 // --------------------------------------------------------------------------
@@ -1171,6 +1410,8 @@ type WorkspaceChatItem =
       pending: boolean;
     };
 
+const CHAT_COLLAPSE_KEY = "precursor:workspace:chat-collapsed";
+
 function WorkspaceChat({
   area,
   activePath,
@@ -1187,6 +1428,16 @@ function WorkspaceChat({
   const [pending, setPending] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Collapse the assistant into a thin rail (persisted), mirroring the
+  // conversation-stats aside on topics/chats. Kept mounted so chat state and
+  // any in-flight stream survive a collapse.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(CHAT_COLLAPSE_KEY) === "1";
+  });
+  useEffect(() => {
+    window.localStorage.setItem(CHAT_COLLAPSE_KEY, collapsed ? "1" : "0");
+  }, [collapsed]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -1409,6 +1660,24 @@ function WorkspaceChat({
     }
   }
 
+  if (collapsed) {
+    return (
+      <aside className="relative shrink-0 border-l border-border flex flex-col items-center py-2 px-1 w-9">
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          className="p-1.5 rounded hover:bg-surface text-muted"
+          data-tooltip="Show assistant"
+          aria-label="Show assistant"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <MessageSquare size={16} className="mt-2 text-muted" />
+        {streaming && <Loader2 size={14} className="mt-2 animate-spin text-muted" />}
+      </aside>
+    );
+  }
+
   return (
     <aside
       className="relative shrink-0 border-l border-border flex flex-col min-h-0"
@@ -1419,14 +1688,25 @@ function WorkspaceChat({
         <span className="text-xs font-medium text-muted uppercase tracking-wide">
           Assistant
         </span>
-        {messages.length > 0 && (
+        <div className="flex items-center gap-2">
+          {messages.length > 0 && (
+            <button
+              className="text-xs text-muted hover:text-text"
+              onClick={() => setMessages([])}
+            >
+              Clear
+            </button>
+          )}
           <button
-            className="text-xs text-muted hover:text-text"
-            onClick={() => setMessages([])}
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="p-1 rounded hover:bg-surface text-muted"
+            data-tooltip="Hide assistant"
+            aria-label="Hide assistant"
           >
-            Clear
+            <ChevronRight size={16} />
           </button>
-        )}
+        </div>
       </div>
       <div ref={scrollRef} className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 && !streaming && (
@@ -1505,16 +1785,71 @@ function ChatTurn({
   content: string;
   pending?: boolean;
 }) {
+  const [hover, setHover] = useState(false);
+  const [copied, setCopied] = useState<null | "text" | "md">(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Copy the rendered text (markdown stripped) or the raw markdown source —
+  // mirrors the main chat's MessageBubble actions.
+  const copyTo = async (kind: "text" | "md") => {
+    const value =
+      kind === "md" ? content : (contentRef.current?.textContent ?? content).trim();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1200);
+    } catch {
+      // Clipboard may be unavailable (e.g. insecure context); fail silently.
+    }
+  };
+
+  const showActions = role === "assistant" && !pending && !!content;
+
   return (
     <div
-      className={`rounded-lg px-3 py-2 text-sm ${
-        role === "user"
-          ? "bg-accent/10 ml-6"
-          : "bg-surface mr-6"
+      className={`group relative rounded-lg px-3 py-2 text-sm ${
+        role === "user" ? "bg-accent/10 ml-6" : "bg-surface mr-6"
       }`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
-      <Markdown className="leading-relaxed">{content || "\u200B"}</Markdown>
+      <div ref={contentRef}>
+        <Markdown className="leading-relaxed">{content || "\u200B"}</Markdown>
+      </div>
       {pending && <span className="text-[11px] text-muted italic">streaming…</span>}
+      {showActions && (
+        <div
+          style={{ opacity: hover ? 1 : 0, transition: "opacity 120ms ease-out" }}
+          className="absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm"
+        >
+          <button
+            type="button"
+            onClick={() => copyTo("text")}
+            className="p-1 rounded-full text-muted hover:text-accent"
+            aria-label="Copy message"
+            data-tooltip="Copy message"
+          >
+            {copied === "text" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Copy size={12} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => copyTo("md")}
+            className="p-1 rounded-full text-muted hover:text-accent"
+            aria-label="Copy raw markdown"
+            data-tooltip="Copy raw markdown"
+          >
+            {copied === "md" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Code2 size={12} />
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
