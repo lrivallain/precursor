@@ -84,9 +84,7 @@ async def list_messages(
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
     base = (
-        select(Message)
-        .where(Message.chat_id == chat_id)
-        .options(selectinload(Message.attachments))
+        select(Message).where(Message.chat_id == chat_id).options(selectinload(Message.attachments))
     )
     if limit is None and before_id is None:
         result = await session.execute(base.order_by(Message.created_at, Message.id))
