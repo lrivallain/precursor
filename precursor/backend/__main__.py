@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import TypedDict
 
 import uvicorn
 
@@ -34,6 +35,11 @@ from precursor.backend.config import get_settings
 from precursor.backend.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
+
+
+class _PopenProcessGroupKwargs(TypedDict, total=False):
+    creationflags: int
+    start_new_session: bool
 
 
 def _repo_root() -> Path:
@@ -251,7 +257,7 @@ def _inject_dev_cors(frontend_port: int) -> None:
     os.environ["PRECURSOR_CORS_ORIGINS"] = ",".join(merged)
 
 
-def _new_process_group_kwargs() -> dict[str, object]:
+def _new_process_group_kwargs() -> _PopenProcessGroupKwargs:
     """``Popen`` kwargs that isolate a child in its own process group/session.
 
     The Vite dev server is launched via ``npm run dev``, which spawns the real
@@ -260,7 +266,7 @@ def _new_process_group_kwargs() -> dict[str, object]:
     terminal's Ctrl-C so Python's teardown is the single authority on its
     lifecycle (no race between the terminal SIGINT and our own terminate).
     """
-    if os.name == "nt":
+    if sys.platform == "win32":
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
@@ -288,7 +294,7 @@ def _terminate_process_tree(proc: subprocess.Popen[bytes], *, timeout: float = 1
         except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(pgid, signal.SIGKILL)
-    else:  # pragma: no cover - Windows-specific path
+    elif sys.platform == "win32":  # pragma: no cover - Windows-specific path
         with contextlib.suppress(OSError):
             proc.send_signal(signal.CTRL_BREAK_EVENT)
         try:
@@ -296,6 +302,8 @@ def _terminate_process_tree(proc: subprocess.Popen[bytes], *, timeout: float = 1
             return
         except subprocess.TimeoutExpired:
             proc.kill()
+    else:
+        proc.terminate()
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=timeout)
 
