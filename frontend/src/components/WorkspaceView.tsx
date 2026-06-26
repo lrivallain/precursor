@@ -43,6 +43,7 @@ import { useResizableWidth } from "../lib/useResizableWidth";
 import { useConfirm } from "./ConfirmDialog";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
+import { InlineTitle } from "./InlineTitle";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { SuggestedReplies } from "./SuggestedReplies";
@@ -1133,49 +1134,6 @@ function CreateRow({
   );
 }
 
-// Inline rename editor: an input pre-filled with the current name. On files the
-// basename (sans extension) is pre-selected for quick edits. Enter confirms,
-// Escape or blur abandons.
-function RenameInput({
-  initial,
-  onSubmit,
-  onCancel,
-}: {
-  initial: string;
-  onSubmit: (name: string) => void;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(initial);
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.focus();
-    const dot = initial.lastIndexOf(".");
-    if (dot > 0) el.setSelectionRange(0, dot);
-    else el.select();
-  }, [initial]);
-  return (
-    <input
-      ref={ref}
-      spellCheck={false}
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onSubmit(value);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      onBlur={onCancel}
-      className="flex-1 min-w-0 bg-bg border border-accent rounded px-1.5 py-0.5 text-sm font-mono outline-none"
-    />
-  );
-}
-
 function FileTree({
   files,
   activePath,
@@ -1199,18 +1157,6 @@ function FileTree({
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [renamingPath, setRenamingPath] = useState<string | null>(null);
-
-  // Commit an inline rename; keep the editor open if the server rejects it
-  // (e.g. a name conflict surfaces in the panel banner).
-  const commitRename = async (path: string, name: string): Promise<void> => {
-    try {
-      await onRename(path, name);
-      setRenamingPath(null);
-    } catch {
-      /* leave the rename input open so the user can correct the name */
-    }
-  };
 
   // Collapse all folders once when the area's files first load. FileTree is
   // keyed by area id (it remounts on area switch), so this runs per area.
@@ -1269,70 +1215,52 @@ function FileTree({
       const indent = { paddingLeft: `${depth * 12 + 8}px` };
       if (node.type === "dir") {
         const isCollapsed = collapsed.has(node.path);
-        const isRenaming = renamingPath === node.path;
         return (
           <div key={node.path}>
-            <div className="group flex items-center pr-1 hover:bg-surface" style={indent}>
-              {isRenaming ? (
-                <div className="flex flex-1 items-center gap-1 py-1 min-w-0">
-                  {isCollapsed ? (
-                    <ChevronRight size={13} className="shrink-0 text-muted" />
-                  ) : (
-                    <ChevronDown size={13} className="shrink-0 text-muted" />
-                  )}
-                  <Folder size={14} className="shrink-0 text-muted" />
-                  <RenameInput
-                    initial={node.name}
-                    onSubmit={(name) => void commitRename(node.path, name)}
-                    onCancel={() => setRenamingPath(null)}
-                  />
-                </div>
+            <div
+              className="group flex items-center gap-1 pr-1 text-sm text-muted hover:bg-surface cursor-pointer"
+              style={indent}
+              onClick={() => toggle(node.path)}
+            >
+              {isCollapsed ? (
+                <ChevronRight size={13} className="shrink-0" />
               ) : (
-                <>
-                  <button
-                    className="flex-1 flex items-center gap-1 py-1 text-sm text-left text-muted min-w-0"
-                    onClick={() => toggle(node.path)}
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight size={13} className="shrink-0" />
-                    ) : (
-                      <ChevronDown size={13} className="shrink-0" />
-                    )}
-                    {isCollapsed ? (
-                      <Folder size={14} className="shrink-0" />
-                    ) : (
-                      <FolderOpen size={14} className="shrink-0" />
-                    )}
-                    <span className="truncate">{node.name}</span>
-                  </button>
-                  <div className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                    <button
-                      className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
-                      aria-label={`New file in ${node.name}`}
-                      data-tooltip="New file here"
-                      onClick={() => onStartCreate("file", node.path)}
-                    >
-                      <FilePlus2 size={13} />
-                    </button>
-                    <button
-                      className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
-                      aria-label={`New folder in ${node.name}`}
-                      data-tooltip="New folder here"
-                      onClick={() => onStartCreate("folder", node.path)}
-                    >
-                      <FolderPlus size={13} />
-                    </button>
-                    <button
-                      className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
-                      aria-label={`Rename ${node.name}`}
-                      data-tooltip="Rename"
-                      onClick={() => setRenamingPath(node.path)}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                  </div>
-                </>
+                <ChevronDown size={13} className="shrink-0" />
               )}
+              {isCollapsed ? (
+                <Folder size={14} className="shrink-0" />
+              ) : (
+                <FolderOpen size={14} className="shrink-0" />
+              )}
+              <InlineTitle
+                title={node.name}
+                onRename={(name) => onRename(node.path, name)}
+                className="flex-1 truncate py-1"
+              />
+              <div className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <button
+                  className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
+                  aria-label={`New file in ${node.name}`}
+                  data-tooltip="New file here"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartCreate("file", node.path);
+                  }}
+                >
+                  <FilePlus2 size={13} />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
+                  aria-label={`New folder in ${node.name}`}
+                  data-tooltip="New folder here"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartCreate("folder", node.path);
+                  }}
+                >
+                  <FolderPlus size={13} />
+                </button>
+              </div>
             </div>
             {!isCollapsed && (
               <>
@@ -1345,50 +1273,28 @@ function FileTree({
       }
       const code = statusByPath.get(node.path);
       const active = activePath === node.path;
-      const isRenaming = renamingPath === node.path;
       return (
         <div
           key={node.path}
-          className={`group flex items-center gap-1 pr-1 ${
+          className={`group flex items-center gap-1.5 pr-2 py-1 text-sm cursor-pointer ${
             active ? "bg-surface" : "hover:bg-surface/60"
           }`}
           style={indent}
+          onClick={() => onOpen(node.path)}
         >
-          {isRenaming ? (
-            <div className="flex flex-1 items-center gap-1.5 py-1 min-w-0">
-              <FileText size={14} className="shrink-0 text-muted" />
-              <RenameInput
-                initial={node.name}
-                onSubmit={(name) => void commitRename(node.path, name)}
-                onCancel={() => setRenamingPath(null)}
-              />
-            </div>
-          ) : (
-            <>
-              <button
-                className="flex-1 flex items-center gap-1.5 py-1 text-sm text-left min-w-0"
-                onClick={() => onOpen(node.path)}
-              >
-                <FileText size={14} className="shrink-0 text-muted" />
-                <span className="truncate">{node.name}</span>
-                {code && (
-                  <span
-                    className="ml-auto text-[10px] font-mono text-amber-500 shrink-0"
-                    title={`git: ${code.trim() || code}`}
-                  >
-                    {code.trim() === "??" ? "U" : code.trim() || "M"}
-                  </span>
-                )}
-              </button>
-              <button
-                className="shrink-0 p-0.5 rounded hover:bg-bg text-muted hover:text-text opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
-                aria-label={`Rename ${node.name}`}
-                data-tooltip="Rename"
-                onClick={() => setRenamingPath(node.path)}
-              >
-                <Pencil size={13} />
-              </button>
-            </>
+          <FileText size={14} className="shrink-0 text-muted" />
+          <InlineTitle
+            title={node.name}
+            onRename={(name) => onRename(node.path, name)}
+            className="flex-1 truncate"
+          />
+          {code && (
+            <span
+              className="text-[10px] font-mono text-amber-500 shrink-0"
+              title={`git: ${code.trim() || code}`}
+            >
+              {code.trim() === "??" ? "U" : code.trim() || "M"}
+            </span>
           )}
         </div>
       );
