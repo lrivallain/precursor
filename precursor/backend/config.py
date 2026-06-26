@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "info"
+    # Seconds uvicorn waits for in-flight requests (e.g. long-lived SSE chat
+    # streams) to finish on shutdown before force-closing them. Kept small so
+    # Ctrl-C releases the listening port promptly instead of hanging on an open
+    # stream and leaving the port unusable for a TIME_WAIT window.
+    shutdown_grace_seconds: int = 3
     # Comma-separated string in env (pydantic-settings JSON-decodes list fields
     # too eagerly to accept a bare value). Parsed via `cors_origins` below.
     cors_origins_raw: str = Field(default="", validation_alias="PRECURSOR_CORS_ORIGINS")

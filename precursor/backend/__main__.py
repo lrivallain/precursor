@@ -6,9 +6,11 @@ Two modes:
   pre-built SPA on one port. No Node.js runtime required; this is what runs
   from an installed wheel (e.g. ``uvx precursor``).
 * ``precursor --dev`` — development stack: uvicorn with ``--reload`` plus the
-  Vite dev server (HMR) on the API port + 1, which proxies ``/api`` back to
-  uvicorn. Both processes are managed together and shut down on Ctrl-C. Requires
-  a source checkout (``uv run precursor --dev``).
+  Vite dev server (HMR), which proxies ``/api`` back to uvicorn. ``--port`` is
+  the URL you open (the Vite UI), exactly like normal mode; the backend runs on
+  a separate, normally hidden port (``--api-port``, default ``--port`` + 1).
+  Both processes are managed together and shut down on Ctrl-C. Requires a
+  source checkout (``uv run precursor --dev``).
 """
 
 from __future__ import annotations
@@ -228,6 +230,7 @@ def _run_prod(
             log_level=log_level,
             log_config=configure_logging(log_level),
             reload=False,
+            timeout_graceful_shutdown=get_settings().shutdown_grace_seconds,
         )
     finally:
         stop.set()
@@ -251,20 +254,19 @@ def _run_dev(
     port: int,
     log_level: str,
     *,
-    frontend_port: int | None,
+    api_port: int | None,
     frontend: bool,
     strict_port: bool,
     open_browser: bool,
 ) -> None:
     log_config = configure_logging(log_level)
     connect_host = _loopback(host)
-    backend_port = _resolve_port(host, port, strict=strict_port)
 
     vite: subprocess.Popen[bytes] | None = None
     vite_lock = threading.Lock()
     stop = threading.Event()
     threads: list[threading.Thread] = []
-    resolved_frontend: int | None = None
+    ui_port: int | None = None
 
     frontend_dir = _repo_root() / "frontend"
     if frontend and not (frontend_dir / "package.json").is_file():
@@ -275,16 +277,18 @@ def _run_dev(
         frontend = False
 
     if frontend:
-        # Ensure frontend is available for Vite to run
-        _ensure_frontend_built()
-        # One knob: the Vite port follows the (resolved) backend port unless the
-        # user pinned --frontend-port. Resolve it too so parallel instances and
-        # a busy 5173/legacy port never collide.
-        preferred_fe = backend_port + 1 if frontend_port is None else frontend_port
-        resolved_frontend = _resolve_port(
-            host, preferred_fe, strict=strict_port, avoid=frozenset({backend_port})
+        # `--port` is the URL you open in the browser — same as prod. In --dev
+        # that URL is the Vite dev server (it proxies /api to the backend), so
+        # the UI takes `--port` and the backend moves to a separate, normally
+        # hidden port (`--api-port`, default the UI port + 1). Both are resolved
+        # so parallel instances and a busy port never collide.
+        ui_port = _resolve_port(host, port, strict=strict_port)
+        preferred_api = api_port if api_port is not None else ui_port + 1
+        backend_port = _resolve_port(
+            host, preferred_api, strict=strict_port, avoid=frozenset({ui_port})
         )
-        _inject_dev_cors(resolved_frontend)
+        _ensure_frontend_built()
+        _inject_dev_cors(ui_port)
 
         def _start_vite_when_ready() -> None:
             nonlocal vite
@@ -294,11 +298,11 @@ def _run_dev(
             if stop.is_set():
                 return
             if ready:
-                logger.info("Backend ready — starting Vite dev server on :%s", resolved_frontend)
+                logger.info("Backend ready — starting Vite dev server on :%s", ui_port)
             else:
                 logger.warning(
                     "Backend not listening yet; starting Vite dev server on :%s anyway.",
-                    resolved_frontend,
+                    ui_port,
                 )
             with vite_lock:
                 if stop.is_set():
@@ -312,7 +316,7 @@ def _run_dev(
                         "dev",
                         "--",
                         "--port",
-                        str(resolved_frontend),
+                        str(ui_port),
                     ],
                     # Let vite.config.ts point its /api proxy at the real backend
                     # port/host (so --port is honoured end-to-end).
@@ -327,10 +331,11 @@ def _run_dev(
         vite_thread.start()
         threads.append(vite_thread)
     else:
-        # No frontend dev server, ensure frontend is built for backend to serve
+        # Backend only: `--port` is the backend itself, exactly like prod.
+        backend_port = _resolve_port(host, port, strict=strict_port)
         _ensure_frontend_built()
 
-    ready_port = resolved_frontend if (frontend and resolved_frontend is not None) else backend_port
+    ready_port = ui_port if (frontend and ui_port is not None) else backend_port
     # Probe/advertise via "localhost" for the UI so the readiness check matches
     # Vite's IPv6 (::1) bind; the backend-only case stays on the loopback addr.
     ui_host = "localhost" if frontend else connect_host
@@ -362,6 +367,7 @@ def _run_dev(
             log_level=log_level,
             log_config=log_config,
             reload=True,
+            timeout_graceful_shutdown=get_settings().shutdown_grace_seconds,
         )
     finally:
         _terminate()
@@ -388,15 +394,19 @@ def main() -> None:
         type=int,
         default=cfg.port,
         help=(
-            f"Server/API port (default: {cfg.port}; 0 = pick any free port). A busy "
-            "port auto-bumps to the next free one unless --strict-port is given."
+            f"Port to open in your browser (default: {cfg.port}; 0 = pick any free "
+            "port). Serves the whole app in normal mode, or the dev UI in --dev. A "
+            "busy port auto-bumps to the next free one unless --strict-port is given."
         ),
     )
     parser.add_argument(
-        "--frontend-port",
+        "--api-port",
         type=int,
         default=None,
-        help="Vite dev server port in --dev mode (default: the API port + 1).",
+        help=(
+            "In --dev mode, the backend/API port the Vite UI proxies to "
+            "(default: the --port value + 1). You rarely need to set this."
+        ),
     )
     parser.add_argument(
         "--strict-port",
@@ -422,7 +432,7 @@ def main() -> None:
             args.host,
             args.port,
             args.log_level,
-            frontend_port=args.frontend_port,
+            api_port=args.api_port,
             frontend=not args.no_frontend,
             strict_port=args.strict_port,
             open_browser=args.open_browser,
