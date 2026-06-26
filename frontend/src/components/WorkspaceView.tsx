@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Check,
   ClipboardCheck,
@@ -18,6 +19,7 @@ import {
   FolderPlus,
   GitBranch,
   Loader2,
+  MessageSquare,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -1408,6 +1410,8 @@ type WorkspaceChatItem =
       pending: boolean;
     };
 
+const CHAT_COLLAPSE_KEY = "precursor:workspace:chat-collapsed";
+
 function WorkspaceChat({
   area,
   activePath,
@@ -1424,6 +1428,16 @@ function WorkspaceChat({
   const [pending, setPending] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Collapse the assistant into a thin rail (persisted), mirroring the
+  // conversation-stats aside on topics/chats. Kept mounted so chat state and
+  // any in-flight stream survive a collapse.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(CHAT_COLLAPSE_KEY) === "1";
+  });
+  useEffect(() => {
+    window.localStorage.setItem(CHAT_COLLAPSE_KEY, collapsed ? "1" : "0");
+  }, [collapsed]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -1646,6 +1660,24 @@ function WorkspaceChat({
     }
   }
 
+  if (collapsed) {
+    return (
+      <aside className="relative shrink-0 border-l border-border flex flex-col items-center py-2 px-1 w-9">
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          className="p-1.5 rounded hover:bg-surface text-muted"
+          data-tooltip="Show assistant"
+          aria-label="Show assistant"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <MessageSquare size={16} className="mt-2 text-muted" />
+        {streaming && <Loader2 size={14} className="mt-2 animate-spin text-muted" />}
+      </aside>
+    );
+  }
+
   return (
     <aside
       className="relative shrink-0 border-l border-border flex flex-col min-h-0"
@@ -1656,14 +1688,25 @@ function WorkspaceChat({
         <span className="text-xs font-medium text-muted uppercase tracking-wide">
           Assistant
         </span>
-        {messages.length > 0 && (
+        <div className="flex items-center gap-2">
+          {messages.length > 0 && (
+            <button
+              className="text-xs text-muted hover:text-text"
+              onClick={() => setMessages([])}
+            >
+              Clear
+            </button>
+          )}
           <button
-            className="text-xs text-muted hover:text-text"
-            onClick={() => setMessages([])}
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="p-1 rounded hover:bg-surface text-muted"
+            data-tooltip="Hide assistant"
+            aria-label="Hide assistant"
           >
-            Clear
+            <ChevronRight size={16} />
           </button>
-        )}
+        </div>
       </div>
       <div ref={scrollRef} className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 && !streaming && (
