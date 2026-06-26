@@ -18,6 +18,7 @@ import {
   BarChart3,
   Bot,
   LogIn,
+  RefreshCw,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -389,6 +390,27 @@ export function SettingsPanel({ onClose }: Props) {
         prev.map((s) =>
           s.name === name
             ? { ...s, preview: current, state: "error", error: (err as Error).message }
+            : s,
+        ),
+      );
+    }
+  }
+
+  async function reloadMcpTools(name: string): Promise<void> {
+    // Re-probe an enabled server to refresh its tool catalogue in place.
+    setMcp((prev) =>
+      prev.map((s) =>
+        s.name === name ? { ...s, state: "connecting", error: null } : s,
+      ),
+    );
+    try {
+      const next = await api.refreshMcpServer(name);
+      setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
+    } catch (err) {
+      setMcp((prev) =>
+        prev.map((s) =>
+          s.name === name
+            ? { ...s, state: "error", error: (err as Error).message }
             : s,
         ),
       );
@@ -951,6 +973,11 @@ export function SettingsPanel({ onClose }: Props) {
                         key={s.name}
                         server={s}
                         onToggle={() => void toggleMcp(s.name, s.enabled)}
+                        onReload={
+                          s.enabled
+                            ? () => void reloadMcpTools(s.name)
+                            : undefined
+                        }
                         onTogglePreview={
                           s.preview != null
                             ? () => void togglePreview(s.name, s.preview ?? false)
@@ -1435,6 +1462,7 @@ function McpExposeCard({
 function McpServerCard({
   server,
   onToggle,
+  onReload,
   onTogglePreview,
   onReauthenticate,
   onEdit,
@@ -1442,6 +1470,7 @@ function McpServerCard({
 }: {
   server: MCPServerStatus;
   onToggle: () => void;
+  onReload?: () => void;
   onTogglePreview?: () => void;
   onReauthenticate?: () => void;
   onEdit?: () => void;
@@ -1522,6 +1551,18 @@ function McpServerCard({
             {server.state === "needs_auth" ? "Sign in" : "Re-authenticate"}
           </button>
         )}
+        {onReload && (
+          <button
+            type="button"
+            onClick={onReload}
+            disabled={server.state === "connecting"}
+            data-tooltip="Reload this server's tool catalogue"
+            aria-label="Reload tools"
+            className="p-1 rounded hover:bg-bg text-muted hover:text-text disabled:opacity-50"
+          >
+            <RefreshCw size={14} />
+          </button>
+        )}
         {!server.builtin && onEdit && (
           <button
             type="button"
@@ -1573,7 +1614,7 @@ function McpServerCard({
               {server.state === "needs_auth"
                 ? "WorkIQ sign-in expired — select Sign in to re-authenticate."
                 : server.enabled
-                  ? "Toggle off and on again to refresh the tool catalogue."
+                  ? "Use the reload button to refresh the tool catalogue."
                   : "Enable the server to discover its tools."}
             </div>
           ) : (
