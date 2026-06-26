@@ -489,14 +489,19 @@ export const api = {
   listSkills: () => request<Skill[]>(`/api/skills`),
   createSkill: (data: SkillCreate) =>
     request<Skill>(`/api/skills`, { method: "POST", body: JSON.stringify(data) }),
-  updateSkill: (id: number, data: SkillUpdate) =>
-    request<Skill>(`/api/skills/${id}`, {
+  updateSkill: (name: string, data: SkillUpdate) =>
+    request<Skill>(`/api/skills/${encodeURIComponent(name)}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
-  deleteSkill: (id: number) =>
-    request<void>(`/api/skills/${id}`, { method: "DELETE" }),
-  skillExportUrl: (id: number) => `/api/skills/${id}/export`,
+  migrateSkill: (name: string) =>
+    request<Skill>(`/api/skills/${encodeURIComponent(name)}/migrate`, {
+      method: "POST",
+    }),
+  deleteSkill: (name: string) =>
+    request<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  skillExportUrl: (name: string) =>
+    `/api/skills/${encodeURIComponent(name)}/export`,
 
   // Roles (Assistant personas)
   listRoles: () => request<Role[]>(`/api/roles`),

@@ -88,7 +88,8 @@ Scheduled topics run the *same* turn logic off the request path via
 - `TopicSchedule` — recurrence config + run state for a scheduled topic
   (interval, weekday mask, time-of-day, timezone, lease/status).
 - `Workspace` — a git clone or a local directory the assistant can browse/edit.
-- `Skill` — a reusable prompt preset (`/name` invocation).
+- `Skill` — enablement record for a file-backed prompt preset (`/name`
+  invocation); content lives in a shared `SKILL.md` file (see Skills & memory).
 - `Memory` — long-term notes injected into the system prompt.
 - `Attachment` — image blobs bound to messages (vision content-parts).
 - `MCPServer` — user-defined external MCP tool servers (transport, headers).
@@ -230,8 +231,18 @@ the server preflights Docker availability against the effective jail setting.
 
 ## Skills & memory
 
-- **Skills** (`Skill`, `routers/skills.py`) — reusable prompt presets invoked as
-  `/name` in chat; the SPA expands them inline.
+- **Skills** (`Skill`, `routers/skills.py`, `services/skills.py`) — reusable
+  prompt presets invoked as `/name` in chat; the SPA expands them inline. Content
+  is stored as shared `<copilot_home>/skills/<name>/SKILL.md` files (YAML
+  frontmatter `name`/`description` + markdown body = instructions), the same
+  format the GitHub Copilot CLI uses, so skills are interoperable across tools.
+  The skills dir is resolved like the CLI's home (`COPILOT_HOME` →
+  `XDG_CONFIG_HOME/copilot` → `~/.copilot`), with a `PRECURSOR_SKILLS_DIR`
+  override. The `skills` table is reduced to an enablement record: a discovered
+  skill is disabled until opted in, and if its file is renamed or deleted the
+  enablement row is dropped. Skills created before this model still live in the
+  DB ("legacy"); they keep working and expose a **Migrate** action that writes
+  the `SKILL.md` and keeps the row as an enablement record.
 - **Memory** (`Memory`, `routers/memories.py`, `services/memories.py`) —
   long-term notes injected into the system prompt of topic chats, flat chats, and
   agent sessions so context persists across conversations. Editable from Settings,

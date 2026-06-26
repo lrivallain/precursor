@@ -1481,13 +1481,15 @@ function WorkspaceChat({
   const skills = useSkills();
   const wsCommands = useMemo<SlashCommand[]>(() => {
     const role = SLASH_COMMANDS.find((c) => c.name === "role");
-    const skillCommands: SlashCommand[] = skills.map((s) => ({
-      name: s.name,
-      label: `/${s.name}`,
-      description: s.description ?? "",
-      kind: "skill" as const,
-      argumentHint: "input",
-    }));
+    const skillCommands: SlashCommand[] = skills
+      .filter((s) => s.active)
+      .map((s) => ({
+        name: s.name,
+        label: `/${s.name}`,
+        description: s.description ?? "",
+        kind: "skill" as const,
+        argumentHint: "input",
+      }));
     return [...(role ? [role] : []), ...skillCommands];
   }, [skills]);
   const suggestions = useMemo<SlashCommand[]>(() => {
@@ -1515,12 +1517,15 @@ function WorkspaceChat({
     let promptOverride: string | undefined;
     const cmd = parseSlashCommand(
       content,
-      skillsStore.all().map((s) => ({
-        name: s.name,
-        label: `/${s.name}`,
-        description: s.description ?? "",
-        kind: "skill" as const,
-      })),
+      skillsStore
+        .all()
+        .filter((s) => s.active)
+        .map((s) => ({
+          name: s.name,
+          label: `/${s.name}`,
+          description: s.description ?? "",
+          kind: "skill" as const,
+        })),
     );
     if (cmd && cmd.name === "role") {
       const arg = cmd.argument.trim();

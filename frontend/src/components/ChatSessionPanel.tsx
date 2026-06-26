@@ -193,13 +193,15 @@ export function ChatSessionPanel({
   const skills = useSkills();
   const skillCommands = useMemo<SlashCommand[]>(
     () =>
-      skills.map((s) => ({
-        name: s.name,
-        label: `/${s.name}`,
-        description: s.description ?? "",
-        kind: "skill" as const,
-        argumentHint: "input",
-      })),
+      skills
+        .filter((s) => s.active)
+        .map((s) => ({
+          name: s.name,
+          label: `/${s.name}`,
+          description: s.description ?? "",
+          kind: "skill" as const,
+          argumentHint: "input",
+        })),
     [skills],
   );
   const suggestions = useMemo<SlashCommand[]>(

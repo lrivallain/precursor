@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { Download, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import {
+  Download,
+  Pencil,
+  Plus,
+  Sparkles,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { api } from "../lib/api";
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import type { Skill } from "../lib/types";
@@ -9,45 +19,70 @@ export function SkillsTab() {
   const confirmAction = useConfirm();
   const skills = useSkills();
   const [editing, setEditing] = useState<Skill | "new" | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyName, setBusyName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void skillsStore.ensureLoaded();
   }, []);
 
+  async function run(name: string, fn: () => Promise<unknown>): Promise<void> {
+    setBusyName(name);
+    setError(null);
+    try {
+      await fn();
+      await skillsStore.load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyName(null);
+    }
+  }
+
   async function handleDelete(skill: Skill): Promise<void> {
+    const message = skill.legacy
+      ? `Delete skill "/${skill.name}"?`
+      : `Delete skill "/${skill.name}"? This removes its SKILL.md file from the shared skills folder.`;
     if (
       !(await confirmAction({
-        message: `Delete skill "/${skill.name}"?`,
+        message,
         confirmLabel: "Delete skill",
         variant: "danger",
       }))
     )
       return;
-    setBusyId(skill.id);
-    setError(null);
-    try {
-      await api.deleteSkill(skill.id);
-      await skillsStore.load();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusyId(null);
-    }
+    await run(skill.name, () => api.deleteSkill(skill.name));
+  }
+
+  async function handleToggle(skill: Skill): Promise<void> {
+    await run(skill.name, () =>
+      api.updateSkill(skill.name, { enabled: !skill.enabled }),
+    );
+  }
+
+  async function handleMigrate(skill: Skill): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Migrate "/${skill.name}" to a shared SKILL.md file? It stays enabled and becomes editable by other tools.`,
+        confirmLabel: "Migrate",
+      }))
+    )
+      return;
+    await run(skill.name, () => api.migrateSkill(skill.name));
   }
 
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-muted">
-          Skills are reusable prompts invoked as <code>/name</code> in chat.
-          The instructions are prepended to your input before it's sent.
+          Skills are reusable prompts invoked as <code>/name</code> in chat,
+          stored as shared <code>SKILL.md</code> files. Enable one to expose it
+          as a slash command.
         </p>
         <button
           type="button"
           onClick={() => setEditing("new")}
-          className="flex items-center gap-1 px-2 py-1 rounded bg-accent text-white text-xs"
+          className="flex items-center gap-1 px-2 py-1 rounded bg-accent text-white text-xs shrink-0"
         >
           <Plus size={12} /> New
         </button>
@@ -69,12 +104,41 @@ export function SkillsTab() {
         <ul className="space-y-1.5">
           {skills.map((s) => (
             <li
-              key={s.id}
+              key={s.name}
               className="border border-border rounded px-2 py-1.5 flex items-center gap-2"
             >
+              {!s.legacy && (
+                <button
+                  type="button"
+                  onClick={() => void handleToggle(s)}
+                  disabled={busyName === s.name}
+                  className={`p-0.5 rounded disabled:opacity-40 ${
+                    s.enabled ? "text-accent" : "text-muted hover:text-text"
+                  }`}
+                  data-tooltip={s.enabled ? "Disable" : "Enable"}
+                  aria-label={s.enabled ? "Disable skill" : "Enable skill"}
+                >
+                  {s.enabled ? (
+                    <ToggleRight size={18} />
+                  ) : (
+                    <ToggleLeft size={18} />
+                  )}
+                </button>
+              )}
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-mono text-accent truncate">
-                  /{s.name}
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-sm font-mono truncate ${
+                      s.active ? "text-accent" : "text-muted"
+                    }`}
+                  >
+                    /{s.name}
+                  </span>
+                  {s.legacy && (
+                    <span className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0">
+                      legacy
+                    </span>
+                  )}
                 </div>
                 {s.description && (
                   <div className="text-[11px] text-muted truncate">
@@ -82,8 +146,20 @@ export function SkillsTab() {
                   </div>
                 )}
               </div>
+              {s.legacy && (
+                <button
+                  type="button"
+                  onClick={() => void handleMigrate(s)}
+                  disabled={busyName === s.name}
+                  className="flex items-center gap-1 px-1.5 py-1 rounded border border-border text-[11px] text-muted hover:text-text disabled:opacity-40"
+                  data-tooltip="Migrate to shared SKILL.md"
+                  aria-label="Migrate skill"
+                >
+                  <Upload size={12} /> Migrate
+                </button>
+              )}
               <a
-                href={api.skillExportUrl(s.id)}
+                href={api.skillExportUrl(s.name)}
                 data-tooltip="Export as .SKILL.md"
                 aria-label="Export as .SKILL.md"
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
@@ -102,7 +178,7 @@ export function SkillsTab() {
               <button
                 type="button"
                 onClick={() => void handleDelete(s)}
-                disabled={busyId === s.id}
+                disabled={busyName === s.name}
                 className="p-1 rounded hover:bg-surface text-muted hover:text-red-500 disabled:opacity-40"
                 data-tooltip="Delete"
                 aria-label="Delete skill"
@@ -146,7 +222,7 @@ function SkillEditor({ skill, onClose, onSaved }: EditorProps) {
     setError(null);
     try {
       if (skill) {
-        await api.updateSkill(skill.id, {
+        await api.updateSkill(skill.name, {
           name: name.trim(),
           description: description.trim() || null,
           instructions,

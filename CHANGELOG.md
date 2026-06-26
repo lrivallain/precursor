@@ -11,6 +11,20 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Skills are shared `SKILL.md` files**: skill content (name, description,
+  instructions) now lives in `<copilot_home>/skills/<name>/SKILL.md` files using
+  the GitHub Copilot CLI's format (YAML frontmatter + markdown body), so skills
+  are interoperable with the CLI and other tools. The skills folder is detected
+  the way the CLI resolves its home (`COPILOT_HOME` → `XDG_CONFIG_HOME/copilot`
+  → `~/.copilot`), with a `PRECURSOR_SKILLS_DIR` override. Skills authored by
+  other tools are **discovered** in the Skills tab and can be enabled per skill
+  (disabled by default); enable/disable, edit, export, and delete all operate on
+  the file. The `skills` table is reduced to an enablement record — if a file is
+  renamed or deleted, its enablement is dropped. Pre-existing Precursor skills
+  keep working as **legacy** entries and gain a **Migrate** button that writes
+  the `SKILL.md` and keeps the row as an enablement record. New
+  `services/skills.py` plus a name-keyed `/api/skills` (now with
+  `/{name}/migrate`).
 - **Memory management commands**: long-term memories can now be created, listed,
   and edited without leaving a conversation. New `/memory-store [kind] <content>`,
   `/memory-list`, and `/memory-update <id> [kind] <content>` slash commands work

@@ -42,7 +42,6 @@ from precursor.backend.models import (
     Memory,
     Message,
     MessageRole,
-    Skill,
     Topic,
     TopicSchedule,
 )
@@ -344,31 +343,37 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 @mcp.tool()
 async def list_skills() -> dict[str, Any]:
-    """List Precursor skills (id, name, description) — reusable prompt presets."""
+    """List Precursor skills (name, description, active) — reusable prompt presets."""
     if not await _section_enabled("skills"):
         return {"error": _GATED.format(section="skills")}
+    from precursor.backend.services import skills as skills_service
+
     async with SessionLocal() as session:
-        rows = (await session.execute(select(Skill).order_by(Skill.name))).scalars().all()
+        resolved = await skills_service.reconcile_and_list(session)
     return {
-        "skills": [{"id": s.id, "name": s.name, "description": s.description} for s in rows],
-        "count": len(rows),
+        "skills": [
+            {"name": s.name, "description": s.description, "active": s.active} for s in resolved
+        ],
+        "count": len(resolved),
     }
 
 
 @mcp.tool()
-async def get_skill(skill_id: int) -> dict[str, Any]:
-    """Get a skill including its full instructions text."""
+async def get_skill(name: str) -> dict[str, Any]:
+    """Get a skill by name, including its full instructions text."""
     if not await _section_enabled("skills"):
         return {"error": _GATED.format(section="skills")}
+    from precursor.backend.services import skills as skills_service
+
     async with SessionLocal() as session:
-        s = await session.get(Skill, skill_id)
+        s = await skills_service.get_resolved(session, name)
     if s is None:
-        return {"error": f"Skill {skill_id} not found"}
+        return {"error": f"Skill '{name}' not found"}
     return {
-        "id": s.id,
         "name": s.name,
         "description": s.description,
         "instructions": s.instructions,
+        "active": s.active,
     }
 
 

@@ -540,12 +540,15 @@ export interface Me {
 }
 
 export interface Skill {
-  id: number;
   name: string;
   description: string | null;
   instructions: string;
-  created_at: string;
-  updated_at: string;
+  /** File-backed skill is turned on (or legacy skill, always on until migrated). */
+  enabled: boolean;
+  /** Usable as a slash command right now. */
+  active: boolean;
+  /** Un-migrated DB skill — exposes a "Migrate" action. */
+  legacy: boolean;
 }
 
 export interface SkillCreate {
@@ -558,6 +561,7 @@ export interface SkillUpdate {
   name?: string;
   description?: string | null;
   instructions?: string;
+  enabled?: boolean;
 }
 
 // Assistant Role — a persistent persona (system prompt) attached to a
