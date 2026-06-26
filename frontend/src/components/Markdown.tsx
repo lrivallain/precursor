@@ -2,9 +2,10 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  useState,
   type ReactNode,
 } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -88,6 +89,43 @@ function svgFromPre(children: ReactNode): string | null {
 }
 
 /**
+ * A fenced code block with a hover "Copy" button so the model's ``` output is
+ * easy to lift to the clipboard. Positioned over the (scrollable) `<pre>` so it
+ * stays put while long lines scroll horizontally.
+ */
+function CodeBlock({ children, ...props }: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(flattenText(children).replace(/\n$/, ""));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Clipboard may be unavailable (e.g. insecure context); fail silently.
+    }
+  };
+  return (
+    <div className="md-code group relative">
+      <button
+        type="button"
+        onClick={copy}
+        className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded border border-border bg-bg/80 px-1.5 py-0.5 text-[11px] text-muted opacity-0 backdrop-blur transition-opacity hover:text-accent focus:opacity-100 group-hover:opacity-100"
+        aria-label="Copy code"
+        data-tooltip="Copy code"
+      >
+        {copied ? (
+          <Check size={12} className="text-emerald-500" />
+        ) : (
+          <Copy size={12} />
+        )}
+        {copied ? "Copied" : "Copy"}
+      </button>
+      <pre {...props}>{children}</pre>
+    </div>
+  );
+}
+
+/**
  * Single markdown renderer shared across the app so plugin config and styling
  * stay consistent. GFM (tables, task lists, strikethrough, autolinks) plus
  * syntax highlighting. Visual styling lives in the `.markdown` CSS class.
@@ -102,7 +140,7 @@ export function Markdown({ children, className }: MarkdownProps) {
           pre({ children: preChildren, ...props }) {
             const svg = svgFromPre(preChildren);
             if (svg) return <SvgBlock code={svg} />;
-            return <pre {...props}>{preChildren}</pre>;
+            return <CodeBlock {...props}>{preChildren}</CodeBlock>;
           },
           a({ href, children: linkChildren, ...props }) {
             const external = isExternalHref(href);
