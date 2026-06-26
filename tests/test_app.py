@@ -777,3 +777,42 @@ def test_log_config_unifies_format() -> None:
     # Plain mode emits no ANSI escapes; colour mode wraps the level.
     assert "\033[" not in line
     assert "\033[" in UTCFormatter(color=True).format(record)
+
+
+def test_chat_messages_cursor_pagination() -> None:
+    """Windowed message listing returns the most recent slice, chronological,
+    with before_id paging further back; no params returns the full transcript."""
+    app = create_app()
+    with TestClient(app) as client:
+        cid = client.post("/api/chats", json={"title": "Long chat"}).json()["id"]
+        for i in range(5):
+            r = client.post(f"/api/chats/{cid}/messages/notes/append", json={"text": f"m{i}"})
+            assert r.status_code == 200
+
+        # Full transcript, oldest first.
+        full = client.get(f"/api/chats/{cid}/messages").json()
+        assert [m["content"] for m in full] == [
+            "**Notes**\n\nm0",
+            "**Notes**\n\nm1",
+            "**Notes**\n\nm2",
+            "**Notes**\n\nm3",
+            "**Notes**\n\nm4",
+        ]
+
+        # Most recent page of 2, still oldest-first within the page.
+        page = client.get(f"/api/chats/{cid}/messages?limit=2").json()
+        assert [m["content"] for m in page] == ["**Notes**\n\nm3", "**Notes**\n\nm4"]
+
+        # Page further back using the oldest loaded id as the cursor.
+        older = client.get(f"/api/chats/{cid}/messages?limit=2&before_id={page[0]['id']}").json()
+        assert [m["content"] for m in older] == ["**Notes**\n\nm1", "**Notes**\n\nm2"]
+
+        # Reaching the start returns the remaining (fewer than limit) rows.
+        oldest = client.get(f"/api/chats/{cid}/messages?limit=2&before_id={older[0]['id']}").json()
+        assert [m["content"] for m in oldest] == ["**Notes**\n\nm0"]
+
+        # Past the start: empty, signalling no more history.
+        assert (
+            client.get(f"/api/chats/{cid}/messages?limit=2&before_id={oldest[0]['id']}").json()
+            == []
+        )

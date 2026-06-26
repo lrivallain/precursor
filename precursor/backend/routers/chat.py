@@ -71,22 +71,43 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/topics/{topic_id}/messages", tags=["chat"])
 _MAX_ATTACHMENT_CONTEXT_CHARS = 4_000
+# Upper bound on a single windowed page, so a hostile/buggy client can't ask the
+# server to materialise an unbounded slice at once.
+_MESSAGE_PAGE_MAX = 500
 
 
 @router.get("", response_model=list[MessageRead])
 async def list_messages(
     topic_id: int,
+    limit: int | None = None,
+    before_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[Message]:
+    """List a topic's transcript, optionally as a cursor-paginated window.
+
+    With no ``limit``/``before_id`` the full transcript is returned in
+    chronological order (the historical behaviour). When ``limit`` is given the
+    most recent ``limit`` messages are returned; pass the oldest loaded id as
+    ``before_id`` to page further back. Either way the slice comes back oldest
+    first so the client can append it in render order.
+    """
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    result = await session.execute(
+    base = (
         select(Message)
         .where(Message.topic_id == topic_id)
         .options(selectinload(Message.attachments))
-        .order_by(Message.created_at)
     )
-    return list(result.scalars().all())
+    if limit is None and before_id is None:
+        result = await session.execute(base.order_by(Message.created_at, Message.id))
+        return list(result.scalars().all())
+    if before_id is not None:
+        base = base.where(Message.id < before_id)
+    page = max(1, min(limit or _MESSAGE_PAGE_MAX, _MESSAGE_PAGE_MAX))
+    result = await session.execute(base.order_by(Message.id.desc()).limit(page))
+    rows = list(result.scalars().all())
+    rows.reverse()
+    return rows
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

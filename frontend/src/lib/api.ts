@@ -80,6 +80,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Options for windowed (cursor-paginated) message listing. */
+export interface MessageWindow {
+  /** Max rows to return — the server caps this. Omit for the full transcript. */
+  limit?: number;
+  /** Return rows older than this message id (the oldest one already loaded). */
+  beforeId?: number;
+}
+
+function messageWindowQuery(opts?: MessageWindow): string {
+  if (!opts) return "";
+  const params = new URLSearchParams();
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  if (opts.beforeId != null) params.set("before_id", String(opts.beforeId));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
 export const api = {
   // Topics
   listTopics: (q?: string) =>
@@ -123,8 +140,8 @@ export const api = {
     request<Topic>(`/api/chats/${id}/promote`, { method: "POST" }),
 
   // Chat messages (mirror topic message endpoints)
-  listChatMessages: (chatId: number) =>
-    request<Message[]>(`/api/chats/${chatId}/messages`),
+  listChatMessages: (chatId: number, opts?: MessageWindow) =>
+    request<Message[]>(`/api/chats/${chatId}/messages${messageWindowQuery(opts)}`),
   clearChatMessages: (chatId: number) =>
     request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
   deleteChatMessage: (chatId: number, messageId: number) =>
@@ -272,8 +289,8 @@ export const api = {
     request<AgentSession>(`/api/agents/${id}/unarchive`, { method: "POST" }),
 
   // Messages
-  listMessages: (topicId: number) =>
-    request<Message[]>(`/api/topics/${topicId}/messages`),
+  listMessages: (topicId: number, opts?: MessageWindow) =>
+    request<Message[]>(`/api/topics/${topicId}/messages${messageWindowQuery(opts)}`),
   clearMessages: (topicId: number) =>
     request<void>(`/api/topics/${topicId}/messages`, { method: "DELETE" }),
   deleteMessage: (topicId: number, messageId: number) =>

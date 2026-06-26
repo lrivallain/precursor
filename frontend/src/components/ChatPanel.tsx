@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowRightCircle } from "lucide-react";
 import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
 import { SuggestedReplies } from "./SuggestedReplies";
@@ -32,6 +32,7 @@ import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
+import { useChatScroll } from "../lib/useChatScroll";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { ResizeHandle } from "./ResizeHandle";
 import { useConfirm } from "./ConfirmDialog";
@@ -45,6 +46,10 @@ import type {
   Reminder,
   Topic,
 } from "../lib/types";
+
+// How many messages to load per page when windowing the transcript. The first
+// load fetches the most recent page; scrolling toward the top pulls older ones.
+const MESSAGE_PAGE_SIZE = 50;
 
 interface ChatPanelProps {
   topic: Topic;
@@ -197,7 +202,19 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   // Set while we handle a user-initiated Stop so the streaming→done effect
   // skips its own reload and lets stop() own the (post-persist) refresh.
   const stoppingRef = useRef(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // Windowed transcript loading: persistedRef mirrors `persisted` so the async
+  // loaders can read the current oldest id / count without re-subscribing.
+  const persistedRef = useRef<Message[]>([]);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const hasMoreOlderRef = useRef(false);
+  const loadingOlderRef = useRef(false);
+  useEffect(() => {
+    persistedRef.current = persisted;
+  }, [persisted]);
+  useEffect(() => {
+    hasMoreOlderRef.current = hasMoreOlder;
+  }, [hasMoreOlder]);
 
   // Subscribe to the global streaming store. The store owns the AbortController
   // and SSE handler so a stream survives switching topics.
@@ -228,6 +245,65 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     () => messages.filter((m) => !hiddenIds.has(m.id)),
     [messages, hiddenIds],
   );
+
+  // Reverse-infinite-scroll: fetch the next older page when the user scrolls
+  // toward the top, prepending it without disturbing the viewport. The hook's
+  // reach-top callback is stable and dispatches through a ref so it can call
+  // the latest `loadOlder` without re-subscribing the scroll listener.
+  const loadOlderRef = useRef<() => void>(() => {});
+  const onReachTop = useCallback(() => loadOlderRef.current(), []);
+  const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
+    [messages, pendingContent],
+    onReachTop,
+  );
+
+  const loadOlder = useCallback(async (): Promise<void> => {
+    if (loadingOlderRef.current || !hasMoreOlderRef.current) return;
+    const oldest = persistedRef.current[0];
+    if (!oldest || oldest.id <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const older = await api.listMessages(topic.id, {
+        limit: MESSAGE_PAGE_SIZE,
+        beforeId: oldest.id,
+      });
+      if (older.length === 0) {
+        setHasMoreOlder(false);
+        return;
+      }
+      captureTopAnchor();
+      setPersisted((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const fresh = older.filter((m) => !seen.has(m.id));
+        return fresh.length ? [...fresh, ...prev] : prev;
+      });
+      setHasMoreOlder(older.length >= MESSAGE_PAGE_SIZE);
+    } catch {
+      // Keep what we have; a transient failure shouldn't drop the transcript.
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [topic.id, captureTopAnchor]);
+  useEffect(() => {
+    loadOlderRef.current = () => void loadOlder();
+  }, [loadOlder]);
+
+  // Reload the most recent slice while preserving roughly the window the user
+  // has open (so a post-stream / post-command refresh doesn't collapse back to
+  // a single page). Returns the rows it applied, or null on failure.
+  const reloadMessages = useCallback(async (): Promise<Message[] | null> => {
+    const want = Math.max(MESSAGE_PAGE_SIZE, persistedRef.current.length + 10);
+    try {
+      const msgs = await api.listMessages(topic.id, { limit: want });
+      setPersisted(msgs);
+      setHasMoreOlder(msgs.length >= want);
+      return msgs;
+    } catch {
+      return null;
+    }
+  }, [topic.id]);
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -398,9 +474,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const msgs = await api.listMessages(topic.id);
+      const msgs = await api.listMessages(topic.id, { limit: MESSAGE_PAGE_SIZE });
       if (cancelled) return;
+      pinToBottom();
       setPersisted(msgs);
+      setHasMoreOlder(msgs.length >= MESSAGE_PAGE_SIZE);
       // If we just switched into a topic whose session has already finished,
       // drop the buffered copy now that we have the canonical server state.
       if (
@@ -463,9 +541,8 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     let cancelled = false;
     (async () => {
-      const msgs = await api.listMessages(topic.id);
-      if (cancelled) return;
-      setPersisted(msgs);
+      const msgs = await reloadMessages();
+      if (cancelled || msgs === null) return;
       streamStore.clear(streamKey);
       onTopicUpdated();
     })();
@@ -474,14 +551,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     };
   }, [streaming, topic.id, onTopicUpdated]);
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, pendingContent]);
-
   async function send(): Promise<void> {
     const content = draft.trim();
     const hasAttachments = pendingAttachments.length > 0;
     if ((!content && !hasAttachments) || streaming) return;
+    pinToBottom();
     historyIndexRef.current = null;
     if (speech.listening) speech.stop();
 
@@ -521,6 +595,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   function sendSuggestion(text: string): void {
     if (streaming || !text.trim()) return;
+    pinToBottom();
     historyIndexRef.current = null;
     void streamStore.start(streamKey, text.trim());
   }
@@ -542,11 +617,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       } catch {
         // best-effort — keep going to refresh whatever did persist
       } finally {
-        try {
-          setPersisted(await api.listMessages(topic.id));
-        } catch {
-          // ignore — the topic may have changed underneath us
-        }
+        await reloadMessages();
         streamStore.clear(streamKey);
         onTopicUpdated();
       }
@@ -661,11 +732,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   // Re-fetch the persisted transcript (the backend records reminder set/clear
   // confirmations as system messages, and our own SSE echo is suppressed).
   async function reloadPersisted(): Promise<void> {
-    try {
-      setPersisted(await api.listMessages(topic.id));
-    } catch {
-      // keep what we have
-    }
+    await reloadMessages();
   }
 
   // Apply a modal save: update local state and pull in the confirmation the
@@ -1246,12 +1313,17 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             onDone={() => void runReminderClear(true)}
           />
         )}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4">
           <div
             className="relative mx-auto space-y-3"
             style={{ maxWidth: chatWidth }}
           >
             <ResizeHandle onMouseDown={onChatResize} />
+          {loadingOlder && (
+            <div className="text-center text-[11px] text-muted py-1">
+              Loading earlier messages…
+            </div>
+          )}
           {visibleMessages.length === 0 && !streaming && (
             <div className="text-sm text-muted text-center pt-8">
               Send a message to start the conversation.

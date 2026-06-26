@@ -11,6 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Lazy-loaded conversation history**: discussions no longer load their entire
+  transcript up front. Topics and chats fetch the most recent page (50 messages)
+  and pull older ones in as you scroll toward the top, preserving your scroll
+  position. The message list endpoints (`GET /api/topics/{id}/messages` and
+  `GET /api/chats/{id}/messages`) gained optional `limit` + `before_id` cursor
+  params (no params still returns the full transcript). Agent timelines apply the
+  same idea client-side, windowing the rendered workflow steps so very long runs
+  don't mount thousands of nodes at once. Shared scroll behaviour lives in the new
+  `useChatScroll` hook.
+
 - **Skills are shared `SKILL.md` files**: skill content (name, description,
   instructions) now lives in `<copilot_home>/skills/<name>/SKILL.md` files using
   the GitHub Copilot CLI's format (YAML frontmatter + markdown body), so skills
