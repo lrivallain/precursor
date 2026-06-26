@@ -31,7 +31,7 @@ from sqlalchemy import delete, select
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Message, MessageRole, Role, Skill, Topic
+from precursor.backend.models import Message, MessageRole, Role, Topic
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_topic_changed,
@@ -114,9 +114,9 @@ async def run_scheduled_prompt(topic_id: int, prompt: str, *, clear_context: boo
         await _dispatch_builtin(topic_id, name, argument, literal=prompt.strip())
         return
 
-    skill = await _load_skill(name)
-    if skill is not None:
-        expanded = f"{skill.instructions.strip()}\n\n---\n\n{argument}".strip()
+    skill_instructions = await _load_skill_instructions(name)
+    if skill_instructions is not None:
+        expanded = f"{skill_instructions.strip()}\n\n---\n\n{argument}".strip()
         # clear_context already handled above; don't wipe twice.
         await run_topic_turn(topic_id, prompt.strip(), llm_prompt=expanded)
         return
@@ -464,6 +464,8 @@ async def _record(topic_id: int, content: str) -> None:
     await publish_message_changed(topic_id)
 
 
-async def _load_skill(name: str) -> Skill | None:
+async def _load_skill_instructions(name: str) -> str | None:
+    from precursor.backend.services import skills as skills_service
+
     async with SessionLocal() as session:
-        return (await session.execute(select(Skill).where(Skill.name == name))).scalar_one_or_none()
+        return await skills_service.get_active_instructions(session, name)

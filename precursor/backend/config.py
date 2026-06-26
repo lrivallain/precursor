@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from functools import cached_property, lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,6 +42,24 @@ class Settings(BaseSettings):
         from pathlib import Path
 
         return str(Path(self.data_dir).resolve() / "workspaces")
+
+    # Skills live as ``<copilot_home>/skills/<name>/SKILL.md`` files shared with
+    # the GitHub Copilot CLI and other tools. An explicit override (handy for
+    # tests / non-standard setups) wins; otherwise we resolve the Copilot home
+    # the same way the CLI does: COPILOT_HOME → XDG_CONFIG_HOME/copilot → ~/.copilot.
+    skills_dir_override: str = Field(default="", validation_alias="PRECURSOR_SKILLS_DIR")
+
+    @cached_property
+    def skills_dir(self) -> str:
+        if self.skills_dir_override.strip():
+            return str(Path(self.skills_dir_override).expanduser().resolve())
+        copilot_home = os.environ.get("COPILOT_HOME", "").strip()
+        if copilot_home:
+            base = Path(copilot_home)
+        else:
+            xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+            base = Path(xdg) / "copilot" if xdg else Path.home() / ".copilot"
+        return str((base / "skills").expanduser())
 
     # LLM — the active provider and its credentials live in the app settings
     # (Settings → Model), not in the environment, so they can be changed at

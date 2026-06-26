@@ -1,114 +1,119 @@
-"""Skill CRUD + export endpoints."""
+"""Skill CRUD + migrate/export endpoints.
+
+Skills are addressed by ``name`` (the on-disk folder / slash-command name).
+Content lives in shared ``<copilot_home>/skills/<name>/SKILL.md`` files; this
+router is a thin layer over ``services.skills``.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Skill
 from precursor.backend.schemas import SkillCreate, SkillRead, SkillUpdate
+from precursor.backend.services import skills as skills_service
+from precursor.backend.services.skills import ResolvedSkill, SkillError
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
-# Names colliding with built-in slash commands would be confusing in the picker.
-_RESERVED_NAMES: frozenset[str] = frozenset(
-    {"gh-update", "gh-sync", "gh-create", "gh-close", "notes"}
-)
+
+def _to_read(skill: ResolvedSkill) -> SkillRead:
+    return SkillRead(
+        name=skill.name,
+        description=skill.description,
+        instructions=skill.instructions,
+        enabled=skill.enabled,
+        active=skill.active,
+        legacy=skill.legacy,
+    )
 
 
-def _check_reserved(name: str) -> None:
-    if name in _RESERVED_NAMES:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"'{name}' is reserved by a built-in command.",
-        )
+def _bad_request(exc: SkillError) -> HTTPException:
+    return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.get("", response_model=list[SkillRead])
-async def list_skills(session: AsyncSession = Depends(get_session)) -> list[Skill]:
-    result = await session.execute(select(Skill).order_by(Skill.name))
-    return list(result.scalars().all())
+async def list_skills(session: AsyncSession = Depends(get_session)) -> list[SkillRead]:
+    return [_to_read(s) for s in await skills_service.reconcile_and_list(session)]
 
 
 @router.post("", response_model=SkillRead, status_code=status.HTTP_201_CREATED)
-async def create_skill(payload: SkillCreate, session: AsyncSession = Depends(get_session)) -> Skill:
-    _check_reserved(payload.name)
-    skill = Skill(**payload.model_dump())
-    session.add(skill)
+async def create_skill(
+    payload: SkillCreate, session: AsyncSession = Depends(get_session)
+) -> SkillRead:
     try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, f"A skill named '{payload.name}' already exists."
-        ) from exc
-    await session.refresh(skill)
-    return skill
+        skill = await skills_service.create_skill(
+            session, payload.name, payload.description, payload.instructions
+        )
+    except SkillError as exc:
+        raise _bad_request(exc) from exc
+    return _to_read(skill)
 
 
-@router.get("/{skill_id}", response_model=SkillRead)
-async def get_skill(skill_id: int, session: AsyncSession = Depends(get_session)) -> Skill:
-    skill = await session.get(Skill, skill_id)
+@router.get("/{name}", response_model=SkillRead)
+async def get_skill(name: str, session: AsyncSession = Depends(get_session)) -> SkillRead:
+    skill = await skills_service.get_resolved(session, name)
     if skill is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
-    return skill
+    return _to_read(skill)
 
 
-@router.patch("/{skill_id}", response_model=SkillRead)
+@router.patch("/{name}", response_model=SkillRead)
 async def update_skill(
-    skill_id: int,
+    name: str,
     payload: SkillUpdate,
     session: AsyncSession = Depends(get_session),
-) -> Skill:
-    skill = await session.get(Skill, skill_id)
-    if skill is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
+) -> SkillRead:
     data = payload.model_dump(exclude_unset=True)
-    if "name" in data and data["name"] != skill.name:
-        _check_reserved(data["name"])
-    for key, value in data.items():
-        setattr(skill, key, value)
     try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "A skill with that name already exists."
-        ) from exc
-    await session.refresh(skill)
-    return skill
+        skill = await skills_service.update_skill(
+            session,
+            name,
+            new_name=data.get("name"),
+            description=data.get("description", skills_service.UNSET),
+            instructions=data.get("instructions", skills_service.UNSET),
+            enabled=data.get("enabled"),
+        )
+    except SkillError as exc:
+        if str(exc) == "Skill not found":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found") from exc
+        raise _bad_request(exc) from exc
+    return _to_read(skill)
 
 
-@router.delete("/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_skill(skill_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    skill = await session.get(Skill, skill_id)
-    if skill is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
-    await session.delete(skill)
-    await session.commit()
+@router.post("/{name}/migrate", response_model=SkillRead)
+async def migrate_skill(name: str, session: AsyncSession = Depends(get_session)) -> SkillRead:
+    try:
+        skill = await skills_service.migrate_skill(session, name)
+    except SkillError as exc:
+        raise _bad_request(exc) from exc
+    return _to_read(skill)
+
+
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_skill(name: str, session: AsyncSession = Depends(get_session)) -> None:
+    try:
+        await skills_service.delete_skill(session, name)
+    except SkillError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
 @router.get(
-    "/{skill_id}/export",
+    "/{name}/export",
     response_class=PlainTextResponse,
     responses={200: {"content": {"text/markdown": {}}}},
 )
 async def export_skill(
-    skill_id: int, session: AsyncSession = Depends(get_session)
+    name: str, session: AsyncSession = Depends(get_session)
 ) -> PlainTextResponse:
-    skill = await session.get(Skill, skill_id)
+    skill = await skills_service.get_resolved(session, name)
     if skill is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
-    body_lines = [f"# /{skill.name}", ""]
-    if skill.description:
-        body_lines += [skill.description.strip(), ""]
-    body_lines += ["## Instructions", "", skill.instructions.rstrip(), ""]
+    body = skills_service.render_skill_file(skill.name, skill.description, skill.instructions)
     return PlainTextResponse(
-        "\n".join(body_lines),
+        body,
         media_type="text/markdown; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="{skill.name}.SKILL.md"',
