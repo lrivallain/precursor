@@ -69,6 +69,15 @@ class Message(Base, TimestampMixin):
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # The LLM model id that produced this assistant turn (NULL for user/tool/
+    # system turns and for assistant turns persisted before this was tracked).
+    model: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Wall-clock time in milliseconds the provider took to produce this
+    # assistant turn, end to end including any tool rounds (NULL when not an
+    # LLM-generated answer, e.g. user/tool/system or an interrupted turn).
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     topic: Mapped[Topic | None] = relationship("Topic", back_populates="messages")
     chat: Mapped[Chat | None] = relationship("Chat", back_populates="messages")
     # Read-only link to the agent that posted this exchange, eager-loaded so the

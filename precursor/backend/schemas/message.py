@@ -72,6 +72,10 @@ class MessageRead(BaseModel):
     agent_session_public_id: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # The LLM model id that produced this assistant turn, surfaced in the UI.
+    model: str | None = None
+    # Wall-clock duration in ms the assistant turn took to generate.
+    elapsed_ms: int | None = None
     created_at: datetime
     attachments: list[AttachmentRead] = Field(default_factory=list)
     # Follow-up reply chips offered on this assistant turn. Stored as a JSON

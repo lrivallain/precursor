@@ -516,6 +516,57 @@ def test_topic_stream_extracts_ooxml_header_and_notes_text(monkeypatch) -> None:
         assert "speaker notes extracted" in assistant["content"]
 
 
+def test_topic_stream_records_model_and_elapsed_on_answer(monkeypatch) -> None:
+    """An LLM answer persists the model id, an elapsed_ms duration, and the
+    user prompt keeps its created_at timestamp — all surfaced by the read model.
+    """
+
+    class EchoProvider:
+        name = "echo"
+
+        async def stream_chat(self, *, model, messages, reasoning_effort=None):
+            yield ""
+
+        async def stream_chat_with_tools(self, *, model, messages, tools, reasoning_effort=None):
+            _ = model, tools, messages, reasoning_effort
+            yield TextDeltaEvent(content="hi there")
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+            yield TurnDoneEvent(finish_reason="stop")
+
+        async def list_models(self):
+            return []
+
+    async def _fake_get_llm_provider(_session):
+        return EchoProvider()
+
+    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Meta"}).json()["id"]
+        stream = client.post(
+            f"/api/topics/{tid}/messages/stream",
+            json={"content": "hello", "model": "test-model-x"},
+            headers={"Accept": "text/event-stream"},
+        )
+        assert stream.status_code == 200
+        assert "test-model-x" in stream.text
+        assert "elapsed_ms" in stream.text
+
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        user = [m for m in msgs if m["role"] == "user"][-1]
+        assistant = [m for m in msgs if m["role"] == "assistant"][-1]
+
+        assert user["created_at"]
+        assert user["model"] is None
+        assert user["elapsed_ms"] is None
+
+        assert assistant["model"] == "test-model-x"
+        assert isinstance(assistant["elapsed_ms"], int)
+        assert assistant["elapsed_ms"] >= 0
+        assert assistant["created_at"]
+
+
 def test_topic_notes_add_and_ask_stream_binds_note_attachments() -> None:
     app = create_app()
     with TestClient(app) as client:

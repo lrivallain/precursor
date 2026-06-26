@@ -365,6 +365,8 @@ class StreamStore {
         tool_calls: null,
         prompt_tokens: usage?.prompt_tokens ?? null,
         completion_tokens: usage?.completion_tokens ?? null,
+        model: (payload.model as string | null) ?? null,
+        elapsed_ms: (payload.elapsed_ms as number | null) ?? null,
         created_at: now,
       });
       session.pendingContent = "";

@@ -234,6 +234,10 @@ export interface Message {
   agent_session_public_id?: string | null;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
+  /** The LLM model id that produced this assistant turn. */
+  model?: string | null;
+  /** Wall-clock time in ms the assistant turn took to generate. */
+  elapsed_ms?: number | null;
   created_at: string;
   attachments?: Attachment[];
   /** Follow-up reply chips the assistant offered on this turn. */

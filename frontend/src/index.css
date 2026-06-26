@@ -330,3 +330,53 @@ body {
     animation: none;
   }
 }
+
+/* Holographic "thinking" dots — mirror the composer's holo palette as a
+   shimmering gradient fill while keeping the original staggered bounce. The
+   colour cycle is done with hue-rotate (not a moving background-position) so
+   there's no gradient tiling seam crossing the tiny dots. */
+@keyframes holo-dot-hue {
+  to {
+    filter: hue-rotate(360deg) drop-shadow(0 0 3px rgba(99, 102, 241, 0.55));
+  }
+}
+
+@keyframes holo-dot-bounce {
+  0%,
+  100% {
+    transform: translateY(-25%);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: none;
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}
+
+.holo-dot {
+  background-image: linear-gradient(135deg, #22d3ee, #6366f1, #a855f7, #ec4899);
+  filter: hue-rotate(0deg) drop-shadow(0 0 3px rgba(99, 102, 241, 0.55));
+  animation:
+    holo-dot-hue 3s linear infinite,
+    holo-dot-bounce 1s infinite;
+}
+
+/* Stagger the bounce so the dots wave first → second → third. Declared here
+   (not as Tailwind delay utilities) because the `.holo-dot` animation shorthand
+   resets animation-delay, which would otherwise win and bounce them in sync. */
+.holo-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+.holo-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+.holo-dot:nth-child(3) {
+  animation-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-dot {
+    animation: none;
+    opacity: 0.8;
+  }
+}

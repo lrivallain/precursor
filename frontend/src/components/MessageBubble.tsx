@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Bot,
@@ -6,10 +6,13 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   Code2,
   Copy,
+  Cpu,
   Paperclip,
   StopCircle,
+  Timer,
   Trash2,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -33,6 +36,12 @@ interface Props {
   // Set when this turn was posted by an Agents-mode session — renders a badge
   // that deep-links back to /agents/{id}.
   agentSessionId?: number | null;
+  // ISO timestamp the message was created — rendered as a subtle time label.
+  createdAt?: string;
+  // For assistant turns: the LLM model id that produced the answer.
+  model?: string | null;
+  // For assistant turns: wall-clock generation time in milliseconds.
+  elapsedMs?: number | null;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -57,7 +66,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId }: Props) {
+export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -71,6 +80,10 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState<null | "text" | "md">(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  // Live elapsed time while this turn is in flight — runs through the whole
+  // pending phase so it counts up during "Thinking…" and keeps ticking as the
+  // answer streams in, then is replaced by the persisted elapsed_ms.
+  const liveElapsed = useStopwatch(Boolean(pending));
 
   // Copy the rendered text (markdown stripped) or the raw markdown source.
   // Output (assistant) bubbles expose both alongside delete.
@@ -175,7 +188,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
 
   return (
     <div
-      className={`flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
+      className={`group flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
@@ -245,6 +258,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
           <div className="flex items-center gap-2 text-sm text-muted">
             <ThinkingDots />
             <span className="italic">Thinking…</span>
+            <Chronometer ms={liveElapsed} />
             {onStop && (
               <button
                 type="button"
@@ -317,6 +331,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
             {pending && (
               <div className="mt-1 flex items-center gap-2 text-[11px] text-muted">
                 <span className="italic">streaming…</span>
+                <Chronometer ms={liveElapsed} />
                 {onStop && (
                   <button
                     type="button"
@@ -334,7 +349,137 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
           </>
         )}
       </div>
+      {!pending && (role === "user" || role === "assistant") && (
+        <MessageMeta
+          role={role}
+          createdAt={createdAt}
+          model={model}
+          elapsedMs={elapsedMs}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Subtle metadata line shown under a message bubble: the timestamp on user
+ * prompts, and the model id + generation time (plus timestamp) on assistant
+ * answers. Pieces with no data are simply omitted. Renders dimmed by default
+ * and brightens when the surrounding bubble is hovered.
+ */
+function MessageMeta({
+  role,
+  createdAt,
+  model,
+  elapsedMs,
+}: {
+  role: MessageRole;
+  createdAt?: string;
+  model?: string | null;
+  elapsedMs?: number | null;
+}) {
+  const isUser = role === "user";
+  const time = formatTimestamp(createdAt);
+  const hasModelInfo = !isUser && (model || elapsedMs != null);
+  if (!time && !hasModelInfo) return null;
+  return (
+    <div
+      className={`flex items-center gap-1.5 px-1 text-[10px] text-muted opacity-70 transition-opacity duration-150 group-hover:opacity-100 ${
+        isUser ? "justify-end" : "justify-start"
+      }`}
+    >
+      {!isUser && model && (
+        <span
+          className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-border bg-bg/60 px-1.5 py-0.5 font-medium text-text/70"
+          title={`Model: ${model}`}
+        >
+          <Cpu size={10} className="shrink-0 text-accent/70" />
+          <span className="truncate">{model}</span>
+        </span>
+      )}
+      {!isUser && elapsedMs != null && (
+        <span className="inline-flex items-center gap-1" title="Generation time">
+          <Timer size={10} className="shrink-0" />
+          {formatElapsed(elapsedMs)}
+        </span>
+      )}
+      {time && (
+        <span
+          className="inline-flex items-center gap-1"
+          title={createdAt ? new Date(createdAt).toLocaleString() : undefined}
+        >
+          <Clock size={10} className="shrink-0" />
+          {time}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function formatTimestamp(value?: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return time;
+  // Older turns prepend a compact date; include the year only when it differs
+  // so today/this-year labels stay short.
+  const date = d.toLocaleDateString([], {
+    day: "2-digit",
+    month: "short",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `${date}, ${time}`;
+}
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
+}
+
+/**
+ * Count up wall-clock time while `active`, ticking ~10×/s. Returns the elapsed
+ * milliseconds; resets to 0 when inactive. Used for the live "thinking"
+ * chronometer on an in-flight assistant turn.
+ */
+function useStopwatch(active: boolean): number {
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      startRef.current = null;
+      setElapsed(0);
+      return;
+    }
+    startRef.current = performance.now();
+    setElapsed(0);
+    const id = window.setInterval(() => {
+      if (startRef.current != null) {
+        setElapsed(performance.now() - startRef.current);
+      }
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [active]);
+
+  return elapsed;
+}
+
+/** A monospaced, live-updating seconds readout (e.g. "1.4s"). */
+function Chronometer({ ms }: { ms: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 font-mono tabular-nums text-muted/80"
+      aria-label="Elapsed time"
+    >
+      <Timer size={11} className="shrink-0" />
+      {(ms / 1000).toFixed(1)}s
+    </span>
   );
 }
 
@@ -407,9 +552,9 @@ function CommandInvocation({ name, argument }: { name: string; argument: string 
 function ThinkingDots() {
   return (
     <span className="inline-flex gap-1" aria-label="Thinking">
-      <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.3s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.15s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce" />
+      <span className="holo-dot w-1.5 h-1.5 rounded-full" />
+      <span className="holo-dot w-1.5 h-1.5 rounded-full" />
+      <span className="holo-dot w-1.5 h-1.5 rounded-full" />
     </span>
   );
 }
