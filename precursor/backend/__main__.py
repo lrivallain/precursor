@@ -16,9 +16,11 @@ Two modes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import errno
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -249,6 +251,55 @@ def _inject_dev_cors(frontend_port: int) -> None:
     os.environ["PRECURSOR_CORS_ORIGINS"] = ",".join(merged)
 
 
+def _new_process_group_kwargs() -> dict[str, object]:
+    """``Popen`` kwargs that isolate a child in its own process group/session.
+
+    The Vite dev server is launched via ``npm run dev``, which spawns the real
+    Vite (esbuild/node) process as a *grandchild*. Putting npm in its own group
+    lets us later signal the entire tree at once, and detaches it from the
+    terminal's Ctrl-C so Python's teardown is the single authority on its
+    lifecycle (no race between the terminal SIGINT and our own terminate).
+    """
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _terminate_process_tree(proc: subprocess.Popen[bytes], *, timeout: float = 10.0) -> None:
+    """Stop ``proc`` and every process in its group, escalating to a hard kill.
+
+    Signalling only ``npm`` leaves the Vite grandchild holding the UI port, so a
+    fresh run reports the port as still in use. We signal the whole process group
+    instead so npm *and* its children die together and the port is released
+    promptly.
+    """
+    if proc.poll() is not None:
+        return
+    if os.name == "posix":
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pgid, signal.SIGKILL)
+    else:  # pragma: no cover - Windows-specific path
+        with contextlib.suppress(OSError):
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        try:
+            proc.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=timeout)
+
+
 def _run_dev(
     host: str,
     port: int,
@@ -325,6 +376,10 @@ def _run_dev(
                         "PRECURSOR_PORT": str(backend_port),
                         "PRECURSOR_HOST": connect_host,
                     },
+                    # Own process group so we can later kill npm *and* the real
+                    # Vite child together — otherwise the orphaned Vite keeps the
+                    # UI port and the next run reports it as in use.
+                    **_new_process_group_kwargs(),
                 )
 
         vite_thread = threading.Thread(target=_start_vite_when_ready, daemon=True)
@@ -356,8 +411,8 @@ def _run_dev(
     def _terminate(*_: object) -> None:
         stop.set()
         with vite_lock:
-            if vite and vite.poll() is None:
-                vite.terminate()
+            if vite is not None:
+                _terminate_process_tree(vite)
 
     try:
         uvicorn.run(
@@ -373,11 +428,6 @@ def _run_dev(
         _terminate()
         for thread in threads:
             thread.join(timeout=5)
-        if vite is not None:
-            try:
-                vite.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                vite.kill()
 
 
 def main() -> None:
