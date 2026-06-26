@@ -63,22 +63,41 @@ from precursor.backend.services.note_drafts import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chats/{chat_id}/messages", tags=["chat"])
+# Upper bound on a single windowed page (mirrors the topic message router).
+_MESSAGE_PAGE_MAX = 500
 
 
 @router.get("", response_model=list[MessageRead])
 async def list_messages(
     chat_id: int,
+    limit: int | None = None,
+    before_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[Message]:
+    """List a chat's transcript, optionally as a cursor-paginated window.
+
+    See the topic message router for the windowing semantics: no params returns
+    the full transcript chronologically; ``limit`` returns the most recent
+    ``limit`` rows; ``before_id`` pages further back. Slices come back oldest
+    first.
+    """
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    result = await session.execute(
+    base = (
         select(Message)
         .where(Message.chat_id == chat_id)
         .options(selectinload(Message.attachments))
-        .order_by(Message.created_at)
     )
-    return list(result.scalars().all())
+    if limit is None and before_id is None:
+        result = await session.execute(base.order_by(Message.created_at, Message.id))
+        return list(result.scalars().all())
+    if before_id is not None:
+        base = base.where(Message.id < before_id)
+    page = max(1, min(limit or _MESSAGE_PAGE_MAX, _MESSAGE_PAGE_MAX))
+    result = await session.execute(base.order_by(Message.id.desc()).limit(page))
+    rows = list(result.scalars().all())
+    rows.reverse()
+    return rows
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

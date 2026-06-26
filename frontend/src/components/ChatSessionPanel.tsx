@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
@@ -31,6 +31,7 @@ import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
+import { useChatScroll } from "../lib/useChatScroll";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
@@ -42,6 +43,9 @@ import type {
   NoteDraftAttachment,
   Reminder,
 } from "../lib/types";
+
+// Page size for windowed transcript loading (mirrors ChatPanel for topics).
+const MESSAGE_PAGE_SIZE = 50;
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -131,8 +135,19 @@ export function ChatSessionPanel({
   const [uploadingCount, setUploadingCount] = useState(0);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const pendingAttachmentsRef = useRef<Attachment[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const stoppingRef = useRef(false);
+  // Windowed transcript loading (see ChatPanel for the full rationale).
+  const persistedRef = useRef<Message[]>([]);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const hasMoreOlderRef = useRef(false);
+  const loadingOlderRef = useRef(false);
+  useEffect(() => {
+    persistedRef.current = persisted;
+  }, [persisted]);
+  useEffect(() => {
+    hasMoreOlderRef.current = hasMoreOlder;
+  }, [hasMoreOlder]);
 
   useStreamVersion();
   const settings = useSettings();
@@ -155,6 +170,59 @@ export function ChatSessionPanel({
     () => messages.filter((m) => !hiddenIds.has(m.id)),
     [messages, hiddenIds],
   );
+
+  // Reverse-infinite-scroll loaders (mirror ChatPanel).
+  const loadOlderRef = useRef<() => void>(() => {});
+  const onReachTop = useCallback(() => loadOlderRef.current(), []);
+  const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
+    [messages, pendingContent],
+    onReachTop,
+  );
+
+  const loadOlder = useCallback(async (): Promise<void> => {
+    if (loadingOlderRef.current || !hasMoreOlderRef.current) return;
+    const oldest = persistedRef.current[0];
+    if (!oldest || oldest.id <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const older = await api.listChatMessages(chat.id, {
+        limit: MESSAGE_PAGE_SIZE,
+        beforeId: oldest.id,
+      });
+      if (older.length === 0) {
+        setHasMoreOlder(false);
+        return;
+      }
+      captureTopAnchor();
+      setPersisted((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const fresh = older.filter((m) => !seen.has(m.id));
+        return fresh.length ? [...fresh, ...prev] : prev;
+      });
+      setHasMoreOlder(older.length >= MESSAGE_PAGE_SIZE);
+    } catch {
+      // Keep what we have on a transient failure.
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [chat.id, captureTopAnchor]);
+  useEffect(() => {
+    loadOlderRef.current = () => void loadOlder();
+  }, [loadOlder]);
+
+  const reloadMessages = useCallback(async (): Promise<Message[] | null> => {
+    const want = Math.max(MESSAGE_PAGE_SIZE, persistedRef.current.length + 10);
+    try {
+      const msgs = await api.listChatMessages(chat.id, { limit: want });
+      setPersisted(msgs);
+      setHasMoreOlder(msgs.length >= want);
+      return msgs;
+    } catch {
+      return null;
+    }
+  }, [chat.id]);
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -218,9 +286,13 @@ export function ChatSessionPanel({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const msgs = await api.listChatMessages(chat.id).catch(() => []);
+      const msgs = await api
+        .listChatMessages(chat.id, { limit: MESSAGE_PAGE_SIZE })
+        .catch(() => []);
       if (cancelled) return;
+      pinToBottom();
       setPersisted(msgs);
+      setHasMoreOlder(msgs.length >= MESSAGE_PAGE_SIZE);
       if (
         streamStore.hasSession(streamKey) &&
         !streamStore.isStreaming(streamKey)
@@ -281,9 +353,8 @@ export function ChatSessionPanel({
     }
     let cancelled = false;
     void (async () => {
-      const msgs = await api.listChatMessages(chat.id).catch(() => null);
+      const msgs = await reloadMessages();
       if (cancelled || msgs === null) return;
-      setPersisted(msgs);
       streamStore.clear(streamKey);
       onChatUpdated();
     })();
@@ -292,10 +363,6 @@ export function ChatSessionPanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming, chat.id]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, pendingContent]);
 
   // Flush queued message deletions on unmount / chat switch.
   const pendingDeletesRef = useRef<typeof pendingDeletes>([]);
@@ -589,11 +656,7 @@ export function ChatSessionPanel({
   // Re-fetch the persisted transcript (the backend records reminder set/clear
   // confirmations as system messages, and our own SSE echo is suppressed).
   async function reloadPersisted(): Promise<void> {
-    try {
-      setPersisted(await api.listChatMessages(chat.id));
-    } catch {
-      // keep what we have
-    }
+    await reloadMessages();
   }
 
   // Apply a modal save: update local state and pull in the confirmation the
@@ -811,6 +874,7 @@ export function ChatSessionPanel({
     const content = draft.trim();
     const hasAttachments = pendingAttachments.length > 0;
     if ((!content && !hasAttachments) || streaming) return;
+    pinToBottom();
     if (speech.listening) speech.stop();
 
     const cmd = content
@@ -846,6 +910,7 @@ export function ChatSessionPanel({
 
   function sendSuggestion(text: string): void {
     if (streaming || !text.trim()) return;
+    pinToBottom();
     void streamStore.start(streamKey, text.trim());
   }
 
@@ -861,11 +926,7 @@ export function ChatSessionPanel({
       } catch {
         // best-effort
       } finally {
-        try {
-          setPersisted(await api.listChatMessages(chat.id));
-        } catch {
-          // ignore
-        }
+        await reloadMessages();
         streamStore.clear(streamKey);
         onChatUpdated();
       }
@@ -882,9 +943,14 @@ export function ChatSessionPanel({
             onDone={() => void runReminderClear(true)}
           />
         )}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4">
           <div className="relative mx-auto space-y-3" style={{ maxWidth: chatWidth }}>
             <ResizeHandle onMouseDown={onChatResize} />
+            {loadingOlder && (
+              <div className="text-center text-[11px] text-muted py-1">
+                Loading earlier messages…
+              </div>
+            )}
             {visibleMessages.length === 0 && !streaming && (
               <div className="text-sm text-muted text-center pt-8">
                 Send a message to start the conversation.

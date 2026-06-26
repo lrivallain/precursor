@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -1131,6 +1131,12 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
   return rows;
 }
 
+// How many workflow segments (boxes) to render at once. Older segments stay
+// out of the DOM until the user scrolls toward the top, where another window's
+// worth is revealed. Keeps very long agent runs from rendering thousands of
+// nodes up front.
+const AGENT_SEGMENT_WINDOW = 40;
+
 export function AgentView({
   agents,
   agentId,
@@ -1217,6 +1223,26 @@ export function AgentView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  // Reverse-windowing of the rendered timeline: only segments from
+  // `windowStart` onward are mounted. The start is a stable absolute index so
+  // appending new segments never shifts what's already on screen; scrolling
+  // toward the top lowers it to reveal older history.
+  const [windowStart, setWindowStart] = useState(0);
+  const windowStartRef = useRef(0);
+  // Captured scrollHeight from just before revealing older segments, so the
+  // layout effect can keep the viewport anchored after they mount.
+  const revealAnchorRef = useRef<number | null>(null);
+  useEffect(() => {
+    windowStartRef.current = windowStart;
+  }, [windowStart]);
+
+  // Keep the viewport steady when older segments are revealed at the top.
+  useLayoutEffect(() => {
+    if (revealAnchorRef.current == null) return;
+    const box = scrollRef.current;
+    if (box) box.scrollTop += box.scrollHeight - revealAnchorRef.current;
+    revealAnchorRef.current = null;
+  }, [windowStart]);
 
   const selected = useMemo(
     () => agents.find((a) => a.id === agentId) ?? null,
@@ -1225,6 +1251,64 @@ export function AgentView({
   useEffect(() => {
     selectedRef.current = selected != null;
   }, [selected]);
+
+  // Derive the workflow timeline (segments + trailing hooks + which assistant
+  // rows are the real "answers") from the raw events. Memoised so windowing
+  // effects can react to the segment count without rebuilding on every render.
+  const selectedStatus = selected?.status ?? null;
+  const timeline = useMemo(() => {
+    const rows = buildRows(events);
+    const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
+      selectedStatus ?? "",
+    );
+    const answerRows = new Set<WorkflowRow>();
+    let lastAssistant: WorkflowRow | null = null;
+    for (const r of rows) {
+      if (r.type === "node" && r.cat === "assistant") {
+        lastAssistant = r;
+      } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("idle")) {
+        if (lastAssistant) answerRows.add(lastAssistant);
+        lastAssistant = null;
+      }
+    }
+    if (terminal && lastAssistant) answerRows.add(lastAssistant);
+
+    const visible = rows.filter((r) => {
+      if (r.type === "hook") return showPrefs.lifecycle;
+      if (r.type === "tool") return showPrefs.tool;
+      if (r.type !== "node") return true;
+      if (r.cat === "system" && !showPrefs.system) return false;
+      if (r.cat === "reasoning" && !showPrefs.thinking) return false;
+      // Keep answers visible even when assistant chatter is hidden.
+      if (r.cat === "assistant" && !showPrefs.assistant && !answerRows.has(r)) return false;
+      return true;
+    });
+
+    const segments: { row: WorkflowRow; hooks: AgentEvent[] }[] = [];
+    let pendingHooks: AgentEvent[] = [];
+    for (const r of visible) {
+      if (r.type === "hook") {
+        pendingHooks.push(r.ev);
+        continue;
+      }
+      segments.push({ row: r, hooks: pendingHooks });
+      pendingHooks = [];
+    }
+    return { segments, trailingHooks: pendingHooks, answerRows };
+  }, [events, showPrefs, selectedStatus]);
+
+  // Maintain the render window as the timeline grows. While the user is parked
+  // at the bottom, keep it bounded to the most recent page so long runs don't
+  // accumulate unbounded DOM. While scrolled up, leave the start fixed (only
+  // clamped) so newly appended steps never shift the history being read.
+  const segmentCount = timeline.segments.length;
+  useEffect(() => {
+    setWindowStart((start) =>
+      pinnedRef.current
+        ? Math.max(0, segmentCount - AGENT_SEGMENT_WINDOW)
+        : Math.min(start, Math.max(0, segmentCount - 1)),
+    );
+  }, [segmentCount]);
 
   const loadEvents = useCallback(async (id: number): Promise<void> => {
     try {
@@ -1305,7 +1389,9 @@ export function AgentView({
     requestAnimationFrame(scrollToBottom);
   }, [events, scrollToBottom]);
 
-  // Jump straight to the bottom (and re-pin) when switching agents.
+  // Jump straight to the bottom (and re-pin) when switching agents. The window
+  // effect re-bounds `windowStart` to the most recent page once the new
+  // timeline loads (pinnedRef is true here).
   useEffect(() => {
     pinnedRef.current = true;
     requestAnimationFrame(scrollToBottom);
@@ -1315,6 +1401,12 @@ export function AgentView({
     const box = scrollRef.current;
     if (!box) return;
     pinnedRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    // Near the top with older segments still hidden: reveal the next window,
+    // anchoring the viewport so it doesn't jump as boxes mount above.
+    if (box.scrollTop < 120 && windowStartRef.current > 0) {
+      revealAnchorRef.current = box.scrollHeight;
+      setWindowStart((s) => Math.max(0, s - AGENT_SEGMENT_WINDOW));
+    }
   }, []);
 
   async function startTask(): Promise<void> {
@@ -1517,61 +1609,30 @@ export function AgentView({
         )}
 
         {(() => {
-          const rows = buildRows(events);
-          // A single prompt can emit several SDK turns (assistant says "I'll do
-          // X" → tool → assistant reports the result), so only the *last*
-          // assistant before the session goes idle is the real answer — interim
-          // turn_end lines are just chatter. We flush at each idle (one answer
-          // per prompt) and, while the agent is still running, flush the trailing
-          // assistant only once it reaches a terminal state.
-          const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
-            selected.status,
-          );
-          const answerRows = new Set<WorkflowRow>();
-          let lastAssistant: WorkflowRow | null = null;
-          for (const r of rows) {
-            if (r.type === "node" && r.cat === "assistant") {
-              lastAssistant = r;
-            } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("idle")) {
-              if (lastAssistant) answerRows.add(lastAssistant);
-              lastAssistant = null;
-            }
-          }
-          if (terminal && lastAssistant) answerRows.add(lastAssistant);
-
-          const visible = rows.filter((r) => {
-            if (r.type === "hook") return showPrefs.lifecycle;
-            if (r.type === "tool") return showPrefs.tool;
-            if (r.type !== "node") return true;
-            if (r.cat === "system" && !showPrefs.system) return false;
-            if (r.cat === "reasoning" && !showPrefs.thinking) return false;
-            // Keep answers visible even when assistant chatter is hidden.
-            if (r.cat === "assistant" && !showPrefs.assistant && !answerRows.has(r)) return false;
-            return true;
-          });
-
-          // Group each main box with the hooks that preceded it, so the arrow
-          // sits directly between boxes and hooks float beside it.
-          const segments: { row: WorkflowRow; hooks: AgentEvent[] }[] = [];
-          let pendingHooks: AgentEvent[] = [];
-          for (const r of visible) {
-            if (r.type === "hook") {
-              pendingHooks.push(r.ev);
-              continue;
-            }
-            segments.push({ row: r, hooks: pendingHooks });
-            pendingHooks = [];
-          }
-          const trailingHooks = pendingHooks;
+          const { segments, trailingHooks, answerRows } = timeline;
 
           if (segments.length === 0 && trailingHooks.length === 0)
             return <p className="text-[11px] text-muted">No steps recorded yet.</p>;
 
+          // Window the rendered segments: only those from `windowStart` onward
+          // are mounted. `windowStart` is an absolute index, so keys stay stable
+          // and appended steps never shift on-screen history; scrolling up
+          // lowers it to reveal older boxes.
+          const hiddenCount = Math.min(windowStart, segments.length);
+          const shownSegments = hiddenCount > 0 ? segments.slice(hiddenCount) : segments;
+
           return (
             <div className="flex flex-col items-center">
-              {segments.map((seg, idx) => (
-                <Fragment key={idx}>
-                  {idx === 0 ? (
+              {hiddenCount > 0 && (
+                <p className="mb-2 text-[11px] text-muted">
+                  Scroll up to load earlier steps…
+                </p>
+              )}
+              {shownSegments.map((seg, idx) => {
+                const absoluteIdx = hiddenCount + idx;
+                return (
+                <Fragment key={absoluteIdx}>
+                  {absoluteIdx === 0 ? (
                     seg.hooks.length > 0 && <HookGutter hooks={seg.hooks} />
                   ) : (
                     <StepConnector hooks={seg.hooks} />
@@ -1597,7 +1658,8 @@ export function AgentView({
                     />
                   ) : null}
                 </Fragment>
-              ))}
+                );
+              })}
               {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
             </div>
           );
