@@ -62,3 +62,14 @@ def test_rename_rejects_traversal(tmp_path: Path) -> None:
 
     with pytest.raises(fs.UnsafePathError):
         fs.rename(tmp_path, "a.md", "../escape.md")
+
+
+def test_rename_rejects_folder_into_own_descendant(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "f.txt").write_text("x", encoding="utf-8")
+
+    with pytest.raises(fs.UnsafePathError):
+        fs.rename(tmp_path, "a", "a/b")
+
+    # The folder must be left intact.
+    assert (tmp_path / "a" / "f.txt").exists()

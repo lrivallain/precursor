@@ -147,6 +147,8 @@ def rename(root: Path, src_rel: str, dst_rel: str) -> None:
         raise FileNotFoundError(src_rel)
     if src.resolve() == dst.resolve():
         return
+    if src.resolve() in dst.resolve().parents:
+        raise UnsafePathError(f"Cannot move '{src_rel}' into its own subdirectory")
     if dst.exists():
         raise FileExistsError(dst_rel)
     dst.parent.mkdir(parents=True, exist_ok=True)

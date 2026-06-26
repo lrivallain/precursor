@@ -213,19 +213,15 @@ export function WorkspaceView({
     }
   }
 
-  async function handleRename(oldPath: string, newName: string): Promise<void> {
-    const cleaned = newName.trim().replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
-    const slash = oldPath.lastIndexOf("/");
-    const parent = slash === -1 ? "" : oldPath.slice(0, slash);
-    const newPath = parent ? `${parent}/${cleaned}` : cleaned;
-    if (!cleaned || newPath === oldPath) return;
+  async function applyPathChange(oldPath: string, newPath: string): Promise<void> {
+    if (!newPath || newPath === oldPath) return;
     setError(null);
     try {
       await api.renameWorkspaceEntry(area.id, oldPath, newPath);
       await refreshFiles();
       await refreshStatus();
-      // Keep the editor pointed at the renamed file (or a file inside a renamed
-      // folder), preserving any unsaved buffer — only the path changes.
+      // Keep the editor pointed at the moved/renamed file (or a file inside a
+      // moved/renamed folder), preserving any unsaved buffer.
       if (activePath === oldPath) {
         setActivePath(newPath);
         onPathChange(newPath);
@@ -238,6 +234,21 @@ export function WorkspaceView({
       setError(e instanceof Error ? e.message : String(e));
       throw e;
     }
+  }
+
+  async function handleRename(oldPath: string, newName: string): Promise<void> {
+    const cleaned = newName.trim().replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    const slash = oldPath.lastIndexOf("/");
+    const parent = slash === -1 ? "" : oldPath.slice(0, slash);
+    const newPath = parent ? `${parent}/${cleaned}` : cleaned;
+    if (!cleaned) return;
+    await applyPathChange(oldPath, newPath);
+  }
+
+  async function handleMove(src: string, targetDir: string): Promise<void> {
+    const name = src.slice(src.lastIndexOf("/") + 1);
+    const newPath = targetDir ? `${targetDir}/${name}` : name;
+    await applyPathChange(src, newPath);
   }
 
   async function submitCreate(name: string): Promise<void> {
@@ -378,6 +389,7 @@ export function WorkspaceView({
               onSubmitCreate={submitCreate}
               onCancelCreate={() => setPendingCreate(null)}
               onRename={handleRename}
+              onMove={handleMove}
             />
           </div>
         </aside>
@@ -1144,6 +1156,7 @@ function FileTree({
   onSubmitCreate,
   onCancelCreate,
   onRename,
+  onMove,
 }: {
   files: WorkspaceFileNode[];
   activePath: string | null;
@@ -1154,9 +1167,66 @@ function FileTree({
   onSubmitCreate: (name: string) => void;
   onCancelCreate: () => void;
   onRename: (path: string, newName: string) => Promise<void>;
+  onMove: (src: string, targetDir: string) => Promise<void>;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Drag-and-drop move state: the path being dragged and the folder ("" = root)
+  // currently hovered as a drop target.
+  const [dragSrc, setDragSrc] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+
+  // A drop is valid unless it targets the item itself, one of its descendants,
+  // or the folder it already lives in (a no-op).
+  const canDrop = (src: string | null, targetDir: string): boolean => {
+    if (!src) return false;
+    if (targetDir === src || targetDir.startsWith(`${src}/`)) return false;
+    const slash = src.lastIndexOf("/");
+    const parent = slash === -1 ? "" : src.slice(0, slash);
+    return parent !== targetDir;
+  };
+
+  const handleDrop = (targetDir: string): void => {
+    const src = dragSrc;
+    setDragSrc(null);
+    setDropTarget(null);
+    if (canDrop(src, targetDir) && src) void onMove(src, targetDir).catch(() => {});
+  };
+
+  // Drag handlers shared by file and folder rows. Renaming inputs are excluded
+  // so text selection inside InlineTitle isn't hijacked by row dragging.
+  const dragProps = (path: string) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      if ((e.target as HTMLElement).tagName === "INPUT") {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", path);
+      setDragSrc(path);
+    },
+    onDragEnd: () => {
+      setDragSrc(null);
+      setDropTarget(null);
+    },
+  });
+
+  // Drop handlers for a folder ("" = the root container).
+  const dropProps = (targetDir: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!canDrop(dragSrc, targetDir)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      setDropTarget(targetDir);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleDrop(targetDir);
+    },
+  });
 
   // Collapse all folders once when the area's files first load. FileTree is
   // keyed by area id (it remounts on area switch), so this runs per area.
@@ -1215,12 +1285,17 @@ function FileTree({
       const indent = { paddingLeft: `${depth * 12 + 8}px` };
       if (node.type === "dir") {
         const isCollapsed = collapsed.has(node.path);
+        const isDropHere = dropTarget === node.path;
         return (
           <div key={node.path}>
             <div
-              className="group flex items-center gap-1 pr-1 text-sm text-muted hover:bg-surface cursor-pointer"
+              className={`group flex items-center gap-1 pr-1 text-sm text-muted cursor-pointer ${
+                isDropHere ? "bg-accent/15 ring-1 ring-inset ring-accent/50" : "hover:bg-surface"
+              }`}
               style={indent}
               onClick={() => toggle(node.path)}
+              {...dragProps(node.path)}
+              {...dropProps(node.path)}
             >
               {isCollapsed ? (
                 <ChevronRight size={13} className="shrink-0" />
@@ -1281,6 +1356,7 @@ function FileTree({
           }`}
           style={indent}
           onClick={() => onOpen(node.path)}
+          {...dragProps(node.path)}
         >
           <FileText size={14} className="shrink-0 text-muted" />
           <InlineTitle
@@ -1300,8 +1376,14 @@ function FileTree({
       );
     });
 
+  // The whole tree is a root drop zone: dropping outside any folder moves the
+  // item to the workspace root. A subtle ring shows when root is the target.
+  const rootActive = dragSrc !== null && dropTarget === "" && canDrop(dragSrc, "");
   return (
-    <div>
+    <div
+      className={`min-h-full ${rootActive ? "ring-1 ring-inset ring-accent/40" : ""}`}
+      {...dropProps("")}
+    >
       {renderCreateRow("", 0)}
       {renderNodes(tree, 0)}
     </div>
