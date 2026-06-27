@@ -443,6 +443,47 @@ async def test_run_command_clear_resets_session_and_timeline() -> None:
         assert remaining == []
 
 
+async def test_clear_session_keep_id_preserves_uuid_and_deletes_sdk_state() -> None:
+    """``keep_id=True`` keeps the public uuid so a scheduled ``/agent <uuid>``
+    nudge keeps resolving, and deletes the SDK's on-disk state so the next turn
+    starts from a clean context instead of resuming the old transcript."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent(
+        copilot_session_id="sess-keep",
+        status="completed",
+        active_prompt="in flight",
+        result_summary="done",
+        error="boom",
+    )
+
+    deleted: list[str] = []
+
+    class _FakeClient:
+        async def delete_session(self, session_id: str) -> None:
+            deleted.append(session_id)
+
+    mgr = AgentManager()
+    mgr._client = _FakeClient()  # type: ignore[assignment]
+
+    await mgr.clear_session(agent_id, keep_id=True)
+
+    assert deleted == ["sess-keep"]
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        # Same public handle — the schedule's "/agent <uuid>" keeps targeting it.
+        assert agent.copilot_session_id == "sess-keep"
+        assert agent.status == "idle"
+        assert agent.active_prompt is None
+        assert agent.result_summary is None
+        assert agent.error is None
+
+
 async def test_run_command_rejects_unknown() -> None:
     import pytest
 

@@ -793,24 +793,45 @@ class AgentManager:
 
     # ------------------------------------------------------------------ commands
 
-    async def clear_session(self, agent_id: int) -> None:
+    async def clear_session(self, agent_id: int, *, keep_id: bool = False) -> None:
         """Erase an agent's conversation and start its SDK context from scratch.
 
         Disconnects + forgets the live session and wipes the archived timeline
-        (``teardown_session(forget=True)``), then mints a **fresh**
-        ``copilot_session_id`` so the next message opens a brand-new SDK session
-        (no prior history is resumed) while the agent keeps a stable, non-null
-        public id, and resets the in-flight/status fields back to idle.
+        (``teardown_session(forget=True)``), then resets the in-flight/status
+        fields back to idle so the next message opens a brand-new SDK session
+        with no prior history resumed.
+
+        ``keep_id`` selects what happens to the public handle:
+
+        * ``False`` (default, interactive ``/clear``) mints a **fresh**
+          ``copilot_session_id`` — a brand-new, shareable conversation.
+        * ``True`` keeps the **same** ``copilot_session_id`` and instead deletes
+          the SDK's on-disk state for it, so a scheduled ``/agent <uuid>``
+          reference (which targets that id) keeps resolving while still getting a
+          clean context on the next turn. Without the delete, reusing the id
+          would resume the old transcript from disk and defeat the clear.
         """
+        old_id: str | None = None
+        if keep_id:
+            agent = await self._load(agent_id)
+            old_id = agent.copilot_session_id if agent else None
+
         await self.teardown_session(agent_id, forget=True)
-        await self._patch(
-            agent_id,
-            copilot_session_id=str(uuid.uuid4()),
-            status="idle",
-            active_prompt=None,
-            result_summary=None,
-            error=None,
-        )
+
+        patch: dict[str, Any] = {
+            "status": "idle",
+            "active_prompt": None,
+            "result_summary": None,
+            "error": None,
+        }
+        if keep_id:
+            # Best-effort: a never-connected (pending) agent has nothing on disk.
+            if old_id and self._client is not None:
+                with contextlib.suppress(Exception):
+                    await self._client.delete_session(old_id)
+        else:
+            patch["copilot_session_id"] = str(uuid.uuid4())
+        await self._patch(agent_id, **patch)
         await self._publish(agent_id)
 
     async def run_command(self, agent_id: int, name: str, argument: str) -> None:

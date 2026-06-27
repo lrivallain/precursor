@@ -212,6 +212,14 @@ Anything else runs a normal generation turn via `services/turn.py` (the same
 path as manual chat). Keep the dispatcher's `BUILTIN_TOPIC_COMMANDS` in sync
 with the topic surface in `frontend/src/lib/commands.ts`.
 
+A recurring `/agent <uuid> <follow-up>` nudges the *same* agent every run, so its
+transcript — and the input tokens replayed each turn — grows without bound. Put a
+`/clear` directive between the id and the prompt (`/agent <uuid> /clear <follow-up>`)
+to wipe the agent's context first while keeping the same uuid (so the schedule
+keeps resolving): each run then starts from a clean transcript. It maps to
+`AgentManager.clear_session(..., keep_id=True)`, which deletes the SDK's on-disk
+session and reuses the id rather than minting a new one.
+
 ## Workspaces
 
 A `Workspace` is a git clone or a local directory the assistant can browse and
