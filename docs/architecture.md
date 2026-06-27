@@ -213,12 +213,18 @@ path as manual chat). Keep the dispatcher's `BUILTIN_TOPIC_COMMANDS` in sync
 with the topic surface in `frontend/src/lib/commands.ts`.
 
 A recurring `/agent <uuid> <follow-up>` nudges the *same* agent every run, so its
-transcript — and the input tokens replayed each turn — grows without bound. Put a
-`/clear` directive between the id and the prompt (`/agent <uuid> /clear <follow-up>`)
-to wipe the agent's context first while keeping the same uuid (so the schedule
-keeps resolving): each run then starts from a clean transcript. It maps to
-`AgentManager.clear_session(..., keep_id=True)`, which deletes the SDK's on-disk
-session and reuses the id rather than minting a new one.
+transcript — and the input tokens replayed each turn — grows without bound. Two
+directives wipe the agent's context first while keeping the same uuid (so the
+schedule keeps resolving), so each run starts from a clean transcript:
+
+- `/agent <uuid> /clear <follow-up>` — reset, then send `<follow-up>`. Maps to
+  `AgentManager.clear_session(..., keep_id=True)`, which deletes the SDK's
+  on-disk session and reuses the id rather than minting a new one.
+- `/agent <uuid> /run [extra]` — reset, then replay the agent's own
+  `task_prompt` (+ optional one-off `[extra]`). This keeps the instructions in
+  **one** place (the agent) instead of the schedule re-sending them every run;
+  the recurring prompt shrinks to a tiny nudge. Maps to
+  `AgentManager.rerun_task(...)`.
 
 ## Workspaces
 

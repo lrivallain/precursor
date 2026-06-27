@@ -153,12 +153,15 @@ def test_agent_command_is_dispatched_not_sent_to_llm(monkeypatch: pytest.MonkeyP
         assert any(c.startswith("`/agent` failed:") for c in receipts)
 
 
-def test_split_clear_directive() -> None:
-    assert sc._split_clear_directive("/clear poll the inbox") == (True, "poll the inbox")
-    assert sc._split_clear_directive("  /Clear   ") == (True, "")
-    assert sc._split_clear_directive("just a message") == (False, "just a message")
-    # A bare "/cleared" is not the directive (word boundary).
-    assert sc._split_clear_directive("/cleared up") == (False, "/cleared up")
+def test_split_agent_directive() -> None:
+    assert sc._split_agent_directive("/clear poll the inbox") == ("clear", "poll the inbox")
+    assert sc._split_agent_directive("  /Clear   ") == ("clear", "")
+    assert sc._split_agent_directive("/run") == ("run", "")
+    assert sc._split_agent_directive("/run focus on FR mail") == ("run", "focus on FR mail")
+    assert sc._split_agent_directive("just a message") == (None, "just a message")
+    # A bare "/cleared" / "/running" is not a directive (word boundary).
+    assert sc._split_agent_directive("/cleared up") == (None, "/cleared up")
+    assert sc._split_agent_directive("/running late") == (None, "/running late")
 
 
 def test_agent_clear_directive_resets_then_sends(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -222,6 +225,37 @@ def test_agent_clear_directive_without_prompt_just_clears(
         assert cleared["call"] == (agent_id, True)
         receipts = [m["content"] for m in _messages(client, topic_id)]
         assert any("Cleared the context" in c for c in receipts)
+        asyncio.run(_delete_agent(agent_id))
+
+
+def test_agent_run_directive_replays_task_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/agent <uuid> /run <extra>` resets context and replays the agent's stored
+    task_prompt (instructions live once on the agent, not in the schedule)."""
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+        agent_uuid = "33333333-3333-3333-3333-333333333333"
+        agent_id = asyncio.run(_seed_agent(agent_uuid, title="Inbox watcher"))
+
+        calls: dict[str, object] = {}
+
+        async def fake_rerun(self, aid, *, extra=None):  # type: ignore[no-untyped-def]
+            calls["rerun"] = (aid, extra)
+
+        async def noop_runtime(session):  # type: ignore[no-untyped-def]
+            return None
+
+        from precursor.backend.routers import agents as agents_router
+        from precursor.backend.services.agents import manager as mgr_mod
+
+        monkeypatch.setattr(mgr_mod.AgentManager, "rerun_task", fake_rerun)
+        monkeypatch.setattr(agents_router, "_require_runtime", noop_runtime)
+
+        _run_prompt(topic_id, f"/agent {agent_uuid} /run prioritise FR mail")
+
+        assert calls["rerun"] == (agent_id, "prioritise FR mail")
+        receipts = [m["content"] for m in _messages(client, topic_id)]
+        assert any("Re-ran agent" in c and "extra note" in c for c in receipts)
         asyncio.run(_delete_agent(agent_id))
 
 

@@ -484,6 +484,35 @@ async def test_clear_session_keep_id_preserves_uuid_and_deletes_sdk_state() -> N
         assert agent.error is None
 
 
+async def test_rerun_task_clears_then_replays_task_prompt() -> None:
+    """`rerun_task` resets the context (same uuid) and re-delivers task_prompt,
+    appending an optional one-off note for the run."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    with TestClient(create_app()):
+        pass
+    agent_id = await _make_agent(task_prompt="Process the inbox.", copilot_session_id="sess-run")
+
+    calls: dict[str, object] = {}
+
+    async def fake_clear(aid, *, keep_id=False):  # type: ignore[no-untyped-def]
+        calls["clear"] = (aid, keep_id)
+
+    async def fake_send(aid, text):  # type: ignore[no-untyped-def]
+        calls["send"] = (aid, text)
+
+    mgr = AgentManager()
+    mgr.clear_session = fake_clear  # type: ignore[assignment]
+    mgr.send_message = fake_send  # type: ignore[assignment]
+
+    await mgr.rerun_task(agent_id)
+    assert calls["clear"] == (agent_id, True)
+    assert calls["send"] == (agent_id, "Process the inbox.")
+
+    await mgr.rerun_task(agent_id, extra="prioritise FR mail")
+    assert calls["send"] == (agent_id, "Process the inbox.\n\nprioritise FR mail")
+
+
 async def test_run_command_rejects_unknown() -> None:
     import pytest
 

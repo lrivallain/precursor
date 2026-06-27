@@ -834,6 +834,29 @@ class AgentManager:
         await self._patch(agent_id, **patch)
         await self._publish(agent_id)
 
+    async def rerun_task(self, agent_id: int, *, extra: str | None = None) -> None:
+        """Reset the agent's context (same uuid) and replay its stored task.
+
+        Backs the scheduled ``/agent <uuid> /run`` nudge: instead of the schedule
+        re-sending the full instruction block every run (and replaying an
+        ever-growing transcript), the instructions live **once** in the agent's
+        ``task_prompt``. Each run wipes the prior transcript via
+        :meth:`clear_session` (``keep_id=True`` so the schedule's uuid keeps
+        resolving), then re-delivers ``task_prompt`` — optionally with an
+        ``extra`` one-off note appended for this run — as a clean turn.
+        """
+        await self.clear_session(agent_id, keep_id=True)
+        agent = await self._load(agent_id)
+        if agent is None:
+            return
+        prompt = (agent.task_prompt or "").strip()
+        if extra:
+            extra = extra.strip()
+            prompt = f"{prompt}\n\n{extra}" if prompt else extra
+        if not prompt:
+            return
+        await self.send_message(agent_id, prompt)
+
     async def run_command(self, agent_id: int, name: str, argument: str) -> None:
         """Execute a system slash command for an agent (never forwarded to the SDK).
 

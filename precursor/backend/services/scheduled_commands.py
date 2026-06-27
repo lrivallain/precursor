@@ -165,28 +165,33 @@ async def _dispatch_builtin(topic_id: int, name: str, argument: str, *, literal:
 # ---------------------------------------------------------------------------
 
 
-# A leading "/clear" inside an "/agent <uuid> …" follow-up resets the target
-# agent's context before the (optional) prompt is sent. Matched case-insensitively
-# so "/Clear" works like the composer's command parsing.
-_AGENT_CLEAR_DIRECTIVE_RE = re.compile(r"^/clear\b\s*([\s\S]*)$", re.IGNORECASE)
+# A leading "/clear" or "/run" inside an "/agent <uuid> …" follow-up controls the
+# target agent's context before the (optional) prompt is sent. Matched
+# case-insensitively so "/Clear" works like the composer's command parsing.
+#   /clear [message]  → wipe context, then send [message] as a follow-up
+#   /run   [extra]    → wipe context, then replay the agent's own task_prompt
+#                       (+ optional [extra] note) — the cheap recurring nudge.
+_AGENT_DIRECTIVE_RE = re.compile(r"^/(clear|run)\b\s*([\s\S]*)$", re.IGNORECASE)
 
 
-def _split_clear_directive(follow_up: str) -> tuple[bool, str]:
-    """Split a leading ``/clear`` directive off an ``/agent`` follow-up.
+def _split_agent_directive(follow_up: str) -> tuple[str | None, str]:
+    """Split a leading ``/clear`` or ``/run`` directive off an ``/agent`` follow-up.
 
-    Returns ``(reset, remaining)``: ``reset`` is True when the follow-up began
-    with ``/clear`` (the agent's context should be wiped first), and
-    ``remaining`` is the prompt to send afterwards (possibly empty).
+    Returns ``(directive, remaining)``: ``directive`` is the lowercased keyword
+    (``"clear"`` or ``"run"``) or ``None`` when the follow-up is a plain message;
+    ``remaining`` is the text after the directive — a follow-up message for
+    ``/clear``, or an extra one-off note for ``/run`` (possibly empty).
     """
-    match = _AGENT_CLEAR_DIRECTIVE_RE.match(follow_up.strip())
+    match = _AGENT_DIRECTIVE_RE.match(follow_up.strip())
     if match:
-        return True, match.group(1).strip()
-    return False, follow_up
+        return match.group(1).lower(), match.group(2).strip()
+    return None, follow_up
 
 
 async def _handle_agent(topic_id: int, argument: str) -> None:
     from precursor.backend.routers.agents import (
         _get_or_404,
+        _require_runtime,
         create_agent,
         send_to_agent,
     )
@@ -209,18 +214,34 @@ async def _handle_agent(topic_id: int, argument: str) -> None:
             except HTTPException:
                 existing = None
             if existing is not None:
-                # "/agent <uuid> /clear <prompt>" wipes the agent's context
-                # *before* sending the prompt, keeping the same uuid so this
-                # schedule keeps targeting it. This bounds token growth on a
-                # recurring nudge: each run starts from a clean transcript rather
-                # than replaying an ever-growing history.
-                fresh, follow_up = _split_clear_directive(follow_up)
-                if fresh:
+                # "/clear"/"/run" keep the same uuid so this schedule keeps
+                # targeting the agent, while bounding token growth: each run
+                # starts from a clean transcript instead of replaying history.
+                directive, rest = _split_agent_directive(follow_up)
+                if directive == "run":
+                    # The cheap recurring nudge: wipe context and replay the
+                    # agent's own task_prompt (instructions stored once on the
+                    # agent, not re-sent by the schedule every run).
+                    await _require_runtime(session)
+                    await get_agent_manager().rerun_task(existing.id, extra=rest or None)
+                    suffix = " with an extra note" if rest else ""
+                    await _record(
+                        topic_id,
+                        f'Re-ran agent "{existing.title}" from a fresh context{suffix}.',
+                    )
+                    return
+                if directive == "clear":
                     await get_agent_manager().clear_session(existing.id, keep_id=True)
-                if not follow_up:
-                    if fresh:
+                    if not rest:
                         await _record(topic_id, f'Cleared the context of agent "{existing.title}".')
                         return
+                    await send_to_agent(str(existing.id), AgentSendRequest(message=rest), session)
+                    await _record(
+                        topic_id,
+                        f'Sent a follow-up to agent "{existing.title}" with a fresh context.',
+                    )
+                    return
+                if not follow_up:
                     await _record(
                         topic_id,
                         f"`/agent`: session `{ref}` already exists; provide a follow-up "
@@ -228,9 +249,7 @@ async def _handle_agent(topic_id: int, argument: str) -> None:
                     )
                     return
                 await send_to_agent(str(existing.id), AgentSendRequest(message=follow_up), session)
-                receipt = f'Sent a follow-up to agent "{existing.title}"'
-                receipt += " with a fresh context." if fresh else "."
-                await _record(topic_id, receipt)
+                await _record(topic_id, f'Sent a follow-up to agent "{existing.title}".')
                 return
             # Not a real session id — fall through and treat the text as a task.
 
