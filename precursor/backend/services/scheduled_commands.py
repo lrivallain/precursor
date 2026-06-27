@@ -22,8 +22,11 @@ Keep ``BUILTIN_TOPIC_COMMANDS`` in sync with the topic surface in
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+from dataclasses import dataclass
+from typing import Any
 
 import anyio
 from fastapi import HTTPException
@@ -36,6 +39,8 @@ from precursor.backend.services.events import (
     publish_message_changed,
     publish_topic_changed,
 )
+from precursor.backend.services.github_auth import resolve_github_token
+from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.turn import run_topic_turn
 
 logger = logging.getLogger(__name__)
@@ -87,6 +92,201 @@ def parse_command(prompt: str) -> tuple[str, str] | None:
 
 
 # ---------------------------------------------------------------------------
+# Guard directives
+# ---------------------------------------------------------------------------
+
+# A scheduled prompt may begin with one or more "/guard" lines that gate the
+# whole run behind a cheap, deterministic MCP probe (no LLM, ~0 tokens). Format:
+#
+#   /guard <predicate> <server> <tool> [json-args]
+#
+# <predicate> is "non-empty" (run only when the probe returns items) or "empty"
+# (run only when it returns none). The probe calls one MCP tool and classifies
+# its result; if the predicate isn't satisfied the run is skipped silently — no
+# LLM turn, no chat message — and simply reschedules. This is what stops a poller
+# (e.g. an inbox watcher) from burning a full turn every tick just to discover
+# there's nothing to do.
+#
+# A malformed or failing guard "fails open" (the run proceeds) so a typo or a
+# transient MCP error can never silently disable a schedule.
+_GUARD_LINE_RE = re.compile(r"^/guard\b\s*(.*)$", re.IGNORECASE)
+_GUARD_PREDICATES = {"non-empty", "non_empty", "empty"}
+# Result texts some tools return in lieu of an empty collection.
+_EMPTY_SENTINELS = {
+    "",
+    "[]",
+    "{}",
+    "null",
+    "none",
+    "(empty result)",
+    "no results",
+    "no emails",
+    "no emails to process.",
+}
+
+
+@dataclass(frozen=True)
+class _GuardSpec:
+    predicate: str  # normalised to "non-empty" or "empty"
+    server: str
+    tool: str
+    args: dict[str, Any]
+
+
+def _extract_guards(prompt: str) -> tuple[list[str], str]:
+    """Peel leading ``/guard …`` lines off a scheduled prompt.
+
+    Returns ``(guard_bodies, remaining_prompt)``. Guards must be the first
+    non-blank lines; the first non-guard line ends the block. When no guard line
+    is present the prompt is returned unchanged.
+    """
+    lines = prompt.splitlines()
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    guards: list[str] = []
+    while i < len(lines):
+        match = _GUARD_LINE_RE.match(lines[i].strip())
+        if not match:
+            break
+        guards.append(match.group(1).strip())
+        i += 1
+    if not guards:
+        return [], prompt
+    return guards, "\n".join(lines[i:]).strip()
+
+
+def _parse_guard(body: str) -> _GuardSpec | None:
+    """Parse a guard body ``<predicate> <server> <tool> [json-args]``.
+
+    Returns ``None`` for anything malformed (caller fails open).
+    """
+    parts = body.split(None, 3)
+    if len(parts) < 3:
+        return None
+    predicate, server, tool = parts[0].lower(), parts[1], parts[2]
+    if predicate not in _GUARD_PREDICATES:
+        return None
+    raw_args = parts[3].strip() if len(parts) == 4 else ""
+    if raw_args:
+        try:
+            args = json.loads(raw_args)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(args, dict):
+            return None
+    else:
+        args = {}
+    predicate = "empty" if predicate == "empty" else "non-empty"
+    return _GuardSpec(predicate=predicate, server=server, tool=tool, args=args)
+
+
+def _coerce_result_value(result: Any) -> Any:
+    """Reduce an MCP ``CallToolResult`` to a Python value for emptiness checks."""
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        return structured
+    texts: list[str] = []
+    for block in getattr(result, "content", None) or []:
+        text = getattr(block, "text", None)
+        if text is not None:
+            texts.append(text)
+    joined = "\n".join(texts).strip()
+    if not joined:
+        return None
+    try:
+        return json.loads(joined)
+    except (json.JSONDecodeError, ValueError):
+        return joined
+
+
+def _value_is_empty(value: Any) -> bool:
+    """Best-effort "no work here" check across common MCP result shapes."""
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value == 0
+    if isinstance(value, str):
+        return value.strip().lower() in _EMPTY_SENTINELS
+    if isinstance(value, list):
+        return len(value) == 0
+    if isinstance(value, dict):
+        # OData/Graph/WorkIQ collections nest the rows under a known key.
+        for key in ("value", "items", "results", "messages", "data"):
+            inner = value.get(key)
+            if isinstance(inner, list):
+                return len(inner) == 0
+        for key in ("count", "total", "totalCount", "@odata.count"):
+            inner = value.get(key)
+            if isinstance(inner, (int, float)) and not isinstance(inner, bool):
+                return inner == 0
+        return len(value) == 0
+    return False
+
+
+async def _probe_guard(spec: _GuardSpec) -> bool | None:
+    """Run the guard's MCP tool and report emptiness.
+
+    Returns ``True``/``False`` for empty/non-empty, or ``None`` to *fail open*
+    (server unavailable, tool error, or exception) so a broken guard never
+    silently disables the schedule.
+    """
+    manager = get_mcp_client_manager()
+    async with SessionLocal() as session:
+        github_token = await resolve_github_token(session)
+    try:
+        async with manager.acquired([spec.server], github_token=github_token) as active:
+            if any(srv == spec.server for srv, _ in active.unavailable):
+                logger.warning("Guard: MCP server %r unavailable; running anyway", spec.server)
+                return None
+            result = await active.call_tool(spec.server, spec.tool, spec.args)
+    except Exception as exc:
+        logger.warning("Guard probe %s/%s failed (%s); running anyway", spec.server, spec.tool, exc)
+        return None
+    if getattr(result, "isError", False):
+        logger.warning(
+            "Guard probe %s/%s returned an error result; running anyway", spec.server, spec.tool
+        )
+        return None
+    return _result_is_empty(result)
+
+
+def _result_is_empty(result: Any) -> bool:
+    return _value_is_empty(_coerce_result_value(result))
+
+
+async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
+    """Evaluate any leading ``/guard`` directives.
+
+    Returns ``(skip, remaining_prompt)``: ``skip`` is True when a guard's
+    predicate isn't satisfied (the run should be silently skipped);
+    ``remaining_prompt`` is the prompt with guard lines stripped.
+    """
+    guards, remaining = _extract_guards(prompt)
+    for body in guards:
+        spec = _parse_guard(body)
+        if spec is None:
+            logger.warning("Ignoring malformed /guard directive: %r", body)
+            continue
+        empty = await _probe_guard(spec)
+        if empty is None:
+            continue  # fail open
+        satisfied = empty if spec.predicate == "empty" else not empty
+        if not satisfied:
+            logger.info(
+                "Topic %s: scheduled run skipped by guard (%s %s %s) — no work",
+                topic_id,
+                spec.predicate,
+                spec.server,
+                spec.tool,
+            )
+            return True, remaining
+    return False, remaining
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -99,7 +299,16 @@ async def run_scheduled_prompt(topic_id: int, prompt: str, *, clear_context: boo
     * A user skill expands to its instructions (LLM turn), persisting the
       literal command as the user turn.
     * Anything else (plain text or an unknown ``/word``) runs a normal turn.
+
+    A prompt may be prefixed with one or more ``/guard`` directives (see
+    :func:`_extract_guards`): a cheap, deterministic MCP probe that gates the
+    whole run. When a guard isn't satisfied the run is skipped silently — no LLM
+    turn, no chat message — and simply reschedules on the next tick.
     """
+    skip, prompt = await _evaluate_guards(topic_id, prompt)
+    if skip:
+        return
+
     command = parse_command(prompt)
     if command is None:
         await run_topic_turn(topic_id, prompt, clear_context=clear_context)
