@@ -230,7 +230,7 @@ A scheduled prompt may also be prefixed with one or more `/guard` directives tha
 gate the whole run behind a cheap, deterministic MCP probe (no LLM, ~0 tokens):
 
 ```
-/guard non-empty workiq <list-tool> {"folder": "…", "top": 1}
+/guard non-empty workiq fetch {"entityUrls": ["/me/mailFolders/<folder-id>/messages?$select=id&$top=1"]}
 /agent <uuid> /run
 ```
 
@@ -239,10 +239,14 @@ chat-side `MCPClientManager` and classifies its result; `non-empty` runs only
 when the probe returns rows, `empty` runs only when it returns none. When the
 predicate isn't satisfied the run is skipped silently — no LLM turn, no chat
 message — and just reschedules. This stops a poller (e.g. an inbox watcher) from
-burning a full ~70K-token turn every tick only to find nothing to do. A
-malformed or failing guard *fails open* (the run proceeds) so a typo or a
-transient MCP error can never silently disable a schedule. See
-`_evaluate_guards` in `services/scheduled_commands.py`.
+burning a full ~70K-token turn every tick only to find nothing to do.
+
+Emptiness is read across common result shapes, including the WorkIQ/`fetch`
+envelope `{"results": [{"data": {"value": [...]}, "statusCode": 200}]}` (the rows
+live at `results[i].data`, not the top level). A malformed or failing guard
+*fails open* (the run proceeds) so a typo or a transient MCP error can never
+silently disable a schedule. See `_evaluate_guards` in
+`services/scheduled_commands.py`.
 
 ## Workspaces
 

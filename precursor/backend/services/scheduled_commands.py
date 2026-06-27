@@ -213,17 +213,37 @@ def _value_is_empty(value: Any) -> bool:
     if isinstance(value, list):
         return len(value) == 0
     if isinstance(value, dict):
-        # OData/Graph/WorkIQ collections nest the rows under a known key.
-        for key in ("value", "items", "results", "messages", "data"):
+        # WorkIQ (and other batch-fetch) tools wrap each query in an envelope:
+        #   {"results": [{"data": <graph-payload>, "statusCode": 200}, …], …}
+        # so the rows live at results[i].data.value, not the top level. Unwrap it
+        # first: empty iff every successful payload is empty. A per-result error
+        # (statusCode >= 400) is treated as non-empty so a transient failure
+        # never looks like "no work" and silently skips the run.
+        results = value.get("results")
+        if isinstance(results, list):
+            return all(_envelope_item_is_empty(item) for item in results)
+        # OData/Graph collection (rows under a known key).
+        for key in ("value", "items", "messages", "data"):
             inner = value.get(key)
             if isinstance(inner, list):
                 return len(inner) == 0
-        for key in ("count", "total", "totalCount", "@odata.count"):
+        for key in ("count", "total", "totalCount", "totalItemCount", "@odata.count"):
             inner = value.get(key)
             if isinstance(inner, (int, float)) and not isinstance(inner, bool):
                 return inner == 0
         return len(value) == 0
     return False
+
+
+def _envelope_item_is_empty(item: Any) -> bool:
+    """Emptiness of one WorkIQ ``results[]`` entry (``{"data": …, "statusCode": …}``)."""
+    if isinstance(item, dict):
+        status = item.get("statusCode")
+        if isinstance(status, int) and status >= 400:
+            return False  # error payload — never count as "no work"
+        if "data" in item:
+            return _value_is_empty(item["data"])
+    return _value_is_empty(item)
 
 
 async def _probe_guard(spec: _GuardSpec) -> bool | None:

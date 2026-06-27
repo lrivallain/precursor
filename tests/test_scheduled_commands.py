@@ -129,6 +129,31 @@ def test_value_is_empty_across_shapes() -> None:
     assert sc._value_is_empty("you have mail") is False
 
 
+def test_value_is_empty_workiq_envelope() -> None:
+    """WorkIQ's fetch tool wraps payloads in {"results":[{"data":…,"statusCode":…}]};
+    emptiness must be read from results[i].data, not the (always length-1) envelope.
+    These are the exact shapes returned by `workiq` fetch on a mail folder."""
+    empty = {
+        "results": [{"data": {"@odata.context": "…", "value": []}, "statusCode": 200}],
+        "note": "Results limited to 1 items per collection.",
+    }
+    non_empty = {
+        "results": [
+            {
+                "data": {"value": [{"id": "abc"}], "@odata.nextLink": "…"},
+                "statusCode": 200,
+            }
+        ]
+    }
+    assert sc._value_is_empty(empty) is True
+    assert sc._value_is_empty(non_empty) is False
+    # A folder-count probe ($select=totalItemCount) works too.
+    assert sc._value_is_empty({"results": [{"data": {"totalItemCount": 0}, "statusCode": 200}]})
+    assert not sc._value_is_empty({"results": [{"data": {"totalItemCount": 5}, "statusCode": 200}]})
+    # A per-result error must never read as "empty" (fail open to run).
+    assert sc._value_is_empty({"results": [{"data": {}, "statusCode": 503}]}) is False
+
+
 def test_guard_skips_run_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     app = create_app()
     with TestClient(app) as client:
