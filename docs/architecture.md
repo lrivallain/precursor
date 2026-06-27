@@ -226,6 +226,28 @@ schedule keeps resolving), so each run starts from a clean transcript:
   the recurring prompt shrinks to a tiny nudge. Maps to
   `AgentManager.rerun_task(...)`.
 
+A scheduled prompt may also be prefixed with one or more `/guard` directives that
+gate the whole run behind a cheap, deterministic MCP probe (no LLM, ~0 tokens):
+
+```
+/guard non-empty workiq fetch {"entityUrls": ["/me/mailFolders/<folder-id>/messages?$select=id&$top=1"]}
+/agent <uuid> /run
+```
+
+`/guard <predicate> <server> <tool> [json-args]` calls a single MCP tool via the
+chat-side `MCPClientManager` and classifies its result; `non-empty` runs only
+when the probe returns rows, `empty` runs only when it returns none. When the
+predicate isn't satisfied the run is skipped silently — no LLM turn, no chat
+message — and just reschedules. This stops a poller (e.g. an inbox watcher) from
+burning a full ~70K-token turn every tick only to find nothing to do.
+
+Emptiness is read across common result shapes, including the WorkIQ/`fetch`
+envelope `{"results": [{"data": {"value": [...]}, "statusCode": 200}]}` (the rows
+live at `results[i].data`, not the top level). A malformed or failing guard
+*fails open* (the run proceeds) so a typo or a transient MCP error can never
+silently disable a schedule. See `_evaluate_guards` in
+`services/scheduled_commands.py`.
+
 ## Workspaces
 
 A `Workspace` is a git clone or a local directory the assistant can browse and

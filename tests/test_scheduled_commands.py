@@ -87,6 +87,135 @@ def test_unknown_command_falls_through_to_turn(monkeypatch: pytest.MonkeyPatch) 
 
 
 # ---------------------------------------------------------------------------
+# /guard directives gate the run with a cheap MCP probe (no LLM)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_guards_splits_leading_guard_lines() -> None:
+    guards, remaining = sc._extract_guards(
+        '/guard non-empty workiq list {"top":1}\n/agent abc /run'
+    )
+    assert guards == ['non-empty workiq list {"top":1}']
+    assert remaining == "/agent abc /run"
+    # No guard line → prompt returned unchanged.
+    assert sc._extract_guards("/agent abc /run") == ([], "/agent abc /run")
+
+
+def test_parse_guard() -> None:
+    spec = sc._parse_guard('non-empty workiq fetch {"folder":"X","top":1}')
+    assert spec is not None
+    assert (spec.predicate, spec.server, spec.tool) == ("non-empty", "workiq", "fetch")
+    assert spec.args == {"folder": "X", "top": 1}
+    # No args defaults to {}.
+    assert sc._parse_guard("empty workiq list").args == {}
+    # Malformed → None (fails open).
+    assert sc._parse_guard("workiq list") is None  # missing predicate slot
+    assert sc._parse_guard("bogus workiq list") is None  # unknown predicate
+    assert sc._parse_guard("non-empty workiq fetch {not json}") is None
+    assert sc._parse_guard("non-empty workiq fetch [1,2]") is None  # args not an object
+
+
+def test_value_is_empty_across_shapes() -> None:
+    assert sc._value_is_empty([]) is True
+    assert sc._value_is_empty([1]) is False
+    assert sc._value_is_empty({"value": []}) is True
+    assert sc._value_is_empty({"value": [{"id": 1}]}) is False
+    assert sc._value_is_empty({"@odata.count": 0}) is True
+    assert sc._value_is_empty({"count": 3}) is False
+    assert sc._value_is_empty("No emails to process.") is True
+    assert sc._value_is_empty("(empty result)") is True
+    assert sc._value_is_empty(0) is True
+    assert sc._value_is_empty(None) is True
+    assert sc._value_is_empty("you have mail") is False
+
+
+def test_value_is_empty_workiq_envelope() -> None:
+    """WorkIQ's fetch tool wraps payloads in {"results":[{"data":…,"statusCode":…}]};
+    emptiness must be read from results[i].data, not the (always length-1) envelope.
+    These are the exact shapes returned by `workiq` fetch on a mail folder."""
+    empty = {
+        "results": [{"data": {"@odata.context": "…", "value": []}, "statusCode": 200}],
+        "note": "Results limited to 1 items per collection.",
+    }
+    non_empty = {
+        "results": [
+            {
+                "data": {"value": [{"id": "abc"}], "@odata.nextLink": "…"},
+                "statusCode": 200,
+            }
+        ]
+    }
+    assert sc._value_is_empty(empty) is True
+    assert sc._value_is_empty(non_empty) is False
+    # A folder-count probe ($select=totalItemCount) works too.
+    assert sc._value_is_empty({"results": [{"data": {"totalItemCount": 0}, "statusCode": 200}]})
+    assert not sc._value_is_empty({"results": [{"data": {"totalItemCount": 5}, "statusCode": 200}]})
+    # A per-result error must never read as "empty" (fail open to run).
+    assert sc._value_is_empty({"results": [{"data": {}, "statusCode": 503}]}) is False
+
+
+def test_guard_skips_run_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        async def fail_turn(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("guard should have skipped the run before any LLM turn")
+
+        async def fake_probe(spec):  # type: ignore[no-untyped-def]
+            return True  # empty
+
+        monkeypatch.setattr(sc, "run_topic_turn", fail_turn)
+        monkeypatch.setattr(sc, "_probe_guard", fake_probe)
+        _run_prompt(topic_id, "/guard non-empty workiq list\nSummarise my inbox")
+
+        # Skipped silently: no LLM turn, and no chat noise recorded.
+        assert _messages(client, topic_id) == []
+
+
+def test_guard_runs_and_strips_line_when_non_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        seen: list[str] = []
+
+        async def fake_turn(tid, prompt, *, clear_context=False, llm_prompt=None):  # type: ignore[no-untyped-def]
+            seen.append(prompt)
+
+        async def fake_probe(spec):  # type: ignore[no-untyped-def]
+            return False  # non-empty → run
+
+        monkeypatch.setattr(sc, "run_topic_turn", fake_turn)
+        monkeypatch.setattr(sc, "_probe_guard", fake_probe)
+        _run_prompt(topic_id, "/guard non-empty workiq list\nSummarise my inbox")
+
+        # Guard line stripped; only the real prompt reaches the turn.
+        assert seen == ["Summarise my inbox"]
+
+
+def test_malformed_guard_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        seen: list[str] = []
+
+        async def fake_turn(tid, prompt, *, clear_context=False, llm_prompt=None):  # type: ignore[no-untyped-def]
+            seen.append(prompt)
+
+        async def fail_probe(spec):  # type: ignore[no-untyped-def]
+            raise AssertionError("a malformed guard must never reach the probe")
+
+        monkeypatch.setattr(sc, "run_topic_turn", fake_turn)
+        monkeypatch.setattr(sc, "_probe_guard", fail_probe)
+        # "bogus" isn't a valid predicate → guard ignored, run proceeds.
+        _run_prompt(topic_id, "/guard bogus workiq list\nSummarise my inbox")
+
+        assert seen == ["Summarise my inbox"]
+
+
+# ---------------------------------------------------------------------------
 # Built-in commands run their backend action (not the LLM)
 # ---------------------------------------------------------------------------
 
