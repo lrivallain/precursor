@@ -153,6 +153,112 @@ def test_agent_command_is_dispatched_not_sent_to_llm(monkeypatch: pytest.MonkeyP
         assert any(c.startswith("`/agent` failed:") for c in receipts)
 
 
+def test_split_agent_directive() -> None:
+    assert sc._split_agent_directive("/clear poll the inbox") == ("clear", "poll the inbox")
+    assert sc._split_agent_directive("  /Clear   ") == ("clear", "")
+    assert sc._split_agent_directive("/run") == ("run", "")
+    assert sc._split_agent_directive("/run focus on FR mail") == ("run", "focus on FR mail")
+    assert sc._split_agent_directive("just a message") == (None, "just a message")
+    # A bare "/cleared" / "/running" is not a directive (word boundary).
+    assert sc._split_agent_directive("/cleared up") == (None, "/cleared up")
+    assert sc._split_agent_directive("/running late") == (None, "/running late")
+
+
+def test_agent_clear_directive_resets_then_sends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/agent <uuid> /clear <prompt>` wipes the agent's context (same uuid) and
+    then sends the remaining prompt as a fresh turn."""
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+        agent_uuid = "11111111-1111-1111-1111-111111111111"
+        agent_id = asyncio.run(_seed_agent(agent_uuid, title="Inbox watcher"))
+
+        calls: dict[str, object] = {}
+
+        async def fake_clear(self, aid, *, keep_id=False):  # type: ignore[no-untyped-def]
+            calls["clear"] = (aid, keep_id)
+
+        async def fake_send(agent_ref, payload, session):  # type: ignore[no-untyped-def]
+            calls["send"] = payload.message
+
+        from precursor.backend.routers import agents as agents_router
+        from precursor.backend.services.agents import manager as mgr_mod
+
+        monkeypatch.setattr(mgr_mod.AgentManager, "clear_session", fake_clear)
+        monkeypatch.setattr(agents_router, "send_to_agent", fake_send)
+
+        _run_prompt(topic_id, f"/agent {agent_uuid} /clear poll the inbox")
+
+        assert calls["clear"] == (agent_id, True)
+        assert calls["send"] == "poll the inbox"
+        receipts = [m["content"] for m in _messages(client, topic_id)]
+        assert any("fresh context" in c for c in receipts)
+        asyncio.run(_delete_agent(agent_id))
+
+
+def test_agent_clear_directive_without_prompt_just_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/agent <uuid> /clear` with no trailing prompt only resets the context."""
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+        agent_uuid = "22222222-2222-2222-2222-222222222222"
+        agent_id = asyncio.run(_seed_agent(agent_uuid, title="Inbox watcher"))
+
+        cleared: dict[str, object] = {}
+
+        async def fake_clear(self, aid, *, keep_id=False):  # type: ignore[no-untyped-def]
+            cleared["call"] = (aid, keep_id)
+
+        async def fail_send(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("a bare /clear must not send a follow-up turn")
+
+        from precursor.backend.routers import agents as agents_router
+        from precursor.backend.services.agents import manager as mgr_mod
+
+        monkeypatch.setattr(mgr_mod.AgentManager, "clear_session", fake_clear)
+        monkeypatch.setattr(agents_router, "send_to_agent", fail_send)
+
+        _run_prompt(topic_id, f"/agent {agent_uuid} /clear")
+
+        assert cleared["call"] == (agent_id, True)
+        receipts = [m["content"] for m in _messages(client, topic_id)]
+        assert any("Cleared the context" in c for c in receipts)
+        asyncio.run(_delete_agent(agent_id))
+
+
+def test_agent_run_directive_replays_task_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/agent <uuid> /run <extra>` resets context and replays the agent's stored
+    task_prompt (instructions live once on the agent, not in the schedule)."""
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+        agent_uuid = "33333333-3333-3333-3333-333333333333"
+        agent_id = asyncio.run(_seed_agent(agent_uuid, title="Inbox watcher"))
+
+        calls: dict[str, object] = {}
+
+        async def fake_rerun(self, aid, *, extra=None):  # type: ignore[no-untyped-def]
+            calls["rerun"] = (aid, extra)
+
+        async def noop_runtime(session):  # type: ignore[no-untyped-def]
+            return None
+
+        from precursor.backend.routers import agents as agents_router
+        from precursor.backend.services.agents import manager as mgr_mod
+
+        monkeypatch.setattr(mgr_mod.AgentManager, "rerun_task", fake_rerun)
+        monkeypatch.setattr(agents_router, "_require_runtime", noop_runtime)
+
+        _run_prompt(topic_id, f"/agent {agent_uuid} /run prioritise FR mail")
+
+        assert calls["rerun"] == (agent_id, "prioritise FR mail")
+        receipts = [m["content"] for m in _messages(client, topic_id)]
+        assert any("Re-ran agent" in c and "extra note" in c for c in receipts)
+        asyncio.run(_delete_agent(agent_id))
+
+
 def test_command_clear_context_wipes_before_acting(monkeypatch: pytest.MonkeyPatch) -> None:
     app = create_app()
     with TestClient(app) as client:
@@ -205,3 +311,29 @@ async def _seed_message(topic_id: int, content: str) -> None:
     async with SessionLocal() as session:
         session.add(Message(topic_id=topic_id, role=MessageRole.USER, content=content))
         await session.commit()
+
+
+async def _seed_agent(copilot_session_id: str, *, title: str = "Agent") -> int:
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        agent = AgentSession(
+            title=title,
+            task_prompt="seed",
+            status="idle",
+            copilot_session_id=copilot_session_id,
+        )
+        session.add(agent)
+        await session.commit()
+        await session.refresh(agent)
+        return agent.id
+
+
+async def _delete_agent(agent_id: int) -> None:
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        if agent is not None:
+            await session.delete(agent)
+            await session.commit()
