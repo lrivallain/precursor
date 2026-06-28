@@ -56,6 +56,10 @@ class Scheduler:
         # Topic ids currently claimed/in-flight, so the ticker doesn't re-enqueue
         # a row a worker is still finishing within the same process.
         self._inflight: set[int] = set()
+        # Topic ids whose next run was explicitly forced via "Run now". A forced
+        # run bypasses the prompt's /guard emptiness gate (the user asked for it
+        # now), while still honouring the auth gate. Consumed once per run.
+        self._forced: set[int] = set()
         self._running = False
 
     # -- lifecycle ---------------------------------------------------------
@@ -67,6 +71,7 @@ class Scheduler:
         self._running = True
         self._queue = asyncio.Queue()
         self._inflight.clear()
+        self._forced.clear()
         # Reclaim any rows orphaned by a previous crash before we begin.
         await self._reclaim_orphans()
         self._tasks.append(asyncio.create_task(self._ticker(), name="scheduler-ticker"))
@@ -132,6 +137,15 @@ class Scheduler:
             await self._enqueue_due()
         except Exception:
             logger.exception("Scheduler nudge failed")
+
+    def mark_forced(self, topic_id: int) -> None:
+        """Flag a topic's next run as an explicit 'Run now'.
+
+        A forced run bypasses the prompt's ``/guard`` emptiness gate so an
+        intentional manual trigger always starts (the auth gate still applies).
+        The flag is consumed by the next :meth:`_run_one` for this topic.
+        """
+        self._forced.add(topic_id)
 
     async def _claim(self, schedule_id: int) -> bool:
         """Atomically mark a schedule running. Returns True if we won the claim."""
@@ -202,12 +216,17 @@ class Scheduler:
 
         status = "ok"
         error: str | None = None
+        # Consume any "Run now" flag for this topic so a forced run bypasses the
+        # guard's emptiness gate exactly once; later automatic ticks gate normally.
+        forced = topic_id in self._forced
+        self._forced.discard(topic_id)
         try:
             await run_scheduled_prompt_with_timeout(
                 topic_id,
                 prompt,
                 timeout=float(run_timeout),
                 clear_context=clear_context,
+                force=forced,
             )
         except TimeoutError:
             status, error = "error", "Run timed out."

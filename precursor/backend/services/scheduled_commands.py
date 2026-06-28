@@ -301,7 +301,7 @@ def _result_is_empty(result: Any) -> bool:
     return _value_is_empty(_coerce_result_value(result))
 
 
-async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
+async def _evaluate_guards(topic_id: int, prompt: str, *, force: bool = False) -> tuple[bool, str]:
     """Evaluate any leading ``/guard`` directives.
 
     Returns ``(skip, remaining_prompt)``: ``skip`` is True when a guard's
@@ -309,6 +309,10 @@ async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
     guard's MCP server needs an interactive sign-in (a re-authenticate prompt is
     surfaced first); ``remaining_prompt`` is the prompt with guard lines
     stripped.
+
+    ``force`` marks an explicit "Run now": the emptiness gate is bypassed (the
+    run proceeds even when a guard reports "no work"), but the auth gate still
+    applies — dispatching a turn whose tools need sign-in would only error.
     """
     guards, remaining = _extract_guards(prompt)
     for body in guards:
@@ -325,6 +329,10 @@ async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
             )
             await _announce_guard_auth(topic_id, spec.server)
             return True, remaining
+        if force:
+            # Manual "Run now": auth is satisfied, so honour the explicit trigger
+            # regardless of whether the guard found work.
+            continue
         if probe.empty is None:
             continue  # fail open
         satisfied = probe.empty if spec.predicate == "empty" else not probe.empty
@@ -398,7 +406,9 @@ async def _record_auth_notice(topic_id: int, content: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run_scheduled_prompt(topic_id: int, prompt: str, *, clear_context: bool = False) -> None:
+async def run_scheduled_prompt(
+    topic_id: int, prompt: str, *, clear_context: bool = False, force: bool = False
+) -> None:
     """Execute a scheduled prompt, dispatching slash commands when present.
 
     * A recognised built-in command runs its backend action and records a
@@ -410,9 +420,11 @@ async def run_scheduled_prompt(topic_id: int, prompt: str, *, clear_context: boo
     A prompt may be prefixed with one or more ``/guard`` directives (see
     :func:`_extract_guards`): a cheap, deterministic MCP probe that gates the
     whole run. When a guard isn't satisfied the run is skipped silently — no LLM
-    turn, no chat message — and simply reschedules on the next tick.
+    turn, no chat message — and simply reschedules on the next tick. ``force``
+    (an explicit "Run now") bypasses that emptiness gate while still honouring
+    the auth gate.
     """
-    skip, prompt = await _evaluate_guards(topic_id, prompt)
+    skip, prompt = await _evaluate_guards(topic_id, prompt, force=force)
     if skip:
         return
 
@@ -442,7 +454,7 @@ async def run_scheduled_prompt(topic_id: int, prompt: str, *, clear_context: boo
 
 
 async def run_scheduled_prompt_with_timeout(
-    topic_id: int, prompt: str, timeout: float, *, clear_context: bool = False
+    topic_id: int, prompt: str, timeout: float, *, clear_context: bool = False, force: bool = False
 ) -> None:
     """Timeout wrapper mirroring ``turn.run_topic_turn_with_timeout``.
 
@@ -451,7 +463,7 @@ async def run_scheduled_prompt_with_timeout(
     the scheduler already records as an error.
     """
     with anyio.fail_after(timeout):
-        await run_scheduled_prompt(topic_id, prompt, clear_context=clear_context)
+        await run_scheduled_prompt(topic_id, prompt, clear_context=clear_context, force=force)
 
 
 # ---------------------------------------------------------------------------

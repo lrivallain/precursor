@@ -28,8 +28,10 @@ def _messages(client: TestClient, topic_id: int) -> list[dict[str, object]]:
     return client.get(f"/api/topics/{topic_id}/messages").json()
 
 
-def _run_prompt(topic_id: int, prompt: str, *, clear_context: bool = False) -> None:
-    asyncio.run(sc.run_scheduled_prompt(topic_id, prompt, clear_context=clear_context))
+def _run_prompt(
+    topic_id: int, prompt: str, *, clear_context: bool = False, force: bool = False
+) -> None:
+    asyncio.run(sc.run_scheduled_prompt(topic_id, prompt, clear_context=clear_context, force=force))
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +273,53 @@ def test_guard_needs_auth_does_not_spam_transcript(
 
         # The identical note isn't appended twice while the server stays blocked.
         assert len(_messages(client, topic_id)) == 1
+
+
+def test_forced_run_bypasses_empty_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        seen: list[str] = []
+
+        async def fake_turn(tid, prompt, *, clear_context=False, llm_prompt=None):  # type: ignore[no-untyped-def]
+            seen.append(prompt)
+
+        async def empty_probe(spec):  # type: ignore[no-untyped-def]
+            return sc._ProbeResult(empty=True)  # guard would skip a normal run
+
+        monkeypatch.setattr(sc, "run_topic_turn", fake_turn)
+        monkeypatch.setattr(sc, "_probe_guard", empty_probe)
+        # force=True mirrors an explicit "Run now": the empty gate is bypassed.
+        _run_prompt(topic_id, "/guard non-empty workiq list\nSummarise my inbox", force=True)
+
+        # The run proceeds with the guard line stripped, despite the empty probe.
+        assert seen == ["Summarise my inbox"]
+
+
+def test_forced_run_still_blocks_on_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        async def fail_turn(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("a forced run must still stop when auth is required")
+
+        async def auth_probe(spec):  # type: ignore[no-untyped-def]
+            return sc._ProbeResult(empty=None, auth_required=True)
+
+        async def fake_publish(*args, **kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+        monkeypatch.setattr(sc, "run_topic_turn", fail_turn)
+        monkeypatch.setattr(sc, "_probe_guard", auth_probe)
+        monkeypatch.setattr(sc, "publish_mcp_auth_required", fake_publish)
+        _run_prompt(topic_id, "/guard non-empty workiq fetch\nSummarise my inbox", force=True)
+
+        # Even forced, a needs_auth server surfaces the sign-in note and skips.
+        msgs = _messages(client, topic_id)
+        assert len(msgs) == 1
+        assert "sign-in" in msgs[0]["content"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -524,3 +573,43 @@ async def _delete_agent(agent_id: int) -> None:
         if agent is not None:
             await session.delete(agent)
             await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Scheduler "Run now" forces past the guard's emptiness gate
+# ---------------------------------------------------------------------------
+
+
+def test_scheduler_consumes_forced_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`mark_forced` makes the next `_run_one` pass `force=True`, then clears it."""
+    from precursor.backend.services import scheduler as scheduler_mod
+
+    app = create_app()
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/schedules",
+            json={
+                "title": "Forced run",
+                "prompt": "Summarise my inbox",
+                "interval_seconds": 300,
+            },
+        )
+        assert created.status_code in (200, 201)
+        topic_id = created.json()["topic_id"]
+
+        seen: list[bool] = []
+
+        async def fake_run(topic, prompt, *, timeout, clear_context=False, force=False):  # type: ignore[no-untyped-def]
+            seen.append(force)
+
+        monkeypatch.setattr(scheduler_mod, "run_scheduled_prompt_with_timeout", fake_run)
+
+        sched = scheduler_mod.Scheduler()
+        sched.mark_forced(topic_id)
+        asyncio.run(sched._run_one(topic_id))
+        assert seen == [True]
+        assert topic_id not in sched._forced
+
+        # A subsequent (automatic) run is no longer forced.
+        asyncio.run(sched._run_one(topic_id))
+        assert seen == [True, False]
