@@ -275,26 +275,27 @@ def test_guard_needs_auth_does_not_spam_transcript(
         assert len(_messages(client, topic_id)) == 1
 
 
-def test_forced_run_bypasses_empty_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_forced_run_shows_visible_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     app = create_app()
     with TestClient(app) as client:
         topic_id = _make_topic(client)
 
-        seen: list[str] = []
-
-        async def fake_turn(tid, prompt, *, clear_context=False, llm_prompt=None):  # type: ignore[no-untyped-def]
-            seen.append(prompt)
+        async def fail_turn(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("an empty guard must skip the run even when forced")
 
         async def empty_probe(spec):  # type: ignore[no-untyped-def]
-            return sc._ProbeResult(empty=True)  # guard would skip a normal run
+            return sc._ProbeResult(empty=True)  # guard finds no work
 
-        monkeypatch.setattr(sc, "run_topic_turn", fake_turn)
+        monkeypatch.setattr(sc, "run_topic_turn", fail_turn)
         monkeypatch.setattr(sc, "_probe_guard", empty_probe)
-        # force=True mirrors an explicit "Run now": the empty gate is bypassed.
+        # force=True mirrors an explicit "Run now": still gated, but visible.
         _run_prompt(topic_id, "/guard non-empty workiq list\nSummarise my inbox", force=True)
 
-        # The run proceeds with the guard line stripped, despite the empty probe.
-        assert seen == ["Summarise my inbox"]
+        # The run is still skipped (no LLM turn), but a visible note explains why.
+        msgs = _messages(client, topic_id)
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "system"
+        assert "skipped" in msgs[0]["content"].lower()
 
 
 def test_forced_run_still_blocks_on_auth(monkeypatch: pytest.MonkeyPatch) -> None:

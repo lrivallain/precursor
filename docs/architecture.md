@@ -260,8 +260,9 @@ exception: instead of failing open into a turn that would just error, the guard
 surfaces a re-authenticate prompt (the `mcp.auth_required` bus event +
 transcript note) and skips until the user signs in. An explicit **Run now**
 (`POST /api/schedules/{topic_id}/run`) is a *forced* run: the scheduler flags the
-topic so `_evaluate_guards` bypasses the emptiness predicate (the user asked for
-it now) while still honouring that auth gate; automatic ticks gate normally. See
+topic so the guard still gates (an empty probe still skips) but records the skip
+*visibly* — a manual trigger that finds no work says so instead of appearing to
+do nothing, while an automatic tick stays silent to avoid posting every poll. See
 `_evaluate_guards` in `services/scheduled_commands.py`.
 
 ## Workspaces

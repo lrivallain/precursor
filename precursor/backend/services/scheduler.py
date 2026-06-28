@@ -56,9 +56,10 @@ class Scheduler:
         # Topic ids currently claimed/in-flight, so the ticker doesn't re-enqueue
         # a row a worker is still finishing within the same process.
         self._inflight: set[int] = set()
-        # Topic ids whose next run was explicitly forced via "Run now". A forced
-        # run bypasses the prompt's /guard emptiness gate (the user asked for it
-        # now), while still honouring the auth gate. Consumed once per run.
+        # Topic ids whose next run was explicitly forced via "Run now". The guard
+        # still gates a forced run (an empty probe still skips), but the skip is
+        # recorded visibly instead of silently so a manual trigger gives feedback.
+        # Consumed once per run.
         self._forced: set[int] = set()
         self._running = False
 
@@ -141,9 +142,9 @@ class Scheduler:
     def mark_forced(self, topic_id: int) -> None:
         """Flag a topic's next run as an explicit 'Run now'.
 
-        A forced run bypasses the prompt's ``/guard`` emptiness gate so an
-        intentional manual trigger always starts (the auth gate still applies).
-        The flag is consumed by the next :meth:`_run_one` for this topic.
+        The guard still gates the run (an empty probe still skips), but a forced
+        run records the skip visibly instead of silently, so the manual trigger
+        gives feedback. The flag is consumed by the next :meth:`_run_one`.
         """
         self._forced.add(topic_id)
 
@@ -216,8 +217,8 @@ class Scheduler:
 
         status = "ok"
         error: str | None = None
-        # Consume any "Run now" flag for this topic so a forced run bypasses the
-        # guard's emptiness gate exactly once; later automatic ticks gate normally.
+        # Consume any "Run now" flag for this topic so a forced run records its
+        # guard skip visibly (exactly once); later automatic ticks skip silently.
         forced = topic_id in self._forced
         self._forced.discard(topic_id)
         try:

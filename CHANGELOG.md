@@ -220,13 +220,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   drives the global `McpAuthBanner`), records a durable, de-duplicated note in the
   topic transcript, and skips the run until the user signs in — the next tick
   re-probes for real.
-- **"Run now" now bypasses a `/guard`'s emptiness gate.** A manual "Run now" on a
-  guarded scheduled topic used to be silently swallowed when the guard reported
-  "no work" (e.g. an empty mailbox folder), so the button appeared to do nothing.
-  An explicit "Run now" is now treated as a forced run that starts regardless of
-  the emptiness predicate, while still honouring the auth gate (it surfaces the
-  sign-in prompt and waits instead of dispatching a turn whose tools need
-  credentials). Automatic ticks are unchanged and still gate normally.
+- **A guard skip is now visible on a manual "Run now".** A manual "Run now" on a
+  guarded scheduled topic still gates the run (an empty mailbox folder never
+  burns an LLM turn), but the skip used to be silent, so the button appeared to
+  do nothing. A manual run now records a short note (e.g. "Skipped — the WorkIQ
+  guard found nothing to process, so this run didn't start") so you can see the
+  gate's verdict. Automatic ticks still skip silently to avoid posting on every
+  poll. The auth gate is unchanged: a guard whose server needs sign-in surfaces
+  the re-authenticate prompt and skips.
 - The Settings endpoint no longer returns **500 Internal Server Error** after
   signing in to the WorkIQ preview (e.g. when toggling Agents mode). The WorkIQ
   OAuth token store wrote its `issued_at` stamp as a raw ISO string into the

@@ -305,14 +305,16 @@ async def _evaluate_guards(topic_id: int, prompt: str, *, force: bool = False) -
     """Evaluate any leading ``/guard`` directives.
 
     Returns ``(skip, remaining_prompt)``: ``skip`` is True when a guard's
-    predicate isn't satisfied (the run should be silently skipped) or when the
-    guard's MCP server needs an interactive sign-in (a re-authenticate prompt is
-    surfaced first); ``remaining_prompt`` is the prompt with guard lines
-    stripped.
+    predicate isn't satisfied (the run is skipped) or when the guard's MCP server
+    needs an interactive sign-in (a re-authenticate prompt is surfaced first);
+    ``remaining_prompt`` is the prompt with guard lines stripped.
 
-    ``force`` marks an explicit "Run now": the emptiness gate is bypassed (the
-    run proceeds even when a guard reports "no work"), but the auth gate still
-    applies — dispatching a turn whose tools need sign-in would only error.
+    The guard always gates the run — an empty mailbox never burns an LLM turn,
+    whether the run is automatic or manual. The only difference ``force`` (an
+    explicit "Run now") makes is *visibility*: an automatic tick skips silently
+    to avoid spamming the transcript every poll, whereas a manual run records a
+    short note so the user can see the gate's verdict instead of the button
+    appearing to do nothing.
     """
     guards, remaining = _extract_guards(prompt)
     for body in guards:
@@ -329,10 +331,6 @@ async def _evaluate_guards(topic_id: int, prompt: str, *, force: bool = False) -
             )
             await _announce_guard_auth(topic_id, spec.server)
             return True, remaining
-        if force:
-            # Manual "Run now": auth is satisfied, so honour the explicit trigger
-            # regardless of whether the guard found work.
-            continue
         if probe.empty is None:
             continue  # fail open
         satisfied = probe.empty if spec.predicate == "empty" else not probe.empty
@@ -344,6 +342,10 @@ async def _evaluate_guards(topic_id: int, prompt: str, *, force: bool = False) -
                 spec.server,
                 spec.tool,
             )
+            if force:
+                # A manual "Run now" deserves visible feedback; an automatic tick
+                # stays silent so a poller doesn't post on every empty check.
+                await _record_guard_skip(topic_id, spec)
             return True, remaining
     return False, remaining
 
@@ -355,6 +357,18 @@ _SERVER_LABELS = {"workiq": "WorkIQ"}
 
 def _server_label(server: str) -> str:
     return _SERVER_LABELS.get(server, server)
+
+
+async def _record_guard_skip(topic_id: int, spec: _GuardSpec) -> None:
+    """Record a visible note that a manual run was gated by the guard.
+
+    Only used for an explicit "Run now" — automatic ticks skip silently so a
+    poller doesn't spam the transcript. Keeps the wording generic (the guard can
+    probe any MCP tool, not just a mailbox) while still being clear.
+    """
+    label = _server_label(spec.server)
+    notice = f"🛡️ Skipped — the {label} guard found nothing to process, so this run didn't start."
+    await _record(topic_id, notice)
 
 
 async def _announce_guard_auth(topic_id: int, server: str) -> None:
@@ -419,10 +433,10 @@ async def run_scheduled_prompt(
 
     A prompt may be prefixed with one or more ``/guard`` directives (see
     :func:`_extract_guards`): a cheap, deterministic MCP probe that gates the
-    whole run. When a guard isn't satisfied the run is skipped silently — no LLM
-    turn, no chat message — and simply reschedules on the next tick. ``force``
-    (an explicit "Run now") bypasses that emptiness gate while still honouring
-    the auth gate.
+    whole run. When a guard isn't satisfied the run is skipped and reschedules on
+    the next tick. ``force`` (an explicit "Run now") doesn't change *whether* the
+    guard gates — an empty probe still skips — only that the skip is recorded
+    visibly instead of silently, so a manual trigger gives feedback.
     """
     skip, prompt = await _evaluate_guards(topic_id, prompt, force=force)
     if skip:
