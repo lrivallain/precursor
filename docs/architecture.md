@@ -179,7 +179,13 @@ are refreshed silently when possible; background connects (catalog probes,
 warm-pool workers, chat turns) use a *non-interactive* provider that never pops
 a browser — when a full sign-in is required they fail fast with a `needs_auth`
 state. The user restarts the browser flow on demand from Settings
-(`POST /api/mcp/servers/workiq/reauthenticate`, single-flight guarded).
+(`POST /api/mcp/servers/workiq/reauthenticate`, single-flight guarded). The same
+sign-in is surfaced *inline* in the main app (no Settings detour) by the global
+`McpAuthBanner`: chat/topic/workspace turns hold and stream an `mcp_auth_required`
+event from their pause-and-resume gate, and the Agents runtime emits the same
+event (as a synthetic timeline entry) when it has to skip an enabled OAuth server
+for lack of credentials. The reauthenticate route also drops idle agent sessions
+so the next dispatch rebuilds with the fresh token.
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,

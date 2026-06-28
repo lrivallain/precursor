@@ -164,6 +164,11 @@ class AgentManager:
         # in arrival order — otherwise an idle handler can race ahead of the
         # assistant-message handler and post a stale answer back to the topic.
         self._event_locks: dict[int, asyncio.Lock] = {}
+        # Per-agent set of OAuth servers we've already surfaced a sign-in prompt
+        # for, so a held session doesn't re-announce ``mcp_auth_required`` on
+        # every rebuild/tool error. Cleared once the server attaches with valid
+        # creds (so a later token expiry re-announces) or the agent is forgotten.
+        self._auth_announced: dict[int, set[str]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
         self._watchdog_task: asyncio.Task[Any] | None = None
@@ -382,7 +387,9 @@ class AgentManager:
             )
         raise ValueError(f"unsupported transport {entry.transport!r}")
 
-    async def _catalog_mcp_configs(self) -> tuple[dict[str, Any], datetime | None]:
+    async def _catalog_mcp_configs(
+        self,
+    ) -> tuple[dict[str, Any], datetime | None, list[str]]:
         """SDK configs for every catalog MCP server the user has *enabled*.
 
         Mirrors the chat/topics surface: both built-in servers (``github``,
@@ -391,16 +398,19 @@ class AgentManager:
         ``precursor`` is excluded here — it's attached separately with full
         access in :meth:`_precursor_mcp_config`.
 
-        Returns ``(configs, oauth_expires_at)``: the second item is the soonest
-        expiry across any OAuth-protected server whose bearer token we baked into
-        a static header, so the caller can refresh the session before it lapses
-        (``None`` when nothing attached needs it). Returns ``({}, None)`` if the
-        SDK isn't loadable.
+        Returns ``(configs, oauth_expires_at, auth_required)``: ``oauth_expires_at``
+        is the soonest expiry across any OAuth-protected server whose bearer token
+        we baked into a static header (so the caller can refresh before it lapses,
+        ``None`` when nothing attached needs it); ``auth_required`` lists enabled
+        OAuth servers we *skipped* because no valid credentials are available, so
+        the caller can surface an interactive sign-in prompt instead of leaving
+        the agent to discover the tools are silently missing. Returns
+        ``({}, None, [])`` if the SDK isn't loadable.
         """
         try:
             sdk = runtime.load_sdk()
         except RuntimeError:
-            return {}, None
+            return {}, None, []
 
         # Imported lazily to keep this module importable without the MCP service
         # graph in the import path of the agents-unavailable case.
@@ -415,6 +425,7 @@ class AgentManager:
         manager = get_mcp_client_manager()
         configs: dict[str, Any] = {}
         oauth_expires_at: datetime | None = None
+        auth_required: list[str] = []
         for entry in manager.list_entries():
             # 'precursor' is first-party and attached with full access elsewhere;
             # never gate or duplicate it here.
@@ -437,9 +448,10 @@ class AgentManager:
                 if bearer is None:
                     logger.warning(
                         "Skipping MCP server '%s' for agent: no valid credentials "
-                        "(re-authenticate it in Settings)",
+                        "(surfacing an in-app sign-in prompt)",
                         entry.name,
                     )
+                    auth_required.append(entry.name)
                     continue
                 header, expires_at = bearer
                 # Unknown lifetime → assume a conservative TTL so we still rebuild
@@ -453,7 +465,7 @@ class AgentManager:
                 existing.update(header)
                 config["headers"] = existing
             configs[entry.name] = config
-        return configs, oauth_expires_at
+        return configs, oauth_expires_at, auth_required
 
     @staticmethod
     async def _oauth_bearer_header(name: str) -> tuple[dict[str, str], datetime | None] | None:
@@ -569,11 +581,12 @@ class AgentManager:
             kwargs["session_id"] = agent.copilot_session_id
         mcp = self._precursor_mcp_config()
         oauth_expires_at: datetime | None = None
+        auth_required: list[str] = []
         if mcp is not None:
             # Attach every enabled catalog server (built-in + user-defined).
             # _catalog_mcp_configs already excludes 'precursor', so the
             # first-party full-access entry can't be shadowed.
-            catalog, oauth_expires_at = await self._catalog_mcp_configs()
+            catalog, oauth_expires_at, auth_required = await self._catalog_mcp_configs()
             mcp.update(catalog)
             kwargs["mcp_servers"] = mcp
         preamble = await self._system_preamble(agent)
@@ -594,6 +607,11 @@ class AgentManager:
         sid = getattr(sdk_session, "id", None) or getattr(sdk_session, "session_id", None)
         if sid and not agent.copilot_session_id:
             await self._patch(agent.id, copilot_session_id=str(sid))
+
+        # Any OAuth server we couldn't attach for lack of credentials is surfaced
+        # as an in-app sign-in prompt (drives the global McpAuthBanner) instead of
+        # leaving the agent to hit "tool not available" and improvise an answer.
+        await self._announce_auth_required(agent.id, auth_required)
         return live
 
     @staticmethod
@@ -603,6 +621,89 @@ class AgentManager:
         if expires_at is None:
             return False
         return datetime.now(UTC) >= expires_at - _OAUTH_REFRESH_MARGIN
+
+    async def _auth_server_from_failed_tool(self, event: AgentEvent) -> str | None:
+        """Return the OAuth server to prompt for when a tool failure looks like
+        an expired sign-in, else ``None``.
+
+        Only WorkIQ uses OAuth today. We require the event to name ``workiq`` as
+        its server and the bearer to be genuinely unavailable, so a routine tool
+        error (bad args, server-side fault) never nags the user to re-auth.
+        """
+        if event.tool_status != "error":
+            return None
+        server = (event.data or {}).get("server_name")
+        if server != "workiq":
+            return None
+        from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
+
+        if await resolve_workiq_bearer_token() is not None:
+            return None
+        return "workiq"
+
+    async def _emit_synthetic(self, agent_id: int, event: AgentEvent) -> None:
+        """Append a manager-originated event to the timeline (archive + publish).
+
+        Used for events the SDK never sends — currently ``mcp_auth_required`` —
+        so they persist in the durable timeline and reach the frontend over the
+        same ``agent.changed`` bus as real SDK events.
+        """
+        await self._ensure_loaded(agent_id)
+        event.at = datetime.now(UTC)
+        self._events.setdefault(agent_id, []).append(event)
+        await self._archive_event(agent_id, event)
+        agent = await self._load(agent_id)
+        await publish_agent_changed(
+            agent_session_id=agent_id,
+            topic_id=agent.topic_id if agent else None,
+            chat_id=agent.chat_id if agent else None,
+        )
+
+    async def _announce_auth_required(self, agent_id: int, servers: list[str]) -> None:
+        """Surface a sign-in prompt for each ``server`` we couldn't authenticate.
+
+        De-duped per agent so a held session doesn't re-announce on every rebuild.
+        Servers that are *not* currently blocked are dropped from the announced
+        set, so a later token expiry (or a sign-in that's since lapsed) prompts
+        again rather than staying silent.
+        """
+        announced = self._auth_announced.setdefault(agent_id, set())
+        for server in servers:
+            if server in announced:
+                continue
+            announced.add(server)
+            label = "WorkIQ" if server == "workiq" else server
+            await self._emit_synthetic(
+                agent_id,
+                AgentEvent(
+                    kind="mcp_auth_required",
+                    tool_name=server,
+                    text=f"{label} needs you to sign in to use its tools.",
+                    data={"server": server},
+                ),
+            )
+        # Reset servers that authenticated this build so a future lapse re-fires.
+        announced.intersection_update(servers)
+
+    async def refresh_oauth_sessions(self) -> None:
+        """Drop idle live sessions after an interactive MCP sign-in.
+
+        The SDK bakes a static OAuth bearer into the session at creation and
+        can't refresh it in place, so a session built before sign-in still lacks
+        the server's tools. Tearing the idle ones down forces the next dispatch
+        to rebuild with the fresh credentials; in-flight turns are left untouched
+        (they refresh on their next idle dispatch via :meth:`_oauth_stale`).
+        Safe to call when agents are disabled — it's a no-op until the runtime is
+        ready.
+        """
+        if not self.ready:
+            return
+        for agent_id in list(self._live):
+            agent = await self._load(agent_id)
+            if agent is not None and agent.status in {"running", "needs_approval", "pending"}:
+                continue
+            await self.teardown_session(agent_id, forget=False)
+            self._auth_announced.pop(agent_id, None)
 
     async def start_task(self, agent_id: int) -> None:
         agent = await self._load(agent_id)
@@ -782,6 +883,7 @@ class AgentManager:
             self._events.pop(agent_id, None)
             self._loaded.discard(agent_id)
             self._event_locks.pop(agent_id, None)
+            self._auth_announced.pop(agent_id, None)
             # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
             # pragma is on, so clear the archive explicitly (the codebase manages
             # such cleanups in the app layer — see roles/topics delete).
@@ -1273,6 +1375,15 @@ class AgentManager:
         normalised.at = datetime.now(UTC)
         self._events.setdefault(agent_id, []).append(normalised)
         await self._archive_event(agent_id, normalised)
+
+        # A workiq tool that errors after the session was built with valid creds
+        # usually means the OAuth token lapsed mid-turn. Surface the same sign-in
+        # prompt as the pre-flight gate so the user can re-authenticate inline
+        # instead of reading a raw tool failure. Best-effort: only fires when the
+        # event carries a server name and the creds are actually gone.
+        auth_server = await self._auth_server_from_failed_tool(normalised)
+        if auth_server is not None:
+            await self._announce_auth_required(agent_id, [auth_server])
 
         data = getattr(event, "data", event)
         name = type(data).__name__

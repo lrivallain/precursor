@@ -8,6 +8,7 @@ its connection state + tool catalog, and CRUD user-defined entries.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -29,6 +30,8 @@ from precursor.backend.services.mcp.user_servers import (
 )
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
+
+logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _RESERVED_NAMES = {"github", "workiq", "fetch", "workspace-fs", "cmd-runner", "precursor"}
@@ -282,6 +285,15 @@ async def reauthenticate_workiq_server(
     # Wake any chat turn paused waiting for this sign-in so it resumes with the
     # freshly authenticated tools instead of timing out.
     manager.signal_auth_resolved()
+    # Agents bake a static OAuth bearer into their SDK session at creation, so an
+    # agent built before sign-in still lacks WorkIQ's tools. Drop idle sessions so
+    # the next dispatch rebuilds with the new token (no-op when agents are off).
+    try:
+        from precursor.backend.services.agents.manager import get_agent_manager
+
+        await get_agent_manager().refresh_oauth_sessions()
+    except Exception:  # pragma: no cover - agents runtime is optional
+        logger.warning("Could not refresh agent sessions after WorkIQ sign-in", exc_info=True)
     base = manager.status_dict(entry, enabled=is_enabled)
     return _enrich_with_user_meta(base, None)
 
