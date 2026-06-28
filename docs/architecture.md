@@ -184,8 +184,12 @@ sign-in is surfaced *inline* in the main app (no Settings detour) by the global
 `McpAuthBanner`: chat/topic/workspace turns hold and stream an `mcp_auth_required`
 event from their pause-and-resume gate, and the Agents runtime emits the same
 event (as a synthetic timeline entry) when it has to skip an enabled OAuth server
-for lack of credentials. The reauthenticate route also drops idle agent sessions
-so the next dispatch rebuilds with the fresh token.
+for lack of credentials. A scheduled `/guard` probe (`services/scheduled_commands.py`)
+that finds its server parked in `needs_auth` does the same over the cross-window
+bus (`mcp.auth_required`) — instead of failing open into a turn that would just
+error — and skips the run with a durable transcript note until the user signs in.
+The reauthenticate route also drops idle agent sessions so the next dispatch
+rebuilds with the fresh token.
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,

@@ -36,6 +36,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Role, Topic
 from precursor.backend.services.events import (
+    publish_mcp_auth_required,
     publish_message_changed,
     publish_topic_changed,
 )
@@ -108,7 +109,11 @@ def parse_command(prompt: str) -> tuple[str, str] | None:
 # there's nothing to do.
 #
 # A malformed or failing guard "fails open" (the run proceeds) so a typo or a
-# transient MCP error can never silently disable a schedule.
+# transient MCP error can never silently disable a schedule. The one exception
+# is a server parked in ``needs_auth``: a headless run can't pop a browser, and
+# proceeding would just burn a turn that errors for lack of credentials, so we
+# surface the re-authenticate prompt (bus event + a transcript note) and skip
+# the run until the user signs in — the next tick re-probes for real.
 _GUARD_LINE_RE = re.compile(r"^/guard\b\s*(.*)$", re.IGNORECASE)
 _GUARD_PREDICATES = {"non-empty", "non_empty", "empty"}
 # Result texts some tools return in lieu of an empty collection.
@@ -131,6 +136,21 @@ class _GuardSpec:
     server: str
     tool: str
     args: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ProbeResult:
+    """Outcome of probing a guard's MCP tool.
+
+    ``empty`` is ``True``/``False`` for an empty/non-empty result, or ``None``
+    to *fail open* (broken or transient probe — run anyway). ``auth_required`` is
+    set when the server is parked in ``needs_auth``: the caller surfaces a
+    sign-in prompt and skips the run rather than failing open into a turn that
+    would just error for lack of credentials.
+    """
+
+    empty: bool | None
+    auth_required: bool = False
 
 
 def _extract_guards(prompt: str) -> tuple[list[str], str]:
@@ -246,12 +266,14 @@ def _envelope_item_is_empty(item: Any) -> bool:
     return _value_is_empty(item)
 
 
-async def _probe_guard(spec: _GuardSpec) -> bool | None:
-    """Run the guard's MCP tool and report emptiness.
+async def _probe_guard(spec: _GuardSpec) -> _ProbeResult:
+    """Run the guard's MCP tool and classify the outcome.
 
-    Returns ``True``/``False`` for empty/non-empty, or ``None`` to *fail open*
-    (server unavailable, tool error, or exception) so a broken guard never
-    silently disables the schedule.
+    Returns a :class:`_ProbeResult`. ``empty`` is ``True``/``False`` for
+    empty/non-empty, or ``None`` to *fail open* (server unavailable, tool error,
+    or exception) so a broken guard never silently disables the schedule. When
+    the server is parked in ``needs_auth`` the result carries
+    ``auth_required=True`` instead, so the caller surfaces a sign-in prompt.
     """
     manager = get_mcp_client_manager()
     async with SessionLocal() as session:
@@ -259,18 +281,20 @@ async def _probe_guard(spec: _GuardSpec) -> bool | None:
     try:
         async with manager.acquired([spec.server], github_token=github_token) as active:
             if any(srv == spec.server for srv, _ in active.unavailable):
+                if manager.auth_blocked_servers([spec.server]):
+                    return _ProbeResult(empty=None, auth_required=True)
                 logger.warning("Guard: MCP server %r unavailable; running anyway", spec.server)
-                return None
+                return _ProbeResult(empty=None)
             result = await active.call_tool(spec.server, spec.tool, spec.args)
     except Exception as exc:
         logger.warning("Guard probe %s/%s failed (%s); running anyway", spec.server, spec.tool, exc)
-        return None
+        return _ProbeResult(empty=None)
     if getattr(result, "isError", False):
         logger.warning(
             "Guard probe %s/%s returned an error result; running anyway", spec.server, spec.tool
         )
-        return None
-    return _result_is_empty(result)
+        return _ProbeResult(empty=None)
+    return _ProbeResult(empty=_result_is_empty(result))
 
 
 def _result_is_empty(result: Any) -> bool:
@@ -281,8 +305,10 @@ async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
     """Evaluate any leading ``/guard`` directives.
 
     Returns ``(skip, remaining_prompt)``: ``skip`` is True when a guard's
-    predicate isn't satisfied (the run should be silently skipped);
-    ``remaining_prompt`` is the prompt with guard lines stripped.
+    predicate isn't satisfied (the run should be silently skipped) or when the
+    guard's MCP server needs an interactive sign-in (a re-authenticate prompt is
+    surfaced first); ``remaining_prompt`` is the prompt with guard lines
+    stripped.
     """
     guards, remaining = _extract_guards(prompt)
     for body in guards:
@@ -290,10 +316,18 @@ async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
         if spec is None:
             logger.warning("Ignoring malformed /guard directive: %r", body)
             continue
-        empty = await _probe_guard(spec)
-        if empty is None:
+        probe = await _probe_guard(spec)
+        if probe.auth_required:
+            logger.info(
+                "Topic %s: scheduled run paused — guard server %r needs sign-in",
+                topic_id,
+                spec.server,
+            )
+            await _announce_guard_auth(topic_id, spec.server)
+            return True, remaining
+        if probe.empty is None:
             continue  # fail open
-        satisfied = empty if spec.predicate == "empty" else not empty
+        satisfied = probe.empty if spec.predicate == "empty" else not probe.empty
         if not satisfied:
             logger.info(
                 "Topic %s: scheduled run skipped by guard (%s %s %s) — no work",
@@ -304,6 +338,59 @@ async def _evaluate_guards(topic_id: int, prompt: str) -> tuple[bool, str]:
             )
             return True, remaining
     return False, remaining
+
+
+# Friendly labels for servers that surface a sign-in prompt. Falls back to the
+# raw server name for anything not listed.
+_SERVER_LABELS = {"workiq": "WorkIQ"}
+
+
+def _server_label(server: str) -> str:
+    return _SERVER_LABELS.get(server, server)
+
+
+async def _announce_guard_auth(topic_id: int, server: str) -> None:
+    """Surface a sign-in prompt when a guard's MCP server needs auth.
+
+    Emits the app-global ``mcp.auth_required`` bus event (so the same banner an
+    interactive turn raises appears, even in windows that weren't streaming the
+    run) and records a durable, de-duplicated transcript note so the requirement
+    is visible whenever the topic is opened.
+    """
+    manager = get_mcp_client_manager()
+    entry = manager.get(server)
+    detail = (entry.error if entry else None) or "Sign-in required."
+    await publish_mcp_auth_required(server, detail, topic_id=topic_id)
+
+    label = _server_label(server)
+    notice = (
+        f"⚠️ {label} needs sign-in before this scheduled check can run. "
+        "Select **Sign in** in the banner (or Settings → MCP servers) to "
+        "re-authenticate; the scheduled run resumes automatically on the next tick."
+    )
+    await _record_auth_notice(topic_id, notice)
+
+
+async def _record_auth_notice(topic_id: int, content: str) -> None:
+    """Append the sign-in note unless it's already the latest message.
+
+    Scheduled guards re-probe every tick; without this guard against duplicates
+    a stuck ``needs_auth`` server would append the same note on every run.
+    """
+    async with SessionLocal() as session:
+        latest = (
+            await session.execute(
+                select(Message)
+                .where(Message.topic_id == topic_id)
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest is not None and latest.role == MessageRole.SYSTEM and latest.content == content:
+            return
+        session.add(Message(topic_id=topic_id, role=MessageRole.SYSTEM, content=content))
+        await session.commit()
+    await publish_message_changed(topic_id)
 
 
 # ---------------------------------------------------------------------------

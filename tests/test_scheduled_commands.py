@@ -163,7 +163,7 @@ def test_guard_skips_run_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError("guard should have skipped the run before any LLM turn")
 
         async def fake_probe(spec):  # type: ignore[no-untyped-def]
-            return True  # empty
+            return sc._ProbeResult(empty=True)  # empty
 
         monkeypatch.setattr(sc, "run_topic_turn", fail_turn)
         monkeypatch.setattr(sc, "_probe_guard", fake_probe)
@@ -184,7 +184,7 @@ def test_guard_runs_and_strips_line_when_non_empty(monkeypatch: pytest.MonkeyPat
             seen.append(prompt)
 
         async def fake_probe(spec):  # type: ignore[no-untyped-def]
-            return False  # non-empty → run
+            return sc._ProbeResult(empty=False)  # non-empty → run
 
         monkeypatch.setattr(sc, "run_topic_turn", fake_turn)
         monkeypatch.setattr(sc, "_probe_guard", fake_probe)
@@ -213,6 +213,64 @@ def test_malformed_guard_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
         _run_prompt(topic_id, "/guard bogus workiq list\nSummarise my inbox")
 
         assert seen == ["Summarise my inbox"]
+
+
+def test_guard_needs_auth_skips_run_and_prompts_signin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        async def fail_turn(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("a needs_auth guard must skip the run, not call the LLM")
+
+        async def auth_probe(spec):  # type: ignore[no-untyped-def]
+            return sc._ProbeResult(empty=None, auth_required=True)
+
+        announced: list[tuple[str, str, int | None]] = []
+
+        async def fake_publish(server, message, *, topic_id=None):  # type: ignore[no-untyped-def]
+            announced.append((server, message, topic_id))
+
+        monkeypatch.setattr(sc, "run_topic_turn", fail_turn)
+        monkeypatch.setattr(sc, "_probe_guard", auth_probe)
+        monkeypatch.setattr(sc, "publish_mcp_auth_required", fake_publish)
+        _run_prompt(topic_id, "/guard non-empty workiq fetch\nSummarise my inbox")
+
+        # The app-global re-authenticate banner is driven for the right server.
+        assert [a[0] for a in announced] == ["workiq"]
+        assert announced[0][2] == topic_id
+
+        # A durable, user-visible note is recorded in the transcript.
+        msgs = _messages(client, topic_id)
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "system"
+        assert "sign-in" in msgs[0]["content"].lower()
+
+
+def test_guard_needs_auth_does_not_spam_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic_id = _make_topic(client)
+
+        async def auth_probe(spec):  # type: ignore[no-untyped-def]
+            return sc._ProbeResult(empty=None, auth_required=True)
+
+        async def fake_publish(*args, **kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+        monkeypatch.setattr(sc, "_probe_guard", auth_probe)
+        monkeypatch.setattr(sc, "publish_mcp_auth_required", fake_publish)
+
+        prompt = "/guard non-empty workiq fetch\nSummarise my inbox"
+        _run_prompt(topic_id, prompt)
+        _run_prompt(topic_id, prompt)  # second tick, still blocked
+
+        # The identical note isn't appended twice while the server stays blocked.
+        assert len(_messages(client, topic_id)) == 1
 
 
 # ---------------------------------------------------------------------------
