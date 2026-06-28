@@ -114,10 +114,12 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
             }
         )
 
-        configs, oauth_expiry = await AgentManager()._catalog_mcp_configs()
+        configs, oauth_expiry, auth_required = await AgentManager()._catalog_mcp_configs()
 
-        # No OAuth-protected server attached here (workiq disabled) → no expiry.
+        # No OAuth-protected server attached here (workiq disabled) → no expiry,
+        # and a disabled server is never a sign-in prompt.
         assert oauth_expiry is None
+        assert auth_required == []
         # precursor is attached separately with full access — never here.
         assert "precursor" not in configs
         # Disabled built-in excluded; malformed entry skipped.

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
+import { mcpAuthStore } from "../lib/mcpAuth";
 import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
 import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
@@ -134,6 +135,8 @@ const CATEGORY_STYLE: Record<
 function classify(event: AgentEvent): StepCategory {
   const kind = event.kind.toLowerCase();
   if (kind.includes("delta")) return "skip";
+  // Surfaced as the global sign-in banner, not as a timeline node.
+  if (kind === "mcp_auth_required") return "skip";
   if (kind === "permission_request") return "permission";
   if (event.tool_name || kind.startsWith("tool")) return "tool";
   if (kind.includes("reason") || kind.includes("think")) return "reasoning";
@@ -1358,6 +1361,21 @@ export function AgentView({
       }
     });
   }, [agentId, loadEvents]);
+
+  // Drive the app-global sign-in banner when a turn surfaces an MCP server that
+  // needs interactive auth (e.g. WorkIQ OAuth lapsed). The agent runtime emits a
+  // synthetic `mcp_auth_required` event; mirror it into the shared store so the
+  // user can re-authenticate inline instead of digging through Settings.
+  useEffect(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev.kind !== "mcp_auth_required") continue;
+      const server =
+        ev.tool_name ?? (ev.data?.server as string | undefined) ?? "workiq";
+      mcpAuthStore.report(server, ev.text ?? "Sign-in required.");
+      return;
+    }
+  }, [events]);
 
   // Snap the scroll container to its absolute bottom. We drive the container's
   // scrollTop directly (rather than scrollIntoView on an anchor) so height that
