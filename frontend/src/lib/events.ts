@@ -8,6 +8,7 @@
  */
 
 import { CLIENT_ID } from "./clientId";
+import { mcpAuthStore } from "./mcpAuth";
 
 export type BusEvent =
   | { type: "topic.changed"; topic_id: number | null; chat_id?: number | null }
@@ -78,6 +79,23 @@ function connect(): void {
   source.addEventListener("agent.changed", (e) =>
     dispatch("agent.changed", (e as MessageEvent).data),
   );
+  // A background run (e.g. a scheduled /guard probe) found an MCP server parked
+  // in needs_auth. Drive the app-global re-authenticate banner directly — this
+  // notice carries server/message fields the typed BusEvent bus doesn't relay.
+  source.addEventListener("mcp.auth_required", (e) => {
+    try {
+      const payload = JSON.parse((e as MessageEvent).data) as {
+        server?: string;
+        message?: string;
+      };
+      mcpAuthStore.report(
+        payload.server ?? "workiq",
+        payload.message ?? "Sign-in required.",
+      );
+    } catch {
+      // Ignore malformed payloads.
+    }
+  });
   source.onerror = () => {
     source?.close();
     source = null;

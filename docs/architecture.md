@@ -184,8 +184,12 @@ sign-in is surfaced *inline* in the main app (no Settings detour) by the global
 `McpAuthBanner`: chat/topic/workspace turns hold and stream an `mcp_auth_required`
 event from their pause-and-resume gate, and the Agents runtime emits the same
 event (as a synthetic timeline entry) when it has to skip an enabled OAuth server
-for lack of credentials. The reauthenticate route also drops idle agent sessions
-so the next dispatch rebuilds with the fresh token.
+for lack of credentials. A scheduled `/guard` probe (`services/scheduled_commands.py`)
+that finds its server parked in `needs_auth` does the same over the cross-window
+bus (`mcp.auth_required`) — instead of failing open into a turn that would just
+error — and skips the run with a durable transcript note until the user signs in.
+The reauthenticate route also drops idle agent sessions so the next dispatch
+rebuilds with the fresh token.
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,
@@ -251,8 +255,15 @@ Emptiness is read across common result shapes, including the WorkIQ/`fetch`
 envelope `{"results": [{"data": {"value": [...]}, "statusCode": 200}]}` (the rows
 live at `results[i].data`, not the top level). A malformed or failing guard
 *fails open* (the run proceeds) so a typo or a transient MCP error can never
-silently disable a schedule. See `_evaluate_guards` in
-`services/scheduled_commands.py`.
+silently disable a schedule. A server that needs interactive sign-in is the one
+exception: instead of failing open into a turn that would just error, the guard
+surfaces a re-authenticate prompt (the `mcp.auth_required` bus event +
+transcript note) and skips until the user signs in. An explicit **Run now**
+(`POST /api/schedules/{topic_id}/run`) is a *forced* run: the scheduler flags the
+topic so the guard still gates (an empty probe still skips) but records the skip
+*visibly* — a manual trigger that finds no work says so instead of appearing to
+do nothing, while an automatic tick stays silent to avoid posting every poll. See
+`_evaluate_guards` in `services/scheduled_commands.py`.
 
 ## Workspaces
 

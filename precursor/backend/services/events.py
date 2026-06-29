@@ -25,6 +25,10 @@ class Event(TypedDict, total=False):
     topic_id: int | None
     chat_id: int | None
     agent_session_id: int | None
+    # Carried only by ``mcp.auth_required`` — which MCP server needs an
+    # interactive sign-in and the human-readable reason to show.
+    server: str | None
+    message: str | None
     client_id: str | None
 
 
@@ -61,6 +65,8 @@ class EventBus:
             "topic_id": event.get("topic_id"),
             "chat_id": event.get("chat_id"),
             "agent_session_id": event.get("agent_session_id"),
+            "server": event.get("server"),
+            "message": event.get("message"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         # Snapshot to avoid mutation during iteration.
@@ -84,6 +90,26 @@ async def publish_topic_changed(topic_id: int | None = None) -> None:
 
 async def publish_message_changed(topic_id: int) -> None:
     await _bus.publish({"type": "message.changed", "topic_id": topic_id})
+
+
+async def publish_mcp_auth_required(
+    server: str, message: str, *, topic_id: int | None = None
+) -> None:
+    """Signal that an MCP server needs an interactive sign-in to proceed.
+
+    Background work (a scheduled ``/guard`` probe, a chat turn) can't pop a
+    browser, so it surfaces ``needs_auth`` and emits this so the app-global
+    ``McpAuthBanner`` offers an inline re-authenticate action — the same UX a
+    live turn gets, but reaching windows that weren't streaming the run.
+    """
+    await _bus.publish(
+        {
+            "type": "mcp.auth_required",
+            "server": server,
+            "message": message,
+            "topic_id": topic_id,
+        }
+    )
 
 
 async def publish_message_changed_chat(chat_id: int) -> None:

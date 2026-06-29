@@ -224,8 +224,12 @@ async def run_now(topic_id: int, session: AsyncSession = Depends(get_session)) -
     await publish_message_changed(topic_id)
     await publish_topic_changed(topic_id)
     # Nudge the scheduler so the run fires now instead of waiting for the next
-    # poll tick (no-op if the scheduler is disabled).
-    await get_scheduler().nudge()
+    # poll tick (no-op if the scheduler is disabled). Flag it as forced so the
+    # guard records its verdict visibly — a manual "Run now" that the guard skips
+    # (e.g. no mail to process) should say so rather than appear to do nothing.
+    scheduler = get_scheduler()
+    scheduler.mark_forced(topic_id)
+    await scheduler.nudge()
     return schedule
 
 
