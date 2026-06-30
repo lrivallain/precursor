@@ -515,7 +515,56 @@ async def test_rerun_task_clears_then_replays_task_prompt() -> None:
     assert calls["send"] == (agent_id, "Process the inbox.\n\nprioritise FR mail")
 
 
-async def test_run_command_rejects_unknown() -> None:
+async def test_notify_back_posts_full_answer_not_truncated_summary() -> None:
+    """The exchange reposted to the linked topic carries the agent's *full*
+    answer, even when it exceeds the 2000-char ``result_summary`` cap used for
+    the agent list. Regression: the topic message was previously truncated."""
+    from sqlalchemy import select
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Message, Topic
+    from precursor.backend.models.message import MessageRole
+    from precursor.backend.services.agents.manager import AgentManager, _LiveSession
+
+    with TestClient(create_app()):
+        pass
+
+    async with SessionLocal() as session:
+        topic = Topic(title="Briefing", slug="briefing-notify-back")
+        session.add(topic)
+        await session.commit()
+        await session.refresh(topic)
+        topic_id = topic.id
+
+    long_answer = "A long briefing. " * 300  # well over 2000 chars
+    assert len(long_answer) > 2000
+
+    agent_id = await _make_agent(topic_id=topic_id, result_summary=long_answer[:2000])
+
+    mgr = AgentManager()
+    live = _LiveSession(sdk_session=None)
+    live.pending_prompt = "Run the briefing"
+    live.pending_answer = long_answer
+    mgr._live[agent_id] = live
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        await mgr._notify_back(agent)
+
+    async with SessionLocal() as session:
+        rows = (
+            await session.scalars(
+                select(Message).where(Message.topic_id == topic_id).order_by(Message.id)
+            )
+        ).all()
+    assistant = [m for m in rows if m.role == MessageRole.ASSISTANT]
+    assert len(assistant) == 1
+    # Full content preserved — not capped to the 2000-char summary.
+    assert assistant[0].content == long_answer.strip()
+    # The pending answer is consumed so a repeated idle event won't double-post.
+    assert live.pending_answer is None
+
     import pytest
 
     from precursor.backend.services.agents.manager import AgentManager
