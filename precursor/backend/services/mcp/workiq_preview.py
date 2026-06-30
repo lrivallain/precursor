@@ -249,12 +249,135 @@ def _make_redirect_handler(interactive: bool) -> Callable[[str], Awaitable[None]
     return _handler
 
 
+# Seconds the success page waits before trying to close itself.
+_CALLBACK_AUTOCLOSE_SECONDS = 4
+
+
+def _render_callback_page(*, status: str, title: str, message: str) -> str:
+    """Build the styled HTML shown in the loopback OAuth callback tab.
+
+    The page mirrors Precursor's look (theme tokens, Inter font, dark-mode via
+    ``prefers-color-scheme``) so it feels like part of the app, and — on
+    success — counts down and closes the tab automatically so the user isn't
+    left staring at a stray browser tab once they're connected.
+    """
+    auto_close = status == "success"
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Precursor — WorkIQ sign-in</title>
+<style>
+  :root {{
+    --bg: #ffffff; --surface: #f7f7f8; --border: #e5e7eb;
+    --text: #111827; --muted: #6b7280; --accent: #2563eb;
+    --ok: #16a34a; --err: #dc2626;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #0b0d10; --surface: #15181d; --border: #2a2f37;
+      --text: #e6e8eb; --muted: #8a93a0; --accent: #60a5fa;
+      --ok: #34d399; --err: #f87171;
+    }}
+  }}
+  * {{ box-sizing: border-box; }}
+  html, body {{ height: 100%; margin: 0; }}
+  body {{
+    background: var(--bg); color: var(--text);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }}
+  .card {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    max-width: 420px; width: 100%;
+    padding: 32px;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  }}
+  .badge {{
+    width: 56px; height: 56px; margin: 0 auto 20px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }}
+  .badge svg {{ width: 30px; height: 30px; }}
+  .badge.success svg {{ color: var(--ok); }}
+  .badge.error svg {{ color: var(--err); }}
+  .brand {{
+    font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }}
+  h1 {{ font-size: 1.25rem; font-weight: 600; margin: 0 0 10px; }}
+  p {{ color: var(--muted); line-height: 1.5; margin: 0; font-size: 0.95rem; }}
+  .countdown {{ margin-top: 18px; font-size: 0.85rem; color: var(--muted); min-height: 1.2em; }}
+  .countdown b {{ color: var(--text); font-variant-numeric: tabular-nums; }}
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="badge {status}">
+      {_CALLBACK_ICONS[status]}
+    </div>
+    <div class="brand">Precursor</div>
+    <h1>{title}</h1>
+    <p>{message}</p>
+    <div class="countdown" id="countdown"></div>
+  </main>
+  <script>
+    (function () {{
+      var autoClose = {str(auto_close).lower()};
+      var el = document.getElementById("countdown");
+      if (!autoClose) {{
+        if (el) el.textContent = "You can close this tab.";
+        return;
+      }}
+      var remaining = {_CALLBACK_AUTOCLOSE_SECONDS};
+      function render() {{
+        if (el) el.innerHTML = "Closing this tab in <b>" + remaining + "</b>s\u2026";
+      }}
+      render();
+      var timer = setInterval(function () {{
+        remaining -= 1;
+        if (remaining <= 0) {{
+          clearInterval(timer);
+          window.close();
+          if (el) el.textContent = "You can close this tab and return to Precursor.";
+          return;
+        }}
+        render();
+      }}, 1000);
+    }})();
+  </script>
+</body>
+</html>"""
+
+
+_CALLBACK_ICONS = {
+    "success": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M20 6 9 17l-5-5" /></svg>'
+    ),
+    "error": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+        '<circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" />'
+        '<path d="m9 9 6 6" /></svg>'
+    ),
+}
+
+
 async def _callback_handler() -> tuple[str, str | None]:
     """Run a one-shot loopback server and return ``(auth_code, state)``.
 
     Listens on ``127.0.0.1:WORKIQ_OAUTH_REDIRECT_PORT`` for the single OAuth
     redirect, parses ``code``/``state`` off the query string, replies with a
-    minimal success page, and resolves.
+    styled success page that auto-closes the tab, and resolves.
     """
     loop = asyncio.get_running_loop()
     result: asyncio.Future[tuple[str, str | None]] = loop.create_future()
@@ -272,11 +395,23 @@ async def _callback_handler() -> tuple[str, str | None]:
             error = query.get("error", [None])[0]
 
             if error:
-                body = f"WorkIQ sign-in failed: {error}. You can close this tab."
+                body = _render_callback_page(
+                    status="error",
+                    title="Sign-in failed",
+                    message=f"WorkIQ couldn't complete the sign-in ({error}).",
+                )
             elif code:
-                body = "WorkIQ sign-in complete. You can close this tab and return to Precursor."
+                body = _render_callback_page(
+                    status="success",
+                    title="You're connected",
+                    message="WorkIQ sign-in is complete.",
+                )
             else:
-                body = "No authorization code received. You can close this tab."
+                body = _render_callback_page(
+                    status="error",
+                    title="Sign-in incomplete",
+                    message="No authorization code was received from WorkIQ.",
+                )
 
             payload = (
                 "HTTP/1.1 200 OK\r\n"
