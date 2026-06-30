@@ -123,29 +123,6 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     }
   }
 
-  async function removeSchedule(): Promise<void> {
-    if (scheduleBusy) return;
-    if (
-      !(await confirmAction({
-        message: "Remove this agent's schedule? The agent itself is kept.",
-        confirmLabel: "Remove schedule",
-        variant: "danger",
-      }))
-    )
-      return;
-    setScheduleBusy(true);
-    setError(null);
-    try {
-      await api.deleteAgentSchedule(agent.id);
-      const updated = await api.getAgent(agent.id);
-      onSaved(updated);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setScheduleBusy(false);
-    }
-  }
-
   async function archive(): Promise<void> {
     setArchiving(true);
     setError(null);
@@ -243,61 +220,56 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
               </p>
             </section>
 
-            <section className="pt-2 border-t border-border space-y-3">
-              <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <section className="pt-4 border-t border-border space-y-4">
+              <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
                   type="checkbox"
                   className="mt-0.5"
                   checked={scheduleOn}
                   onChange={(e) => setScheduleOn(e.target.checked)}
                 />
-                <span className="flex items-center gap-1.5">
-                  <CalendarClock size={14} /> Run on a schedule
-                  <span className="block text-[11px] text-muted">
+                <span className="space-y-0.5">
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    <CalendarClock size={14} className="text-muted" />
+                    Run on a schedule
+                  </span>
+                  <span className="block text-[11px] text-muted leading-relaxed">
                     Re-runs this agent's task automatically on a recurrence.
                   </span>
                 </span>
               </label>
 
               {scheduleOn && (
-                <div className="space-y-3 pl-1">
+                <div className="ml-1.5 space-y-4 border-l border-border pl-4">
                   <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
-                  <label className="flex items-start gap-2 text-sm cursor-pointer">
+
+                  <label className="flex items-start gap-2.5 cursor-pointer">
                     <input
                       type="checkbox"
                       className="mt-0.5"
                       checked={clearContext}
                       onChange={(e) => setClearContext(e.target.checked)}
                     />
-                    <span>
-                      Clear context before each run
-                      <span className="block text-[11px] text-muted">
+                    <span className="space-y-0.5">
+                      <span className="block text-sm">Clear context before each run</span>
+                      <span className="block text-[11px] text-muted leading-relaxed">
                         Wipes the prior transcript (keeping the session id) and replays the task
                         from scratch. Off = re-runs as a follow-up in the existing conversation.
                       </span>
                     </span>
                   </label>
-                </div>
-              )}
 
-              {agent.schedule && <AgentScheduleMeta schedule={agent.schedule} />}
+                  {agent.schedule && <AgentScheduleMeta schedule={agent.schedule} />}
 
-              {hasSchedule && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => void runScheduleNow()}
-                    disabled={scheduleBusy || saving}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs hover:bg-surface disabled:opacity-50"
-                  >
-                    <Play size={12} /> Run now
-                  </button>
-                  <button
-                    onClick={() => void removeSchedule()}
-                    disabled={scheduleBusy || saving}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs text-red-500 hover:bg-surface disabled:opacity-50"
-                  >
-                    <Trash2 size={12} /> Remove schedule
-                  </button>
+                  {hasSchedule && (
+                    <button
+                      onClick={() => void runScheduleNow()}
+                      disabled={scheduleBusy || saving}
+                      className="flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs hover:bg-surface disabled:opacity-50"
+                    >
+                      <Play size={12} /> Run now
+                    </button>
+                  )}
                 </div>
               )}
             </section>
