@@ -83,11 +83,12 @@ Scheduled topics run the *same* turn logic off the request path via
 
 - Models live in `precursor/backend/models/`. Async SQLAlchemy 2 via
   `AsyncSession` (`db.py`).
-- `Topic` — self-referencing tree (parent/children); `kind` is
-  `standard | schedule_root | scheduled`.
+- `Topic` — self-referencing tree (parent/children); `kind` is `standard`
+  (the only kind — a topic is "scheduled" simply when it has a `TopicSchedule`).
 - `Message` — per-topic, cascade delete; roles `user/assistant/system/tool`.
-- `TopicSchedule` — recurrence config + run state for a scheduled topic
-  (interval, weekday mask, time-of-day, timezone, lease/status).
+- `TopicSchedule` — recurrence config + run state, one-to-one on **any** topic
+  (interval, weekday mask, time-of-day, timezone, lease/status), holding the
+  prompt sent each run. A topic with an enabled schedule runs on a cadence.
 - `AgentSchedule` — the same recurrence + run state, one-to-one on an
   `AgentSession`, so an agent re-runs its task on a cadence.
 - `Workspace` — a git clone or a local directory the assistant can browse/edit.
@@ -211,12 +212,14 @@ history outbound is opt-in). Two transports, same tools:
 
 ## Scheduler
 
-`services/scheduler.py` drives recurring "scheduled" topics **and** scheduled
-agents: a single async ticker enqueues due `TopicSchedule` *and* `AgentSchedule`
-rows (tagged `(kind, id)`), a bounded worker pool runs each — topics via
+`services/scheduler.py` drives recurring topics **and** scheduled agents: a
+single async ticker enqueues due `TopicSchedule` *and* `AgentSchedule` rows
+(tagged `(kind, id)`), a bounded worker pool runs each — topics via
 `services/scheduled_commands.py` under a timeout, agents by re-triggering the
-agent's task — with DB row leasing for crash recovery. Recurrence supports
-interval, weekday mask, and daily time-of-day in a timezone
+agent's task — with DB row leasing for crash recovery. A topic or agent runs on
+a cadence simply by having an enabled schedule row (edited from its settings
+panel; `POST/PATCH/DELETE /api/topics/{id}/schedule` and the agent equivalent).
+Recurrence supports interval, weekday mask, and daily time-of-day in a timezone
 (`services/schedule_timing.py`).
 
 A scheduled prompt that begins with a slash command (e.g. `/agent run the

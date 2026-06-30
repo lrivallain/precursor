@@ -74,6 +74,18 @@ class ScheduleCreate(BaseModel):
     enabled: bool = True
 
 
+class TopicScheduleCreate(BaseModel):
+    """Attach a recurrence to an existing topic (no title — the topic owns it)."""
+
+    prompt: str = Field(min_length=1)
+    interval_seconds: int = Field(ge=MIN_INTERVAL_SECONDS)
+    days_of_week: int = Field(default=ALL_DAYS_MASK, ge=1, le=ALL_DAYS_MASK)
+    run_at_minute: int | None = Field(default=None, ge=0, le=MAX_MINUTE_OF_DAY)
+    timezone: str = Field(default="UTC", max_length=64)
+    clear_context: bool = False
+    enabled: bool = True
+
+
 class ScheduleUpdate(BaseModel):
     # Title edits the underlying topic; the rest edit the schedule row.
     title: str | None = Field(default=None, min_length=1, max_length=255)

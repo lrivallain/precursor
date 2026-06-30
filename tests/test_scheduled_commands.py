@@ -587,16 +587,12 @@ def test_scheduler_consumes_forced_flag(monkeypatch: pytest.MonkeyPatch) -> None
 
     app = create_app()
     with TestClient(app) as client:
+        topic_id = _make_topic(client, "Forced run")
         created = client.post(
-            "/api/schedules",
-            json={
-                "title": "Forced run",
-                "prompt": "Summarise my inbox",
-                "interval_seconds": 300,
-            },
+            f"/api/topics/{topic_id}/schedule",
+            json={"prompt": "Summarise my inbox", "interval_seconds": 300},
         )
         assert created.status_code in (200, 201)
-        topic_id = created.json()["topic_id"]
 
         seen: list[bool] = []
 

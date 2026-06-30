@@ -1353,7 +1353,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
               // In a scheduled topic the user turn is the repeated automation
               // prompt — collapse it so generated content gets the room.
-              const collapsible = m.role === "user" && topic.kind === "scheduled";
+              const collapsible = m.role === "user" && topic.schedule != null;
               return (
                 <MessageBubble
                   key={m.id}

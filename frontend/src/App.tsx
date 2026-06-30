@@ -16,7 +16,6 @@ import { ChatSettingsPanel } from "./components/ChatSettingsPanel";
 import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TopicCreateModal } from "./components/TopicCreateModal";
-import { ScheduleModal } from "./components/ScheduleModal";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
 import { ArchivePanel } from "./components/ArchivePanel";
 import { IssueStatusBadge } from "./components/IssueStatusBadge";
@@ -47,7 +46,6 @@ import type {
   AgentSession,
   Chat,
   ReminderItem,
-  Schedule,
   Topic,
   TopicNode,
   Workspace,
@@ -228,10 +226,6 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [createParentId, setCreateParentId] = useState<number | null | undefined>(undefined);
   const [chatReloadKey, setChatReloadKey] = useState(0);
-  // Schedule editor: undefined = closed, null = creating, Schedule = editing.
-  const [scheduleModal, setScheduleModal] = useState<Schedule | null | undefined>(
-    undefined,
-  );
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   // Ids already seen as fired, so we only notify on newly-fired ones.
@@ -864,14 +858,6 @@ export default function App() {
     setCreateParentId(parentId ?? activeTopic?.id ?? null);
   }
 
-  async function handleEditSchedule(topicId: number): Promise<void> {
-    try {
-      setScheduleModal(await api.getSchedule(topicId));
-    } catch {
-      // schedule may have been deleted elsewhere; ignore
-    }
-  }
-
   function openTopicSettings(tab: "settings" | "context" = "settings"): void {
     setTopicSettingsTab(tab);
     setTopicSettingsOpen(true);
@@ -932,8 +918,6 @@ export default function App() {
         onNew={handleNew}
         onCreate={handleCreate}
         onRename={handleRenameTopic}
-        onCreateSchedule={() => setScheduleModal(null)}
-        onEditSchedule={handleEditSchedule}
         reminders={reminders}
         reminderTopicIds={reminderTopicIds}
         onReminderSelect={handleReminderSelect}
@@ -960,7 +944,7 @@ export default function App() {
                 ) : (
                   <span className="truncate font-medium">Select or create a topic</span>
                 )}
-                {activeTopic && issueAssociationsEnabled && activeTopic.kind !== "scheduled" && (
+                {activeTopic && issueAssociationsEnabled && (
                   <IssueStatusBadge
                     status={issueContext.status}
                     onClick={() => openTopicSettings("context")}
@@ -969,7 +953,6 @@ export default function App() {
               </div>
               {activeTopic &&
                 issueAssociationsEnabled &&
-                activeTopic.kind !== "scheduled" &&
                 issueContext.summary && (
                   <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
                     <IssueStateBadge state={issueContext.summary.issue_state} />
@@ -1353,17 +1336,6 @@ export default function App() {
             setCreateParentId(undefined);
             await refreshTree();
             setActiveTopic(topic);
-          }}
-        />
-      )}
-
-      {scheduleModal !== undefined && (
-        <ScheduleModal
-          schedule={scheduleModal}
-          onClose={() => setScheduleModal(undefined)}
-          onSaved={async () => {
-            setScheduleModal(undefined);
-            await refreshTree();
           }}
         />
       )}

@@ -7,7 +7,7 @@ export interface AppVersion {
   build_date: string | null;
 }
 
-export type TopicKind = "standard" | "schedule_root" | "scheduled";
+export type TopicKind = "standard";
 
 export interface Topic {
   id: number;
@@ -23,6 +23,8 @@ export interface Topic {
   role_id: number | null;
   created_at: string;
   updated_at: string;
+  // Recurrence summary when the topic runs on a schedule (null otherwise).
+  schedule: ScheduleSummary | null;
 }
 
 // Lightweight schedule view embedded in the sidebar tree (mirrors backend
@@ -49,8 +51,8 @@ export interface Schedule extends ScheduleSummary {
   updated_at: string;
 }
 
-export interface ScheduleCreate {
-  title: string;
+// Attach a recurrence to an existing topic (no title — the topic owns it).
+export interface TopicScheduleCreate {
   prompt: string;
   interval_seconds: number;
   days_of_week?: number;
@@ -61,7 +63,6 @@ export interface ScheduleCreate {
 }
 
 export interface ScheduleUpdate {
-  title?: string;
   prompt?: string;
   interval_seconds?: number;
   days_of_week?: number;
@@ -74,7 +75,6 @@ export interface ScheduleUpdate {
 export interface TopicNode extends Topic {
   children: TopicNode[];
   unread_count: number;
-  schedule: ScheduleSummary | null;
 }
 
 // A flat conversation session (no tree hierarchy, no GitHub link). Mirrors the

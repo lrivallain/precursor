@@ -48,8 +48,8 @@ import type {
   RoleCreate,
   RoleUpdate,
   Schedule,
-  ScheduleCreate,
   ScheduleUpdate,
+  TopicScheduleCreate,
   Settings,
   SettingsUpdate,
   Skill,
@@ -198,23 +198,24 @@ export const api = {
       method: "DELETE",
     }),
 
-  // Schedules (recurring automation topics). Keyed by topic id.
-  getSchedule: (topicId: number) =>
-    request<Schedule>(`/api/schedules/${topicId}`),
-  createSchedule: (data: ScheduleCreate) =>
-    request<Schedule>(`/api/schedules`, {
+  // Topic schedules (run a topic's prompt on a recurrence). Keyed by topic id;
+  // mirror the agent schedule endpoints.
+  getTopicSchedule: (topicId: number) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule`),
+  createTopicSchedule: (topicId: number, data: TopicScheduleCreate) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateSchedule: (topicId: number, data: ScheduleUpdate) =>
-    request<Schedule>(`/api/schedules/${topicId}`, {
+  updateTopicSchedule: (topicId: number, data: ScheduleUpdate) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
-  deleteSchedule: (topicId: number) =>
-    request<void>(`/api/schedules/${topicId}`, { method: "DELETE" }),
-  runScheduleNow: (topicId: number) =>
-    request<Schedule>(`/api/schedules/${topicId}/run`, { method: "POST" }),
+  deleteTopicSchedule: (topicId: number) =>
+    request<void>(`/api/topics/${topicId}/schedule`, { method: "DELETE" }),
+  runTopicScheduleNow: (topicId: number) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule/run`, { method: "POST" }),
 
   // Reminders (one-shot date/time). Keyed by container kind + id; shared by
   // topics and chats. listReminders returns only fired (awaiting acknowledgment).

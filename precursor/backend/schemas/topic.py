@@ -45,6 +45,9 @@ class TopicRead(TopicBase):
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+    # Recurrence summary when the topic runs on a schedule (null otherwise).
+    # Eager-loaded (selectin) so any topic read carries it.
+    schedule: ScheduleSummary | None = None
 
 
 class TopicNode(TopicRead):
@@ -52,7 +55,6 @@ class TopicNode(TopicRead):
 
     children: list[TopicNode] = Field(default_factory=list)
     unread_count: int = 0
-    schedule: ScheduleSummary | None = None
 
 
 TopicNode.model_rebuild()

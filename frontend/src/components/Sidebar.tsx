@@ -16,7 +16,6 @@ import {
   Pin,
   Plus,
   Search,
-  Settings2,
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
 import { PersonaMenu } from "./PersonaMenu";
@@ -61,8 +60,6 @@ interface Props {
   onCreate: (parentId: number | null) => void;
   /** Inline rename of a topic (double-click its name in the tree). */
   onRename: (id: number, title: string) => void | Promise<void>;
-  onCreateSchedule: () => void;
-  onEditSchedule: (topicId: number) => void;
   /** Fired reminders, shown in a dedicated section across topics & chats. */
   reminders: ReminderItem[];
   /** Topic ids with a fired reminder, flagged with an alarm icon in the tree. */
@@ -89,8 +86,6 @@ export function Sidebar({
   onNew,
   onCreate,
   onRename,
-  onCreateSchedule,
-  onEditSchedule,
   reminders,
   reminderTopicIds,
   onReminderSelect,
@@ -114,14 +109,7 @@ export function Sidebar({
   // Pinned topics surface as a flat list at the top of the sidebar so they
   // are always one click away regardless of where they sit in the tree.
   const pinned = useMemo(() => collectPinned(filtered), [filtered]);
-  // Scheduled topics get their own section (just after Pinned). They live under
-  // the hidden "schedule_root" folder, which we lift out of the main tree so
-  // they aren't shown twice.
-  const scheduled = useMemo(() => collectScheduled(filtered), [filtered]);
-  const mainTree = useMemo(
-    () => filtered.filter((n) => n.kind !== "schedule_root"),
-    [filtered],
-  );
+  const mainTree = filtered;
 
   if (collapsed) {
     return (
@@ -213,16 +201,6 @@ export function Sidebar({
         >
           <Plus size={16} />
         </button>
-        {mode === "topics" && (
-          <button
-            className="p-1.5 rounded hover:bg-surface"
-            aria-label="New scheduled topic"
-            data-tooltip="New scheduled topic"
-            onClick={onCreateSchedule}
-          >
-            <Clock size={16} />
-          </button>
-        )}
         <button
           className="p-1.5 rounded hover:bg-surface"
           aria-label="Collapse sidebar"
@@ -313,37 +291,6 @@ export function Sidebar({
             <div className="mt-2 border-t border-border" />
           </div>
         )}
-        {scheduled.length > 0 && (
-          <div className="mb-2">
-            <SectionHeader
-              icon={<Clock size={11} />}
-              label="Scheduled"
-              collapsed={collapsedSections.has("scheduled")}
-              onToggle={() => toggleSection("scheduled")}
-            />
-            {!collapsedSections.has("scheduled") && (
-              <ul className="space-y-0.5">
-                {scheduled.map((node) => (
-                  <TopicItem
-                    key={`scheduled-${node.id}`}
-                    node={node}
-                    depth={0}
-                    activeId={activeId}
-                    streamingTopicIds={streamingTopicIds}
-                    collapsedIds={collapsedIds}
-                    onToggleCollapsed={toggleCollapsed}
-                    onSelect={onSelect}
-                    onCreate={onCreate}
-                    onEditSchedule={onEditSchedule}
-                    onRename={onRename}
-                    reminderTopicIds={reminderTopicIds}
-                  />
-                ))}
-              </ul>
-            )}
-            <div className="mt-2 border-t border-border" />
-          </div>
-        )}
         {mainTree.length === 0 ? (
           <div className="text-sm text-muted px-2 py-4">No topics yet.</div>
         ) : (
@@ -359,7 +306,6 @@ export function Sidebar({
                 onToggleCollapsed={toggleCollapsed}
                 onSelect={onSelect}
                 onCreate={onCreate}
-                onEditSchedule={onEditSchedule}
                 onRename={onRename}
                 reminderTopicIds={reminderTopicIds}
               />
@@ -386,7 +332,6 @@ interface ItemProps {
   onToggleCollapsed: (id: number) => void;
   onSelect: (id: number) => void;
   onCreate: (parentId: number | null) => void;
-  onEditSchedule: (topicId: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
   reminderTopicIds?: Set<number>;
 }
@@ -400,7 +345,6 @@ function TopicItem({
   onToggleCollapsed,
   onSelect,
   onCreate,
-  onEditSchedule,
   onRename,
   reminderTopicIds,
 }: ItemProps) {
@@ -408,7 +352,7 @@ function TopicItem({
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
   const hasChildren = node.children.length > 0;
-  const isScheduled = node.kind === "scheduled";
+  const isScheduled = node.schedule != null;
   const scheduleDisabled = isScheduled && node.schedule?.enabled === false;
   const scheduleError = isScheduled && node.schedule?.status === "error";
 
@@ -421,38 +365,26 @@ function TopicItem({
         style={{ paddingLeft: 6 + depth * 12 }}
         onClick={() => onSelect(node.id)}
       >
-        {isScheduled ? (
-          <span
-            className={`p-0.5 inline-flex ${
-              scheduleDisabled ? "text-muted/50" : "text-muted"
-            }`}
-            aria-label={scheduleDisabled ? "Schedule paused" : "Scheduled topic"}
-            data-tooltip={scheduleDisabled ? "Schedule paused" : "Scheduled topic"}
-          >
-            <Clock size={13} />
-          </span>
-        ) : (
-          <button
-            className="p-0.5 text-muted disabled:opacity-30"
-            disabled={!hasChildren}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleCollapsed(node.id);
-            }}
-            aria-label={open ? "Collapse" : "Expand"}
-            data-tooltip={hasChildren ? (open ? "Collapse" : "Expand") : undefined}
-          >
-            {hasChildren ? (
-              open ? (
-                <ChevronDown size={14} />
-              ) : (
-                <ChevronRight size={14} />
-              )
+        <button
+          className="p-0.5 text-muted disabled:opacity-30"
+          disabled={!hasChildren}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapsed(node.id);
+          }}
+          aria-label={open ? "Collapse" : "Expand"}
+          data-tooltip={hasChildren ? (open ? "Collapse" : "Expand") : undefined}
+        >
+          {hasChildren ? (
+            open ? (
+              <ChevronDown size={14} />
             ) : (
-              <span className="inline-block w-3.5" />
-            )}
-          </button>
-        )}
+              <ChevronRight size={14} />
+            )
+          ) : (
+            <span className="inline-block w-3.5" />
+          )}
+        </button>
         <InlineTitle
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
@@ -462,6 +394,14 @@ function TopicItem({
               : ""
           } ${scheduleDisabled ? "text-muted" : ""}`}
         />
+        {isScheduled && (
+          <Clock
+            size={11}
+            className={`shrink-0 ${scheduleDisabled ? "text-muted/50" : "text-muted"}`}
+            aria-label={scheduleDisabled ? "Schedule paused" : "Scheduled"}
+            data-tooltip={scheduleDisabled ? "Schedule paused" : "Runs on a schedule"}
+          />
+        )}
         {node.pinned && (
           <Pin
             size={11}
@@ -490,31 +430,17 @@ function TopicItem({
         {node.github_issue_number && (
           <span className="text-[10px] text-muted">#{node.github_issue_number}</span>
         )}
-        {isScheduled ? (
-          <button
-            className="p-0.5 opacity-0 group-hover:opacity-100 text-muted hover:text-text"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditSchedule(node.id);
-            }}
-            aria-label="Edit schedule"
-            data-tooltip="Edit schedule"
-          >
-            <Settings2 size={12} />
-          </button>
-        ) : (
-          <button
-            className="p-0.5 opacity-0 group-hover:opacity-100 text-muted hover:text-text"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreate(node.id);
-            }}
-            aria-label="Add child topic"
-            data-tooltip="Add child topic"
-          >
-            <Plus size={12} />
-          </button>
-        )}
+        <button
+          className="p-0.5 opacity-0 group-hover:opacity-100 text-muted hover:text-text"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCreate(node.id);
+          }}
+          aria-label="Add child topic"
+          data-tooltip="Add child topic"
+        >
+          <Plus size={12} />
+        </button>
       </div>
       {hasChildren && open && (
         <ul className="space-y-0.5">
@@ -529,7 +455,6 @@ function TopicItem({
               onToggleCollapsed={onToggleCollapsed}
               onSelect={onSelect}
               onCreate={onCreate}
-              onEditSchedule={onEditSchedule}
               onRename={onRename}
               reminderTopicIds={reminderTopicIds}
             />
@@ -618,19 +543,6 @@ function collectPinned(tree: TopicNode[]): TopicNode[] {
   const walk = (nodes: TopicNode[]): void => {
     for (const node of nodes) {
       if (node.pinned) out.push(node);
-      if (node.children.length > 0) walk(node.children);
-    }
-  };
-  walk(tree);
-  out.sort((a, b) => a.title.localeCompare(b.title));
-  return out;
-}
-
-function collectScheduled(tree: TopicNode[]): TopicNode[] {
-  const out: TopicNode[] = [];
-  const walk = (nodes: TopicNode[]): void => {
-    for (const node of nodes) {
-      if (node.kind === "scheduled") out.push(node);
       if (node.children.length > 0) walk(node.children);
     }
   };
