@@ -137,6 +137,10 @@ class _LiveSession:
     # *every* turn's exchange to the topic/chat (not just the first), keyed to
     # the right prompt rather than always the initial ``task_prompt``.
     pending_prompt: str | None = None
+    # Full text of the most recent assistant message for the in-flight turn.
+    # ``result_summary`` is capped for the agent list, so we keep the untruncated
+    # answer here to repost the complete exchange into the linked topic/chat.
+    pending_answer: str | None = None
     # Soonest expiry across any OAuth-protected MCP server attached to this SDK
     # session (today only WorkIQ preview). The bearer header is static, so once
     # this passes we rebuild the session to re-mint it. ``None`` means nothing
@@ -713,6 +717,7 @@ class AgentManager:
         live.approval_policy = await self._approval_policy()
         prompt = (agent.task_prompt or "").strip() or None
         live.pending_prompt = prompt
+        live.pending_answer = None
         await self._patch(agent_id, status="running", error=None, active_prompt=prompt)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -744,6 +749,7 @@ class AgentManager:
         live.approval_policy = await self._approval_policy()
         prompt = text.strip() or None
         live.pending_prompt = prompt
+        live.pending_answer = None
         await self._patch(agent_id, status="running", active_prompt=prompt)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -766,6 +772,7 @@ class AgentManager:
         live = await self._ensure_live(agent)
         live.approval_policy = await self._approval_policy()
         live.pending_prompt = prompt
+        live.pending_answer = None
         await self._patch(agent_id, status="running", error=None)
         await publish_agent_changed(
             agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
@@ -1409,6 +1416,11 @@ class AgentManager:
             content = getattr(data, "content", None)
             if content:
                 patch["result_summary"] = str(content)[:2000]
+                # Keep the full answer for the topic/chat repost — the summary
+                # column is capped for the agent list.
+                live = self._live.get(agent_id)
+                if live is not None:
+                    live.pending_answer = str(content)
         elif name == "AssistantUsageData":
             await self._record_usage(agent_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
@@ -1494,7 +1506,12 @@ class AgentManager:
         prompt = live.pending_prompt
         live.pending_prompt = None
 
-        answer = (agent.result_summary or "").strip() or "Agent task finished."
+        # Prefer the full assistant text captured this turn; fall back to the
+        # (capped) summary so a resumed turn without a tracked answer still posts.
+        answer = (
+            live.pending_answer or agent.result_summary or ""
+        ).strip() or "Agent task finished."
+        live.pending_answer = None
         answer, suggestions = split_suggestions(answer)
         async with SessionLocal() as session:
             session.add(
