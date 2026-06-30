@@ -166,6 +166,50 @@ export interface AgentSession {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  // Recurrence config + run state when the agent re-runs on a cadence (null
+  // when unscheduled). Mirrors backend AgentScheduleSummary.
+  schedule: AgentScheduleSummary | null;
+}
+
+// Lightweight schedule view embedded in AgentSession (mirrors backend
+// AgentScheduleSummary). Datetimes are ISO-8601 UTC strings.
+export interface AgentScheduleSummary {
+  enabled: boolean;
+  interval_seconds: number;
+  days_of_week: number;
+  run_at_minute: number | null;
+  timezone: string;
+  clear_context: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  status: string;
+}
+
+// Full agent schedule record (mirrors backend AgentScheduleRead).
+export interface AgentSchedule extends AgentScheduleSummary {
+  id: number;
+  agent_session_id: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentScheduleCreate {
+  interval_seconds: number;
+  days_of_week?: number;
+  run_at_minute?: number | null;
+  timezone?: string;
+  clear_context?: boolean;
+  enabled?: boolean;
+}
+
+export interface AgentScheduleUpdate {
+  interval_seconds?: number;
+  days_of_week?: number;
+  run_at_minute?: number | null;
+  timezone?: string;
+  clear_context?: boolean;
+  enabled?: boolean;
 }
 
 export interface AgentSessionCreate {

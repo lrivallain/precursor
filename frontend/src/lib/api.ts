@@ -4,6 +4,9 @@ import type {
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
+  AgentSchedule,
+  AgentScheduleCreate,
+  AgentScheduleUpdate,
   AgentSession,
   AgentSessionCreate,
   AppVersion,
@@ -287,6 +290,25 @@ export const api = {
     request<AgentSession>(`/api/agents/${id}/archive`, { method: "POST" }),
   unarchiveAgent: (id: number) =>
     request<AgentSession>(`/api/agents/${id}/unarchive`, { method: "POST" }),
+
+  // Agent schedules (recurring auto-re-run of an agent's task). Keyed by the
+  // agent's id or public uuid; mirror the topic schedule endpoints.
+  getAgentSchedule: (id: number | string) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule`),
+  createAgentSchedule: (id: number | string, data: AgentScheduleCreate) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateAgentSchedule: (id: number | string, data: AgentScheduleUpdate) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteAgentSchedule: (id: number | string) =>
+    request<void>(`/api/agents/${id}/schedule`, { method: "DELETE" }),
+  runAgentScheduleNow: (id: number | string) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule/run`, { method: "POST" }),
 
   // Messages
   listMessages: (topicId: number, opts?: MessageWindow) =>

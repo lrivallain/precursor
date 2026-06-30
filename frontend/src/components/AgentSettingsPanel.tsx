@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
-import { Archive, Trash2, X } from "lucide-react";
+import { Archive, CalendarClock, Play, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { AgentSession, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { TopicPicker } from "./AgentView";
+import {
+  defaultRecurrence,
+  recurrenceFromSchedule,
+  recurrenceToPayload,
+  RecurrenceEditor,
+  type RecurrenceValue,
+} from "./RecurrenceEditor";
 
 interface Props {
   agent: AgentSession;
@@ -31,6 +38,20 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Schedule: re-run this agent's task on a cadence (mirrors scheduled topics).
+  // A row exists when `agent.schedule` is non-null; the master toggle maps to
+  // its `enabled` flag. Recurrence/clear-context are seeded from the embedded
+  // summary so reopening shows the live config.
+  const hasSchedule = agent.schedule !== null;
+  const [scheduleOn, setScheduleOn] = useState<boolean>(agent.schedule?.enabled ?? false);
+  const [recurrence, setRecurrence] = useState<RecurrenceValue>(
+    agent.schedule ? recurrenceFromSchedule(agent.schedule) : defaultRecurrence(),
+  );
+  const [clearContext, setClearContext] = useState<boolean>(
+    agent.schedule?.clear_context ?? true,
+  );
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+
   // The task can't be replayed while a turn is in flight; the server rejects it.
   const taskLocked = ["pending", "running", "needs_approval"].includes(agent.status);
 
@@ -48,22 +69,80 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     setSaving(true);
     setError(null);
     try {
-      let updated = agent;
       const patch: { title?: string; task?: string } = {};
       if (trimmedTitle !== agent.title) patch.title = trimmedTitle;
       if (trimmedTask && trimmedTask !== agent.task_prompt) patch.task = trimmedTask;
       if (patch.title !== undefined || patch.task !== undefined) {
-        updated = await api.updateAgent(agent.id, patch);
+        await api.updateAgent(agent.id, patch);
       }
       if (topicId !== agent.topic_id) {
-        updated = await api.linkAgent(agent.id, { topic_id: topicId, chat_id: null });
+        await api.linkAgent(agent.id, { topic_id: topicId, chat_id: null });
       }
+      await persistSchedule();
+      // Re-fetch so the returned agent reflects title/task/link *and* the
+      // embedded schedule summary (selectin-loaded server-side).
+      const updated = await api.getAgent(agent.id);
       onSaved(updated);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Apply the schedule edits as part of Save. Creating the first schedule, then
+  // toggling its enabled flag, or updating the cadence/clear-context.
+  async function persistSchedule(): Promise<void> {
+    const recur = recurrenceToPayload(recurrence);
+    if (scheduleOn) {
+      const payload = { ...recur, clear_context: clearContext, enabled: true };
+      if (hasSchedule) {
+        await api.updateAgentSchedule(agent.id, payload);
+      } else {
+        await api.createAgentSchedule(agent.id, payload);
+      }
+    } else if (hasSchedule) {
+      // Pause (keep the config) rather than delete it on toggle-off.
+      await api.updateAgentSchedule(agent.id, { enabled: false });
+    }
+  }
+
+  async function runScheduleNow(): Promise<void> {
+    if (scheduleBusy) return;
+    setScheduleBusy(true);
+    setError(null);
+    try {
+      await api.runAgentScheduleNow(agent.id);
+      const updated = await api.getAgent(agent.id);
+      onSaved(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
+  async function removeSchedule(): Promise<void> {
+    if (scheduleBusy) return;
+    if (
+      !(await confirmAction({
+        message: "Remove this agent's schedule? The agent itself is kept.",
+        confirmLabel: "Remove schedule",
+        variant: "danger",
+      }))
+    )
+      return;
+    setScheduleBusy(true);
+    setError(null);
+    try {
+      await api.deleteAgentSchedule(agent.id);
+      const updated = await api.getAgent(agent.id);
+      onSaved(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScheduleBusy(false);
     }
   }
 
@@ -164,6 +243,65 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
               </p>
             </section>
 
+            <section className="pt-2 border-t border-border space-y-3">
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={scheduleOn}
+                  onChange={(e) => setScheduleOn(e.target.checked)}
+                />
+                <span className="flex items-center gap-1.5">
+                  <CalendarClock size={14} /> Run on a schedule
+                  <span className="block text-[11px] text-muted">
+                    Re-runs this agent's task automatically on a recurrence.
+                  </span>
+                </span>
+              </label>
+
+              {scheduleOn && (
+                <div className="space-y-3 pl-1">
+                  <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+                  <label className="flex items-start gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={clearContext}
+                      onChange={(e) => setClearContext(e.target.checked)}
+                    />
+                    <span>
+                      Clear context before each run
+                      <span className="block text-[11px] text-muted">
+                        Wipes the prior transcript (keeping the session id) and replays the task
+                        from scratch. Off = re-runs as a follow-up in the existing conversation.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {agent.schedule && <AgentScheduleMeta schedule={agent.schedule} />}
+
+              {hasSchedule && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void runScheduleNow()}
+                    disabled={scheduleBusy || saving}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs hover:bg-surface disabled:opacity-50"
+                  >
+                    <Play size={12} /> Run now
+                  </button>
+                  <button
+                    onClick={() => void removeSchedule()}
+                    disabled={scheduleBusy || saving}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs text-red-500 hover:bg-surface disabled:opacity-50"
+                  >
+                    <Trash2 size={12} /> Remove schedule
+                  </button>
+                </div>
+              )}
+            </section>
+
             {error && <p className="text-xs text-red-500">{error}</p>}
 
             <section className="pt-2 border-t border-border space-y-3">
@@ -214,6 +352,27 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
           </button>
         </footer>
       </div>
+    </div>
+  );
+}
+
+function AgentScheduleMeta({
+  schedule,
+}: {
+  schedule: NonNullable<AgentSession["schedule"]>;
+}) {
+  return (
+    <div className="rounded border border-border bg-surface/50 px-3 py-2 text-[11px] text-muted space-y-1">
+      <div>
+        Status: <span className="text-text">{schedule.status}</span>
+        {!schedule.enabled && " (paused)"}
+      </div>
+      {schedule.next_run_at && (
+        <div>Next run: {new Date(schedule.next_run_at).toLocaleString()}</div>
+      )}
+      {schedule.last_run_at && (
+        <div>Last run: {new Date(schedule.last_run_at).toLocaleString()}</div>
+      )}
     </div>
   );
 }

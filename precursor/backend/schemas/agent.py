@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from precursor.backend.schemas.agent_schedule import AgentScheduleSummary
 from precursor.backend.schemas.schedule import UtcDateTime
 
 ContainerKind = Literal["topic", "chat"]
@@ -39,6 +40,9 @@ class AgentSessionRead(BaseModel):
     archived_at: UtcDateTime | None = None
     created_at: UtcDateTime
     updated_at: UtcDateTime
+    # Recurrence config + run state when the agent re-runs on a cadence (null
+    # when unscheduled). Eager-loaded by the agents router.
+    schedule: AgentScheduleSummary | None = None
 
 
 class AgentSessionCreate(BaseModel):

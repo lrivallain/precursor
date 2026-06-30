@@ -32,6 +32,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.agent_schedule import AgentSchedule
     from precursor.backend.models.chat import Chat
     from precursor.backend.models.topic import Topic
 
@@ -118,3 +119,15 @@ class AgentSession(Base, TimestampMixin):
 
     topic: Mapped[Topic | None] = relationship("Topic")
     chat: Mapped[Chat | None] = relationship("Chat")
+
+    # Recurrence config + run state when the agent re-runs on a cadence. One-to-
+    # one; null for unscheduled agents. Deleting the agent cascades to it.
+    # Eager-loaded (selectin) so the API can serialise it without an async lazy
+    # load, mirroring how the agents router returns refreshed ORM rows directly.
+    schedule: Mapped[AgentSchedule | None] = relationship(
+        "AgentSchedule",
+        back_populates="agent_session",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
