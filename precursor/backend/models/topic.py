@@ -85,13 +85,15 @@ class Topic(Base, TimestampMixin):
         order_by="Message.created_at",
     )
 
-    # Recurrence config + run state for "scheduled" topics. One-to-one; null
-    # for standard topics. Deleting the topic cascades to its schedule.
+    # Recurrence config + run state when the topic runs on a schedule. One-to-
+    # one; null for unscheduled topics. Deleting the topic cascades to its
+    # schedule. Eager-loaded (selectin) so any topic read carries the summary.
     schedule: Mapped[TopicSchedule | None] = relationship(
         "TopicSchedule",
         back_populates="topic",
         cascade="all, delete-orphan",
         uselist=False,
+        lazy="selectin",
     )
 
     # Optional one-shot reminder. One-to-one; deleting the topic cascades to it.

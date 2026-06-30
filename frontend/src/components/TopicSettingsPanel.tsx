@@ -72,39 +72,39 @@ export function TopicSettingsPanel({
   const settings = useSettings();
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
 
-  // Scheduled topics (kind === "scheduled") swap the GitHub/parent/description
-  // fields for a task prompt + recurrence editor sourced from their schedule.
-  const isScheduled = topic.kind === "scheduled";
+  // Any topic can opt into a recurring schedule (mirrors agents). A topic is
+  // "scheduled" when it has an enabled schedule — there is no special kind.
   const [schedule, setSchedule] = useState<Schedule | null>(null);
+  const [scheduleOn, setScheduleOn] = useState(topic.schedule?.enabled ?? false);
   const [prompt, setPrompt] = useState("");
   const [recurrence, setRecurrence] = useState<RecurrenceValue>(defaultRecurrence);
-  const [enabled, setEnabled] = useState(true);
   const [clearContext, setClearContext] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
+  const hasSchedule = topic.schedule !== null || schedule !== null;
 
   useEffect(() => {
-    if (!isScheduled) return;
+    if (topic.schedule === null) return;
     void (async () => {
       try {
-        const s = await api.getSchedule(topic.id);
+        const s = await api.getTopicSchedule(topic.id);
         setSchedule(s);
         setPrompt(s.prompt);
         setRecurrence(recurrenceFromSchedule(s));
-        setEnabled(s.enabled);
         setClearContext(s.clear_context);
+        setScheduleOn(s.enabled);
       } catch {
         /* schedule may have been deleted elsewhere */
       }
     })();
-  }, [isScheduled, topic.id]);
+  }, [topic.id]);
 
-  // If the user lands on the Context tab while it's unavailable (feature off,
-  // or a scheduled topic which has no issue), fall back to the Settings tab.
+  // If the user lands on the Context tab while it's unavailable (feature off),
+  // fall back to the Settings tab.
   useEffect(() => {
-    if ((!issueAssociationsEnabled || isScheduled) && tab === "context") {
+    if (!issueAssociationsEnabled && tab === "context") {
       setTab("settings");
     }
-  }, [issueAssociationsEnabled, isScheduled, tab]);
+  }, [issueAssociationsEnabled, tab]);
 
   useEffect(() => {
     void (async () => {
@@ -122,29 +122,16 @@ export function TopicSettingsPanel({
   async function save(): Promise<void> {
     const trimmed = title.trim();
     if (!trimmed || saving) return;
-    if (isScheduled && !prompt.trim()) {
-      setError("Task prompt is required");
+    if (scheduleOn && !prompt.trim()) {
+      setError("Prompt is required to run on a schedule");
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      if (isScheduled) {
-        // Title/slug live on the topic; prompt/interval/enabled on the schedule.
-        const updated = await api.updateTopic(topic.id, {
-          title: trimmed,
-          slug: slug.trim() && slug.trim() !== topic.slug ? slug.trim() : undefined,
-        });
-        await api.updateSchedule(topic.id, {
-          prompt: prompt.trim(),
-          ...recurrenceToPayload(recurrence),
-          clear_context: clearContext,
-          enabled,
-        });
-        onSaved(updated);
-        onClose();
-        return;
-      }
+      await persistSchedule();
+      // Update the topic last so the returned row carries the fresh schedule
+      // summary (selectin-loaded), keeping the sidebar badge in sync.
       const updated = await api.updateTopic(topic.id, {
         title: trimmed,
         slug: slug.trim() && slug.trim() !== topic.slug ? slug.trim() : undefined,
@@ -162,12 +149,32 @@ export function TopicSettingsPanel({
     }
   }
 
+  // Apply schedule edits: create the first one, update cadence/prompt, or pause
+  // it (enabled=false) when the toggle is switched off — the config is kept.
+  async function persistSchedule(): Promise<void> {
+    if (scheduleOn) {
+      const payload = {
+        prompt: prompt.trim(),
+        ...recurrenceToPayload(recurrence),
+        clear_context: clearContext,
+        enabled: true,
+      };
+      if (hasSchedule) {
+        await api.updateTopicSchedule(topic.id, payload);
+      } else {
+        await api.createTopicSchedule(topic.id, payload);
+      }
+    } else if (hasSchedule) {
+      await api.updateTopicSchedule(topic.id, { enabled: false });
+    }
+  }
+
   async function runNow(): Promise<void> {
     if (runningNow) return;
     setRunningNow(true);
     setError(null);
     try {
-      setSchedule(await api.runScheduleNow(topic.id));
+      setSchedule(await api.runTopicScheduleNow(topic.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -238,9 +245,7 @@ export function TopicSettingsPanel({
     >
       <div className="w-[min(480px,100%)] h-full bg-bg border-l border-border flex flex-col">
         <header className="flex items-center justify-between px-4 h-12 border-b border-border">
-          <h2 className="font-semibold truncate">
-            {isScheduled ? "Scheduled topic" : "Topic settings"}
-          </h2>
+          <h2 className="font-semibold truncate">Topic settings</h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded hover:bg-surface"
@@ -255,7 +260,7 @@ export function TopicSettingsPanel({
           <TabButton active={tab === "settings"} onClick={() => setTab("settings")}>
             Settings
           </TabButton>
-          {issueAssociationsEnabled && !isScheduled && (
+          {issueAssociationsEnabled && (
             <TabButton
               active={tab === "context"}
               onClick={() => setTab("context")}
@@ -299,134 +304,143 @@ export function TopicSettingsPanel({
               </section>
 
               <section>
-                <label className="block text-xs text-muted mb-1">
-                  {isScheduled ? "Task prompt" : "Description"}
-                </label>
-                {isScheduled ? (
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    rows={4}
-                    placeholder="What should the assistant do on every run?"
-                    className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                ) : (
-                  <textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows={4}
-                    className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                )}
-                {isScheduled && (
-                  <p className="text-[11px] text-muted mt-1">
-                    Sent as the message on each scheduled run.
-                  </p>
-                )}
+                <label className="block text-xs text-muted mb-1">Description</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={4}
+                  className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                />
               </section>
 
-              {isScheduled ? (
-                <section className="space-y-3">
-                  <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={(e) => setEnabled(e.target.checked)}
-                    />
-                    <span>Enabled</span>
-                  </label>
-                  <label className="flex items-start gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={clearContext}
-                      onChange={(e) => setClearContext(e.target.checked)}
-                    />
-                    <span>
-                      Clear context before each run
-                      <span className="block text-[11px] text-muted">
-                        Wipes the topic's prior messages so every run starts fresh.
-                      </span>
-                    </span>
-                  </label>
-                  {schedule && (
-                    <div className="rounded border border-border bg-surface/50 px-3 py-2 text-[11px] text-muted space-y-1">
-                      <div className="flex items-center gap-1.5">
-                        <Clock size={11} />
-                        Status: <span className="text-text">{schedule.status}</span>
-                      </div>
-                      {schedule.next_run_at && (
-                        <div>Next run: {new Date(schedule.next_run_at).toLocaleString()}</div>
-                      )}
-                      {schedule.last_run_at && (
-                        <div>Last run: {new Date(schedule.last_run_at).toLocaleString()}</div>
-                      )}
-                      {schedule.last_error && (
-                        <div className="text-red-500">Last error: {schedule.last_error}</div>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    onClick={() => void runNow()}
-                    disabled={runningNow || schedule?.status === "running"}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border text-sm hover:bg-surface disabled:opacity-50"
-                  >
-                    <Play size={14} />
-                    {runningNow ? "Starting…" : "Run now"}
-                  </button>
-                </section>
-              ) : (
-                <>
-                  <section>
-                    <label className="block text-xs text-muted mb-1">Parent topic</label>
-                    <select
-                      value={parentId === "" ? "" : String(parentId)}
-                      onChange={(e) =>
-                        setParentId(e.target.value === "" ? "" : Number(e.target.value))
-                      }
-                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                    >
-                      <option value="">— top level —</option>
-                      {flatten(tree).map((opt) => (
-                        <option
-                          key={opt.id}
-                          value={opt.id}
-                          disabled={forbiddenIds.has(opt.id)}
-                        >
-                          {"\u00A0".repeat(opt.depth * 2)}
-                          {opt.title}
-                        </option>
-                      ))}
-                    </select>
-                  </section>
+              <section>
+                <label className="block text-xs text-muted mb-1">Parent topic</label>
+                <select
+                  value={parentId === "" ? "" : String(parentId)}
+                  onChange={(e) =>
+                    setParentId(e.target.value === "" ? "" : Number(e.target.value))
+                  }
+                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                >
+                  <option value="">— top level —</option>
+                  {flatten(tree).map((opt) => (
+                    <option key={opt.id} value={opt.id} disabled={forbiddenIds.has(opt.id)}>
+                      {"\u00A0".repeat(opt.depth * 2)}
+                      {opt.title}
+                    </option>
+                  ))}
+                </select>
+              </section>
 
-                  {issueAssociationsEnabled && (
-                    <section className="grid grid-cols-[1fr_120px] gap-2">
-                      <div>
-                        <label className="block text-xs text-muted mb-1">GitHub repo</label>
-                        <input
-                          type="text"
-                          value={repo}
-                          onChange={(e) => setRepo(e.target.value)}
-                          placeholder={defaultRepo || "owner/name"}
-                          className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted mb-1">Issue #</label>
-                        <input
-                          type="number"
-                          value={issueNumber}
-                          onChange={(e) => setIssueNumber(e.target.value)}
-                          placeholder="123"
-                          className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                        />
-                      </div>
-                    </section>
-                  )}
-                </>
+              {issueAssociationsEnabled && (
+                <section className="grid grid-cols-[1fr_120px] gap-2">
+                  <div>
+                    <label className="block text-xs text-muted mb-1">GitHub repo</label>
+                    <input
+                      type="text"
+                      value={repo}
+                      onChange={(e) => setRepo(e.target.value)}
+                      placeholder={defaultRepo || "owner/name"}
+                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted mb-1">Issue #</label>
+                    <input
+                      type="number"
+                      value={issueNumber}
+                      onChange={(e) => setIssueNumber(e.target.value)}
+                      placeholder="123"
+                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                  </div>
+                </section>
               )}
+
+              <section className="pt-4 border-t border-border space-y-4">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={scheduleOn}
+                    onChange={(e) => setScheduleOn(e.target.checked)}
+                  />
+                  <span className="space-y-0.5">
+                    <span className="flex items-center gap-1.5 text-sm font-medium">
+                      <Clock size={14} className="text-muted" />
+                      Run on a schedule
+                    </span>
+                    <span className="block text-[11px] text-muted leading-relaxed">
+                      Sends a prompt to this topic automatically on a recurrence.
+                    </span>
+                  </span>
+                </label>
+
+                {scheduleOn && (
+                  <div className="ml-1.5 space-y-4 border-l border-border pl-4">
+                    <div>
+                      <label className="block text-xs text-muted mb-1">Prompt to run each time</label>
+                      <textarea
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        rows={4}
+                        placeholder="What should the assistant do on every run?"
+                        className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                      />
+                      <p className="mt-1 text-[11px] text-muted">
+                        Tip: slash commands work too — e.g.{" "}
+                        <code className="text-text">/agent run the smoke tests</code>.
+                      </p>
+                    </div>
+
+                    <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={clearContext}
+                        onChange={(e) => setClearContext(e.target.checked)}
+                      />
+                      <span className="space-y-0.5">
+                        <span className="block text-sm">Clear context before each run</span>
+                        <span className="block text-[11px] text-muted leading-relaxed">
+                          Wipes the topic's prior messages so every run starts fresh.
+                        </span>
+                      </span>
+                    </label>
+
+                    {schedule && (
+                      <div className="rounded border border-border bg-surface/50 px-3 py-2 text-[11px] text-muted space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <Clock size={11} />
+                          Status: <span className="text-text">{schedule.status}</span>
+                        </div>
+                        {schedule.next_run_at && (
+                          <div>Next run: {new Date(schedule.next_run_at).toLocaleString()}</div>
+                        )}
+                        {schedule.last_run_at && (
+                          <div>Last run: {new Date(schedule.last_run_at).toLocaleString()}</div>
+                        )}
+                        {schedule.last_error && (
+                          <div className="text-red-500">Last error: {schedule.last_error}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {hasSchedule && (
+                      <button
+                        onClick={() => void runNow()}
+                        disabled={runningNow || schedule?.status === "running"}
+                        className="flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs hover:bg-surface disabled:opacity-50"
+                      >
+                        <Play size={12} />
+                        {runningNow ? "Starting…" : "Run now"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
 
               {error && <p className="text-xs text-red-500">{error}</p>}
 
@@ -444,21 +458,19 @@ export function TopicSettingsPanel({
                     Erases every message in this topic. The topic itself and its GitHub link are kept.
                   </p>
                 </div>
-                {!isScheduled && (
-                  <div>
-                    <button
-                      onClick={() => void archive()}
-                      disabled={archiving}
-                      className="flex items-center gap-2 text-sm text-muted hover:text-text disabled:opacity-50"
-                    >
-                      <Archive size={14} />
-                      {archiving ? "Archiving…" : "Archive topic"}
-                    </button>
-                    <p className="text-[11px] text-muted mt-1">
-                      Hides the topic from the sidebar tree but keeps its messages, GitHub link, and parent intact. Restore it any time from the archive (click your profile in the sidebar).
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <button
+                    onClick={() => void archive()}
+                    disabled={archiving}
+                    className="flex items-center gap-2 text-sm text-muted hover:text-text disabled:opacity-50"
+                  >
+                    <Archive size={14} />
+                    {archiving ? "Archiving…" : "Archive topic"}
+                  </button>
+                  <p className="text-[11px] text-muted mt-1">
+                    Hides the topic from the sidebar tree but keeps its messages, GitHub link, and parent intact. Restore it any time from the archive (click your profile in the sidebar).
+                  </p>
+                </div>
                 <div>
                   <button
                     onClick={() => void remove()}
@@ -489,7 +501,7 @@ export function TopicSettingsPanel({
             </button>
             <button
               onClick={() => void save()}
-              disabled={!title.trim() || (isScheduled && !prompt.trim()) || saving}
+              disabled={!title.trim() || (scheduleOn && !prompt.trim()) || saving}
               className="px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save"}

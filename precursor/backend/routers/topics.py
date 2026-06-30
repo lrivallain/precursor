@@ -12,8 +12,19 @@ from sqlalchemy.orm import selectinload
 from precursor.backend.db import get_session
 from precursor.backend.models import Message, MessageRole, Topic, TopicSchedule
 from precursor.backend.schemas import TopicCreate, TopicNode, TopicRead, TopicUpdate
-from precursor.backend.schemas.schedule import ScheduleSummary
-from precursor.backend.services.events import publish_topic_changed
+from precursor.backend.schemas.schedule import (
+    ScheduleRead,
+    ScheduleSummary,
+    ScheduleUpdate,
+    TopicScheduleCreate,
+)
+from precursor.backend.services.events import (
+    publish_message_changed,
+    publish_topic_changed,
+    set_current_client_id,
+)
+from precursor.backend.services.schedule_timing import compute_next_run
+from precursor.backend.services.scheduler import get_scheduler
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -245,3 +256,191 @@ async def unarchive_topic(
         await session.refresh(topic)
         await publish_topic_changed(topic_id)
     return topic
+
+
+# --------------------------------------------------------------------- schedule
+#
+# Any topic can run on a recurrence: it has at most one TopicSchedule holding the
+# prompt to send each run + the cadence (see services/scheduler.py). A topic is
+# "scheduled" simply when it has an enabled schedule — there is no special topic
+# kind. These endpoints mirror the agent schedule surface.
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+async def _require_topic(session: AsyncSession, topic_id: int) -> Topic:
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    return topic
+
+
+async def _get_schedule_or_404(session: AsyncSession, topic_id: int) -> TopicSchedule:
+    result = await session.execute(select(TopicSchedule).where(TopicSchedule.topic_id == topic_id))
+    schedule = result.scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic schedule not found")
+    return schedule
+
+
+@router.get("/{topic_id}/schedule", response_model=ScheduleRead)
+async def get_topic_schedule(
+    topic_id: int, session: AsyncSession = Depends(get_session)
+) -> TopicSchedule:
+    await _require_topic(session, topic_id)
+    return await _get_schedule_or_404(session, topic_id)
+
+
+@router.post(
+    "/{topic_id}/schedule",
+    response_model=ScheduleRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_topic_schedule(
+    topic_id: int,
+    payload: TopicScheduleCreate,
+    session: AsyncSession = Depends(get_session),
+) -> TopicSchedule:
+    await _require_topic(session, topic_id)
+    existing = await session.execute(
+        select(TopicSchedule).where(TopicSchedule.topic_id == topic_id)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Topic already has a schedule")
+
+    schedule = TopicSchedule(
+        topic_id=topic_id,
+        enabled=payload.enabled,
+        prompt=payload.prompt,
+        interval_seconds=payload.interval_seconds,
+        days_of_week=payload.days_of_week,
+        run_at_minute=payload.run_at_minute,
+        timezone=payload.timezone,
+        clear_context=payload.clear_context,
+        next_run_at=compute_next_run(
+            _now(),
+            payload.interval_seconds,
+            payload.days_of_week,
+            payload.run_at_minute,
+            payload.timezone,
+        )
+        if payload.enabled
+        else None,
+        status="idle",
+    )
+    session.add(schedule)
+    await session.commit()
+    await session.refresh(schedule)
+    await publish_topic_changed(topic_id)
+    return schedule
+
+
+@router.patch("/{topic_id}/schedule", response_model=ScheduleRead)
+async def update_topic_schedule(
+    topic_id: int,
+    payload: ScheduleUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> TopicSchedule:
+    schedule = await _get_schedule_or_404(session, topic_id)
+    data = payload.model_dump(exclude_unset=True)
+
+    if data.get("prompt"):
+        schedule.prompt = data["prompt"]
+    if data.get("interval_seconds"):
+        schedule.interval_seconds = data["interval_seconds"]
+    if data.get("days_of_week"):
+        schedule.days_of_week = data["days_of_week"]
+    if data.get("timezone"):
+        schedule.timezone = data["timezone"]
+    if "clear_context" in data and data["clear_context"] is not None:
+        schedule.clear_context = data["clear_context"]
+
+    # run_at_minute is tri-state: omitted = unchanged, int = daily-at-time,
+    # explicit null = back to interval mode.
+    cadence_changed = (
+        "interval_seconds" in data
+        or "days_of_week" in data
+        or "timezone" in data
+        or "run_at_minute" in data
+    )
+    if "run_at_minute" in data:
+        schedule.run_at_minute = data["run_at_minute"]
+
+    if cadence_changed and schedule.enabled:
+        schedule.next_run_at = compute_next_run(
+            _now(),
+            schedule.interval_seconds,
+            schedule.days_of_week,
+            schedule.run_at_minute,
+            schedule.timezone,
+        )
+
+    if "enabled" in data and data["enabled"] is not None:
+        schedule.enabled = data["enabled"]
+        if schedule.enabled and schedule.next_run_at is None:
+            schedule.next_run_at = compute_next_run(
+                _now(),
+                schedule.interval_seconds,
+                schedule.days_of_week,
+                schedule.run_at_minute,
+                schedule.timezone,
+            )
+        if not schedule.enabled:
+            schedule.next_run_at = None
+
+    await session.commit()
+    await session.refresh(schedule)
+    await publish_topic_changed(topic_id)
+    return schedule
+
+
+@router.post("/{topic_id}/schedule/run", response_model=ScheduleRead)
+async def run_topic_schedule_now(
+    topic_id: int, session: AsyncSession = Depends(get_session)
+) -> TopicSchedule:
+    """Pull the next run forward so the ticker picks it up immediately."""
+    schedule = await _get_schedule_or_404(session, topic_id)
+    if schedule.status == "running":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Run already in progress")
+    await session.execute(
+        update(TopicSchedule)
+        .where(TopicSchedule.topic_id == topic_id)
+        .values(
+            enabled=True,
+            next_run_at=_now(),
+            status="idle",
+            lease_until=None,
+            last_error=None,
+        )
+    )
+    # Broadcast to all windows (including this one) so the confirmation isn't
+    # echo-suppressed in the originating window.
+    set_current_client_id(None)
+    session.add(
+        Message(
+            topic_id=topic_id,
+            role=MessageRole.SYSTEM,
+            content="Run now accepted — this task will start within a minute.",
+        )
+    )
+    await session.commit()
+    await session.refresh(schedule)
+    await publish_message_changed(topic_id)
+    await publish_topic_changed(topic_id)
+    scheduler = get_scheduler()
+    scheduler.mark_forced(topic_id)
+    await scheduler.nudge()
+    return schedule
+
+
+@router.delete("/{topic_id}/schedule", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_topic_schedule(
+    topic_id: int, session: AsyncSession = Depends(get_session)
+) -> None:
+    """Remove only the schedule; the topic and its messages are kept."""
+    schedule = await _get_schedule_or_404(session, topic_id)
+    await session.delete(schedule)
+    await session.commit()
+    await publish_topic_changed(topic_id)

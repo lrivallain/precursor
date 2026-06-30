@@ -4,6 +4,9 @@ import type {
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
+  AgentSchedule,
+  AgentScheduleCreate,
+  AgentScheduleUpdate,
   AgentSession,
   AgentSessionCreate,
   AppVersion,
@@ -45,8 +48,8 @@ import type {
   RoleCreate,
   RoleUpdate,
   Schedule,
-  ScheduleCreate,
   ScheduleUpdate,
+  TopicScheduleCreate,
   Settings,
   SettingsUpdate,
   Skill,
@@ -195,23 +198,24 @@ export const api = {
       method: "DELETE",
     }),
 
-  // Schedules (recurring automation topics). Keyed by topic id.
-  getSchedule: (topicId: number) =>
-    request<Schedule>(`/api/schedules/${topicId}`),
-  createSchedule: (data: ScheduleCreate) =>
-    request<Schedule>(`/api/schedules`, {
+  // Topic schedules (run a topic's prompt on a recurrence). Keyed by topic id;
+  // mirror the agent schedule endpoints.
+  getTopicSchedule: (topicId: number) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule`),
+  createTopicSchedule: (topicId: number, data: TopicScheduleCreate) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateSchedule: (topicId: number, data: ScheduleUpdate) =>
-    request<Schedule>(`/api/schedules/${topicId}`, {
+  updateTopicSchedule: (topicId: number, data: ScheduleUpdate) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
-  deleteSchedule: (topicId: number) =>
-    request<void>(`/api/schedules/${topicId}`, { method: "DELETE" }),
-  runScheduleNow: (topicId: number) =>
-    request<Schedule>(`/api/schedules/${topicId}/run`, { method: "POST" }),
+  deleteTopicSchedule: (topicId: number) =>
+    request<void>(`/api/topics/${topicId}/schedule`, { method: "DELETE" }),
+  runTopicScheduleNow: (topicId: number) =>
+    request<Schedule>(`/api/topics/${topicId}/schedule/run`, { method: "POST" }),
 
   // Reminders (one-shot date/time). Keyed by container kind + id; shared by
   // topics and chats. listReminders returns only fired (awaiting acknowledgment).
@@ -287,6 +291,25 @@ export const api = {
     request<AgentSession>(`/api/agents/${id}/archive`, { method: "POST" }),
   unarchiveAgent: (id: number) =>
     request<AgentSession>(`/api/agents/${id}/unarchive`, { method: "POST" }),
+
+  // Agent schedules (recurring auto-re-run of an agent's task). Keyed by the
+  // agent's id or public uuid; mirror the topic schedule endpoints.
+  getAgentSchedule: (id: number | string) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule`),
+  createAgentSchedule: (id: number | string, data: AgentScheduleCreate) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateAgentSchedule: (id: number | string, data: AgentScheduleUpdate) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteAgentSchedule: (id: number | string) =>
+    request<void>(`/api/agents/${id}/schedule`, { method: "DELETE" }),
+  runAgentScheduleNow: (id: number | string) =>
+    request<AgentSchedule>(`/api/agents/${id}/schedule/run`, { method: "POST" }),
 
   // Messages
   listMessages: (topicId: number, opts?: MessageWindow) =>

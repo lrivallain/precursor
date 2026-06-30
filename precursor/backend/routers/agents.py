@@ -12,11 +12,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentSession, Chat, Topic
+from precursor.backend.models import AgentSchedule, AgentSession, Chat, Topic
 from precursor.backend.schemas.agent import (
     AgentEvent,
     AgentLinkRequest,
@@ -28,10 +28,17 @@ from precursor.backend.schemas.agent import (
     AgentSessionRead,
     AgentUpdateRequest,
 )
+from precursor.backend.schemas.agent_schedule import (
+    AgentScheduleCreate,
+    AgentScheduleRead,
+    AgentScheduleUpdate,
+)
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.agents.manager import get_agent_manager, parse_agent_command
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.events import publish_agent_changed
+from precursor.backend.services.schedule_timing import compute_next_run
+from precursor.backend.services.scheduler import get_scheduler
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -348,3 +355,184 @@ async def delete_agent(agent_id: str, session: AsyncSession = Depends(get_sessio
     await session.delete(agent)
     await session.commit()
     await publish_agent_changed(agent_session_id=aid, topic_id=topic_id, chat_id=chat_id)
+
+
+# --------------------------------------------------------------------- schedule
+#
+# An agent session may carry a recurrence so it re-runs its task on a cadence,
+# mirroring scheduled topics (see routers/schedules.py + services/scheduler.py).
+# The schedule replays the agent's own ``task_prompt`` — there is no separate
+# prompt — optionally from a fresh context (``clear_context``). The background
+# scheduler executes due rows.
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+async def _get_schedule_or_404(session: AsyncSession, agent_id: int) -> AgentSchedule:
+    result = await session.execute(
+        select(AgentSchedule).where(AgentSchedule.agent_session_id == agent_id)
+    )
+    schedule = result.scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent schedule not found")
+    return schedule
+
+
+@router.get("/{agent_id}/schedule", response_model=AgentScheduleRead)
+async def get_agent_schedule(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> AgentSchedule:
+    agent = await _get_or_404(session, agent_id)
+    return await _get_schedule_or_404(session, agent.id)
+
+
+@router.post(
+    "/{agent_id}/schedule",
+    response_model=AgentScheduleRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_schedule(
+    agent_id: str,
+    payload: AgentScheduleCreate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentSchedule:
+    agent = await _get_or_404(session, agent_id)
+    existing = await session.execute(
+        select(AgentSchedule).where(AgentSchedule.agent_session_id == agent.id)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Agent already has a schedule")
+
+    schedule = AgentSchedule(
+        agent_session_id=agent.id,
+        enabled=payload.enabled,
+        interval_seconds=payload.interval_seconds,
+        days_of_week=payload.days_of_week,
+        run_at_minute=payload.run_at_minute,
+        timezone=payload.timezone,
+        clear_context=payload.clear_context,
+        next_run_at=compute_next_run(
+            _now(),
+            payload.interval_seconds,
+            payload.days_of_week,
+            payload.run_at_minute,
+            payload.timezone,
+        )
+        if payload.enabled
+        else None,
+        status="idle",
+    )
+    session.add(schedule)
+    await session.commit()
+    await session.refresh(schedule)
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+    return schedule
+
+
+@router.patch("/{agent_id}/schedule", response_model=AgentScheduleRead)
+async def update_agent_schedule(
+    agent_id: str,
+    payload: AgentScheduleUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentSchedule:
+    agent = await _get_or_404(session, agent_id)
+    schedule = await _get_schedule_or_404(session, agent.id)
+    data = payload.model_dump(exclude_unset=True)
+
+    if data.get("interval_seconds"):
+        schedule.interval_seconds = data["interval_seconds"]
+    if data.get("days_of_week"):
+        schedule.days_of_week = data["days_of_week"]
+    if data.get("timezone"):
+        schedule.timezone = data["timezone"]
+    if "clear_context" in data and data["clear_context"] is not None:
+        schedule.clear_context = data["clear_context"]
+
+    # run_at_minute is tri-state: omitted = unchanged, int = daily-at-time,
+    # explicit null = back to interval mode.
+    cadence_changed = (
+        "interval_seconds" in data
+        or "days_of_week" in data
+        or "timezone" in data
+        or "run_at_minute" in data
+    )
+    if "run_at_minute" in data:
+        schedule.run_at_minute = data["run_at_minute"]
+
+    # Re-anchor the next run from now whenever cadence/days/time changed.
+    if cadence_changed and schedule.enabled:
+        schedule.next_run_at = compute_next_run(
+            _now(),
+            schedule.interval_seconds,
+            schedule.days_of_week,
+            schedule.run_at_minute,
+            schedule.timezone,
+        )
+
+    if "enabled" in data and data["enabled"] is not None:
+        schedule.enabled = data["enabled"]
+        if schedule.enabled and schedule.next_run_at is None:
+            schedule.next_run_at = compute_next_run(
+                _now(),
+                schedule.interval_seconds,
+                schedule.days_of_week,
+                schedule.run_at_minute,
+                schedule.timezone,
+            )
+        if not schedule.enabled:
+            schedule.next_run_at = None
+
+    await session.commit()
+    await session.refresh(schedule)
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+    return schedule
+
+
+@router.post("/{agent_id}/schedule/run", response_model=AgentScheduleRead)
+async def run_agent_schedule_now(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> AgentSchedule:
+    """Pull the next run forward so the ticker triggers the agent immediately."""
+    agent = await _get_or_404(session, agent_id)
+    schedule = await _get_schedule_or_404(session, agent.id)
+    if schedule.status == "running":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Run already in progress")
+    await session.execute(
+        update(AgentSchedule)
+        .where(AgentSchedule.agent_session_id == agent.id)
+        .values(
+            enabled=True,
+            next_run_at=_now(),
+            status="idle",
+            lease_until=None,
+            last_error=None,
+        )
+    )
+    await session.commit()
+    await session.refresh(schedule)
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+    # Nudge the scheduler so the run fires now instead of waiting for the next
+    # poll tick (no-op if the scheduler is disabled).
+    await get_scheduler().nudge()
+    return schedule
+
+
+@router.delete("/{agent_id}/schedule", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_schedule(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> None:
+    agent = await _get_or_404(session, agent_id)
+    schedule = await _get_schedule_or_404(session, agent.id)
+    await session.delete(schedule)
+    await session.commit()
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )

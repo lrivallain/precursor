@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, Search } from "lucide-react";
+import { Bot, CalendarClock, Search } from "lucide-react";
 import type { AgentSession } from "../lib/types";
 import { AgentStatusBadge, agentRelativeTime } from "./AgentStatusBadge";
 import { InlineTitle } from "./InlineTitle";
@@ -79,6 +79,20 @@ export function AgentList({ agents, activeId, enabled, onSelect, onRename }: Age
                         onRename={(t) => onRename(a.id, t)}
                         className="flex-1 truncate text-sm"
                       />
+                      {a.schedule && (
+                        <CalendarClock
+                          size={12}
+                          className={`shrink-0 ${
+                            a.schedule.enabled ? "text-accent" : "text-muted opacity-60"
+                          }`}
+                          aria-label={
+                            a.schedule.enabled ? "Scheduled" : "Schedule paused"
+                          }
+                          data-tooltip={
+                            a.schedule.enabled ? "Runs on a schedule" : "Schedule paused"
+                          }
+                        />
+                      )}
                       <AgentStatusBadge status={a.status} />
                     </div>
                     <div className="mt-0.5 pl-6 text-[10px] text-muted">

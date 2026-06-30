@@ -3,7 +3,6 @@
 //   - daily:    "at HH:MM" on the selected weekdays (in the browser timezone)
 // Embeds the weekday picker so a consumer drops in one component.
 
-import type { Schedule } from "../lib/types";
 import { ALL_DAYS_MASK, WeekdayPicker } from "./WeekdayPicker";
 
 export type RecurrenceMode = "interval" | "daily";
@@ -48,7 +47,11 @@ export function defaultRecurrence(): RecurrenceValue {
   };
 }
 
-export function recurrenceFromSchedule(s: Schedule): RecurrenceValue {
+export function recurrenceFromSchedule(s: {
+  interval_seconds: number;
+  run_at_minute: number | null;
+  days_of_week: number;
+}): RecurrenceValue {
   const { value, unit } = splitInterval(s.interval_seconds);
   const daily = s.run_at_minute !== null;
   return {

@@ -31,11 +31,12 @@ from sqlalchemy.engine import CursorResult
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import TopicSchedule
+from precursor.backend.models import AgentSchedule, TopicSchedule
 from precursor.backend.services.app_settings import (
+    resolve_agents_enabled,
     resolve_scheduled_run_timeout_seconds,
 )
-from precursor.backend.services.events import publish_topic_changed
+from precursor.backend.services.events import publish_agent_changed, publish_topic_changed
 from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.scheduled_commands import run_scheduled_prompt_with_timeout
 
@@ -46,16 +47,28 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# Agent statuses that mean a turn is in flight; a scheduled re-run is skipped
+# (not errored) while one is active so it never stomps an unfinished run.
+_AGENT_BUSY_STATUSES = {"pending", "running", "needs_approval"}
+
+
+class _SkipRun(Exception):
+    """Raised to skip a scheduled agent run without marking it failed."""
+
+
 class Scheduler:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         # The queue is created in start() so it binds to the running event loop
         # (a singleton constructed on one loop must not be reused on another).
-        self._queue: asyncio.Queue[int] = asyncio.Queue()
+        # Items are ``(kind, target_id)`` where kind is "topic" (target=topic_id)
+        # or "agent" (target=agent_session_id), so one ticker/worker pool drains
+        # both scheduled topics and scheduled agents.
+        self._queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
         self._tasks: list[asyncio.Task[None]] = []
-        # Topic ids currently claimed/in-flight, so the ticker doesn't re-enqueue
-        # a row a worker is still finishing within the same process.
-        self._inflight: set[int] = set()
+        # Items currently claimed/in-flight, so the ticker doesn't re-enqueue a
+        # row a worker is still finishing within the same process.
+        self._inflight: set[tuple[str, int]] = set()
         # Topic ids whose next run was explicitly forced via "Run now". The guard
         # still gates a forced run (an empty probe still skips), but the skip is
         # recorded visibly instead of silently so a manual trigger gives feedback.
@@ -109,22 +122,40 @@ class Scheduler:
     async def _enqueue_due(self) -> None:
         now = _now()
         async with SessionLocal() as session:
-            result = await session.execute(
-                select(TopicSchedule.id, TopicSchedule.topic_id).where(
-                    TopicSchedule.enabled.is_(True),
-                    TopicSchedule.next_run_at.is_not(None),
-                    TopicSchedule.next_run_at <= now,
-                    TopicSchedule.status != "running",
+            topic_rows = (
+                await session.execute(
+                    select(TopicSchedule.id, TopicSchedule.topic_id).where(
+                        TopicSchedule.enabled.is_(True),
+                        TopicSchedule.next_run_at.is_not(None),
+                        TopicSchedule.next_run_at <= now,
+                        TopicSchedule.status != "running",
+                    )
                 )
-            )
-            due = [(row[0], row[1]) for row in result.all()]
+            ).all()
+            agent_rows = (
+                await session.execute(
+                    select(AgentSchedule.id, AgentSchedule.agent_session_id).where(
+                        AgentSchedule.enabled.is_(True),
+                        AgentSchedule.next_run_at.is_not(None),
+                        AgentSchedule.next_run_at <= now,
+                        AgentSchedule.status != "running",
+                    )
+                )
+            ).all()
 
-        for schedule_id, topic_id in due:
-            if topic_id in self._inflight:
+        due: list[tuple[str, int, int]] = [
+            ("topic", schedule_id, target_id) for schedule_id, target_id in topic_rows
+        ]
+        due += [("agent", schedule_id, target_id) for schedule_id, target_id in agent_rows]
+
+        for kind, schedule_id, target_id in due:
+            item = (kind, target_id)
+            if item in self._inflight:
                 continue
-            if await self._claim(schedule_id):
-                self._inflight.add(topic_id)
-                await self._queue.put(topic_id)
+            model = TopicSchedule if kind == "topic" else AgentSchedule
+            if await self._claim(model, schedule_id):
+                self._inflight.add(item)
+                await self._queue.put(item)
 
     async def nudge(self) -> None:
         """Run one enqueue pass immediately (e.g. after a 'Run now').
@@ -148,18 +179,18 @@ class Scheduler:
         """
         self._forced.add(topic_id)
 
-    async def _claim(self, schedule_id: int) -> bool:
+    async def _claim(self, model: type[TopicSchedule | AgentSchedule], schedule_id: int) -> bool:
         """Atomically mark a schedule running. Returns True if we won the claim."""
         now = _now()
         async with SessionLocal() as session:
             timeout = await resolve_scheduled_run_timeout_seconds(session)
             lease_until = now + timedelta(seconds=timeout + 30)
             result = await session.execute(
-                update(TopicSchedule)
+                update(model)
                 .where(
-                    TopicSchedule.id == schedule_id,
-                    TopicSchedule.enabled.is_(True),
-                    TopicSchedule.status != "running",
+                    model.id == schedule_id,
+                    model.enabled.is_(True),
+                    model.status != "running",
                 )
                 .values(status="running", lease_until=lease_until)
             )
@@ -172,30 +203,35 @@ class Scheduler:
         """Reset rows stuck in 'running' with an expired lease (crash recovery)."""
         now = _now()
         async with SessionLocal() as session:
-            await session.execute(
-                update(TopicSchedule)
-                .where(
-                    TopicSchedule.status == "running",
-                    TopicSchedule.lease_until.is_not(None),
-                    TopicSchedule.lease_until < now,
+            for model in (TopicSchedule, AgentSchedule):
+                await session.execute(
+                    update(model)
+                    .where(
+                        model.status == "running",
+                        model.lease_until.is_not(None),
+                        model.lease_until < now,
+                    )
+                    .values(status="error", lease_until=None)
                 )
-                .values(status="error", lease_until=None)
-            )
             await session.commit()
 
     # -- workers -----------------------------------------------------------
     async def _worker(self) -> None:
         while self._running:
             try:
-                topic_id = await self._queue.get()
+                item = await self._queue.get()
             except asyncio.CancelledError:
                 break
+            kind, target_id = item
             try:
-                await self._run_one(topic_id)
+                if kind == "agent":
+                    await self._run_one_agent(target_id)
+                else:
+                    await self._run_one(target_id)
             except Exception:
-                logger.exception("Scheduled run for topic %s crashed", topic_id)
+                logger.exception("Scheduled %s run for %s crashed", kind, target_id)
             finally:
-                self._inflight.discard(topic_id)
+                self._inflight.discard(item)
                 self._queue.task_done()
 
     async def _run_one(self, topic_id: int) -> None:
@@ -251,6 +287,95 @@ class Scheduler:
             )
             await session.commit()
         await publish_topic_changed(topic_id)
+
+    async def _run_one_agent(self, agent_session_id: int) -> None:
+        # Reload the schedule so we use the freshest cadence/options.
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(AgentSchedule).where(AgentSchedule.agent_session_id == agent_session_id)
+            )
+            schedule = result.scalar_one_or_none()
+            if schedule is None or not schedule.enabled:
+                return
+            interval = schedule.interval_seconds
+            days_mask = schedule.days_of_week
+            run_at_minute = schedule.run_at_minute
+            tz_name = schedule.timezone
+            clear_context = schedule.clear_context
+
+        status = "ok"
+        error: str | None = None
+        try:
+            await self._fire_agent_run(agent_session_id, clear_context=clear_context)
+        except _SkipRun as exc:
+            # Not a failure — a transient reason to skip this tick (e.g. the
+            # previous run is still in flight). Surface it without an error state.
+            error = str(exc)
+            logger.info("Scheduled agent run for %s skipped: %s", agent_session_id, error)
+        except Exception as exc:
+            status, error = "error", str(exc)
+            logger.exception("Scheduled agent run for %s failed", agent_session_id)
+
+        now = _now()
+        async with SessionLocal() as session:
+            await session.execute(
+                update(AgentSchedule)
+                .where(AgentSchedule.agent_session_id == agent_session_id)
+                .values(
+                    status=status,
+                    last_error=error,
+                    last_run_at=now,
+                    next_run_at=compute_next_run(now, interval, days_mask, run_at_minute, tz_name),
+                    lease_until=None,
+                )
+            )
+            await session.commit()
+        await self._publish_agent(agent_session_id)
+
+    async def _fire_agent_run(self, agent_session_id: int, *, clear_context: bool) -> None:
+        """Trigger the agent's task once. Fire-and-forget: results post back via
+        the event bus, so this returns as soon as the turn is submitted."""
+        from precursor.backend.models import AgentSession
+        from precursor.backend.services.agents import runtime
+        from precursor.backend.services.agents.manager import get_agent_manager
+
+        async with SessionLocal() as session:
+            if not await resolve_agents_enabled(session):
+                raise RuntimeError("Agents mode is disabled")
+            agent = await session.get(AgentSession, agent_session_id)
+
+        if agent is None:
+            raise _SkipRun("Agent no longer exists")
+        if agent.archived_at is not None:
+            raise _SkipRun("Agent is archived")
+        ok, detail = runtime.agents_available()
+        if not ok:
+            raise RuntimeError(f"Agents runtime unavailable: {detail}")
+        if agent.status in _AGENT_BUSY_STATUSES:
+            raise _SkipRun("Previous run still in progress")
+        if not (agent.task_prompt or "").strip():
+            raise _SkipRun("Agent has no task to run")
+
+        manager = get_agent_manager()
+        if not manager.ready:
+            raise RuntimeError("Agents runtime not started")
+        if clear_context:
+            # Wipe prior transcript (same public id) and replay the stored task.
+            await manager.rerun_task(agent_session_id)
+        else:
+            # Re-send the task into the existing conversation as a follow-up.
+            await manager.send_message(agent_session_id, agent.task_prompt)
+
+    async def _publish_agent(self, agent_session_id: int) -> None:
+        from precursor.backend.models import AgentSession
+
+        async with SessionLocal() as session:
+            agent = await session.get(AgentSession, agent_session_id)
+        await publish_agent_changed(
+            agent_session_id=agent_session_id,
+            topic_id=agent.topic_id if agent else None,
+            chat_id=agent.chat_id if agent else None,
+        )
 
 
 _scheduler: Scheduler | None = None

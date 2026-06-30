@@ -15,7 +15,7 @@ flowchart LR
       FAPI[FastAPI app]
       DB[(SQLite / Postgres)]
       LLM["LLM provider<br/>(Copilot / GH Models / mock)"]
-      SCHED["Scheduler<br/>(recurring topics)"]
+      SCHED["Scheduler<br/>(recurring topics + agents)"]
       BUS["Event bus<br/>(SSE pub/sub)"]
       MCPS["MCP server 'precursor'<br/>(stdio + HTTP /mcp)"]
       MCPC["MCP client manager<br/>(built-in + user tool servers)"]
@@ -48,7 +48,8 @@ A single `uvicorn` worker hosts everything (`precursor/backend/main.py`):
 - **FastAPI app** — JSON API under `/api/*`, the built SPA at `/`, and the MCP
   server's streamable-HTTP endpoint at `/mcp` (gated, loopback-only).
 - **Scheduler** (`services/scheduler.py`) — an async ticker + bounded worker
-  pool that runs due "scheduled" topics; started/stopped in the app lifespan.
+  pool that runs due "scheduled" topics and scheduled agents; started/stopped in
+  the app lifespan.
 - **Event bus** (`services/events.py`) — in-process pub/sub so multiple browser
   windows stay in sync over a single SSE stream (`/api/events`). A contextvar
   carries the originating client id so a window suppresses its own echoes.
@@ -82,11 +83,14 @@ Scheduled topics run the *same* turn logic off the request path via
 
 - Models live in `precursor/backend/models/`. Async SQLAlchemy 2 via
   `AsyncSession` (`db.py`).
-- `Topic` — self-referencing tree (parent/children); `kind` is
-  `standard | schedule_root | scheduled`.
+- `Topic` — self-referencing tree (parent/children); `kind` is `standard`
+  (the only kind — a topic is "scheduled" simply when it has a `TopicSchedule`).
 - `Message` — per-topic, cascade delete; roles `user/assistant/system/tool`.
-- `TopicSchedule` — recurrence config + run state for a scheduled topic
-  (interval, weekday mask, time-of-day, timezone, lease/status).
+- `TopicSchedule` — recurrence config + run state, one-to-one on **any** topic
+  (interval, weekday mask, time-of-day, timezone, lease/status), holding the
+  prompt sent each run. A topic with an enabled schedule runs on a cadence.
+- `AgentSchedule` — the same recurrence + run state, one-to-one on an
+  `AgentSession`, so an agent re-runs its task on a cadence.
 - `Workspace` — a git clone or a local directory the assistant can browse/edit.
 - `Skill` — enablement record for a file-backed prompt preset (`/name`
   invocation); content lives in a shared `SKILL.md` file (see Skills & memory).
@@ -208,11 +212,15 @@ history outbound is opt-in). Two transports, same tools:
 
 ## Scheduler
 
-`services/scheduler.py` drives recurring "scheduled" topics: a single async
-ticker enqueues due `TopicSchedule` rows, a bounded worker pool runs each via
-`services/scheduled_commands.py` under a timeout, with DB row leasing for crash
-recovery. Recurrence supports interval, weekday mask, and daily time-of-day in a
-timezone (`services/schedule_timing.py`).
+`services/scheduler.py` drives recurring topics **and** scheduled agents: a
+single async ticker enqueues due `TopicSchedule` *and* `AgentSchedule` rows
+(tagged `(kind, id)`), a bounded worker pool runs each — topics via
+`services/scheduled_commands.py` under a timeout, agents by re-triggering the
+agent's task — with DB row leasing for crash recovery. A topic or agent runs on
+a cadence simply by having an enabled schedule row (edited from its settings
+panel; `POST/PATCH/DELETE /api/topics/{id}/schedule` and the agent equivalent).
+Recurrence supports interval, weekday mask, and daily time-of-day in a timezone
+(`services/schedule_timing.py`).
 
 A scheduled prompt that begins with a slash command (e.g. `/agent run the
 tests`, `/gh-sync`) is dispatched to the command's backend action by
@@ -235,6 +243,14 @@ schedule keeps resolving), so each run starts from a clean transcript:
   **one** place (the agent) instead of the schedule re-sending them every run;
   the recurring prompt shrinks to a tiny nudge. Maps to
   `AgentManager.rerun_task(...)`.
+
+An agent can also carry its **own** recurrence via `AgentSchedule` (a one-to-one
+row on `AgentSession`, edited from the agent's settings drawer). Each due tick
+re-runs the agent's stored `task_prompt` directly — `clear_context` selects
+`AgentManager.rerun_task(...)` (fresh transcript, same uuid) vs `send_message(...)`
+(follow-up in the existing conversation). This is the first-class equivalent of a
+scheduled topic that nudges `/agent <uuid> /run`, without a hosting topic. A run
+is skipped (not failed) while the agent is mid-turn, archived, or task-less.
 
 A scheduled prompt may also be prefixed with one or more `/guard` directives that
 gate the whole run behind a cheap, deterministic MCP probe (no LLM, ~0 tokens):

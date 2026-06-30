@@ -34,7 +34,6 @@ from typing import Any, TypeVar
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
@@ -495,23 +494,6 @@ async def post_message(topic_id: int, content: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 # schedules
 # --------------------------------------------------------------------------
-async def _ensure_schedule_root(session: AsyncSession) -> Topic:
-    root = (
-        await session.execute(select(Topic).where(Topic.kind == "schedule_root"))
-    ).scalar_one_or_none()
-    if root is not None:
-        return root
-    root = Topic(
-        title="Scheduled",
-        slug=await allocate_unique_slug(session, "scheduled", Topic),
-        kind="schedule_root",
-    )
-    session.add(root)
-    await session.commit()
-    await session.refresh(root)
-    return root
-
-
 @mcp.tool()
 async def list_schedules() -> dict[str, Any]:
     """List recurring scheduled topics and their run state."""
@@ -551,7 +533,7 @@ async def create_schedule(
     clear_context: bool = False,
     enabled: bool = True,
 ) -> dict[str, Any]:
-    """Create a recurring scheduled topic that runs ``prompt`` on a cadence.
+    """Create a recurring schedule on a new topic that runs ``prompt`` on a cadence.
 
     ``interval_seconds`` is the minimum gap between runs (>= 60).
     ``days_of_week`` is a 7-bit mask (Mon=1 ... Sun=64; 127 = every day).
@@ -565,12 +547,9 @@ async def create_schedule(
     if interval_seconds < 60:
         return {"error": "interval_seconds must be >= 60"}
     async with SessionLocal() as session:
-        root = await _ensure_schedule_root(session)
         topic = Topic(
             title=title,
             slug=await allocate_unique_slug(session, slugify(title) or "scheduled-topic", Topic),
-            kind="scheduled",
-            parent_id=root.id,
         )
         session.add(topic)
         await session.flush()

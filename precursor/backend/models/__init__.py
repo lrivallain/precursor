@@ -1,6 +1,7 @@
 """SQLAlchemy ORM models."""
 
 from precursor.backend.models.agent_event import AgentEventRecord
+from precursor.backend.models.agent_schedule import AgentSchedule
 from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
@@ -22,6 +23,7 @@ from precursor.backend.models.workspace import Workspace
 
 __all__ = [
     "AgentEventRecord",
+    "AgentSchedule",
     "AgentSession",
     "AppSetting",
     "Attachment",
