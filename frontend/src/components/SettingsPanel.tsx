@@ -175,13 +175,37 @@ export function SettingsPanel({ onClose }: Props) {
 
   async function refreshMcp(): Promise<void> {
     setMcpLoading(true);
+    let servers: MCPServerStatus[];
     try {
-      setMcp(await api.listMcpServers());
+      // Load the list fast, without waiting on per-server status probes so the
+      // cards render immediately instead of blocking on a slow server.
+      servers = await api.listMcpServers(false);
+      setMcp(servers);
     } catch {
       setMcp([]);
+      return;
     } finally {
       setMcpLoading(false);
     }
+    // Resolve each pending server's status independently: a slow server only
+    // spins its own card rather than stalling the whole list.
+    const pending = servers.filter((s) => s.enabled && s.state === "connecting");
+    await Promise.all(
+      pending.map(async (s) => {
+        try {
+          const next = await api.probeMcpServer(s.name);
+          setMcp((prev) => prev.map((x) => (x.name === s.name ? next : x)));
+        } catch (err) {
+          setMcp((prev) =>
+            prev.map((x) =>
+              x.name === s.name
+                ? { ...x, state: "error", error: (err as Error).message }
+                : x,
+            ),
+          );
+        }
+      }),
+    );
   }
 
   async function loadModels(providerOverride?: string): Promise<LLMModel[]> {

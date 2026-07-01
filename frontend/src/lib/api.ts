@@ -392,7 +392,10 @@ export const api = {
     }),
 
   // MCP
-  listMcpServers: () => request<MCPServerStatus[]>(`/api/mcp/servers`),
+  listMcpServers: (probe = true) =>
+    request<MCPServerStatus[]>(`/api/mcp/servers?probe=${probe}`),
+  probeMcpServer: (name: string) =>
+    request<MCPServerStatus>(`/api/mcp/servers/${name}/probe`, { method: "POST" }),
   connectMcpServer: (name: string) =>
     request<MCPServerStatus>(`/api/mcp/servers/${name}/connect`, { method: "POST" }),
   disconnectMcpServer: (name: string) =>
