@@ -100,7 +100,8 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
       // Clipboard may be unavailable (e.g. insecure context); fail silently.
     }
   };
-  const showActions = !pending && !!content && (role === "assistant" || onDelete);
+  const showActions =
+    !pending && !!content && (role === "assistant" || isUser || onDelete);
 
   // Persisted SYSTEM rows are UI-only notices (e.g. the "Run now accepted"
   // confirmation). Short notes render as a compact green, user-aligned
@@ -211,7 +212,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
               isUser ? "left-2" : "right-2"
             } z-10 flex items-center gap-1 rounded-full bg-surface border border-border px-1 py-0.5 shadow-sm`}
           >
-            {role === "assistant" && (
+            {(role === "assistant" || isUser) && (
               <>
                 <button
                   type="button"
