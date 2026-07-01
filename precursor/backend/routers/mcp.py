@@ -7,6 +7,7 @@ its connection state + tool catalog, and CRUD user-defined entries.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -91,10 +92,16 @@ async def list_servers(
     github_token = await resolve_github_token(session)
     # Lazily probe enabled servers with an empty tool catalogue (e.g. after a
     # process restart). The chat router itself opens fresh sessions, but the
-    # UI relies on the cached tools list to render the catalogue.
-    for entry in manager.list_entries():
-        if enabled.get(entry.name, False) and not entry.tools:
-            await manager.probe(entry.name, github_token=github_token)
+    # UI relies on the cached tools list to render the catalogue. Probe
+    # concurrently so a slow server (stdio spin-up, network, OAuth) doesn't
+    # serialise behind the others and stall the whole listing.
+    stale = [
+        entry.name
+        for entry in manager.list_entries()
+        if enabled.get(entry.name, False) and not entry.tools
+    ]
+    if stale:
+        await asyncio.gather(*(manager.probe(name, github_token=github_token) for name in stale))
 
     out: list[dict[str, Any]] = []
     for entry in manager.list_entries():
