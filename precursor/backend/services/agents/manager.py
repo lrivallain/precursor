@@ -1587,6 +1587,12 @@ class AgentManager:
                 val = getattr(data, attr, None)
                 if val is not None:
                     extra[attr] = int(val)
+            # The resolved model for this LLM round (a required SDK field). Lets
+            # the UI show the concrete model per turn — useful for default-model
+            # agents whose session.model is null.
+            model = getattr(data, "model", None)
+            if model:
+                extra["model"] = str(model)
         elif name == "SessionUsageInfoData":
             for attr in ("current_tokens", "token_limit", "conversation_tokens"):
                 val = getattr(data, attr, None)
