@@ -137,6 +137,7 @@ export function SettingsPanel({ onClose }: Props) {
   const [category, setCategory] = useState<Category>("appearance");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mcp, setMcp] = useState<MCPServerStatus[]>([]);
+  const [mcpLoading, setMcpLoading] = useState(true);
   const [theme, setThemeState] = useState<Theme>(getStoredTheme());
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -173,10 +174,13 @@ export function SettingsPanel({ onClose }: Props) {
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
   async function refreshMcp(): Promise<void> {
+    setMcpLoading(true);
     try {
       setMcp(await api.listMcpServers());
     } catch {
       setMcp([]);
+    } finally {
+      setMcpLoading(false);
     }
   }
 
@@ -965,7 +969,14 @@ export function SettingsPanel({ onClose }: Props) {
                   </button>
                 </div>
                 {mcp.length === 0 ? (
-                  <p className="text-xs text-muted">No MCP servers registered.</p>
+                  mcpLoading ? (
+                    <p className="flex items-center gap-2 text-xs text-muted">
+                      <RefreshCw size={12} className="animate-spin" />
+                      Loading MCP servers…
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted">No MCP servers registered.</p>
+                  )
                 ) : (
                   <ul className="space-y-2">
                     {mcp.map((s) => (
