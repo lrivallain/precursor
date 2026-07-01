@@ -84,31 +84,66 @@ def _enrich_with_user_meta(base: dict[str, Any], row: MCPServer | None) -> dict[
 
 @router.get("/servers")
 async def list_servers(
+    probe: bool = True,
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     manager = get_mcp_client_manager()
     enabled = await _load_enabled(session)
-    github_token = await resolve_github_token(session)
-    # Lazily probe enabled servers with an empty tool catalogue (e.g. after a
-    # process restart). The chat router itself opens fresh sessions, but the
-    # UI relies on the cached tools list to render the catalogue. Probe
-    # concurrently so a slow server (stdio spin-up, network, OAuth) doesn't
-    # serialise behind the others and stall the whole listing.
+    # Enabled servers with an empty tool catalogue (e.g. after a process
+    # restart) need a probe to resolve their real state + tools. The chat
+    # router opens its own sessions, but the UI relies on the cached tools
+    # list to render the catalogue.
     stale = [
         entry.name
         for entry in manager.list_entries()
         if enabled.get(entry.name, False) and not entry.tools
     ]
-    if stale:
+    if probe and stale:
+        # Probe concurrently so a slow server (stdio spin-up, network, OAuth)
+        # doesn't serialise behind the others and stall the whole listing.
+        github_token = await resolve_github_token(session)
         await asyncio.gather(*(manager.probe(name, github_token=github_token) for name in stale))
 
+    # When probing is deferred (``probe=false``), the UI wants the list back
+    # immediately and resolves each status afterwards via ``/servers/{name}/probe``.
+    # Report unresolved enabled servers as "connecting" so each card shows its
+    # own spinner instead of the whole list sitting in a loading state.
+    pending = set() if probe else set(stale)
     out: list[dict[str, Any]] = []
     for entry in manager.list_entries():
         base = manager.status_dict(entry, enabled=enabled.get(entry.name, False))
+        if entry.name in pending:
+            base["state"] = "connecting"
         row = None if entry.builtin else await get_row_by_name(session, entry.name)
         out.append(_enrich_with_user_meta(base, row))
     return out
+
+
+@router.post("/servers/{name}/probe")
+async def probe_server(
+    name: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Probe a single server to resolve its state + tool catalog for the UI.
+
+    Complements the deferred-status listing (``GET /servers?probe=false``): the
+    Settings panel renders the server list right away, then calls this per
+    server so each card resolves independently and a slow server never blocks
+    the others. Unlike ``/refresh`` this does not retire the warm worker — it
+    just opens and closes a session to refresh the cached catalogue.
+    """
+    manager = get_mcp_client_manager()
+    entry = manager.get(name)
+    if entry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "MCP server not found")
+
+    enabled = await _load_enabled(session)
+    if enabled.get(name, False):
+        entry = await manager.probe(name, github_token=await resolve_github_token(session))
+    base = manager.status_dict(entry, enabled=enabled.get(name, False))
+    row = None if entry.builtin else await get_row_by_name(session, name)
+    return _enrich_with_user_meta(base, row)
 
 
 @router.get("/server/info")
