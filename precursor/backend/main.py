@@ -81,6 +81,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     reminder_ticker = get_reminder_ticker()
     await reminder_ticker.start()
+    from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
+
+    workiq_keepalive = get_workiq_keepalive()
+    await workiq_keepalive.start()
     from precursor.backend.services.agents.manager import get_agent_manager
 
     agent_manager = get_agent_manager()
@@ -97,6 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await scheduler.stop()
         await reminder_ticker.stop()
+        await workiq_keepalive.stop()
         await agent_manager.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
 

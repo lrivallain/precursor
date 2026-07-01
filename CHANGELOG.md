@@ -11,6 +11,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **WorkIQ preview keep-alive**: a background ticker now silently refreshes the
+  WorkIQ preview OAuth token before it expires, so the hosted session survives
+  without frequent interactive re-sign-in. It only acts while preview is enabled
+  and a token already exists (it never starts a sign-in on its own), refreshing
+  once the access token is within a margin of expiring. When the refresh token
+  itself has aged out and a silent refresh can no longer proceed, it surfaces the
+  existing `McpAuthBanner` re-authenticate prompt once (a tenant Conditional
+  Access sign-in-frequency policy still forces periodic interactive sign-in).
+  Tunable via `workiq_keepalive_enabled`, `workiq_keepalive_poll_seconds`, and
+  `workiq_keepalive_refresh_margin_seconds`.
+
 - **Lazy-loaded conversation history**: discussions no longer load their entire
   transcript up front. Topics and chats fetch the most recent page (50 messages)
   and pull older ones in as you scroll toward the top, preserving your scroll
