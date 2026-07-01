@@ -610,6 +610,8 @@ def test_normalise_usage_event_captures_token_counts() -> None:
     assert event.data["input_tokens"] == 1200
     assert event.data["output_tokens"] == 340
     assert event.data["reasoning_tokens"] == 50
+    # The resolved model is captured so the UI can label each turn's answer.
+    assert event.data["model"] == "gpt-x"
     # Stored as raw ints (not JSON-stringified) so the UI can do arithmetic.
     assert isinstance(event.data["input_tokens"], int)
 

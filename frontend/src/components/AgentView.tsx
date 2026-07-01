@@ -37,6 +37,7 @@ import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
+import { MessageMeta } from "./MessageMeta";
 import { SuggestedReplies } from "./SuggestedReplies";
 import type {
   AgentEvent,
@@ -652,6 +653,8 @@ function MessageNode({
   category,
   isLastAnswer,
   user,
+  model,
+  elapsedMs,
   onPickSuggestion,
   suggestionsDisabled,
 }: {
@@ -659,6 +662,9 @@ function MessageNode({
   category: "user" | "system" | "assistant" | "reasoning" | "error";
   isLastAnswer: boolean;
   user?: { name: string; avatarUrl: string | null };
+  // Session model + computed generation time, shown on assistant answers only.
+  model?: string | null;
+  elapsedMs?: number | null;
   onPickSuggestion?: (text: string) => void;
   suggestionsDisabled?: boolean;
 }) {
@@ -799,6 +805,14 @@ function MessageNode({
           className="mt-2"
         />
       )}
+      <div className="mt-1.5">
+        <MessageMeta
+          createdAt={event.at}
+          model={isAssistant ? model : null}
+          elapsedMs={isAssistant ? elapsedMs : null}
+          hoverGroup="node"
+        />
+      </div>
     </div>
   );
 }
@@ -1134,7 +1148,67 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
   return rows;
 }
 
-// How many workflow segments (boxes) to render at once. Older segments stay
+// Derive a per-assistant-answer "generation time" (ms) from event timestamps,
+// mirroring the elapsed readout on topic/chat turns. A turn is anchored at its
+// `turn_start` (or the user prompt, when the SDK omits the marker); each
+// assistant message in that turn is measured from that anchor. Keyed by the
+// event object so the timeline can look it up while rendering.
+function computeElapsedByEvent(events: AgentEvent[]): Map<AgentEvent, number> {
+  const map = new Map<AgentEvent, number>();
+  let anchorAt: number | null = null;
+  const parse = (at: string | null): number | null => {
+    if (!at) return null;
+    const t = new Date(at).getTime();
+    return Number.isNaN(t) ? null : t;
+  };
+  for (const ev of events) {
+    const kind = ev.kind.toLowerCase();
+    const atMs = parse(ev.at);
+    if (kind === "turn_start" || classify(ev) === "user") {
+      if (atMs != null) anchorAt = atMs;
+      continue;
+    }
+    if (
+      classify(ev) === "assistant" &&
+      ev.text &&
+      ev.text.trim() &&
+      atMs != null &&
+      anchorAt != null
+    ) {
+      const delta = atMs - anchorAt;
+      if (delta >= 0) map.set(ev, delta);
+    }
+  }
+  return map;
+}
+
+// Resolve the concrete model for each assistant answer from its turn's usage
+// event. The SDK emits an `AssistantUsageData` (kind "usage") carrying the
+// resolved model just before each assistant message in the same turn, so we
+// track the latest usage model seen since the turn started and tag each answer
+// with it. The call site falls back to the session model when a turn predates
+// this capture (older archived runs) or reported no usage.
+function computeModelByEvent(events: AgentEvent[]): Map<AgentEvent, string> {
+  const map = new Map<AgentEvent, string>();
+  let currentModel: string | null = null;
+  for (const ev of events) {
+    const kind = ev.kind.toLowerCase();
+    if (kind === "turn_start") {
+      currentModel = null;
+      continue;
+    }
+    if (kind === "usage") {
+      const m = ev.data?.model;
+      if (typeof m === "string" && m.trim()) currentModel = m;
+      continue;
+    }
+    if (classify(ev) === "assistant" && ev.text && ev.text.trim() && currentModel) {
+      map.set(ev, currentModel);
+    }
+  }
+  return map;
+}
+
 // out of the DOM until the user scrolls toward the top, where another window's
 // worth is revealed. Keeps very long agent runs from rendering thousands of
 // nodes up front.
@@ -1299,6 +1373,14 @@ export function AgentView({
     }
     return { segments, trailingHooks: pendingHooks, answerRows };
   }, [events, showPrefs, selectedStatus]);
+
+  // Per-assistant-answer generation time, derived from event timestamps and
+  // looked up by event object while rendering each node's metadata line.
+  const elapsedByEvent = useMemo(() => computeElapsedByEvent(events), [events]);
+
+  // Per-assistant-answer resolved model (from the turn's usage event), with the
+  // session model as fallback at the render site.
+  const modelByEvent = useMemo(() => computeModelByEvent(events), [events]);
 
   // Maintain the render window as the timeline grows. While the user is parked
   // at the bottom, keep it bounded to the most recent page so long runs don't
@@ -1667,6 +1749,8 @@ export function AgentView({
                       category={seg.row.cat}
                       isLastAnswer={answerRows.has(seg.row)}
                       user={userPersona}
+                      model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
+                      elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
                       onPickSuggestion={(text) => void sendFollowUp(text)}
                       suggestionsDisabled={
                         selected.status === "running" ||
