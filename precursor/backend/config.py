@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     # due reminders. Gated by the same ``scheduler_enabled`` flag.
     reminder_poll_seconds: int = 30
 
+    # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
+    # ticker that silently refreshes the WorkIQ preview OAuth token before it
+    # expires, so the hosted session survives without frequent interactive
+    # re-sign-in. Only does work while preview is on and tokens exist.
+    workiq_keepalive_enabled: bool = True
+    workiq_keepalive_poll_seconds: int = 60
+    # Refresh once the access token is within this many seconds of expiring.
+    workiq_keepalive_refresh_margin_seconds: int = 300
+
     # Command runner (cmd-runner MCP) — runs bash/python/node either inside a
     # throwaway Docker "jail" (default) or, when the jail is disabled, directly
     # on the host with full local disk access. See services/cmd_runner.py.
