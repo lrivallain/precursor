@@ -167,6 +167,11 @@ class _LiveSession:
     # built stays invisible to the agent until a restart. ``None`` means we didn't
     # attach a catalog (SDK unavailable) and should never rebuild on this basis.
     mcp_fingerprint: frozenset[str] | None = None
+    # The (model, reasoning_effort, context_tier) triple currently applied to the
+    # live SDK session — set at build time and whenever we ``set_model``. Lets us
+    # skip a redundant model switch when the selection hasn't drifted, so every
+    # next turn can cheaply reconcile to the current selection.
+    model_signature: tuple[str, str | None, str] | None = None
 
 
 class AgentManager:
@@ -630,16 +635,23 @@ class AgentManager:
 
         assert self._client is not None
         kwargs: dict[str, Any] = {
-            "model": agent.model or get_settings().agents_default_model,
             "on_permission_request": self._make_permission_handler(agent.id),
         }
         # Reasoning effort + context tier are global agent prefs (Settings →
         # Agents / composer toolbar). Applied at session creation, mirroring how
         # the model is chosen — a change takes effect on the next new/rebuilt
         # session. The frontend only offers efforts the chosen model supports.
+        # The model comes from the DB-resolved selection (what the composer
+        # writes), not the env/config constant, so a new agent honours the
+        # currently selected model instead of the factory default. An explicit
+        # per-agent pin (``agent.model``) still wins.
         async with SessionLocal() as s:
+            default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
+        model = agent.model or default_model
+        if model:
+            kwargs["model"] = model
         if effort:
             kwargs["reasoning_effort"] = effort
         if tier and tier != "default":
@@ -670,6 +682,7 @@ class AgentManager:
             sdk_session=sdk_session,
             oauth_expires_at=oauth_expires_at,
             mcp_fingerprint=mcp_fingerprint,
+            model_signature=(model, effort or None, tier or "default") if model else None,
         )
         self._live[agent.id] = live
 
@@ -784,6 +797,7 @@ class AgentManager:
         if agent is None:
             return
         live = await self._ensure_live(agent)
+        await self._sync_selected_model(agent)
         live.approval_policy = await self._approval_policy()
         prompt = (agent.task_prompt or "").strip() or None
         live.pending_prompt = prompt
@@ -816,6 +830,7 @@ class AgentManager:
         if agent is None:
             return
         live = await self._ensure_live(agent)
+        await self._sync_selected_model(agent)
         live.approval_policy = await self._approval_policy()
         prompt = text.strip() or None
         live.pending_prompt = prompt
@@ -840,6 +855,7 @@ class AgentManager:
         if not prompt:
             return
         live = await self._ensure_live(agent)
+        await self._sync_selected_model(agent)
         live.approval_policy = await self._approval_policy()
         live.pending_prompt = prompt
         live.pending_answer = None
@@ -1149,6 +1165,59 @@ class AgentManager:
             )
         return out
 
+    async def _apply_agent_model(
+        self,
+        agent: AgentSession,
+        live: _LiveSession,
+        *,
+        default_model: str,
+        effort: str,
+        tier: str,
+    ) -> None:
+        """``set_model`` a single idle live agent to its selected model.
+
+        The model is ``agent.model or default_model`` — an explicit per-agent pin
+        wins, otherwise the current composer/Settings selection applies. History
+        preserving and effective on the agent's next turn. No-op when the target
+        (model, effort, tier) already matches what we last applied.
+        """
+        model = agent.model or default_model
+        if not model:
+            return
+        signature = (model, effort or None, tier or "default")
+        if live.model_signature == signature:
+            return
+        # Always send the tier (incl. "default") so toggling back resets it;
+        # a falsy effort is sent as None so the runtime restores the model
+        # default rather than pinning a stale level.
+        kwargs: dict[str, Any] = {"context_tier": tier or "default"}
+        if effort:
+            kwargs["reasoning_effort"] = effort
+        try:
+            await live.sdk_session.set_model(model, **kwargs)
+            live.model_signature = signature
+        except Exception:
+            logger.debug("set_model failed for agent %s", agent.id, exc_info=True)
+
+    async def _sync_selected_model(self, agent: AgentSession) -> None:
+        """Reconcile ``agent``'s live session to the current model selection.
+
+        Called right before a turn is dispatched so every next turn follows the
+        composer/Settings selection, even on a long-lived reused session. Skipped
+        when there's no live session yet (a fresh build already bakes in the
+        selection).
+        """
+        live = self._live.get(agent.id)
+        if live is None:
+            return
+        async with SessionLocal() as s:
+            default_model = await resolve_agents_default_model(s)
+            effort = await resolve_agents_reasoning_effort(s)
+            tier = await resolve_agents_context_tier(s)
+        await self._apply_agent_model(
+            agent, live, default_model=default_model, effort=effort, tier=tier
+        )
+
     async def apply_session_overrides(self) -> None:
         """Apply the current global model / reasoning-effort / context-tier prefs
         onto idle live sessions.
@@ -1181,19 +1250,9 @@ class AgentManager:
                 continue
             if agent.status in {"running", "needs_approval", "pending"}:
                 continue
-            model = agent.model or default_model
-            if not model:
-                continue
-            # Always send the tier (incl. "default") so toggling back resets it;
-            # a falsy effort is sent as None so the runtime restores the model
-            # default rather than pinning a stale level.
-            kwargs: dict[str, Any] = {"context_tier": tier or "default"}
-            if effort:
-                kwargs["reasoning_effort"] = effort
-            try:
-                await live.sdk_session.set_model(model, **kwargs)
-            except Exception:
-                logger.debug("set_model failed for agent %s", agent_id, exc_info=True)
+            await self._apply_agent_model(
+                agent, live, default_model=default_model, effort=effort, tier=tier
+            )
 
     def _make_permission_handler(self, agent_id: int) -> Any:
         async def handler(request: Any, invocation: Any) -> Any:
