@@ -676,6 +676,72 @@ def test_normalise_context_usage_event_captures_window() -> None:
     assert event.data["conversation_tokens"] == 7500
 
 
+def test_normalise_tool_completion_failure_captures_error() -> None:
+    """A failed tool must archive *why* it failed, not ``data: null``.
+
+    ``ToolExecutionCompleteData`` reports the outcome via a ``success`` flag and
+    a nested ``error`` object (no flat ``is_error``/``error_type`` attrs), so the
+    normaliser has to pull those out — otherwise the timeline loses the reason
+    the agent hit a wall (the exact bug that made an agent claim it was "blocked").
+    """
+    from precursor.backend.services.agents.manager import AgentManager
+
+    class _Err:
+        message = "connect timeout after 30s"
+        code = "ETIMEDOUT"
+
+    class ToolExecutionCompleteData:
+        def __init__(self) -> None:
+            self.success = False
+            self.tool_call_id = "call-1"
+            self.error = _Err()
+            self.result = None
+            self.sandboxed = True
+
+    event = AgentManager()._normalise(ToolExecutionCompleteData())
+
+    assert event.tool_status == "error"
+    assert event.request_id == "call-1"
+    assert event.data is not None
+    assert event.data["success"] is False
+    assert event.data["error"] == "connect timeout after 30s"
+    assert event.data["error_code"] == "ETIMEDOUT"
+    # Running in the ephemeral cmd-runner jail is surfaced so silent-non-persist
+    # writes are diagnosable.
+    assert event.data["sandboxed"] is True
+
+
+def test_normalise_tool_completion_success_captures_result() -> None:
+    """A successful tool archives its (capped) output and a ``done`` status."""
+    from precursor.backend.services.agents.manager import AgentManager
+
+    class _Result:
+        content = "x" * 10000
+        detailed_content = None
+
+    class _Desc:
+        name = "fetch-http_get"
+
+    class ToolExecutionCompleteData:
+        def __init__(self) -> None:
+            self.success = True
+            self.tool_call_id = "call-2"
+            self.error = None
+            self.result = _Result()
+            self.tool_description = _Desc()
+
+    event = AgentManager()._normalise(ToolExecutionCompleteData())
+
+    assert event.tool_status == "done"
+    assert event.data is not None
+    assert event.data["success"] is True
+    # Output is captured but capped so a huge fetch can't bloat the archive.
+    assert event.data["result"].startswith("x")
+    assert len(event.data["result"]) <= 4000
+    # Completion events have no ``tool_name`` — fall back to the description.
+    assert event.tool_name == "fetch-http_get"
+
+
 async def test_update_agent_title_only_needs_no_runtime() -> None:
     """A title-only PATCH never touches the runtime (no task replay)."""
     with TestClient(create_app()):
