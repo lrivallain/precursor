@@ -11,6 +11,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Agent unread badges & notifications**: agent sessions now track unread
+  activity just like topics and chats. When a background or scheduled agent
+  produces a new reply while you aren't looking at it, its row in the Agents list
+  is bold with an unread count, and — when notifications are enabled and the
+  window is unfocused — a browser notification fires. Opening a session clears
+  its badge (`POST /api/agents/{id}/read`); the count (assistant replies since
+  `last_read_at`, exposed as `AgentSessionRead.unread_count`) is computed
+  server-side from the archived event timeline. The sidebar mode switcher
+  (Topics / Chats / Agents) now highlights any tab with unread items — a count
+  badge when expanded, a dot on the collapsed icons and the overflow menu — and
+  the browser tab title reflects the combined unread total.
+
 - **WorkIQ preview keep-alive**: a background ticker now silently refreshes the
   WorkIQ preview OAuth token before it expires, so the hosted session survives
   without frequent interactive re-sign-in. It only acts while preview is enabled

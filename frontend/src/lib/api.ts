@@ -242,6 +242,8 @@ export const api = {
     return request<AgentSession[]>(`/api/agents${suffix}`);
   },
   getAgent: (id: number | string) => request<AgentSession>(`/api/agents/${id}`),
+  markAgentRead: (id: number | string) =>
+    request<void>(`/api/agents/${id}/read`, { method: "POST" }),
   createAgent: (data: AgentSessionCreate) =>
     request<AgentSession>(`/api/agents`, {
       method: "POST",

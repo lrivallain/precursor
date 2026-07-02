@@ -13,7 +13,7 @@ from precursor.backend.db import get_session
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
 from precursor.backend.schemas.topic import TopicRead
-from precursor.backend.services.events import publish_topic_changed
+from precursor.backend.services.events import publish_read_changed, publish_topic_changed
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
@@ -175,6 +175,8 @@ async def mark_chat_read(
         raise HTTPException(status_code=404, detail="Chat not found")
     chat.last_read_at = datetime.now(UTC)
     await session.commit()
+    # Let other tabs clear this chat's badge/counter in real time.
+    await publish_read_changed(chat_id=chat_id)
 
 
 @router.post("/{chat_id}/archive", response_model=ChatRead)

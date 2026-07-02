@@ -12,11 +12,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentSchedule, AgentSession, Chat, Topic
+from precursor.backend.models import AgentEventRecord, AgentSchedule, AgentSession, Chat, Topic
 from precursor.backend.schemas.agent import (
     AgentEvent,
     AgentLinkRequest,
@@ -36,7 +36,7 @@ from precursor.backend.schemas.agent_schedule import (
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.agents.manager import get_agent_manager, parse_agent_command
 from precursor.backend.services.app_settings import resolve_agents_enabled
-from precursor.backend.services.events import publish_agent_changed
+from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.scheduler import get_scheduler
 
@@ -81,6 +81,40 @@ async def _validate_container(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
 
 
+# Marker used to recognise assistant replies in the archived (JSON) event blob.
+# The timeline payload is an opaque ``AgentEvent`` dump, but its compact JSON
+# always carries ``"kind":"assistant_message"`` for a finished reply, so a LIKE
+# match is a cheap, migration-free way to count them without a dedicated column.
+_ASSISTANT_EVENT_MARKER = '%"kind":"assistant_message"%'
+
+
+async def _unread_counts(session: AsyncSession, agent_ids: list[int]) -> dict[int, int]:
+    """Assistant replies produced after each agent's ``last_read_at``.
+
+    Mirrors the topic/chat unread badge: a session with ``last_read_at`` unset is
+    treated as fully read (so background history never shows retroactively), and
+    only assistant replies — not intermediate tool/reasoning steps — count.
+    """
+    if not agent_ids:
+        return {}
+    result = await session.execute(
+        select(AgentEventRecord.agent_session_id, func.count(AgentEventRecord.id))
+        .join(AgentSession, AgentSession.id == AgentEventRecord.agent_session_id)
+        .where(AgentSession.last_read_at.is_not(None))
+        .where(AgentEventRecord.created_at > AgentSession.last_read_at)
+        .where(AgentEventRecord.payload.like(_ASSISTANT_EVENT_MARKER))
+        .where(AgentEventRecord.agent_session_id.in_(agent_ids))
+        .group_by(AgentEventRecord.agent_session_id)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
+def _to_read(agent: AgentSession, unread: int) -> AgentSessionRead:
+    read = AgentSessionRead.model_validate(agent)
+    read.unread_count = unread
+    return read
+
+
 @router.get("/models", response_model=list[AgentModelInfo])
 async def list_agent_models(
     session: AsyncSession = Depends(get_session),
@@ -107,7 +141,7 @@ async def list_agents(
     topic_id: int | None = None,
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
-) -> list[AgentSession]:
+) -> list[AgentSessionRead]:
     stmt = (
         select(AgentSession)
         .where(AgentSession.archived_at.is_(None))
@@ -118,7 +152,9 @@ async def list_agents(
     if chat_id is not None:
         stmt = stmt.where(AgentSession.chat_id == chat_id)
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    agents = list(result.scalars().all())
+    unread = await _unread_counts(session, [a.id for a in agents])
+    return [_to_read(a, unread.get(a.id, 0)) for a in agents]
 
 
 @router.get("/archived", response_model=list[AgentSessionRead])
@@ -164,8 +200,12 @@ async def create_agent(
 
 
 @router.get("/{agent_id}", response_model=AgentSessionRead)
-async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> AgentSession:
-    return await _get_or_404(session, agent_id)
+async def get_agent(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> AgentSessionRead:
+    agent = await _get_or_404(session, agent_id)
+    unread = await _unread_counts(session, [agent.id])
+    return _to_read(agent, unread.get(agent.id, 0))
 
 
 @router.get("/{agent_id}/events", response_model=list[AgentEvent])
@@ -174,6 +214,20 @@ async def get_agent_events(
 ) -> list[AgentEvent]:
     agent = await _get_or_404(session, agent_id)
     return await get_agent_manager().get_events(agent.id)
+
+
+@router.post("/{agent_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_agent_read(agent_id: str, session: AsyncSession = Depends(get_session)) -> None:
+    """Mark an agent session as fully read (clears its unread badge).
+
+    Mirrors the chat/topic read endpoints: a plain state write with no event
+    published, so marking read never echoes back as an ``agent.changed`` update.
+    """
+    agent = await _get_or_404(session, agent_id)
+    agent.last_read_at = datetime.now(UTC)
+    await session.commit()
+    # Let other tabs clear this agent's badge/counter in real time.
+    await publish_read_changed(agent_session_id=agent.id)
 
 
 @router.post("/{agent_id}/send", response_model=AgentSessionRead)

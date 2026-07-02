@@ -113,6 +113,13 @@ class AgentSession(Base, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # Timestamp of the last time the user opened this agent session. Used to
+    # compute the Agents-list unread badge: assistant replies produced after
+    # this are unread. Null means "never explicitly opened" — treated as fully
+    # read (mirrors Topic/Chat.last_read_at) so background history doesn't show
+    # as unread retroactively.
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Non-null once the session is archived (hidden from the active list but kept
     # for history). Mirrors Topic/Chat archiving.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

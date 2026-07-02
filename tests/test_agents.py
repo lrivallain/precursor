@@ -694,3 +694,181 @@ async def test_restart_with_task_replays_and_keeps_session_id() -> None:
     await mgr.restart_with_task(7)
 
     assert calls == [("teardown", 7, False), ("start", 7, False)]
+
+
+async def test_agent_unread_lifecycle() -> None:
+    """The Agents list carries an unread badge for background assistant replies.
+
+    Mirrors the topic/chat unread model: a session is fully read until opened,
+    only assistant replies (not tool/reasoning steps) count, and marking it read
+    clears the badge. The SDK can't run in CI, so we seed rows directly.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.schemas.agent import AgentEvent
+
+    def reply(text: str) -> str:
+        return AgentEvent(kind="assistant_message", text=text).model_dump_json()
+
+    with TestClient(create_app()) as client:
+        async with SessionLocal() as session:
+            agent = AgentSession(title="Background agent", task_prompt="do", status="idle")
+            session.add(agent)
+            await session.flush()
+            aid = agent.id
+            # A reply that predates any "open" — last_read_at is null, so it must
+            # be treated as fully read (no retroactive unread).
+            session.add(AgentEventRecord(agent_session_id=aid, payload=reply("hello")))
+            await session.commit()
+
+        row = next(a for a in client.get("/api/agents").json() if a["id"] == aid)
+        assert row["unread_count"] == 0
+
+        # Open it, then a fresh reply (and a tool step that must NOT count) land.
+        assert client.post(f"/api/agents/{aid}/read").status_code == 204
+        async with SessionLocal() as session:
+            session.add(AgentEventRecord(agent_session_id=aid, payload=reply("done")))
+            session.add(
+                AgentEventRecord(
+                    agent_session_id=aid,
+                    payload=AgentEvent(kind="tool_call", tool_name="shell").model_dump_json(),
+                )
+            )
+            await session.commit()
+
+        row = next(a for a in client.get("/api/agents").json() if a["id"] == aid)
+        assert row["unread_count"] == 1
+        assert client.get(f"/api/agents/{aid}").json()["unread_count"] == 1
+
+        # Reading again clears the badge.
+        assert client.post(f"/api/agents/{aid}/read").status_code == 204
+        row = next(a for a in client.get("/api/agents").json() if a["id"] == aid)
+        assert row["unread_count"] == 0
+
+
+async def test_agent_notify_back_marks_never_opened_container_unread() -> None:
+    """An agent posting into a linked topic/chat lights the unread badge even if
+    the container was never opened.
+
+    A conversation with ``last_read_at = NULL`` is treated as fully read, so the
+    agent's reply would otherwise not count. ``_notify_back`` pins ``last_read_at``
+    just before the posted messages (mirroring the reminder ticker) so the badge
+    shows reliably.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Topic
+    from precursor.backend.services.agents.manager import AgentManager, _LiveSession
+
+    def find(nodes: list[dict], tid: int) -> dict | None:
+        for n in nodes:
+            if n["id"] == tid:
+                return n
+            hit = find(n.get("children", []), tid)
+            if hit is not None:
+                return hit
+        return None
+
+    with TestClient(create_app()) as client:
+        async with SessionLocal() as session:
+            topic = Topic(title="Bg topic", slug="bg-topic-notify-back")
+            session.add(topic)
+            await session.flush()
+            tid = topic.id
+            assert topic.last_read_at is None  # never opened
+            agent = AgentSession(title="A", task_prompt="do", status="idle", topic_id=tid)
+            session.add(agent)
+            await session.commit()
+            aid = agent.id
+
+        mgr = AgentManager()
+        mgr._live[aid] = _LiveSession(
+            sdk_session=None, pending_prompt="do the thing", pending_answer="all done"
+        )
+        async with SessionLocal() as session:
+            agent = await session.get(AgentSession, aid)
+            assert agent is not None
+            await mgr._notify_back(agent)
+
+        # The reply landed and the never-opened topic now reads as unread.
+        node = find(client.get("/api/topics/tree").json(), tid)
+        assert node is not None
+        assert node["unread_count"] == 1
+
+        async with SessionLocal() as session:
+            refreshed = await session.get(Topic, tid)
+            assert refreshed is not None
+            assert refreshed.last_read_at is not None
+
+
+async def test_agent_background_task_events_broadcast_to_originating_tab() -> None:
+    """Events published from agent background work carry no client id.
+
+    ``enqueue``/``_spawn`` runs agent work in a task whose context has the
+    request's ``X-Client-Id`` cleared, so the notify-back unread (and live
+    progress) reaches *every* tab — including the one that started the agent,
+    which would otherwise echo-suppress its own event.
+    """
+    import asyncio
+
+    from precursor.backend.services import events
+    from precursor.backend.services.agents.manager import AgentManager
+
+    mgr = AgentManager()
+
+    async def publisher() -> None:
+        await events.get_bus().publish({"type": "agent.changed", "agent_session_id": 1})
+
+    try:
+        async with events.get_bus().subscribe() as q:
+            events.set_current_client_id("tab-A")  # as request middleware would
+            mgr.enqueue(publisher())
+            evt = await asyncio.wait_for(q.get(), timeout=2)
+        assert evt["client_id"] is None  # broadcast, not stamped with tab-A
+    finally:
+        events.set_current_client_id(None)
+
+
+async def test_mark_read_endpoints_publish_read_changed() -> None:
+    """The topic/chat/agent /read endpoints emit a ``read.changed`` event so
+    other tabs clear the badge + counter for that discussion in real time."""
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Chat, Topic
+    from precursor.backend.routers.agents import mark_agent_read
+    from precursor.backend.routers.chats import mark_chat_read
+    from precursor.backend.routers.topics import mark_topic_read
+    from precursor.backend.services import events
+
+    with TestClient(create_app()):
+        pass
+
+    async with SessionLocal() as session:
+        chat = Chat(title="c", slug="read-evt-chat")
+        topic = Topic(title="t", slug="read-evt-topic")
+        agent = AgentSession(title="a", task_prompt="x", status="idle")
+        session.add_all([chat, topic, agent])
+        await session.commit()
+        cid, tid, aid = chat.id, topic.id, agent.id
+
+    async with events.get_bus().subscribe() as q:
+        async with SessionLocal() as session:
+            await mark_chat_read(cid, session=session)
+            await mark_topic_read(tid, session=session)
+            await mark_agent_read(str(aid), session=session)
+        seen = [await asyncio.wait_for(q.get(), timeout=2) for _ in range(3)]
+
+    by_kind = {(e.get("chat_id"), e.get("topic_id"), e.get("agent_session_id")): e for e in seen}
+    assert all(e["type"] == "read.changed" for e in seen)
+    assert (cid, None, None) in by_kind
+    assert (None, tid, None) in by_kind
+    assert (None, None, aid) in by_kind
+
+    # Clean up so the shared session DB stays empty for order-independent tests
+    # (test_app.py asserts an empty chat list to start).
+    async with SessionLocal() as session:
+        for model, oid in ((Chat, cid), (Topic, tid), (AgentSession, aid)):
+            row = await session.get(model, oid)
+            if row is not None:
+                await session.delete(row)
+        await session.commit()

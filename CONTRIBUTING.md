@@ -9,7 +9,7 @@ Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
 (env, run, build, release). Install it once, then:
 
 ```bash
-make sync                 # uv sync --extra dev + npm install
+make sync                 # uv sync + npm install
 cp .env.example .env
 ```
 
@@ -17,7 +17,7 @@ cp .env.example .env
 <summary>Without make</summary>
 
 ```bash
-uv sync --extra dev
+uv sync
 cp .env.example .env
 cd frontend && npm install && cd ..
 ```
@@ -27,7 +27,7 @@ Run the dev stack (uvicorn `--reload` + Vite HMR, both stop on Ctrl-C):
 
 ```bash
 make dev
-# or:  uv run precursor --dev
+# or:  uv run --extra agents precursor --dev   (drop --extra agents to skip Agents mode)
 ```
 
 Other launch options:

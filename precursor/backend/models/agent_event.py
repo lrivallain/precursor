@@ -10,7 +10,7 @@ topic is linked). Append-only; rows are removed when the agent is deleted.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -32,6 +32,13 @@ class AgentEventRecord(Base):
     # owns (de)serialisation.
     payload: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # Python-side default (tz-aware, microsecond) mirrors ``TimestampMixin`` so
+    # this compares reliably against the tz-aware ``AgentSession.last_read_at``
+    # when computing the unread badge. ``server_default`` stays as a fallback for
+    # any raw insert.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        nullable=False,
     )

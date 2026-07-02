@@ -38,6 +38,10 @@ class AgentSessionRead(BaseModel):
     chat_id: int | None = None
     last_activity_at: UtcDateTime | None = None
     archived_at: UtcDateTime | None = None
+    last_read_at: UtcDateTime | None = None
+    # Number of assistant replies produced since the user last opened the
+    # session (computed server-side; mirrors ChatRead.unread_count).
+    unread_count: int = 0
     created_at: UtcDateTime
     updated_at: UtcDateTime
     # Recurrence config + run state when the agent re-runs on a cadence (null

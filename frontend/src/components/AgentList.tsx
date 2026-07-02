@@ -77,7 +77,9 @@ export function AgentList({ agents, activeId, enabled, onSelect, onRename }: Age
                       <InlineTitle
                         title={a.title}
                         onRename={(t) => onRename(a.id, t)}
-                        className="flex-1 truncate text-sm"
+                        className={`flex-1 truncate text-sm ${
+                          a.unread_count > 0 && !isActive ? "font-semibold" : ""
+                        }`}
                       />
                       {a.schedule && (
                         <CalendarClock
@@ -92,6 +94,14 @@ export function AgentList({ agents, activeId, enabled, onSelect, onRename }: Age
                             a.schedule.enabled ? "Runs on a schedule" : "Schedule paused"
                           }
                         />
+                      )}
+                      {a.unread_count > 0 && !isActive && (
+                        <span
+                          className="inline-flex h-[16px] min-w-[16px] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-medium text-white"
+                          aria-label={`${a.unread_count} unread ${a.unread_count === 1 ? "update" : "updates"}`}
+                        >
+                          {a.unread_count > 9 ? "9+" : a.unread_count}
+                        </span>
                       )}
                       <AgentStatusBadge status={a.status} />
                     </div>

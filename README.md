@@ -44,7 +44,7 @@ environment, running, building, and releasing. Install it once
 ([instructions](https://docs.astral.sh/uv/getting-started/installation/)), then:
 
 ```bash
-uv sync --extra dev           # backend: .venv + Python deps (uv manages the interpreter)
+uv sync                       # backend: .venv + Python deps (uv manages the interpreter)
 npm --prefix frontend install # frontend: Vite + React toolchain (needs Node.js)
 cp .env.example .env
 ```
@@ -65,10 +65,11 @@ so the chat flow stays usable offline.
 ### Optional: Agents mode
 
 **Agents mode** is **opt-in and off by default**. It is **not** installed by the
-`uv sync --extra dev` above — it lives behind its own `agents` extra:
+`uv sync` above — it lives behind its own `agents` extra:
 
 ```bash
-uv sync --extra dev --extra agents   # adds github-copilot-sdk on top of the dev deps
+uv sync --extra agents               # adds github-copilot-sdk on top of the dev deps
+uv run --extra agents precursor --dev # …or run the dev stack with it in one step (= make dev)
 ```
 
 > [!IMPORTANT]

@@ -15,6 +15,8 @@ interface ChatListProps {
   /** Open the chat settings drawer (archive/delete/rename/promote live there). */
   onOpenSettings: (chat: Chat) => void;
   onChatsChanged?: () => void;
+  /** Reports the total unread count across chats after each refresh. */
+  onUnreadChange?: (total: number) => void;
 }
 
 export function ChatList({
@@ -25,6 +27,7 @@ export function ChatList({
   onSelect,
   onOpenSettings,
   onChatsChanged,
+  onUnreadChange,
 }: ChatListProps) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [query, setQuery] = useState("");
@@ -34,9 +37,12 @@ export function ChatList({
 
   async function refresh(): Promise<void> {
     try {
-      setChats(await api.listChats());
+      const list = await api.listChats();
+      setChats(list);
+      onUnreadChange?.(list.reduce((n, c) => n + (c.unread_count ?? 0), 0));
     } catch {
       setChats([]);
+      onUnreadChange?.(0);
     }
   }
 

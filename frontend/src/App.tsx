@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   MessagesSquare,
@@ -160,6 +160,30 @@ function resolveAgentRef(ref: string | null, agents: AgentSession[] | null): num
 
 const BASE_TITLE = "Precursor";
 
+// Agent statuses that represent a finished/paused turn (not actively running).
+// Used to re-mark the actively-viewed agent read once per turn rather than on
+// every streamed event.
+const AGENT_SETTLED_STATUSES = new Set([
+  "idle",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "needs_approval",
+]);
+
+// Auto-marking a conversation read on an *incoming* reply should only happen in
+// the tab the user is actually looking at. A tab merely left open on a
+// conversation in the background must not clear the unread for everyone (read
+// state is shared server-side) — otherwise a reply that arrives while you're in
+// another tab/app never shows as unread. Explicit actions (clicking a
+// conversation open) mark read regardless; this gate is only for event-driven
+// auto-marks. Mirrors the standard "unread accrues while the window isn't
+// focused" behaviour (and how maybeNotify already keys off focus).
+function windowFocused(): boolean {
+  return typeof document !== "undefined" && document.hasFocus();
+}
+
 /** Sum unread counts across the whole topic tree (recursively). */
 function totalUnread(nodes: TopicNode[]): number {
   let n = 0;
@@ -226,6 +250,12 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [createParentId, setCreateParentId] = useState<number | null | undefined>(undefined);
   const [chatReloadKey, setChatReloadKey] = useState(0);
+  // Total unread across chats, lifted from ChatList so the mode switcher can
+  // badge the Chats tab even when that list isn't mounted.
+  const [chatsUnread, setChatsUnread] = useState(0);
+  // Previous per-agent unread counts, so loadAgents can detect background
+  // completions and fire a browser notification for newly-unread sessions.
+  const agentUnreadRef = useRef<Map<number, number> | null>(null);
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   // Ids already seen as fired, so we only notify on newly-fired ones.
@@ -284,6 +314,49 @@ export default function App() {
     activeAgentIdRef.current = activeAgentId;
   }, [activeAgentId]);
 
+  // Mirror the current sidebar mode into a ref. The active item refs persist
+  // across mode switches (changeMode doesn't clear them), so "the user is
+  // actually looking at this conversation" means its ref matches AND its mode is
+  // on screen. The (registered-once) event handlers read this to avoid marking a
+  // conversation read when a background update lands in a mode the user left.
+  const sidebarModeRef = useRef<SidebarMode>(sidebarMode);
+  useEffect(() => {
+    sidebarModeRef.current = sidebarMode;
+  }, [sidebarMode]);
+
+  // Single source of truth for "which conversation is actually on screen right
+  // now". A conversation is only being viewed when its type matches the current
+  // sidebar mode AND it's the active item — the active refs persist across mode
+  // switches, so checking the id alone would treat a conversation the user left
+  // (e.g. a still-streaming topic they navigated away from) as "viewed" and
+  // wrongly mark it read when its turn finishes. Every auto-mark-read decision
+  // funnels through this so read state stays reliable.
+  type Viewed =
+    | { kind: "topic"; id: number }
+    | { kind: "chat"; id: number }
+    | { kind: "agent"; id: number }
+    | null;
+  const currentlyViewed = useCallback((): Viewed => {
+    const mode = sidebarModeRef.current;
+    if (mode === "topics" && activeTopicRef.current) {
+      return { kind: "topic", id: activeTopicRef.current.id };
+    }
+    if (mode === "chats" && activeChatRef.current) {
+      return { kind: "chat", id: activeChatRef.current.id };
+    }
+    if (mode === "agents" && activeAgentIdRef.current != null) {
+      return { kind: "agent", id: activeAgentIdRef.current };
+    }
+    return null;
+  }, []);
+  const isViewing = useCallback(
+    (kind: "topic" | "chat" | "agent", id: number): boolean => {
+      const v = currentlyViewed();
+      return v != null && v.kind === kind && v.id === id;
+    },
+    [currentlyViewed],
+  );
+
   // Mirror the loaded agent list into a ref so the mount-only URL sync handler
   // can resolve a UUID segment without re-subscribing.
   const agentsRef = useRef<AgentSession[] | null>(agents);
@@ -304,6 +377,18 @@ export default function App() {
 
   async function refreshTree(): Promise<void> {
     setTree(await api.topicTree());
+  }
+
+  // Total chat unread, kept current in App (not just in ChatList) so the mode
+  // switcher can badge the Chats tab from any mode. ChatList also reports its
+  // own total via onUnreadChange for instant updates while it's mounted.
+  async function refreshChatsUnread(): Promise<void> {
+    try {
+      const list = await api.listChats();
+      setChatsUnread(list.reduce((n, c) => n + (c.unread_count ?? 0), 0));
+    } catch {
+      // transient — keep the previous total
+    }
   }
 
   // Reload fired reminders and fire a browser notification for any that became
@@ -337,16 +422,32 @@ export default function App() {
 
   useEffect(() => {
     void refreshTree();
+    void refreshChatsUnread();
     void skillsStore.load();
     void rolesStore.load();
   }, []);
 
-  // Reflect the unread count in the tab title (always, independent of the
+  // Reflect the total unread count in the tab title (always, independent of the
   // notification permission/setting). Cleared title falls back to the base.
+  const topicsUnread = useMemo(() => totalUnread(tree), [tree]);
+  // Exclude the agent you're actively viewing (agents mode) from the tab total:
+  // unlike topics/chats it isn't re-marked read on every incoming event, so its
+  // backend count would otherwise keep the Agents tab badged while you watch it.
+  const agentsUnread = useMemo(() => {
+    const viewingId = sidebarMode === "agents" ? activeAgentId : null;
+    return (agents ?? []).reduce(
+      (n, a) => n + (a.id === viewingId ? 0 : (a.unread_count ?? 0)),
+      0,
+    );
+  }, [agents, activeAgentId, sidebarMode]);
+  const unreadByMode = useMemo(
+    () => ({ topics: topicsUnread, chats: chatsUnread, agents: agentsUnread }),
+    [topicsUnread, chatsUnread, agentsUnread],
+  );
   useEffect(() => {
-    const n = totalUnread(tree);
+    const n = topicsUnread + chatsUnread + agentsUnread;
     document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
-  }, [tree]);
+  }, [topicsUnread, chatsUnread, agentsUnread]);
 
   // Mirror tree + notification setting into refs so the completion callbacks
   // (registered once) read current values without re-subscribing.
@@ -548,7 +649,7 @@ export default function App() {
       const id = Number(rawId);
       void (async () => {
         if (kind === "chat") {
-          if (activeChatRef.current?.id === id) {
+          if (isViewing("chat", id) && windowFocused()) {
             try {
               await api.markChatRead(id);
             } catch {
@@ -556,9 +657,10 @@ export default function App() {
             }
           }
           setChatListReloadKey((k) => k + 1);
+          void refreshChatsUnread();
           return;
         }
-        if (activeTopicRef.current?.id === id) {
+        if (isViewing("topic", id) && windowFocused()) {
           try {
             await api.markTopicRead(id);
           } catch {
@@ -594,17 +696,44 @@ export default function App() {
         }
       } else if (event.type === "message.changed") {
         if (event.chat_id != null) {
+          const chatId = event.chat_id;
+          const isActive = isViewing("chat", chatId);
           // A chat turn changed — refresh the list badges and, if the user is
-          // viewing it, remount the panel so it re-fetches from scratch.
-          setChatListReloadKey((k) => k + 1);
-          if (activeChatRef.current?.id === event.chat_id) {
+          // viewing it, remount the panel so it re-fetches from scratch. When
+          // the change lands in the actively-viewed chat (e.g. a linked agent
+          // posted into it), keep it read so its unread badge doesn't resurrect
+          // when the user navigates away.
+          void (async () => {
+            if (isActive && windowFocused()) {
+              try {
+                await api.markChatRead(chatId);
+              } catch {
+                // non-fatal
+              }
+            }
+            setChatListReloadKey((k) => k + 1);
+            void refreshChatsUnread();
+          })();
+          if (isActive) {
             setActiveChatReloadKey((k) => k + 1);
           }
           return;
         }
-        // Sidebar badge tracking depends on the tree, so always refresh.
-        void refreshTree();
-        if (activeTopicRef.current?.id === event.topic_id) {
+        const topicId = event.topic_id;
+        const topicActive = topicId != null && isViewing("topic", topicId);
+        // Sidebar badge tracking depends on the tree, so always refresh — and
+        // keep the actively-viewed topic read for the same reason as chats.
+        void (async () => {
+          if (topicActive && windowFocused()) {
+            try {
+              await api.markTopicRead(topicId);
+            } catch {
+              // non-fatal
+            }
+          }
+          await refreshTree();
+        })();
+        if (topicActive) {
           // Re-mount ChatPanel so it re-fetches messages from scratch.
           setChatReloadKey((k) => k + 1);
         }
@@ -618,6 +747,7 @@ export default function App() {
         if (event.chat_id != null) {
           streamStore.setRemoteStreaming(convKey("chat", event.chat_id), false);
           setChatListReloadKey((k) => k + 1);
+          void refreshChatsUnread();
           return;
         }
         if (event.topic_id != null) {
@@ -632,19 +762,87 @@ export default function App() {
         // ticker). Reload the sidebar section; loadReminders also notifies for
         // any newly-fired ones.
         void loadReminders();
+      } else if (event.type === "read.changed") {
+        // Another tab marked a conversation read. Refetch only the affected
+        // section's unread state so this tab's badge + counter clear in sync.
+        // This never re-marks anything, so it can't loop with the active-view
+        // read logic.
+        if (event.chat_id != null) {
+          setChatListReloadKey((k) => k + 1);
+          void refreshChatsUnread();
+        } else if (event.agent_session_id != null) {
+          void loadAgents();
+        } else {
+          void refreshTree();
+        }
       } else if (event.type === "agent.changed") {
         // An agent session was created, advanced, or finished (possibly in the
         // background). Refresh the list so statuses/badges stay current; the
         // AgentView refreshes its own timeline.
-        void loadAgents();
+        void (async () => {
+          const list = await loadAgents();
+          // Keep the session the user is actively viewing marked read as it
+          // produces output, so its badge doesn't resurrect when they navigate
+          // away (mirrors how a chat/topic is re-marked read on turn completion).
+          // Gate on a settled status so we mark once per turn, not per streamed
+          // event; markAgentRead doesn't publish, so this can't loop.
+          const activeId = activeAgentIdRef.current;
+          if (activeId == null || !isViewing("agent", activeId) || !windowFocused()) return;
+          const active = list.find((a) => a.id === activeId);
+          if (active && active.unread_count > 0 && AGENT_SETTLED_STATUSES.has(active.status)) {
+            try {
+              await api.markAgentRead(activeId);
+              await loadAgents();
+            } catch {
+              // non-fatal
+            }
+          }
+        })();
       }
     });
   }, []);
 
+  // When this tab regains focus, mark whatever conversation it's showing read.
+  // This is the complement to the focus-gated auto-marks: unread that piled up
+  // while the tab was backgrounded clears the moment the user looks at it again,
+  // and the read.changed broadcast keeps other tabs in sync. We listen for both
+  // window focus (switching OS windows) and visibility (switching browser tabs).
+  useEffect(() => {
+    function markActiveRead(): void {
+      const v = currentlyViewed();
+      if (v == null) return;
+      void (async () => {
+        try {
+          if (v.kind === "chat") {
+            await api.markChatRead(v.id);
+            setChatListReloadKey((k) => k + 1);
+            void refreshChatsUnread();
+          } else if (v.kind === "topic") {
+            await api.markTopicRead(v.id);
+            await refreshTree();
+          } else {
+            await api.markAgentRead(v.id);
+            await loadAgents();
+          }
+        } catch {
+          // non-fatal
+        }
+      })();
+    }
+    function onVisibility(): void {
+      if (document.visibilityState === "visible") markActiveRead();
+    }
+    window.addEventListener("focus", markActiveRead);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", markActiveRead);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   async function handleSelect(id: number): Promise<void> {
     setActiveTopic(await api.getTopic(id));
-    try {
-      await api.markTopicRead(id);
+    try {      await api.markTopicRead(id);
       await refreshTree();
     } catch {
       // non-fatal
@@ -835,6 +1033,24 @@ export default function App() {
   async function loadAgents(): Promise<AgentSession[]> {
     try {
       const list = await api.listAgents();
+      // Notify for sessions whose unread grew since the last load — i.e. a
+      // background/scheduled agent produced a new reply — skipping the very
+      // first load and whichever session is currently open. Mirrors how a
+      // finished topic turn notifies (see maybeNotify).
+      const prev = agentUnreadRef.current;
+      if (prev && notificationsEnabledRef.current) {
+        for (const a of list) {
+          const before = prev.get(a.id) ?? 0;
+          if (a.unread_count > before && a.id !== activeAgentIdRef.current) {
+            notifyIfUnfocused({
+              title: a.title,
+              body: "Agent has a new update.",
+              tag: `precursor-agent-${a.id}`,
+            });
+          }
+        }
+      }
+      agentUnreadRef.current = new Map(list.map((a) => [a.id, a.unread_count ?? 0]));
       setAgents(list);
       return list;
     } catch {
@@ -843,13 +1059,26 @@ export default function App() {
     }
   }
 
-  // Lazily load agent sessions the first time the user enters agents mode
-  // (only when the feature is enabled).
+  // Mark the active agent read (and refresh badges) whenever it changes to a
+  // real session — covers list clicks, the AgentView, deep links and route
+  // sync in one place. markAgentRead doesn't publish, so this can't loop.
   useEffect(() => {
-    if (sidebarMode !== "agents" || agents !== null || !agentsEnabled) return;
+    if (activeAgentId == null) return;
+    void api
+      .markAgentRead(activeAgentId)
+      .then(() => loadAgents())
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAgentId]);
+
+  // Load agent sessions as soon as the feature is known-enabled (independent of
+  // the current mode) so the mode-switcher badge and background completion
+  // notifications work from anywhere, not just inside agents mode.
+  useEffect(() => {
+    if (!agentsEnabled || agents !== null) return;
     void loadAgents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidebarMode, agentsEnabled]);
+  }, [agentsEnabled]);
 
   function handleCreate(parentId: number | null): void {
     // Top-level "+ create" passes null; in that case, if a topic is currently
@@ -895,6 +1124,7 @@ export default function App() {
               setChatSettingsOpen(true);
             }}
             onChatsChanged={() => void refreshActiveChat()}
+            onUnreadChange={setChatsUnread}
           />
         }
         workspaceSlot={
@@ -925,6 +1155,7 @@ export default function App() {
         onRefresh={refreshTree}
         onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
         onOpenArchive={() => setArchiveOpen(true)}
+        unreadByMode={unreadByMode}
       />
 
       <main className="flex-1 flex flex-col min-w-0">
