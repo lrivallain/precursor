@@ -163,3 +163,28 @@ async def publish_agent_changed(
             "chat_id": chat_id,
         }
     )
+
+
+async def publish_read_changed(
+    *,
+    topic_id: int | None = None,
+    chat_id: int | None = None,
+    agent_session_id: int | None = None,
+) -> None:
+    """Signal that a conversation was marked read (its ``last_read_at`` advanced).
+
+    Emitted by the ``/read`` endpoints so *other* tabs clear the unread badge and
+    counter for the same discussion in real time. It carries only the affected
+    id; receivers re-fetch that section's unread state. Deliberately distinct
+    from ``message.changed`` and never triggers a re-mark, so it can't loop with
+    the "mark the actively-viewed conversation read" logic. Echo-filtered for the
+    originating tab, which already updated optimistically.
+    """
+    await _bus.publish(
+        {
+            "type": "read.changed",
+            "topic_id": topic_id,
+            "chat_id": chat_id,
+            "agent_session_id": agent_session_id,
+        }
+    )

@@ -164,6 +164,10 @@ export interface AgentSession {
   chat_id: number | null;
   last_activity_at: string | null;
   archived_at: string | null;
+  last_read_at: string | null;
+  // Assistant replies produced since the user last opened the session
+  // (computed server-side; mirrors Chat.unread_count).
+  unread_count: number;
   created_at: string;
   updated_at: string;
   // Recurrence config + run state when the agent re-runs on a cadence (null

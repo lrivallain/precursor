@@ -20,6 +20,7 @@ from precursor.backend.schemas.schedule import (
 )
 from precursor.backend.services.events import (
     publish_message_changed,
+    publish_read_changed,
     publish_topic_changed,
     set_current_client_id,
 )
@@ -224,6 +225,8 @@ async def mark_topic_read(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     topic.last_read_at = datetime.now(UTC)
     await session.commit()
+    # Let other tabs clear this topic's badge/counter in real time.
+    await publish_read_changed(topic_id=topic_id)
 
 
 @router.post("/{topic_id}/archive", response_model=TopicRead)

@@ -69,6 +69,8 @@ interface Props {
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
+  /** Per-mode unread totals, used to badge the mode switcher tabs. */
+  unreadByMode?: Partial<Record<SidebarMode, number>>;
 }
 
 export function Sidebar({
@@ -92,6 +94,7 @@ export function Sidebar({
   onReminderDone,
   onOpenGlobalSettings,
   onOpenArchive,
+  unreadByMode,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
@@ -131,20 +134,22 @@ export function Sidebar({
         </button>
         <div className="my-1 h-px w-6 bg-border" />
         <button
-          className={`p-2 rounded ${mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Topics"
           data-tooltip="Topics"
           onClick={() => onModeChange("topics")}
         >
           <MessagesSquare size={18} />
+          <ModeUnreadDot count={unreadByMode?.topics ?? 0} />
         </button>
         <button
-          className={`p-2 rounded ${mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Chats"
           data-tooltip="Chats"
           onClick={() => onModeChange("chats")}
         >
           <MessageSquare size={18} />
+          <ModeUnreadDot count={unreadByMode?.chats ?? 0} />
         </button>
         <button
           className={`p-2 rounded ${mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
@@ -155,12 +160,13 @@ export function Sidebar({
           <FolderGit2 size={18} />
         </button>
         <button
-          className={`p-2 rounded ${mode === "agents" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${mode === "agents" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Agents"
           data-tooltip="Agents"
           onClick={() => onModeChange("agents")}
         >
           <Bot size={18} />
+          <ModeUnreadDot count={unreadByMode?.agents ?? 0} />
         </button>
         <div className="my-1 h-px w-6 bg-border" />
         <button
@@ -214,7 +220,7 @@ export function Sidebar({
       {/* Mode switcher: Topics ⟷ Chats ⟷ Files. Persona + settings stay
           visible at the bottom of the sidebar across every mode. When the
           sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
-      <ModeSwitcher mode={mode} onModeChange={onModeChange} />
+      <ModeSwitcher mode={mode} onModeChange={onModeChange} unreadByMode={unreadByMode} />
 
       {/* Fired reminders surface here across every mode until acknowledged. */}
       {reminders.length > 0 && (
@@ -486,6 +492,18 @@ function UnreadBadge({ count }: { count: number }) {
   );
 }
 
+// Small dot overlay for the collapsed sidebar's mode icons — signals "this mode
+// has unread items" without room for a count.
+function ModeUnreadDot({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="absolute right-1 top-1 h-2 w-2 rounded-full bg-blue-500 ring-2 ring-bg"
+      aria-label={`${count} unread`}
+    />
+  );
+}
+
 const COLLAPSED_TOPICS_KEY = "precursor:sidebar:collapsed";
 
 // Tracks which parent topics are collapsed. We persist the collapsed set (not
@@ -563,9 +581,11 @@ const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
 function ModeSwitcher({
   mode,
   onModeChange,
+  unreadByMode,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
+  unreadByMode?: Partial<Record<SidebarMode, number>>;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(MODES.length);
@@ -614,24 +634,29 @@ function ModeSwitcher({
   const visible = MODES.slice(0, visibleCount);
   const overflow = MODES.slice(visibleCount);
   const activeHidden = overflow.some((m) => m.mode === mode);
+  const overflowUnread = overflow.reduce((n, m) => n + (unreadByMode?.[m.mode] ?? 0), 0);
 
   return (
     <div ref={rowRef} className="relative flex gap-1 px-2 py-2 border-b border-border">
-      {visible.map((m) => (
-        <button
-          key={m.mode}
-          className={`flex flex-1 min-w-0 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
-            mode === m.mode ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
-          }`}
-          onClick={() => onModeChange(m.mode)}
-        >
-          {m.icon} <span className="truncate">{m.label}</span>
-        </button>
-      ))}
+      {visible.map((m) => {
+        const unread = unreadByMode?.[m.mode] ?? 0;
+        return (
+          <button
+            key={m.mode}
+            className={`flex flex-1 min-w-0 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
+              mode === m.mode ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+            }`}
+            onClick={() => onModeChange(m.mode)}
+          >
+            {m.icon} <span className="truncate">{m.label}</span>
+            {unread > 0 && mode !== m.mode && <UnreadBadge count={unread} />}
+          </button>
+        );
+      })}
       {overflow.length > 0 && (
         <>
           <button
-            className={`flex shrink-0 items-center justify-center rounded px-2 py-1.5 ${
+            className={`relative flex shrink-0 items-center justify-center rounded px-2 py-1.5 ${
               activeHidden ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
             }`}
             aria-label="More modes"
@@ -641,27 +666,33 @@ function ModeSwitcher({
             onClick={() => setOverflowOpen((v) => !v)}
           >
             <ChevronsRight size={16} />
+            <ModeUnreadDot count={overflowUnread} />
           </button>
           {overflowOpen && (
             <div
               role="menu"
               className="absolute right-2 top-full z-40 mt-1 w-40 rounded-md border border-border bg-bg py-1 shadow-lg"
             >
-              {overflow.map((m) => (
-                <button
-                  key={m.mode}
-                  role="menuitem"
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
-                    mode === m.mode ? "text-accent" : "hover:bg-surface"
-                  }`}
-                  onClick={() => {
-                    setOverflowOpen(false);
-                    onModeChange(m.mode);
-                  }}
-                >
-                  {m.icon} {m.label}
-                </button>
-              ))}
+              {overflow.map((m) => {
+                const unread = unreadByMode?.[m.mode] ?? 0;
+                return (
+                  <button
+                    key={m.mode}
+                    role="menuitem"
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                      mode === m.mode ? "text-accent" : "hover:bg-surface"
+                    }`}
+                    onClick={() => {
+                      setOverflowOpen(false);
+                      onModeChange(m.mode);
+                    }}
+                  >
+                    {m.icon}
+                    <span className="flex-1 truncate">{m.label}</span>
+                    {unread > 0 && mode !== m.mode && <UnreadBadge count={unread} />}
+                  </button>
+                );
+              })}
             </div>
           )}
         </>

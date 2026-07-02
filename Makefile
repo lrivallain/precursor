@@ -5,17 +5,21 @@ help:  ## Show available targets
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
 # uv is the single source for the Python env, running, and building.
+# The `dev` dependency group is included by uv automatically, so `uv sync` /
+# `uv run` always carry the tooling (ruff/pytest/mypy) — no `--extra dev`.
 sync:  ## Install/refresh the dev environment (uv + npm)
-	uv sync --extra dev
+	uv sync
 	npm --prefix frontend install
 
-# Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both).
-dev:  ## Run the full dev stack (API + Vite HMR)
-	uv run precursor --dev
+# Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). `--extra
+# agents` pulls the Copilot SDK so Agents mode is live (opt-in payload, kept out
+# of `make sync`/CI). Drop it if you don't need Agents mode.
+dev:  ## Run the full dev stack (API + Vite HMR, with Agents mode)
+	uv run --extra agents precursor --dev
 
 # Backend only (uvicorn --reload, no Vite).
-backend:  ## Run the backend only (uvicorn --reload)
-	uv run precursor --dev --no-frontend
+backend:  ## Run the backend only (uvicorn --reload, with Agents mode)
+	uv run --extra agents precursor --dev --no-frontend
 
 # Vite dev server only.
 frontend:  ## Run the Vite dev server only

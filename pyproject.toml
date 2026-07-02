@@ -48,8 +48,16 @@ postgres = ["asyncpg>=0.31"]
 # sessions. Kept as an extra because the published 1.0.x wheels are
 # platform-specific and *bundle* the ~90 MB native Copilot CLI runtime binary
 # (there is no lightweight download-on-demand wheel for this API line yet), so
-# installing it is opt-in to avoid forcing that payload on every install.
+# installing it is opt-in to avoid forcing that payload on every install. Run
+# the app with it via `uv run --extra agents precursor --dev` (or `make dev`).
 agents = ["github-copilot-sdk>=1.0"]
+
+# Dev tooling lives in a PEP 735 dependency group rather than an extra, so uv
+# includes it by DEFAULT on every `uv run` / `uv sync` (no `--extra dev` to
+# remember, and a bare `uv run <cmd>` never prunes ruff/pytest/mypy). Dependency
+# groups are dev-only — they are not part of the published wheel's requirements,
+# so `pip install precursor` is unaffected.
+[dependency-groups]
 dev = [
     "ruff>=0.15",
     "mypy>=2.1",

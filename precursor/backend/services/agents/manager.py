@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -43,7 +44,14 @@ from sqlalchemy import delete, select
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import AgentEventRecord, AgentSession, Message, MessageRole, Topic
+from precursor.backend.models import (
+    AgentEventRecord,
+    AgentSession,
+    Chat,
+    Message,
+    MessageRole,
+    Topic,
+)
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import runtime
 from precursor.backend.services.app_settings import (
@@ -59,6 +67,7 @@ from precursor.backend.services.events import (
     publish_agent_changed,
     publish_message_changed,
     publish_message_changed_chat,
+    set_current_client_id,
 )
 from precursor.backend.services.memories import build_memory_prompt
 from precursor.backend.services.suggestions import (
@@ -316,7 +325,18 @@ class AgentManager:
     # ------------------------------------------------------------------ helpers
 
     def _spawn(self, coro: Any) -> None:
-        task = asyncio.create_task(coro)
+        # Agent work runs asynchronously in the background, but ``create_task``
+        # copies the caller's context — which carries the originating request's
+        # ``X-Client-Id`` (set by middleware). Every event this task publishes
+        # (live progress *and* the notify-back that marks a linked topic/chat
+        # unread) would then be stamped with that id and echo-suppressed in the
+        # very tab that started the agent, while other tabs see it. The agent's
+        # results aren't "live-streamed" back to the originating tab the way a
+        # chat turn is, so clear the client id for the task: its events broadcast
+        # to *every* subscriber, including the originator.
+        ctx = contextvars.copy_context()
+        ctx.run(set_current_client_id, None)
+        task = asyncio.create_task(coro, context=ctx)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -1513,6 +1533,10 @@ class AgentManager:
         ).strip() or "Agent task finished."
         live.pending_answer = None
         answer, suggestions = split_suggestions(answer)
+        now = datetime.now(UTC)
+        # Keep the posted messages strictly newer than any last_read_at we pin,
+        # so the unread badge lights up reliably (mirrors the reminder ticker).
+        read_threshold = now - timedelta(seconds=1)
         async with SessionLocal() as session:
             session.add(
                 Message(
@@ -1521,6 +1545,7 @@ class AgentManager:
                     role=MessageRole.USER,
                     content=prompt,
                     agent_session_id=agent.id,
+                    created_at=now,
                 )
             )
             session.add(
@@ -1531,8 +1556,25 @@ class AgentManager:
                     content=answer,
                     suggestions=json.dumps(suggestions) if suggestions else None,
                     agent_session_id=agent.id,
+                    created_at=now,
                 )
             )
+            # Ensure the linked conversation reads as unread even when it was
+            # never opened: last_read_at IS NULL is treated as fully read, so the
+            # agent's reply wouldn't count. Pin last_read just before the messages
+            # when null (or somehow stamped in the future) without masking other
+            # genuinely-unread history. Mirrors services/reminders.py.
+            container: Topic | Chat | None = None
+            if agent.topic_id is not None:
+                container = await session.get(Topic, agent.topic_id)
+            elif agent.chat_id is not None:
+                container = await session.get(Chat, agent.chat_id)
+            if container is not None:
+                last_read = container.last_read_at
+                if last_read is not None and last_read.tzinfo is None:
+                    last_read = last_read.replace(tzinfo=UTC)
+                if last_read is None or last_read > read_threshold:
+                    container.last_read_at = read_threshold
             await session.commit()
         if agent.topic_id is not None:
             await publish_message_changed(agent.topic_id)
