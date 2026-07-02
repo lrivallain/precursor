@@ -116,6 +116,11 @@ _OAUTH_REFRESH_MARGIN = timedelta(minutes=5)
 # (legacy token saved before we stamped issue time, or no ``expires_in``).
 _OAUTH_FALLBACK_TTL = timedelta(minutes=30)
 
+# Cap the tool result/error text we archive per event. Tool output (e.g. a
+# fetched page) can be huge; the timeline only needs enough to show "what was
+# done / why it failed", and the model already got the full payload live.
+_TOOL_RESULT_CAP = 4000
+
 
 @dataclass
 class _LiveSession:
@@ -1459,21 +1464,6 @@ class AgentManager:
 
         data = getattr(event, "data", event)
         name = type(data).__name__
-        # Diagnostic: dump tool-execution payloads so we can see *why* a tool
-        # failed (e.g. a sandbox "permission denied" string) and discover which
-        # attribute carries it — the normaliser currently archives ``data: null``
-        # for ToolExecutionCompleteData, so the denial reason is otherwise lost.
-        if name.startswith("ToolExecution"):
-            attrs = (
-                {
-                    k: (str(v)[:300] if not callable(v) else "<fn>")
-                    for k, v in vars(data).items()
-                    if not k.startswith("_")
-                }
-                if hasattr(data, "__dict__")
-                else {"repr": repr(data)[:300]}
-            )
-            logger.debug("agent %s: %s attrs=%s", agent_id, name, attrs)
         now = datetime.now(UTC)
         patch: dict[str, Any] = {"last_activity_at": now}
 
@@ -1663,7 +1653,40 @@ class AgentManager:
                 continue
             if attr in ("result", "output"):
                 val = self._unwrap_result(val)
-            extra[attr] = val if isinstance(val, str) else self._jsonify(val)
+            if isinstance(val, str):
+                extra[attr] = val[:_TOOL_RESULT_CAP]
+            else:
+                extra[attr] = self._jsonify(val)
+        # ``ToolExecutionCompleteData`` reports success + result/error as nested
+        # objects rather than the flat ``is_error``/``result`` string attrs the
+        # loop above looks for, so a *failed* tool would otherwise archive as
+        # ``data: null`` with no status — losing the reason the agent hit a wall
+        # (e.g. a sandbox "permission denied" or a fetch error). Pull them out
+        # explicitly so the timeline shows why a tool call failed.
+        if name == "ToolExecutionCompleteData":
+            success = getattr(data, "success", None)
+            if success is not None:
+                tool_status = "done" if success else "error"
+                extra["success"] = bool(success)
+            sandboxed = getattr(data, "sandboxed", None)
+            if sandboxed is not None:
+                # Surfaces that a command ran in the ephemeral cmd-runner jail —
+                # key context when file writes silently don't persist.
+                extra["sandboxed"] = bool(sandboxed)
+            err = getattr(data, "error", None)
+            if err is not None:
+                message = getattr(err, "message", None) or str(err)
+                extra["error"] = str(message)[:_TOOL_RESULT_CAP]
+                code = getattr(err, "code", None)
+                if code:
+                    extra["error_code"] = str(code)
+            if "result" not in extra:
+                content = self._unwrap_result(getattr(data, "result", None))
+                if isinstance(content, str) and content.strip():
+                    extra["result"] = content[:_TOOL_RESULT_CAP]
+            if not tool_name:
+                desc = getattr(data, "tool_description", None)
+                tool_name = getattr(desc, "name", None) or getattr(desc, "tool_name", None)
         # Usage events carry token counts, not tool I/O. Capture them verbatim
         # (as raw ints, not JSON-stringified) so the workflow timeline can drive
         # the per-agent usage stats in the side panel: ``AssistantUsageData``
