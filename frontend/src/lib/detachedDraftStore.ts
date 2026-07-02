@@ -85,3 +85,24 @@ export const detachedDraftStore = {
 export function useDetachedDrafts(): DetachedSession[] {
   return useSyncExternalStore(subscribe, detachedDraftStore.snapshot, detachedDraftStore.snapshot);
 }
+
+/**
+ * Notified whenever a detached controller mutates the persisted note draft for a
+ * container (save / append / clear). Lets the originating panel keep its
+ * "saved notes draft" banner live instead of waiting for a manual refresh.
+ */
+type DraftChangeListener = (container: ConvKind, containerId: number) => void;
+const draftChangeListeners = new Set<DraftChangeListener>();
+
+/** Broadcast that the persisted note draft for a container changed. */
+export function notifyNoteDraftChanged(container: ConvKind, containerId: number): void {
+  for (const l of draftChangeListeners) l(container, containerId);
+}
+
+/** Subscribe to persisted note-draft changes; returns an unsubscribe callback. */
+export function subscribeNoteDraftChanges(listener: DraftChangeListener): () => void {
+  draftChangeListeners.add(listener);
+  return () => {
+    draftChangeListeners.delete(listener);
+  };
+}

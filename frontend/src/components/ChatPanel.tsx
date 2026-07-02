@@ -27,7 +27,7 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
-import { detachedDraftStore } from "../lib/detachedDraftStore";
+import { detachedDraftStore, subscribeNoteDraftChanges } from "../lib/detachedDraftStore";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -493,6 +493,19 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     };
   }, [topic.id]);
 
+  const reloadSavedNotesDraft = useMemo(
+    () => async () => {
+      const res = await api.getNotesDraft(topic.id).catch(() => null);
+      const text = (res?.text ?? "").trim();
+      setSavedNotesDraft(
+        text || (res?.attachments.length ?? 0)
+          ? { text, attachmentCount: res?.attachments.length ?? 0 }
+          : null,
+      );
+    },
+    [topic.id],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -509,6 +522,16 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       cancelled = true;
     };
   }, [topic.id]);
+
+  // Keep the saved-draft banner live when a popped-out notes window persists a
+  // draft for this topic (otherwise it stays stale until a manual refresh).
+  useEffect(() => {
+    return subscribeNoteDraftChanges((container, containerId) => {
+      if (container === "topic" && containerId === topic.id) {
+        void reloadSavedNotesDraft();
+      }
+    });
+  }, [topic.id, reloadSavedNotesDraft]);
 
   // Load this topic's reminder (if any) so we can show the fired banner and
   // prefill the edit modal. Re-runs when the panel remounts after a fire.
