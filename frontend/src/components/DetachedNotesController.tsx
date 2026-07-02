@@ -8,6 +8,7 @@ import {
   unsupportedAttachmentMessage,
 } from "../lib/attachments";
 import type { DetachedSession } from "../lib/detachedDraftStore";
+import { notifyNoteDraftChanged } from "../lib/detachedDraftStore";
 import type { NoteDraftAttachment } from "../lib/types";
 
 interface Props {
@@ -50,6 +51,9 @@ function notesApi(session: DetachedSession) {
 export function DetachedNotesController({ session, onDone }: Props) {
   const backend = notesApi(session);
   const streamKey = convKey(session.container, session.containerId);
+
+  const announceDraftChanged = () =>
+    notifyNoteDraftChanged(session.container, session.containerId);
 
   const [attachments, setAttachments] = useState<NoteDraftAttachment[]>(
     session.initialAttachments ?? [],
@@ -120,6 +124,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
     setError(null);
     try {
       await backend.save(trimmed);
+      announceDraftChanged();
       onDone();
     } catch (err) {
       setSavingDraft(false);
@@ -137,6 +142,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
       if (action === "append") {
         await backend.append(trimmed, attachmentIds);
         await backend.clear().catch(() => {});
+        announceDraftChanged();
         onDone();
       } else if (action === "append-and-ask") {
         const body = trimmed ? `**Notes**\n\n${trimmed}` : "**Notes**";
@@ -145,6 +151,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
       } else if (action === "post-comment" && backend.postComment) {
         await backend.postComment(trimmed, attachmentIds);
         await backend.clear().catch(() => {});
+        announceDraftChanged();
         onDone();
       }
     } catch (err) {
@@ -164,6 +171,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
     const trimmed = latestText.current.trim();
     if (trimmed || attachmentsRef.current.length > 0) {
       await backend.save(trimmed).catch(() => {});
+      announceDraftChanged();
     }
     onDone();
   }
