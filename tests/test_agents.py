@@ -148,6 +148,46 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
         await _set_mcp_enabled({})
 
 
+async def test_enabled_catalog_fingerprint_tracks_toggles() -> None:
+    """The fingerprint reflects enabled+registered servers and excludes precursor.
+
+    It drives the rebuild-on-change decision in ``_ensure_live``, so it must
+    change when a toggle flips and ignore servers that aren't registered — never
+    depending on SDK/credential availability (no runtime needed here).
+    """
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    with TestClient(create_app()):
+        pass
+
+    manager = get_mcp_client_manager()
+    manager.register_user_entry(
+        name="my-http",
+        transport="streamable_http",
+        url="https://example.test/mcp",
+    )
+    mgr = AgentManager()
+    try:
+        await _set_mcp_enabled({"fetch": True, "precursor": True, "my-http": False})
+        fp = await mgr._enabled_catalog_fingerprint()
+        # Enabled + registered only; precursor excluded; disabled excluded.
+        assert "fetch" in fp
+        assert "precursor" not in fp
+        assert "my-http" not in fp
+        # An enabled toggle that isn't registered doesn't leak in.
+        assert "ghost-server" not in fp
+
+        # Toggling a server on changes the fingerprint → triggers a rebuild.
+        await _set_mcp_enabled({"fetch": True, "precursor": True, "my-http": True})
+        fp2 = await mgr._enabled_catalog_fingerprint()
+        assert fp2 != fp
+        assert "my-http" in fp2
+    finally:
+        manager.unregister_user_entry("my-http")
+        await _set_mcp_enabled({})
+
+
 async def test_oauth_bearer_header_only_applies_to_workiq() -> None:
     """Catalog servers without an OAuth provider never get a bearer header."""
     from precursor.backend.services.agents.manager import AgentManager
@@ -302,7 +342,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
             return "wq-token", expires
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
-        configs, oauth_expiry = await AgentManager()._catalog_mcp_configs()
+        configs, oauth_expiry, _auth_required = await AgentManager()._catalog_mcp_configs()
         assert configs["workiq"]["type"] == "http"
         assert configs["workiq"]["url"] == wp.WORKIQ_PREVIEW_URL
         assert configs["workiq"]["headers"] == {"Authorization": "Bearer wq-token"}
@@ -315,7 +355,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok_no_exp)
         before = datetime.now(UTC)
-        _, fallback_expiry = await AgentManager()._catalog_mcp_configs()
+        _, fallback_expiry, _ = await AgentManager()._catalog_mcp_configs()
         assert fallback_expiry is not None
         assert before < fallback_expiry <= datetime.now(UTC) + _OAUTH_FALLBACK_TTL
 
@@ -323,7 +363,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
             return None
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _none)
-        configs, oauth_expiry = await AgentManager()._catalog_mcp_configs()
+        configs, oauth_expiry, _auth_required = await AgentManager()._catalog_mcp_configs()
         assert "workiq" not in configs
         assert oauth_expiry is None
     finally:

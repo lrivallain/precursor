@@ -155,6 +155,13 @@ class _LiveSession:
     # this passes we rebuild the session to re-mint it. ``None`` means nothing
     # attached needs refreshing.
     oauth_expires_at: datetime | None = None
+    # Set of enabled+registered catalog server names this session was built with
+    # (see ``_enabled_catalog_fingerprint``). MCP servers are wired at build time
+    # only, so we snapshot the effective set here and rebuild the session when it
+    # changes — otherwise a server toggled on in Settings after the session was
+    # built stays invisible to the agent until a restart. ``None`` means we didn't
+    # attach a catalog (SDK unavailable) and should never rebuild on this basis.
+    mcp_fingerprint: frozenset[str] | None = None
 
 
 class AgentManager:
@@ -411,6 +418,27 @@ class AgentManager:
             )
         raise ValueError(f"unsupported transport {entry.transport!r}")
 
+    async def _enabled_catalog_fingerprint(self) -> frozenset[str]:
+        """Names of catalog MCP servers currently enabled *and* registered.
+
+        Excludes ``precursor`` (always attached with full access). Computed the
+        same way on both sides of the comparison in :meth:`_ensure_live`, so it
+        deliberately reflects the user's toggles rather than which servers
+        actually attached — an OAuth server skipped for missing credentials must
+        not read as a change and trigger an endless rebuild loop.
+        """
+        from precursor.backend.services.app_settings import resolve_mcp_enabled
+        from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+        async with SessionLocal() as session:
+            enabled = await resolve_mcp_enabled(session)
+        registered = {entry.name for entry in get_mcp_client_manager().list_entries()}
+        return frozenset(
+            name
+            for name, on in enabled.items()
+            if on and name != "precursor" and name in registered
+        )
+
     async def _catalog_mcp_configs(
         self,
     ) -> tuple[dict[str, Any], datetime | None, list[str]]:
@@ -576,13 +604,23 @@ class AgentManager:
         self._require_ready()
         live = self._live.get(agent.id)
         if live is not None:
-            if not self._oauth_stale(live):
+            oauth_stale = self._oauth_stale(live)
+            catalog_changed = (
+                live.mcp_fingerprint is not None
+                and live.mcp_fingerprint != await self._enabled_catalog_fingerprint()
+            )
+            if not oauth_stale and not catalog_changed:
                 return live
             if agent.status in {"running", "needs_approval", "pending"}:
                 # A turn is in flight — don't disrupt it; refresh on the next
                 # idle dispatch instead.
                 return live
-            logger.info("Rebuilding agent %s session to refresh an expiring OAuth token", agent.id)
+            reason = (
+                "refresh an expiring OAuth token"
+                if oauth_stale
+                else "pick up a changed MCP server set"
+            )
+            logger.info("Rebuilding agent %s session to %s", agent.id, reason)
             await self.teardown_session(agent.id, forget=False)
 
         assert self._client is not None
@@ -606,6 +644,7 @@ class AgentManager:
         mcp = self._precursor_mcp_config()
         oauth_expires_at: datetime | None = None
         auth_required: list[str] = []
+        mcp_fingerprint: frozenset[str] | None = None
         if mcp is not None:
             # Attach every enabled catalog server (built-in + user-defined).
             # _catalog_mcp_configs already excludes 'precursor', so the
@@ -613,6 +652,8 @@ class AgentManager:
             catalog, oauth_expires_at, auth_required = await self._catalog_mcp_configs()
             mcp.update(catalog)
             kwargs["mcp_servers"] = mcp
+            # Snapshot the enabled set so a later toggle rebuilds this session.
+            mcp_fingerprint = await self._enabled_catalog_fingerprint()
         preamble = await self._system_preamble(agent)
         if preamble:
             # Append (don't replace) so the agent keeps its SDK base instructions
@@ -620,7 +661,11 @@ class AgentManager:
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
         sdk_session = await self._client.create_session(**kwargs)
-        live = _LiveSession(sdk_session=sdk_session, oauth_expires_at=oauth_expires_at)
+        live = _LiveSession(
+            sdk_session=sdk_session,
+            oauth_expires_at=oauth_expires_at,
+            mcp_fingerprint=mcp_fingerprint,
+        )
         self._live[agent.id] = live
 
         # Wire the event stream. The SDK invokes this synchronously; defer the
