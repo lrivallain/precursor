@@ -817,6 +817,51 @@ function MessageNode({
   );
 }
 
+// Optimistic echo of a just-sent prompt. Rendered immediately on send — before
+// the backend has recorded the real user turn — so it's obvious the message
+// left the composer even while the session spins the turn up. Styled like the
+// real user node but muted, with a "Sending…" spinner; it's swapped out for the
+// real event the moment it lands.
+function PendingUserBubble({
+  text,
+  user,
+}: {
+  text: string;
+  user?: { name: string; avatarUrl: string | null };
+}) {
+  const style = CATEGORY_STYLE.user;
+  return (
+    <div
+      className={`relative w-full max-w-xl rounded-lg border p-2.5 opacity-70 ${style.box}`}
+      aria-busy="true"
+    >
+      <div className="flex items-center gap-2">
+        {user?.avatarUrl ? (
+          <img
+            src={user.avatarUrl}
+            alt={user.name}
+            className="h-6 w-6 shrink-0 rounded-full border border-sky-500/40 object-cover"
+          />
+        ) : (
+          <span
+            className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${style.marker}`}
+          >
+            {style.icon}
+          </span>
+        )}
+        <span className="text-[11px] font-semibold">{user?.name ?? "You"}</span>
+        <span className="ml-auto flex items-center gap-1 text-[10px] text-muted">
+          <Loader2 size={11} className="animate-spin" />
+          Sending…
+        </span>
+      </div>
+      <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
+        {text.length > 1500 ? `${text.slice(0, 1500)}…` : text}
+      </p>
+    </div>
+  );
+}
+
 // A grouped tool call. Shows the tool name + status; input/output collapse until
 // the user wants to see "what was done"; a pending approval renders inline.
 function ToolBox({
@@ -892,11 +937,39 @@ function ToolBox({
 }
 
 function ToolField({ label, value }: { label: string; value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  // Collapsed keeps the box compact (a short scrollable window) and hard-caps
+  // very long blobs so they can't freeze layout — but that also means content
+  // past the cap can't be reached by scrolling. Expanding lifts both limits and
+  // wraps long lines so the whole input/output is visible on demand.
+  const LIMIT = 2000;
+  const clipped = value.length > LIMIT || value.split("\n").length > 12;
+  const shown = expanded || value.length <= LIMIT ? value : `${value.slice(0, LIMIT)}…`;
   return (
     <div>
-      <div className="text-[9px] font-medium uppercase tracking-wide text-muted">{label}</div>
-      <pre className="mt-0.5 max-h-48 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10px] leading-snug">
-        {value.length > 2000 ? `${value.slice(0, 2000)}…` : value}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[9px] font-medium uppercase tracking-wide text-muted">{label}</div>
+        {clipped && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted hover:bg-bg"
+            title={expanded ? "Collapse" : "Show full content"}
+          >
+            <ChevronDown
+              size={11}
+              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+            {expanded ? "Collapse" : "Expand"}
+          </button>
+        )}
+      </div>
+      <pre
+        className={`mt-0.5 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10px] leading-snug ${
+          expanded ? "whitespace-pre-wrap break-words" : "max-h-48"
+        }`}
+      >
+        {shown}
       </pre>
     </div>
   );
@@ -1233,6 +1306,10 @@ export function AgentView({
   const [followUp, setFollowUp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Optimistic echo of a just-sent prompt, scoped to the agent it targets so it
+  // survives the switch into a freshly created session but never leaks onto
+  // another. Cleared once the backend records the real user turn.
+  const [pending, setPending] = useState<{ agentId: number; text: string } | null>(null);
 
   // Preselect the originating topic in the new-agent form when opened via
   // "/agent" from a topic (only while no session is selected).
@@ -1382,6 +1459,22 @@ export function AgentView({
   // session model as fallback at the render site.
   const modelByEvent = useMemo(() => computeModelByEvent(events), [events]);
 
+  // Whether the backend has now recorded the real user turn for our optimistic
+  // echo. Computed in render so the echo is dropped in the same paint that shows
+  // the real node — no duplicate flashes — while the effect clears the state.
+  const pendingLanded = useMemo(() => {
+    if (!pending) return false;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (classify(events[i]) !== "user") continue;
+      return (events[i].text ?? "").trim() === pending.text.trim();
+    }
+    return false;
+  }, [events, pending]);
+  useEffect(() => {
+    if (pendingLanded) setPending(null);
+  }, [pendingLanded]);
+  const showPending = pending != null && pending.agentId === agentId && !pendingLanded;
+
   // Maintain the render window as the timeline grows. While the user is parked
   // at the bottom, keep it bounded to the most recent page so long runs don't
   // accumulate unbounded DOM. While scrolled up, leave the start fixed (only
@@ -1431,6 +1524,9 @@ export function AgentView({
 
   // Load the selected session's timeline, and keep it live on agent.changed.
   useEffect(() => {
+    // Drop an optimistic echo when leaving the agent it targeted (it survives the
+    // switch *into* its own freshly created session, cleared later when it lands).
+    setPending((p) => (p && p.agentId !== agentId ? null : p));
     if (agentId == null) {
       setEvents([]);
       return;
@@ -1487,7 +1583,7 @@ export function AgentView({
   useEffect(() => {
     if (!pinnedRef.current) return;
     requestAnimationFrame(scrollToBottom);
-  }, [events, scrollToBottom]);
+  }, [events, showPending, scrollToBottom]);
 
   // Jump straight to the bottom (and re-pin) when switching agents. The window
   // effect re-bounds `windowStart` to the most recent page once the new
@@ -1510,14 +1606,18 @@ export function AgentView({
   }, []);
 
   async function startTask(): Promise<void> {
-    if (!task.trim()) return;
+    if (busy || !task.trim()) return;
+    const message = task.trim();
     setBusy(true);
     setError(null);
     try {
       const created = await api.createAgent({
-        task: task.trim(),
+        task: message,
         topic_id: newTopicId,
       });
+      // Echo the prompt into the new session's transcript right away so the
+      // hand-off feels immediate while the runtime spins the agent up.
+      setPending({ agentId: created.id, text: message });
       setTask("");
       setNewTopicId(null);
       onReload();
@@ -1530,7 +1630,7 @@ export function AgentView({
   }
 
   async function sendFollowUp(explicit?: string): Promise<void> {
-    if (!selected) return;
+    if (!selected || busy) return;
     const message = (explicit ?? followUp).trim();
     if (!message) return;
     // /clear erases the whole transcript on the backend — confirm first, mirroring
@@ -1543,12 +1643,18 @@ export function AgentView({
     }
     setBusy(true);
     setError(null);
+    // Clear the composer and echo the prompt immediately so it's obvious the
+    // message left, even before the backend records the real turn.
+    if (explicit === undefined) setFollowUp("");
+    setPending({ agentId: selected.id, text: message });
     try {
       await api.sendToAgent(selected.id, message);
-      if (explicit === undefined) setFollowUp("");
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setPending(null);
+      // Restore the draft so the user doesn't lose what they typed.
+      if (explicit === undefined) setFollowUp(message);
     } finally {
       setBusy(false);
     }
@@ -1712,7 +1818,15 @@ export function AgentView({
           const { segments, trailingHooks, answerRows } = timeline;
 
           if (segments.length === 0 && trailingHooks.length === 0)
-            return <p className="text-[11px] text-muted">No steps recorded yet.</p>;
+            return showPending ? (
+              <div className="flex flex-col items-center">
+                <div className="flex w-full justify-end">
+                  <PendingUserBubble text={pending!.text} user={userPersona} />
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted">No steps recorded yet.</p>
+            );
 
           // Window the rendered segments: only those from `windowStart` onward
           // are mounted. `windowStart` is an absolute index, so keys stay stable
@@ -1730,6 +1844,15 @@ export function AgentView({
               )}
               {shownSegments.map((seg, idx) => {
                 const absoluteIdx = hiddenCount + idx;
+                // Chat-style placement over the workflow spine: the user's own
+                // prompts sit to the right, the assistant's answers to the left,
+                // and everything else (system, tools, thinking, errors) centered.
+                const align =
+                  seg.row.type === "node" && seg.row.cat === "user"
+                    ? "justify-end"
+                    : seg.row.type === "node" && seg.row.cat === "assistant"
+                      ? "justify-start"
+                      : "justify-center";
                 return (
                 <Fragment key={absoluteIdx}>
                   {absoluteIdx === 0 ? (
@@ -1737,32 +1860,42 @@ export function AgentView({
                   ) : (
                     <StepConnector hooks={seg.hooks} />
                   )}
-                  {seg.row.type === "tool" ? (
-                    <ToolBox
-                      step={seg.row.step}
-                      busy={busy}
-                      onDecision={approve}
-                    />
-                  ) : seg.row.type === "node" ? (
-                    <MessageNode
-                      event={seg.row.ev}
-                      category={seg.row.cat}
-                      isLastAnswer={answerRows.has(seg.row)}
-                      user={userPersona}
-                      model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
-                      elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
-                      onPickSuggestion={(text) => void sendFollowUp(text)}
-                      suggestionsDisabled={
-                        selected.status === "running" ||
-                        selected.status === "pending" ||
-                        selected.status === "needs_approval"
-                      }
-                    />
-                  ) : null}
+                  <div className={`flex w-full ${align}`}>
+                    {seg.row.type === "tool" ? (
+                      <ToolBox
+                        step={seg.row.step}
+                        busy={busy}
+                        onDecision={approve}
+                      />
+                    ) : seg.row.type === "node" ? (
+                      <MessageNode
+                        event={seg.row.ev}
+                        category={seg.row.cat}
+                        isLastAnswer={answerRows.has(seg.row)}
+                        user={userPersona}
+                        model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
+                        elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
+                        onPickSuggestion={(text) => void sendFollowUp(text)}
+                        suggestionsDisabled={
+                          selected.status === "running" ||
+                          selected.status === "pending" ||
+                          selected.status === "needs_approval"
+                        }
+                      />
+                    ) : null}
+                  </div>
                 </Fragment>
                 );
               })}
               {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
+              {showPending && (
+                <>
+                  <StepConnector hooks={[]} />
+                  <div className="flex w-full justify-end">
+                    <PendingUserBubble text={pending!.text} user={userPersona} />
+                  </div>
+                </>
+              )}
             </div>
           );
         })()}
@@ -1777,6 +1910,10 @@ export function AgentView({
           selected.status === "running" ||
           selected.status === "pending" ||
           selected.status === "needs_approval";
+        // While the send request is still in flight (`busy`) the turn hasn't
+        // reported active yet — lock the input so the prompt can't be sent twice,
+        // but don't flash a Stop control until there's actually a turn to stop.
+        const sending = busy && pending != null;
         return (
           <div className="shrink-0 border-t border-border px-5 py-3">
             <Composer
@@ -1785,7 +1922,7 @@ export function AgentView({
               onSend={() => void sendFollowUp()}
               onStop={() => void stopAgent()}
               streaming={turnActive}
-              disabled={turnActive}
+              disabled={turnActive || sending}
               suggestions={followUpSuggestions}
               userHistory={userHistory}
               speech={speech}
@@ -1795,7 +1932,9 @@ export function AgentView({
               placeholder={
                 turnActive
                   ? "Agent is working… use Stop to interrupt"
-                  : "Send a follow-up message…"
+                  : sending
+                    ? "Sending…"
+                    : "Send a follow-up message…"
               }
               toolbarStart={<ComposerModelControls variant="agents" />}
             />
