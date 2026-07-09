@@ -937,11 +937,39 @@ function ToolBox({
 }
 
 function ToolField({ label, value }: { label: string; value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  // Collapsed keeps the box compact (a short scrollable window) and hard-caps
+  // very long blobs so they can't freeze layout — but that also means content
+  // past the cap can't be reached by scrolling. Expanding lifts both limits and
+  // wraps long lines so the whole input/output is visible on demand.
+  const LIMIT = 2000;
+  const clipped = value.length > LIMIT || value.split("\n").length > 12;
+  const shown = expanded || value.length <= LIMIT ? value : `${value.slice(0, LIMIT)}…`;
   return (
     <div>
-      <div className="text-[9px] font-medium uppercase tracking-wide text-muted">{label}</div>
-      <pre className="mt-0.5 max-h-48 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10px] leading-snug">
-        {value.length > 2000 ? `${value.slice(0, 2000)}…` : value}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[9px] font-medium uppercase tracking-wide text-muted">{label}</div>
+        {clipped && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted hover:bg-bg"
+            title={expanded ? "Collapse" : "Show full content"}
+          >
+            <ChevronDown
+              size={11}
+              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+            {expanded ? "Collapse" : "Expand"}
+          </button>
+        )}
+      </div>
+      <pre
+        className={`mt-0.5 overflow-auto rounded bg-bg px-2 py-1 font-mono text-[10px] leading-snug ${
+          expanded ? "whitespace-pre-wrap break-words" : "max-h-48"
+        }`}
+      >
+        {shown}
       </pre>
     </div>
   );
