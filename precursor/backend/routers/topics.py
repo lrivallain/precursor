@@ -27,6 +27,9 @@ from precursor.backend.services.events import (
 from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.scheduler import get_scheduler
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
+from precursor.backend.services.topic_issue import (
+    create_linked_issue as create_topic_linked_issue,
+)
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
 
@@ -137,11 +140,25 @@ async def create_topic(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_id does not exist")
 
     data = payload.model_dump()
+    create_linked_issue = data.pop("create_linked_issue", False)
     requested_slug = data.pop("slug", None)
     base = slugify(requested_slug) if requested_slug else slugify(payload.title)
     if not base:
         base = "topic"
     data["slug"] = await allocate_unique_slug(session, base, Topic)
+
+    if create_linked_issue:
+        # Create the issue first so a GitHub failure aborts before the topic is
+        # persisted, keeping topic and issue in sync.
+        repo, issue_number = await create_topic_linked_issue(
+            session,
+            parent_id=payload.parent_id,
+            title=payload.title,
+            description=payload.description,
+            repo_override=payload.github_repo,
+        )
+        data["github_repo"] = repo
+        data["github_issue_number"] = issue_number
 
     topic = Topic(**data)
     session.add(topic)

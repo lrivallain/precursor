@@ -19,6 +19,7 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
   );
   const [repo, setRepo] = useState("");
   const [issueNumber, setIssueNumber] = useState("");
+  const [createLinkedIssue, setCreateLinkedIssue] = useState(false);
   const [defaultRepo, setDefaultRepo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +48,12 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
         description: description.trim() || null,
         parent_id: parentId === "" ? null : parentId,
         github_repo: repo.trim() || null,
-        github_issue_number: issueNumber.trim() ? Number(issueNumber.trim()) : null,
+        github_issue_number: createLinkedIssue
+          ? null
+          : issueNumber.trim()
+            ? Number(issueNumber.trim())
+            : null,
+        create_linked_issue: createLinkedIssue,
       });
       onCreated(created);
     } catch (e) {
@@ -125,27 +131,57 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
           </div>
 
           {issueAssociationsEnabled && (
-            <div className="grid grid-cols-[1fr_120px] gap-2">
-              <div>
-                <label className="block text-xs text-muted mb-1">GitHub repo (optional)</label>
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input
-                  type="text"
-                  value={repo}
-                  onChange={(e) => setRepo(e.target.value)}
-                  placeholder={defaultRepo || "owner/name"}
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                  type="checkbox"
+                  checked={createLinkedIssue}
+                  onChange={(e) => setCreateLinkedIssue(e.target.checked)}
+                  className="accent-accent"
                 />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">Issue #</label>
-                <input
-                  type="number"
-                  value={issueNumber}
-                  onChange={(e) => setIssueNumber(e.target.value)}
-                  placeholder="123"
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                />
-              </div>
+                Create a linked GitHub issue
+              </label>
+
+              {createLinkedIssue ? (
+                <div>
+                  <label className="block text-xs text-muted mb-1">GitHub repo</label>
+                  <input
+                    type="text"
+                    value={repo}
+                    onChange={(e) => setRepo(e.target.value)}
+                    placeholder={defaultRepo || "owner/name"}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    Opens an issue titled{" "}
+                    <span className="font-mono">[parent topics] {title.trim() || "title"}</span>{" "}
+                    with the description as its body, then links it to this topic.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-[1fr_120px] gap-2">
+                  <div>
+                    <label className="block text-xs text-muted mb-1">GitHub repo (optional)</label>
+                    <input
+                      type="text"
+                      value={repo}
+                      onChange={(e) => setRepo(e.target.value)}
+                      placeholder={defaultRepo || "owner/name"}
+                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted mb-1">Issue #</label>
+                    <input
+                      type="number"
+                      value={issueNumber}
+                      onChange={(e) => setIssueNumber(e.target.value)}
+                      placeholder="123"
+                      className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

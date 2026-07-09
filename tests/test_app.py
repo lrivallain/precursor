@@ -713,6 +713,98 @@ def test_notes_post_comment_continues_when_image_upload_fails(monkeypatch) -> No
         assert local["attachments"][0]["original_filename"] == "proof.png"
 
 
+def test_create_topic_with_linked_issue(monkeypatch) -> None:
+    """create_linked_issue opens an issue titled with the parent chain + links it."""
+    from precursor.backend.services import topic_issue
+
+    created: dict[str, object] = {}
+
+    async def _fake_token(_session) -> str:
+        return "test-token"
+
+    async def _fake_create_issue(self, repo, *, title, body=None, labels=None):
+        created["repo"] = repo
+        created["title"] = title
+        created["body"] = body
+        return {"number": 77, "title": title, "state": "open", "url": None}
+
+    async def _fake_aclose(self) -> None:
+        return None
+
+    monkeypatch.setattr(topic_issue, "resolve_github_token", _fake_token)
+    monkeypatch.setattr(topic_issue.GitHubClient, "create_issue", _fake_create_issue)
+    monkeypatch.setattr(topic_issue.GitHubClient, "aclose", _fake_aclose)
+
+    app = create_app()
+    with TestClient(app) as client:
+        root = client.post("/api/topics", json={"title": "Root"}).json()
+        child = client.post("/api/topics", json={"title": "Child", "parent_id": root["id"]}).json()
+
+        r = client.post(
+            "/api/topics",
+            json={
+                "title": "Leaf",
+                "description": "issue body here",
+                "parent_id": child["id"],
+                "github_repo": "octo/example",
+                "create_linked_issue": True,
+            },
+        )
+        assert r.status_code == 201
+        topic = r.json()
+        # The issue is linked back onto the topic.
+        assert topic["github_repo"] == "octo/example"
+        assert topic["github_issue_number"] == 77
+        # Title carries the ancestor chain, body carries the description.
+        assert created["title"] == "[Root / Child] Leaf"
+        assert created["body"] == "issue body here"
+        assert created["repo"] == "octo/example"
+
+
+def test_create_topic_with_linked_issue_no_parent_omits_brackets(monkeypatch) -> None:
+    """A top-level linked issue uses the bare title (no empty brackets)."""
+    from precursor.backend.services import topic_issue
+
+    seen: dict[str, object] = {}
+
+    async def _fake_token(_session) -> str:
+        return "test-token"
+
+    async def _fake_create_issue(self, repo, *, title, body=None, labels=None):
+        seen["title"] = title
+        return {"number": 5, "title": title, "state": "open", "url": None}
+
+    async def _fake_aclose(self) -> None:
+        return None
+
+    monkeypatch.setattr(topic_issue, "resolve_github_token", _fake_token)
+    monkeypatch.setattr(topic_issue.GitHubClient, "create_issue", _fake_create_issue)
+    monkeypatch.setattr(topic_issue.GitHubClient, "aclose", _fake_aclose)
+
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/topics",
+            json={"title": "Solo", "github_repo": "octo/example", "create_linked_issue": True},
+        )
+        assert r.status_code == 201
+        assert r.json()["github_issue_number"] == 5
+        assert seen["title"] == "Solo"
+
+
+def test_create_topic_linked_issue_requires_repo() -> None:
+    """Without a repo (topic or global), the request fails and no topic persists."""
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/topics",
+            json={"title": "Orphan", "create_linked_issue": True},
+        )
+        assert r.status_code == 400
+        titles = [t["title"] for t in client.get("/api/topics").json()]
+        assert "Orphan" not in titles
+
+
 def test_chat_promote_to_topic_moves_messages() -> None:
     """Promoting a chat creates a topic, moves the transcript, drops the chat."""
     app = create_app()
