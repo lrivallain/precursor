@@ -22,6 +22,10 @@ class TopicBase(BaseModel):
 class TopicCreate(TopicBase):
     # Optional explicit slug. If omitted, the server derives one from the title.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
+    # When true, open a GitHub issue for the new topic and link it back. The
+    # issue title is prefixed with the ancestor topic chain and its body is the
+    # description. Not a Topic column — the router consumes it during creation.
+    create_linked_issue: bool = False
 
 
 class TopicUpdate(BaseModel):

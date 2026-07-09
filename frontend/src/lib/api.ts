@@ -108,7 +108,7 @@ export const api = {
   getTopic: (id: number) => request<Topic>(`/api/topics/${id}`),
   getTopicBySlug: (slug: string) =>
     request<Topic>(`/api/topics/by-slug/${encodeURIComponent(slug)}`),
-  createTopic: (data: Partial<Topic>) =>
+  createTopic: (data: Partial<Topic> & { create_linked_issue?: boolean }) =>
     request<Topic>(`/api/topics`, { method: "POST", body: JSON.stringify(data) }),
   updateTopic: (id: number, data: Partial<Topic>) =>
     request<Topic>(`/api/topics/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
