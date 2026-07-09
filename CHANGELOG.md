@@ -233,6 +233,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ preview no longer hands agents a dead token (or spams the log).** When
+  the WorkIQ refresh token has aged out, the SDK's streamable-http transport
+  raises our non-interactive `WorkIQAuthRequiredError` wrapped in a
+  `BaseExceptionGroup` ("unhandled errors in a TaskGroup"). The narrow
+  `except WorkIQAuthRequiredError` in `resolve_workiq_bearer_token` missed the
+  wrapped case, so every agent attach logged a misleading
+  `WorkIQ token refresh for agent attach failed` warning **and** fell back to the
+  now-expired stored token — which the agent then attached and 401'd on, forcing
+  yet another interactive sign-in. We now unwrap the group (reusing
+  `_find_in_exception`): a genuine sign-in requirement returns `None` (skip
+  attaching WorkIQ, let the keep-alive surface a single re-auth prompt) instead
+  of looping on a dead bearer, while genuinely transient transport blips still
+  fall back to the stored token and log once.
 - **Scheduled `/guard` no longer fails open when WorkIQ needs sign-in.** A guard
   probe against a server parked in `needs_auth` used to "fail open" and run the
   scheduled turn anyway — which then errored because the headless run can't

@@ -497,9 +497,18 @@ async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
             ClientSession(read, write) as session,
         ):
             await session.initialize()
-    except WorkIQAuthRequiredError:
-        return None
     except Exception as exc:  # pragma: no cover - network/transport dependent
+        # The SDK's streamable-http transport runs inside an anyio task group, so
+        # our non-interactive redirect handler's ``WorkIQAuthRequiredError`` comes
+        # back wrapped in a ``BaseExceptionGroup`` ("unhandled errors in a
+        # TaskGroup"). Unwrap it: a genuine sign-in requirement means the stored
+        # tokens are dead, so return None (skip attaching WorkIQ) rather than
+        # logging a misleading transport failure and handing the agent an expired
+        # bearer that would just 401 and re-trigger the sign-in prompt.
+        from precursor.backend.services.mcp.client import _find_in_exception
+
+        if _find_in_exception(exc, WorkIQAuthRequiredError) is not None:
+            return None
         # A transient connect failure shouldn't strand the agent: fall back to
         # whatever token we already have stored.
         logger.warning("WorkIQ token refresh for agent attach failed: %s", exc)

@@ -83,6 +83,76 @@ async def test_reauthenticate_single_flight() -> None:
             await wp.reauthenticate_workiq()
 
 
+async def test_resolve_bearer_returns_none_on_group_wrapped_auth_required(monkeypatch) -> None:
+    """A sign-in requirement wrapped in a TaskGroup must not yield a stale token.
+
+    The SDK's streamable-http transport raises inside an anyio task group, so our
+    non-interactive ``WorkIQAuthRequiredError`` surfaces as a
+    ``BaseExceptionGroup``. We must unwrap it and return None (skip attaching)
+    rather than log a transport failure and hand back the dead stored token.
+    """
+    import contextlib
+
+    from mcp.shared.auth import OAuthToken
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens()
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="stale", token_type="Bearer", expires_in=3600)
+    )
+
+    @contextlib.asynccontextmanager
+    async def _raising_client(*_args, **_kwargs):
+        raise BaseExceptionGroup(
+            "unhandled errors in a TaskGroup (1 sub-exception)",
+            [wp.WorkIQAuthRequiredError("sign in")],
+        )
+        yield  # pragma: no cover - never reached
+
+    warnings: list[str] = []
+    monkeypatch.setattr(wp, "streamablehttp_client", _raising_client)
+    monkeypatch.setattr(wp.logger, "warning", lambda *a, **k: warnings.append(a[0]))
+
+    # Auth-required → None (don't hand the agent the dead token) and no scary warning.
+    assert await wp.resolve_workiq_bearer_token() is None
+    assert warnings == []
+
+
+async def test_resolve_bearer_falls_back_on_transient_error(monkeypatch) -> None:
+    """A genuine transport blip still falls back to the stored token."""
+    import contextlib
+
+    from mcp.shared.auth import OAuthToken
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens()
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="warm", token_type="Bearer", expires_in=3600)
+    )
+
+    @contextlib.asynccontextmanager
+    async def _raising_client(*_args, **_kwargs):
+        raise BaseExceptionGroup("boom", [ConnectionError("network down")])
+        yield  # pragma: no cover - never reached
+
+    warnings: list[str] = []
+    monkeypatch.setattr(wp, "streamablehttp_client", _raising_client)
+    monkeypatch.setattr(wp.logger, "warning", lambda *a, **k: warnings.append(a[0]))
+
+    resolved = await wp.resolve_workiq_bearer_token()
+    assert resolved is not None
+    assert resolved[0] == "warm"
+    assert len(warnings) == 1
+
+
 def test_reauthenticate_requires_preview_enabled() -> None:
     app = create_app()
     with TestClient(app) as client:
