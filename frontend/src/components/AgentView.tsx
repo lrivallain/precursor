@@ -198,12 +198,12 @@ function Connector() {
 }
 
 // The link between two main boxes, with any lifecycle hooks that happened in
-// between floated to the right of the arrow — so the arrow always sits directly
-// between the steps and the hooks never push the boxes apart.
+// between centered on the arrow — so the arrow always sits directly between the
+// steps and the hooks never push the boxes apart.
 function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
   if (hooks.length === 0) return <Connector />;
   return (
-    <div className="group relative flex w-full max-w-xl justify-end py-1">
+    <div className="group relative flex w-full max-w-xl justify-center py-1">
       <div
         className="absolute -inset-y-1 left-1/2 flex -translate-x-1/2 flex-col items-center"
         aria-hidden
@@ -216,7 +216,7 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
           className="-mt-1.5 shrink-0 text-muted/70 transition-colors group-hover:text-accent"
         />
       </div>
-      <div className="relative flex flex-col items-end gap-0.5">
+      <div className="relative flex flex-col items-center gap-0.5">
         {hooks.map((ev, i) => (
           <HookBubble key={i} event={ev} />
         ))}
@@ -228,7 +228,7 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
 // Hooks before the first box or after the last one, with no arrow to attach to.
 function HookGutter({ hooks }: { hooks: AgentEvent[] }) {
   return (
-    <div className="flex w-full max-w-xl flex-col items-end gap-0.5 py-1">
+    <div className="flex w-full max-w-xl flex-col items-center gap-0.5 py-1">
       {hooks.map((ev, i) => (
         <HookBubble key={i} event={ev} />
       ))}
@@ -1792,7 +1792,9 @@ export function AgentView({
           if (segments.length === 0 && trailingHooks.length === 0)
             return showPending ? (
               <div className="flex flex-col items-center">
-                <PendingUserBubble text={pending!.text} user={userPersona} />
+                <div className="flex w-full justify-end">
+                  <PendingUserBubble text={pending!.text} user={userPersona} />
+                </div>
               </div>
             ) : (
               <p className="text-[11px] text-muted">No steps recorded yet.</p>
@@ -1814,6 +1816,15 @@ export function AgentView({
               )}
               {shownSegments.map((seg, idx) => {
                 const absoluteIdx = hiddenCount + idx;
+                // Chat-style placement over the workflow spine: the user's own
+                // prompts sit to the right, the assistant's answers to the left,
+                // and everything else (system, tools, thinking, errors) centered.
+                const align =
+                  seg.row.type === "node" && seg.row.cat === "user"
+                    ? "justify-end"
+                    : seg.row.type === "node" && seg.row.cat === "assistant"
+                      ? "justify-start"
+                      : "justify-center";
                 return (
                 <Fragment key={absoluteIdx}>
                   {absoluteIdx === 0 ? (
@@ -1821,28 +1832,30 @@ export function AgentView({
                   ) : (
                     <StepConnector hooks={seg.hooks} />
                   )}
-                  {seg.row.type === "tool" ? (
-                    <ToolBox
-                      step={seg.row.step}
-                      busy={busy}
-                      onDecision={approve}
-                    />
-                  ) : seg.row.type === "node" ? (
-                    <MessageNode
-                      event={seg.row.ev}
-                      category={seg.row.cat}
-                      isLastAnswer={answerRows.has(seg.row)}
-                      user={userPersona}
-                      model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
-                      elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
-                      onPickSuggestion={(text) => void sendFollowUp(text)}
-                      suggestionsDisabled={
-                        selected.status === "running" ||
-                        selected.status === "pending" ||
-                        selected.status === "needs_approval"
-                      }
-                    />
-                  ) : null}
+                  <div className={`flex w-full ${align}`}>
+                    {seg.row.type === "tool" ? (
+                      <ToolBox
+                        step={seg.row.step}
+                        busy={busy}
+                        onDecision={approve}
+                      />
+                    ) : seg.row.type === "node" ? (
+                      <MessageNode
+                        event={seg.row.ev}
+                        category={seg.row.cat}
+                        isLastAnswer={answerRows.has(seg.row)}
+                        user={userPersona}
+                        model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
+                        elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
+                        onPickSuggestion={(text) => void sendFollowUp(text)}
+                        suggestionsDisabled={
+                          selected.status === "running" ||
+                          selected.status === "pending" ||
+                          selected.status === "needs_approval"
+                        }
+                      />
+                    ) : null}
+                  </div>
                 </Fragment>
                 );
               })}
@@ -1850,7 +1863,9 @@ export function AgentView({
               {showPending && (
                 <>
                   <StepConnector hooks={[]} />
-                  <PendingUserBubble text={pending!.text} user={userPersona} />
+                  <div className="flex w-full justify-end">
+                    <PendingUserBubble text={pending!.text} user={userPersona} />
+                  </div>
                 </>
               )}
             </div>
