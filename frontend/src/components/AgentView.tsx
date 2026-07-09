@@ -198,12 +198,12 @@ function Connector() {
 }
 
 // The link between two main boxes, with any lifecycle hooks that happened in
-// between centered on the arrow — so the arrow always sits directly between the
-// steps and the hooks never push the boxes apart.
+// between floated to the right of the arrow — so the arrow always sits directly
+// between the steps and the hooks never push the boxes apart.
 function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
   if (hooks.length === 0) return <Connector />;
   return (
-    <div className="group relative flex w-full max-w-xl justify-center py-1">
+    <div className="group relative flex w-full max-w-xl justify-end py-1">
       <div
         className="absolute -inset-y-1 left-1/2 flex -translate-x-1/2 flex-col items-center"
         aria-hidden
@@ -216,7 +216,7 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
           className="-mt-1.5 shrink-0 text-muted/70 transition-colors group-hover:text-accent"
         />
       </div>
-      <div className="relative flex flex-col items-center gap-0.5">
+      <div className="relative flex flex-col items-end gap-0.5">
         {hooks.map((ev, i) => (
           <HookBubble key={i} event={ev} />
         ))}
@@ -228,7 +228,7 @@ function StepConnector({ hooks }: { hooks: AgentEvent[] }) {
 // Hooks before the first box or after the last one, with no arrow to attach to.
 function HookGutter({ hooks }: { hooks: AgentEvent[] }) {
   return (
-    <div className="flex w-full max-w-xl flex-col items-center gap-0.5 py-1">
+    <div className="flex w-full max-w-xl flex-col items-end gap-0.5 py-1">
       {hooks.map((ev, i) => (
         <HookBubble key={i} event={ev} />
       ))}
