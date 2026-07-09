@@ -3,6 +3,7 @@ import {
   cloneElement,
   isValidElement,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { AlertTriangle, Check, Copy } from "lucide-react";
@@ -10,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
+import { MermaidBlock } from "./MermaidBlock";
 
 interface MarkdownProps {
   children: string;
@@ -89,6 +91,22 @@ function svgFromPre(children: ReactNode): string | null {
 }
 
 /**
+ * Pull mermaid source out of a `<pre>`'s `<code class="language-mermaid">`
+ * child, or null when the fence isn't tagged as mermaid.
+ */
+function mermaidFromPre(children: ReactNode): string | null {
+  const code = Children.toArray(children).find(
+    (child): child is ReactElement<{ className?: string; children?: ReactNode }> =>
+      isValidElement(child),
+  );
+  if (!code) return null;
+  const className = code.props.className ?? "";
+  if (!/\blanguage-mermaid\b/.test(className)) return null;
+  const text = flattenText(code.props.children).replace(/\n$/, "");
+  return text.trim() ? text : null;
+}
+
+/**
  * A fenced code block with a hover "Copy" button so the model's ``` output is
  * easy to lift to the clipboard. Positioned over the (scrollable) `<pre>` so it
  * stays put while long lines scroll horizontally.
@@ -138,6 +156,8 @@ export function Markdown({ children, className }: MarkdownProps) {
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
           pre({ children: preChildren, ...props }) {
+            const mermaid = mermaidFromPre(preChildren);
+            if (mermaid) return <MermaidBlock code={mermaid} />;
             const svg = svgFromPre(preChildren);
             if (svg) return <SvgBlock code={svg} />;
             return <CodeBlock {...props}>{preChildren}</CodeBlock>;
