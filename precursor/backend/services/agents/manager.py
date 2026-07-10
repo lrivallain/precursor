@@ -35,7 +35,7 @@ import os
 import re
 import sys
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
@@ -120,6 +120,51 @@ _OAUTH_FALLBACK_TTL = timedelta(minutes=30)
 # fetched page) can be huge; the timeline only needs enough to show "what was
 # done / why it failed", and the model already got the full payload live.
 _TOOL_RESULT_CAP = 4000
+
+
+# Broken-pipe family raised when a JSON-RPC write races the CLI child's stdin
+# closing during shutdown. The SDK spawns the Copilot CLI in *our* process group
+# (no ``start_new_session``), so on Ctrl+C the child takes the same terminal
+# SIGINT and can exit — closing its stdin — before our graceful ``client.stop()``
+# finishes its ``runtime.shutdown`` request. The SDK already swallows the write
+# error (into a ``StopError`` we suppress), but logs it at WARNING with a full
+# traceback first: pure noise on an otherwise-clean shutdown.
+_TEARDOWN_PIPE_ERRORS = (
+    BrokenPipeError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+    EOFError,
+)
+
+# copilot SDK loggers that emit those teardown write failures.
+_SDK_PIPE_LOGGERS = ("copilot._jsonrpc", "copilot.client")
+
+
+class _TeardownPipeNoiseFilter(logging.Filter):
+    """Drop copilot SDK records whose exception is an expected teardown pipe error."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc: BaseException | None = record.exc_info[1] if record.exc_info else None
+        while exc is not None:
+            if isinstance(exc, _TEARDOWN_PIPE_ERRORS):
+                return False
+            # Walk the chain — the SDK may wrap/chain the underlying pipe error.
+            exc = exc.__cause__ or exc.__context__
+        return True
+
+
+@contextlib.contextmanager
+def _quiet_sdk_teardown_pipe_noise() -> Iterator[None]:
+    """Silence the expected broken-pipe tracebacks the SDK logs while stopping."""
+    noise_filter = _TeardownPipeNoiseFilter()
+    sdk_loggers = [logging.getLogger(name) for name in _SDK_PIPE_LOGGERS]
+    for sdk_logger in sdk_loggers:
+        sdk_logger.addFilter(noise_filter)
+    try:
+        yield
+    finally:
+        for sdk_logger in sdk_loggers:
+            sdk_logger.removeFilter(noise_filter)
 
 
 @dataclass
@@ -249,19 +294,23 @@ class AgentManager:
             if not self._ready:
                 return
             self._ready = False
-            # Unblock any parked permission requests so awaiting tasks unwind.
-            for live in self._live.values():
-                for fut in live.pending.values():
-                    if not fut.done():
-                        fut.set_result(self._reject("runtime shutting down"))
-            for live in list(self._live.values()):
-                with contextlib.suppress(Exception):
-                    await live.sdk_session.disconnect()
-            self._live.clear()
-            if self._client is not None:
-                with contextlib.suppress(Exception):
-                    await self._client.stop()
-            self._client = None
+            # Quiet the SDK's expected broken-pipe tracebacks: on Ctrl+C the CLI
+            # child shares our process group and may die before these graceful
+            # calls finish writing to it (see ``_quiet_sdk_teardown_pipe_noise``).
+            with _quiet_sdk_teardown_pipe_noise():
+                # Unblock any parked permission requests so awaiting tasks unwind.
+                for live in self._live.values():
+                    for fut in live.pending.values():
+                        if not fut.done():
+                            fut.set_result(self._reject("runtime shutting down"))
+                for live in list(self._live.values()):
+                    with contextlib.suppress(Exception):
+                        await live.sdk_session.disconnect()
+                self._live.clear()
+                if self._client is not None:
+                    with contextlib.suppress(Exception):
+                        await self._client.stop()
+                self._client = None
         for task in list(self._tasks):
             task.cancel()
         if self._watchdog_task is not None:
