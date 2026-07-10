@@ -35,6 +35,7 @@ from precursor.backend.services.app_settings import (
     resolve_issue_associations_enabled,
     resolve_llm_model,
 )
+from precursor.backend.services.blob_store import write_blob
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_topic_changed,
@@ -841,7 +842,7 @@ async def notes_attachments_upload(
         mime=mime,
         size=len(data),
         original_filename=(file.filename or "")[:255],
-        data=data,
+        sha256=write_blob(data),
     )
     session.add(att)
     await session.commit()

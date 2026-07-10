@@ -59,6 +59,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    from precursor.backend.services.blob_store import gc_orphan_blobs
+
+    try:
+        removed = await gc_orphan_blobs()
+        if removed:
+            logger.info("Removed %d orphaned attachment blob(s) on startup", removed)
+    except Exception:  # pragma: no cover - best-effort cleanup
+        logger.warning("Orphan blob sweep failed", exc_info=True)
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()

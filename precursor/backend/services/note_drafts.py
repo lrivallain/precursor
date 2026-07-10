@@ -93,7 +93,7 @@ async def consume_note_draft_attachments_to_message(
             mime=src.mime,
             size=src.size,
             original_filename=src.original_filename,
-            data=src.data,
+            sha256=src.sha256,
             **_container_kwargs(kind, container_id),
         )
         session.add(att)

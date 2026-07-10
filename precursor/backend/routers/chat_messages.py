@@ -49,6 +49,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
+from precursor.backend.services.blob_store import write_blob
 from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.image_uploads import read_validated_attachment
@@ -421,7 +422,7 @@ async def notes_attachments_upload(
         mime=mime,
         size=len(data),
         original_filename=(file.filename or "")[:255],
-        data=data,
+        sha256=write_blob(data),
     )
     session.add(att)
     await session.commit()

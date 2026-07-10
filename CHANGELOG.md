@@ -173,7 +173,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
-- **Database schema is now managed entirely by Alembic** instead of a parallel
+- **Attachment bytes now live on disk, not in the database.** Uploaded
+  attachments (images, PDF, DOCX, PPTX) used to be stored as `LargeBinary`
+  BLOBs in SQLite, which bloated the database file and made every backup/copy
+  pay for the payload. They are now written as content-addressed files under
+  `settings.blobs_dir` (`.precursor/blobs/<aa>/<bb>/<sha256>`, sharded like
+  Git's object store); the `attachments` / `note_draft_attachments` rows keep
+  only metadata plus a `sha256` pointer. Identical uploads dedupe to one file
+  automatically, and a best-effort startup sweep removes blobs no row
+  references. The migration spills existing BLOBs to disk before dropping the
+  `data` column (and the downgrade reads them back). No API shape change — the
+  attachment endpoints and schemas are unchanged.
+
+
   hand-written backfill. `init_db` runs `alembic upgrade head` on startup, which
   both builds a fresh database and migrates an existing one (additive only —
   existing tables are never rebuilt or dropped). The dev-only column backfill /

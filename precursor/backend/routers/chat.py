@@ -33,6 +33,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
+from precursor.backend.services.blob_store import read_blob
 from precursor.backend.services.context_budget import trim_messages
 from precursor.backend.services.events import (
     publish_message_changed,
@@ -276,7 +277,12 @@ def _attachments_to_image_urls(atts: list[Attachment]) -> list[str]:
     """Inline image attachments as ``data:`` URLs for vision-capable providers."""
     urls: list[str] = []
     for a in atts:
-        b64 = base64.b64encode(a.data).decode("ascii")
+        try:
+            raw = read_blob(a.sha256)
+        except FileNotFoundError:
+            logger.warning("Attachment blob %s missing; skipping image", a.sha256)
+            continue
+        b64 = base64.b64encode(raw).decode("ascii")
         urls.append(f"data:{a.mime};base64,{b64}")
     return urls
 
@@ -383,16 +389,21 @@ def _extract_pptx_text(data: bytes) -> str:
 
 
 def _extract_non_image_text(att: Attachment) -> str:
+    try:
+        data = read_blob(att.sha256)
+    except FileNotFoundError:
+        logger.warning("Attachment blob %s missing; no text extracted", att.sha256)
+        return ""
     if att.mime == "application/pdf":
-        return _extract_pdf_text(att.data)
+        return _extract_pdf_text(data)
     if att.mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
         try:
-            return _extract_docx_text(att.data)
+            return _extract_docx_text(data)
         except (zipfile.BadZipFile, KeyError, ET.ParseError):
             return ""
     if att.mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
         try:
-            return _extract_pptx_text(att.data)
+            return _extract_pptx_text(data)
         except (zipfile.BadZipFile, KeyError, ET.ParseError):
             return ""
     return ""
