@@ -978,3 +978,68 @@ async def test_mark_read_endpoints_publish_read_changed() -> None:
             if row is not None:
                 await session.delete(row)
         await session.commit()
+
+
+async def test_stop_silences_sdk_broken_pipe_teardown_noise() -> None:
+    """Clean Ctrl+C shutdown must not spew the SDK's broken-pipe traceback.
+
+    The Copilot CLI child shares our process group, so on Ctrl+C it takes the
+    same SIGINT and can close its stdin before our graceful ``client.stop()``
+    finishes writing the ``runtime.shutdown`` request. The SDK logs that write
+    failure at WARNING with a full traceback (via ``copilot._jsonrpc``) and then
+    re-raises it — which the manager already suppresses. ``AgentManager.stop``
+    must quiet that expected teardown log so the shell exit stays clean, while
+    leaving broken-pipe warnings outside the teardown window untouched.
+    """
+    import logging
+
+    from precursor.backend.services.agents.manager import AgentManager
+
+    sdk_logger = logging.getLogger("copilot._jsonrpc")
+    captured: list[logging.LogRecord] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    collector = _Collector()
+    sdk_logger.addHandler(collector)
+    # Pin the shared logger's state so suite-wide logging config (level bumps,
+    # ``logging.disable``) can't gate out the WARNING we assert on.
+    prev_level, prev_disabled = sdk_logger.level, sdk_logger.disabled
+    sdk_logger.setLevel(logging.DEBUG)
+    sdk_logger.disabled = False
+
+    class _FakeClient:
+        async def stop(self) -> None:
+            # Mirror ``copilot._jsonrpc.request``: a write that lost the pipe race
+            # is logged at WARNING with the BrokenPipeError attached, then re-raised.
+            try:
+                raise BrokenPipeError(32, "Broken pipe")
+            except BrokenPipeError:
+                sdk_logger.warning("JsonRpcClient.request JSON-RPC request finished", exc_info=True)
+                raise
+
+    try:
+        mgr = AgentManager()
+        mgr._ready = True  # type: ignore[attr-defined]
+        mgr._client = _FakeClient()  # type: ignore[assignment]
+
+        await mgr.stop()
+
+        # The manager suppressed the re-raised error and tore the client down.
+        assert mgr._client is None  # type: ignore[attr-defined]
+        # ...and the broken-pipe traceback was filtered out during teardown.
+        assert captured == []
+
+        # Control: outside the teardown window the same warning is *not* silenced,
+        # proving the filter is scoped and selective (real pipe errors stay visible).
+        try:
+            raise BrokenPipeError(32, "Broken pipe")
+        except BrokenPipeError:
+            sdk_logger.warning("post-teardown broken pipe", exc_info=True)
+        assert [r.getMessage() for r in captured] == ["post-teardown broken pipe"]
+    finally:
+        sdk_logger.removeHandler(collector)
+        sdk_logger.setLevel(prev_level)
+        sdk_logger.disabled = prev_disabled
