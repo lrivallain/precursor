@@ -86,6 +86,9 @@ Scheduled topics run the *same* turn logic off the request path via
 - `Topic` — self-referencing tree (parent/children); `kind` is `standard`
   (the only kind — a topic is "scheduled" simply when it has a `TopicSchedule`).
 - `Message` — per-topic, cascade delete; roles `user/assistant/system/tool`.
+  Large `tool` results can be age-pruned in place (content replaced with a short
+  placeholder past a configurable retention window; row + `tool_calls` metadata
+  kept so history pairing survives) — see `services/tool_result_retention.py`.
 - `TopicSchedule` — recurrence config + run state, one-to-one on **any** topic
   (interval, weekday mask, time-of-day, timezone, lease/status), holding the
   prompt sent each run. A topic with an enabled schedule runs on a cadence.

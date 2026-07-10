@@ -67,6 +67,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Removed %d orphaned attachment blob(s) on startup", removed)
     except Exception:  # pragma: no cover - best-effort cleanup
         logger.warning("Orphan blob sweep failed", exc_info=True)
+    from precursor.backend.services.tool_result_retention import prune_expired_tool_results
+
+    try:
+        pruned = await prune_expired_tool_results()
+        if pruned:
+            logger.info("Pruned %d expired tool result(s) on startup", pruned)
+    except Exception:  # pragma: no cover - best-effort cleanup
+        logger.warning("Tool-result retention sweep failed", exc_info=True)
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()
@@ -89,6 +97,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     reminder_ticker = get_reminder_ticker()
     await reminder_ticker.start()
+    from precursor.backend.services.tool_result_ticker import get_tool_result_ticker
+
+    tool_result_ticker = get_tool_result_ticker()
+    await tool_result_ticker.start()
     from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
 
     workiq_keepalive = get_workiq_keepalive()
@@ -109,6 +121,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await scheduler.stop()
         await reminder_ticker.stop()
+        await tool_result_ticker.stop()
         await workiq_keepalive.stop()
         await agent_manager.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager

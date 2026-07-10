@@ -11,6 +11,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Tool-result retention**: a new **Settings → System → Storage / retention**
+  option (`tool_result_retention_days`, default `0` = keep forever) bounds
+  long-term DB growth from large persisted tool outputs. Past the configured age,
+  a `tool` message's `content` is replaced **in place** with a short placeholder;
+  the row and its `tool_calls` metadata are preserved so conversation history
+  still pairs each assistant tool-call turn with its results (no turns are
+  dropped). The sweep runs best-effort on startup and periodically via a
+  lightweight ticker (gated by `scheduler_enabled`); it only touches `tool` rows
+  older than the cutoff whose content exceeds a small floor and isn't already the
+  placeholder, so re-runs are cheap and idempotent.
+
 - **Agent unread badges & notifications**: agent sessions now track unread
   activity just like topics and chats. When a background or scheduled agent
   produces a new reply while you aren't looking at it, its row in the Agents list
