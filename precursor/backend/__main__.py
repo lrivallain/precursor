@@ -31,6 +31,7 @@ from typing import TypedDict
 
 import uvicorn
 
+from precursor.backend import banner
 from precursor.backend.config import get_settings
 from precursor.backend.logging_config import configure_logging
 
@@ -173,13 +174,20 @@ def _resolve_port(
 
 
 def _print_banner(*, title: str, open_url: str, api_url: str | None) -> None:
-    line = "\u2500" * 54
-    print(line, file=sys.stderr)
-    print(f"  {title}", file=sys.stderr)
-    print(f"  \u25b6 Open   {open_url}", file=sys.stderr)
+    color = banner.use_color(sys.stderr)
+    reset = "\033[0m" if color else ""
+    bold = "\033[1m" if color else ""
+    dim = "\033[2m" if color else ""
+    print(file=sys.stderr)
+    for art_line in banner.render(color=color):
+        print(art_line, file=sys.stderr)
+    print(file=sys.stderr)
+    subtitle = "dev" if "dev" in title.lower() else "running"
+    print(f"  {dim}Precursor is {subtitle}.{reset}", file=sys.stderr)
+    print(f"  {bold}\u25b6 Open   {open_url}{reset}", file=sys.stderr)
     if api_url and api_url != open_url:
-        print(f"    API    {api_url}", file=sys.stderr)
-    print(line, file=sys.stderr)
+        print(f"    {dim}API    {api_url}{reset}", file=sys.stderr)
+    print(file=sys.stderr)
     sys.stderr.flush()
 
 
