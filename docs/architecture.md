@@ -95,7 +95,13 @@ Scheduled topics run the *same* turn logic off the request path via
 - `Skill` — enablement record for a file-backed prompt preset (`/name`
   invocation); content lives in a shared `SKILL.md` file (see Skills & memory).
 - `Memory` — long-term notes injected into the system prompt.
-- `Attachment` — image blobs bound to messages (vision content-parts).
+- `Attachment` — file attachments bound to messages (images become vision
+  content-parts; PDF/DOCX/PPTX are text-extracted). Bytes are **not** stored in
+  the DB: the row keeps only metadata plus a `sha256` pointer, and the content
+  lives on disk as a content-addressed file under `settings.blobs_dir`
+  (`.precursor/blobs/<aa>/<bb>/<sha256>`), so the database stays small. See
+  `services/blob_store.py`; identical uploads dedupe automatically and a startup
+  sweep (`gc_orphan_blobs`) reclaims unreferenced files.
 - `MCPServer` — user-defined external MCP tool servers (transport, headers).
 - `IssueContextCache` — cached GitHub issue summary/state/labels (TTL refresh).
 - `AppSetting` — JSON key/value store for runtime-editable settings (theme,

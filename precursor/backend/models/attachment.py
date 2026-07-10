@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -42,7 +42,9 @@ class Attachment(Base, TimestampMixin):
     mime: Mapped[str] = mapped_column(String(127), nullable=False)
     size: Mapped[int] = mapped_column(Integer, nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # SHA-256 hex digest of the content; the bytes live on disk under
+    # ``settings.blobs_dir`` (see services/blob_store.py), not in the DB.
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
 
     topic: Mapped[Topic | None] = relationship("Topic")
     chat: Mapped[Chat | None] = relationship("Chat")

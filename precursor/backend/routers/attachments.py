@@ -1,8 +1,8 @@
 """Attachments router — upload, serve, and (pre-commit) delete attachment blobs.
 
-Files are stored as BLOBs in the main database so the single-process
-deployment story stays intact (one SQLite file, no separate object store
-to back up).
+Attachment bytes are stored as content-addressed files on disk (see
+``services/blob_store.py``); only metadata (mime, size, filename, SHA-256) lives
+in the database, keeping the SQLite file small and cheap to back up.
 """
 
 from __future__ import annotations
@@ -10,12 +10,13 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.models import Attachment, Chat, NoteDraftAttachment, Topic
 from precursor.backend.schemas import AttachmentRead
+from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.image_uploads import read_validated_attachment
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ async def upload_attachment(
         mime=mime,
         size=len(data),
         original_filename=(file.filename or "")[:255],
-        data=data,
+        sha256=write_blob(data),
     )
     session.add(att)
     await session.commit()
@@ -73,7 +74,7 @@ async def upload_chat_attachment(
         mime=mime,
         size=len(data),
         original_filename=(file.filename or "")[:255],
-        data=data,
+        sha256=write_blob(data),
     )
     session.add(att)
     await session.commit()
@@ -85,35 +86,32 @@ async def upload_chat_attachment(
 async def get_attachment(
     attachment_id: int,
     session: AsyncSession = Depends(get_session),
-) -> Response:
+) -> FileResponse:
     att = await session.get(Attachment, attachment_id)
     if att is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
-    return Response(
-        content=att.data,
-        media_type=att.mime,
-        headers={
-            "Cache-Control": "private, max-age=3600",
-            "Content-Length": str(att.size),
-        },
-    )
+    return _serve_blob(att.sha256, att.mime)
 
 
 @router.get("/api/notes/attachments/{attachment_id}")
 async def get_note_draft_attachment(
     attachment_id: int,
     session: AsyncSession = Depends(get_session),
-) -> Response:
+) -> FileResponse:
     att = await session.get(NoteDraftAttachment, attachment_id)
     if att is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
-    return Response(
-        content=att.data,
-        media_type=att.mime,
-        headers={
-            "Cache-Control": "private, max-age=3600",
-            "Content-Length": str(att.size),
-        },
+    return _serve_blob(att.sha256, att.mime)
+
+
+def _serve_blob(sha256: str, mime: str) -> FileResponse:
+    path = blob_path(sha256)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment content missing")
+    return FileResponse(
+        path,
+        media_type=mime,
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

@@ -48,6 +48,15 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "workspaces")
 
+    # Attachment bytes live on disk as content-addressed files here (keyed by
+    # SHA-256, sharded two levels deep) rather than as BLOBs in the DB, so the
+    # database file stays small and cheap to back up / copy.
+    @cached_property
+    def blobs_dir(self) -> str:
+        from pathlib import Path
+
+        return str(Path(self.data_dir).resolve() / "blobs")
+
     # Skills live as ``<copilot_home>/skills/<name>/SKILL.md`` files shared with
     # the GitHub Copilot CLI and other tools. An explicit override (handy for
     # tests / non-standard setups) wins; otherwise we resolve the Copilot home

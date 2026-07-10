@@ -29,12 +29,19 @@ os.environ["PRECURSOR_DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmp.name}"
 _skills_dir = tempfile.mkdtemp(prefix="precursor-test-skills-")
 os.environ["PRECURSOR_SKILLS_DIR"] = _skills_dir
 
+# Isolate the on-disk data directory (attachment blobs, workspaces, …) so tests
+# write content-addressed attachment files into a throwaway dir instead of the
+# developer's real ``./.precursor``.
+_data_dir = tempfile.mkdtemp(prefix="precursor-test-data-")
+os.environ["PRECURSOR_DATA_DIR"] = _data_dir
+
 
 @atexit.register
 def _cleanup_tmp_db() -> None:
     with contextlib.suppress(OSError):
         os.unlink(_tmp.name)
     shutil.rmtree(_skills_dir, ignore_errors=True)
+    shutil.rmtree(_data_dir, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
