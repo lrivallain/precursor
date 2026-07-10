@@ -69,6 +69,21 @@ def _loopback(host: str) -> str:
     return "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
 
 
+def _probe_socket(family: int) -> socket.socket:
+    """A TCP socket configured to bind exactly like uvicorn does.
+
+    uvicorn sets ``SO_REUSEADDR`` before binding its listen socket, so a port
+    left in ``TIME_WAIT`` by a just-closed connection (e.g. an SSE chat stream
+    torn down on Ctrl-C) is still bindable. Our pre-flight availability checks
+    must use the same option, otherwise they report a freshly stopped port as
+    "in use" — refusing to restart under ``--strict-port`` or needlessly bumping
+    to another port — even though uvicorn would happily bind it.
+    """
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    return sock
+
+
 def _port_free(host: str, port: int) -> bool:
     """Best-effort check that nothing holds ``port`` on loopback (racy).
 
@@ -83,7 +98,7 @@ def _port_free(host: str, port: int) -> bool:
         probes.append((socket.AF_INET6 if ":" in host else socket.AF_INET, host))
     for family, addr in probes:
         try:
-            sock = socket.socket(family, socket.SOCK_STREAM)
+            sock = _probe_socket(family)
         except OSError:
             continue  # address family unsupported on this host
         with sock:
@@ -157,7 +172,7 @@ def _resolve_port(
     bind_host = _loopback(host)
     if preferred == 0:
         family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
-        with socket.socket(family, socket.SOCK_STREAM) as sock:
+        with _probe_socket(family) as sock:
             sock.bind((bind_host, 0))
             return int(sock.getsockname()[1])
     candidate = preferred
