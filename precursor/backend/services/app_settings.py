@@ -220,6 +220,9 @@ async def azure_stt_ready(session: AsyncSession) -> bool:
 # it at runtime. Helpers below clamp to sane ranges so a bad value can't wedge
 # the app.
 
+# Retention window (in days) for full TOOL-result content. 0 disables pruning.
+DEFAULT_TOOL_RESULT_RETENTION_DAYS = 0
+
 # Clamp bounds.
 _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
 _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
@@ -227,6 +230,7 @@ _MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT = 10, 24 * 3600
 _MIN_CMD_TIMEOUT, _MAX_CMD_TIMEOUT = 1, 3600
 _MIN_CMD_OUTPUT, _MAX_CMD_OUTPUT = 1_000, 50_000_000
 _MIN_PIDS, _MAX_PIDS = 1, 100_000
+_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS = 0, 3650
 
 
 def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
@@ -251,6 +255,13 @@ async def resolve_scheduled_run_timeout_seconds(session: AsyncSession) -> int:
     default = get_settings().scheduled_run_timeout_seconds
     db_value = await _get_db_value(session, "scheduled_run_timeout_seconds")
     return _clamp_int(db_value, default, _MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT)
+
+
+async def resolve_tool_result_retention_days(session: AsyncSession) -> int:
+    """Return the configured TOOL-result retention window in days (0 = disabled)."""
+    default = get_settings().tool_result_retention_days
+    db_value = await _get_db_value(session, "tool_result_retention_days")
+    return _clamp_int(db_value, default, _MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS)
 
 
 async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
@@ -301,6 +312,7 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
         "llm_max_input_tokens": await resolve_llm_max_input_tokens(session),
         "llm_max_tool_result_tokens": await resolve_llm_max_tool_result_tokens(session),
         "scheduled_run_timeout_seconds": await resolve_scheduled_run_timeout_seconds(session),
+        "tool_result_retention_days": await resolve_tool_result_retention_days(session),
         "cmd_runner_jail": cfg.jail,
         "cmd_runner_image": cfg.image,
         "cmd_runner_network": cfg.network,

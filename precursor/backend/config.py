@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     # due reminders. Gated by the same ``scheduler_enabled`` flag.
     reminder_poll_seconds: int = 30
 
+    # Tool-result retention (services/tool_result_retention.py) — how long full
+    # TOOL-result content is kept before its ``content`` is replaced in place
+    # with a short placeholder to bound DB growth. 0 = disabled / keep forever.
+    # The sweep runs on startup and periodically via a ticker gated by
+    # ``scheduler_enabled`` (poll interval below, default daily).
+    tool_result_retention_days: int = 0
+    tool_result_retention_poll_seconds: int = 86_400
+
     # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
     # ticker that silently refreshes the WorkIQ preview OAuth token before it
     # expires, so the hosted session survives without frequent interactive

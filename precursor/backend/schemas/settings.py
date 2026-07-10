@@ -56,6 +56,8 @@ class SettingsPayload(BaseModel):
     llm_max_tool_result_tokens: int | None = None
     # Scheduler (only the live-applicable timeout is editable).
     scheduled_run_timeout_seconds: int | None = None
+    # Tool-result retention window in days (0 = keep forever / disabled).
+    tool_result_retention_days: int | None = None
     # Command runner ("jail").
     cmd_runner_jail: bool | None = None
     cmd_runner_image: str | None = None
@@ -115,6 +117,7 @@ class SettingsRead(BaseModel):
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000
     scheduled_run_timeout_seconds: int = 600
+    tool_result_retention_days: int = 0
     cmd_runner_jail: bool = True
     cmd_runner_image: str = "python:3.14-slim"
     cmd_runner_network: bool = False

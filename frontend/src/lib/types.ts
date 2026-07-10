@@ -347,6 +347,7 @@ export interface Settings {
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
   scheduled_run_timeout_seconds: number;
+  tool_result_retention_days: number;
   cmd_runner_jail: boolean;
   cmd_runner_image: string;
   cmd_runner_network: boolean;
@@ -392,6 +393,7 @@ export interface SettingsUpdate {
   llm_max_input_tokens?: number;
   llm_max_tool_result_tokens?: number;
   scheduled_run_timeout_seconds?: number;
+  tool_result_retention_days?: number;
   cmd_runner_jail?: boolean;
   cmd_runner_image?: string;
   cmd_runner_network?: boolean;

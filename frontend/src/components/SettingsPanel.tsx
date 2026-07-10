@@ -55,6 +55,7 @@ interface SystemSettings {
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
   scheduled_run_timeout_seconds: number;
+  tool_result_retention_days: number;
   cmd_runner_jail: boolean;
   cmd_runner_image: string;
   cmd_runner_network: boolean;
@@ -70,6 +71,7 @@ function pickSystem(s: Settings): SystemSettings {
     llm_max_input_tokens: s.llm_max_input_tokens,
     llm_max_tool_result_tokens: s.llm_max_tool_result_tokens,
     scheduled_run_timeout_seconds: s.scheduled_run_timeout_seconds,
+    tool_result_retention_days: s.tool_result_retention_days,
     cmd_runner_jail: s.cmd_runner_jail,
     cmd_runner_image: s.cmd_runner_image,
     cmd_runner_network: s.cmd_runner_network,
@@ -1197,6 +1199,15 @@ function SystemTab({
             help: "How long a single scheduled automation run may take before it is cancelled. Applied live on the next run.",
           },
         )}
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium">Storage / retention</h3>
+        {numField("Tool result retention (days)", "tool_result_retention_days", {
+          min: 0,
+          max: 3650,
+          help: "How long full tool outputs are kept before their content is replaced with a short placeholder to save space. 0 = keep forever.",
+        })}
       </section>
 
       <section className="space-y-3">
