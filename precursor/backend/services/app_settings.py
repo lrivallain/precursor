@@ -35,7 +35,7 @@ DEFAULT_ISSUE_CONTEXT_TTL_MINUTES = 60
 # while still leaving room for multi-step agents (browser automation,
 # multi-search workflows, etc.).
 DEFAULT_MAX_TOOL_ROUNDS = 15
-MAX_TOOL_ROUNDS_CEILING = 50
+MAX_TOOL_ROUNDS_CEILING = 1000
 # When false, the GitHub-issue association feature is hidden across the UI
 # and all related API endpoints reject requests. Existing topic links and
 # cached contexts are preserved so the user can re-enable later.

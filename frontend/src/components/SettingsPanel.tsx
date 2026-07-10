@@ -616,11 +616,11 @@ export function SettingsPanel({ onClose }: Props) {
                   <input
                     type="number"
                     min={1}
-                    max={50}
+                    max={1000}
                     value={maxToolRounds}
                     onChange={(e) =>
                       setMaxToolRounds(
-                        Math.max(1, Math.min(50, Number(e.target.value) || 1)),
+                        Math.max(1, Math.min(1000, Number(e.target.value) || 1)),
                       )
                     }
                     className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
@@ -629,7 +629,7 @@ export function SettingsPanel({ onClose }: Props) {
                     Hard ceiling on the number of tool-call iterations the
                     assistant may chain before the stream aborts. Increase for
                     multi-step agents (e.g. browser automation); decrease to
-                    cut runaway loops short. Range: 1–50.
+                    cut runaway loops short. Range: 1–1000.
                   </p>
                 </section>
               </>
