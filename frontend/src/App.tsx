@@ -17,6 +17,7 @@ import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TopicCreateModal } from "./components/TopicCreateModal";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
+import { ChatStartHero, TopicStartHero } from "./components/StartHero";
 import { ArchivePanel } from "./components/ArchivePanel";
 import { IssueStatusBadge } from "./components/IssueStatusBadge";
 import { IssueLabelChip, IssueStateBadge } from "./components/IssueTags";
@@ -949,17 +950,25 @@ export default function App() {
     setChatListReloadKey((k) => k + 1);
   }
 
-  async function handleCreateChat(): Promise<void> {
+  // Start hero: create a fresh chat and immediately send the user's first
+  // prompt. Streaming is kicked off through the global store so it survives the
+  // switch to the newly-mounted ChatSessionPanel.
+  async function handleStartChat(prompt: string): Promise<void> {
+    const text = prompt.trim();
+    if (!text) return;
     const chat = await api.createChat({ title: "New chat" });
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
+    void streamStore.start(convKey("chat", chat.id), text);
   }
 
   // The sidebar header's single "New" button adapts to the active mode so the
   // create affordance lives in the same place across Topics / Chats / Files.
+  // Chats and agents drop the selection to reveal their "start" landing surface;
+  // topics open the create dialog directly.
   function handleNew(): void {
     if (sidebarMode === "topics") handleCreate(null);
-    else if (sidebarMode === "chats") void handleCreateChat();
+    else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "agents") setActiveAgentId(null);
     else setCreateWorkspaceOpen(true);
   }
@@ -1382,7 +1391,7 @@ export default function App() {
                 onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
-              <EmptyHero label="No topic selected." />
+              <TopicStartHero onNewTopic={() => handleCreate(null)} />
             )
           ) : sidebarMode === "chats" ? (
             activeChat ? (
@@ -1399,7 +1408,7 @@ export default function App() {
                 onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
-              <EmptyHero label="No chat selected." />
+              <ChatStartHero onStart={handleStartChat} />
             )
           ) : sidebarMode === "workspaces" ? (
             workspaces === null ? (
