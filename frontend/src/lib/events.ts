@@ -27,7 +27,8 @@ export type BusEvent =
       agent_session_id?: number | null;
       topic_id?: number | null;
       chat_id?: number | null;
-    };
+    }
+  | { type: "meeting.changed"; meeting_session_id?: number | null };
 
 type Handler = (event: BusEvent) => void;
 
@@ -42,6 +43,7 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     topic_id?: number | null;
     chat_id?: number | null;
     agent_session_id?: number | null;
+    meeting_session_id?: number | null;
   };
   try {
     payload = JSON.parse(raw);
@@ -54,6 +56,7 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     topic_id: payload.topic_id ?? null,
     chat_id: payload.chat_id ?? null,
     agent_session_id: payload.agent_session_id ?? null,
+    meeting_session_id: payload.meeting_session_id ?? null,
   } as BusEvent;
   for (const h of handlers) {
     try {
@@ -87,6 +90,9 @@ function connect(): void {
   );
   source.addEventListener("agent.changed", (e) =>
     dispatch("agent.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("meeting.changed", (e) =>
+    dispatch("meeting.changed", (e as MessageEvent).data),
   );
   // A background run (e.g. a scheduled /guard probe) found an MCP server parked
   // in needs_auth. Drive the app-global re-authenticate banner directly — this

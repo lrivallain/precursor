@@ -772,3 +772,58 @@ export interface WorkspaceChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+// ---- Live meeting assistant --------------------------------------------
+export type MeetingStatus = "active" | "ended";
+
+export type MeetingInsightKind =
+  | "action_item"
+  | "decision"
+  | "question"
+  | "suggestion"
+  | "risk"
+  | "note";
+
+export interface MeetingSession {
+  id: number;
+  title: string;
+  slug: string;
+  status: MeetingStatus;
+  language: string | null;
+  topic_id: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MeetingSessionCreate {
+  title?: string | null;
+  language?: string | null;
+  topic_id?: number | null;
+  slug?: string | null;
+}
+
+export interface MeetingSessionUpdate {
+  title?: string | null;
+  language?: string | null;
+  topic_id?: number | null;
+  status?: MeetingStatus;
+}
+
+export interface MeetingSegment {
+  id: number;
+  session_id: number;
+  speaker_label: string | null;
+  text: string;
+  offset_ms: number | null;
+  created_at: string;
+}
+
+export interface MeetingInsight {
+  id: number;
+  session_id: number;
+  kind: MeetingInsightKind;
+  content: string;
+  created_at: string;
+}

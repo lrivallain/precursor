@@ -37,6 +37,9 @@ import type {
   Memory,
   MemoryCreate,
   MemoryUpdate,
+  MeetingSession,
+  MeetingSessionCreate,
+  MeetingSessionUpdate,
   Message,
   NotesDraft,
   NoteDraftAttachment,
@@ -582,6 +585,23 @@ export const api = {
 
   // Current user
   getMe: () => request<Me>(`/api/me`),
+
+  // Live meeting sessions
+  listMeetingSessions: () => request<MeetingSession[]>(`/api/live`),
+  getMeetingSession: (id: number) =>
+    request<MeetingSession>(`/api/live/${id}`),
+  createMeetingSession: (data: MeetingSessionCreate) =>
+    request<MeetingSession>(`/api/live`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateMeetingSession: (id: number, data: MeetingSessionUpdate) =>
+    request<MeetingSession>(`/api/live/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteMeetingSession: (id: number) =>
+    request<void>(`/api/live/${id}`, { method: "DELETE" }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),

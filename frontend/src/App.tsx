@@ -26,6 +26,9 @@ import {
   WorkspaceView,
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
+import { LiveList } from "./components/LiveList";
+import { LiveView } from "./components/LiveView";
+import { LiveStartHero } from "./components/LiveStartHero";
 import { AgentList } from "./components/AgentList";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
@@ -46,6 +49,7 @@ import { useIssueContext } from "./lib/useIssueContext";
 import type {
   AgentSession,
   Chat,
+  MeetingSession,
   ReminderItem,
   Topic,
   TopicNode,
@@ -79,6 +83,7 @@ interface AppRoute {
   mode: SidebarMode;
   topicSlug: string | null;
   chatSlug: string | null;
+  liveSlug: string | null;
   // The raw agent path segment — a public UUID for new links, or a legacy
   // integer id. Resolved to an internal numeric id once the agent list loads.
   agentRef: string | null;
@@ -87,12 +92,13 @@ interface AppRoute {
 function parseAppRoute(): AppRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   if (segs[0] === "ws")
-    return { mode: "workspaces", topicSlug: null, chatSlug: null, agentRef: null };
+    return { mode: "workspaces", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
   if (segs[0] === "agents") {
     return {
       mode: "agents",
       topicSlug: null,
       chatSlug: null,
+      liveSlug: null,
       agentRef: segs[1] ? decodeURIComponent(segs[1]) : null,
     };
   }
@@ -101,14 +107,24 @@ function parseAppRoute(): AppRoute {
       mode: "chats",
       topicSlug: null,
       chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
+      liveSlug: null,
+      agentRef: null,
+    };
+  }
+  if (segs[0] === "live") {
+    return {
+      mode: "live",
+      topicSlug: null,
+      chatSlug: null,
+      liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
       agentRef: null,
     };
   }
   if (segs[0] === "topics") {
     const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
-    return { mode: "topics", topicSlug: last, chatSlug: null, agentRef: null };
+    return { mode: "topics", topicSlug: last, chatSlug: null, liveSlug: null, agentRef: null };
   }
-  return { mode: "topics", topicSlug: null, chatSlug: null, agentRef: null };
+  return { mode: "topics", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
 }
 
 /** Ancestor → self slug chain for a topic, using the loaded tree. */
@@ -138,6 +154,11 @@ function topicUrl(tree: TopicNode[], topic: Topic): string {
 
 function chatUrl(chat: Chat): string {
   return "/chats/" + encodeURIComponent(chat.slug);
+}
+
+function liveUrl(session: MeetingSession | null): string {
+  if (session == null) return "/live";
+  return "/live/" + encodeURIComponent(session.slug);
 }
 
 // Agents are addressed by their public UUID (copilot_session_id) in the URL.
@@ -226,6 +247,9 @@ export default function App() {
   // Workspaces are loaded lazily when the user first enters workspaces mode.
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
+  // Live meeting sessions are loaded lazily when the user first enters live mode.
+  const [meetingSessions, setMeetingSessions] = useState<MeetingSession[] | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
@@ -314,6 +338,17 @@ export default function App() {
   useEffect(() => {
     activeAgentIdRef.current = activeAgentId;
   }, [activeAgentId]);
+
+  // Mirror the active meeting session into refs so changeMode / URL sync can
+  // build the /live URL without re-subscribing.
+  const meetingSessionsRef = useRef<MeetingSession[] | null>(meetingSessions);
+  useEffect(() => {
+    meetingSessionsRef.current = meetingSessions;
+  }, [meetingSessions]);
+  const activeSessionIdRef = useRef<number | null>(activeSessionId);
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
 
   // Mirror the current sidebar mode into a ref. The active item refs persist
   // across mode switches (changeMode doesn't clear them), so "the user is
@@ -489,6 +524,23 @@ export default function App() {
       }
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
+      if (r.mode === "live") {
+        const slug = r.liveSlug;
+        if (!slug) {
+          setActiveSessionId(null);
+          return;
+        }
+        const existing = meetingSessionsRef.current?.find((s) => s.slug === slug);
+        if (existing) {
+          setActiveSessionId(existing.id);
+          return;
+        }
+        void loadMeetingSessions().then((list) => {
+          const found = list.find((s) => s.slug === slug);
+          setActiveSessionId(found ? found.id : null);
+        });
+        return;
+      }
       if (r.mode === "agents") {
         if (r.agentRef == null) {
           pendingAgentRef.current = null;
@@ -576,6 +628,14 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeChat, sidebarMode]);
 
+  // activeSession -> /live/<slug> (or /live when nothing is selected).
+  useEffect(() => {
+    if (sidebarMode !== "live") return;
+    const active = meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
+    const target = liveUrl(active);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
+  }, [activeSessionId, meetingSessions, sidebarMode]);
+
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
   // rewritten from a transient integer fallback once the list resolves.
@@ -616,6 +676,10 @@ export default function App() {
         : "/topics";
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
+    } else if (next === "live") {
+      const active =
+        meetingSessionsRef.current?.find((s) => s.id === activeSessionIdRef.current) ?? null;
+      target = liveUrl(active);
     } else if (next === "agents") {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else {
@@ -799,6 +863,11 @@ export default function App() {
             }
           }
         })();
+      } else if (event.type === "meeting.changed") {
+        // A meeting session was created, renamed, ended, or deleted (possibly in
+        // another tab). Refresh the list if we've loaded it so the Live section
+        // stays current.
+        if (meetingSessionsRef.current !== null) void loadMeetingSessions();
       }
     });
   }, []);
@@ -969,6 +1038,7 @@ export default function App() {
   function handleNew(): void {
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") setActiveChat(null);
+    else if (sidebarMode === "live") setActiveSessionId(null);
     else if (sidebarMode === "agents") setActiveAgentId(null);
     else setCreateWorkspaceOpen(true);
   }
@@ -979,6 +1049,10 @@ export default function App() {
   // The route path only applies to the workspace named in the URL.
   const workspaceInitialPath =
     activeWorkspace && activeWorkspace.slug === wsRoute.slug ? wsRoute.path : null;
+
+  // ---- Live meeting sessions -------------------------------------------
+  const activeSession =
+    meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
 
   // ---- Assistant roles --------------------------------------------------
   // The header role selector and the `/role` command both funnel through here.
@@ -1036,6 +1110,33 @@ export default function App() {
   function handleSelectWorkspace(ws: Workspace): void {
     setActiveWorkspaceId(ws.id);
     navigateWorkspace(ws.slug, null);
+  }
+
+  // ---- Live meeting sessions --------------------------------------------
+  async function loadMeetingSessions(): Promise<MeetingSession[]> {
+    const list = await api.listMeetingSessions();
+    setMeetingSessions(list);
+    return list;
+  }
+
+  // Lazily load sessions the first time the user enters live mode, then pick an
+  // active one (honouring a slug from the URL, else the first).
+  useEffect(() => {
+    if (sidebarMode !== "live" || meetingSessions !== null) return;
+    const { liveSlug } = parseAppRoute();
+    void loadMeetingSessions().then((list) => {
+      if (list.length === 0) return;
+      const fromRoute = liveSlug ? list.find((s) => s.slug === liveSlug) : undefined;
+      // Only auto-select when the URL points at a specific session; otherwise
+      // leave nothing selected so the start hero shows.
+      if (fromRoute) setActiveSessionId((id) => id ?? fromRoute.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarMode]);
+
+  function handleSelectSession(session: MeetingSession): void {
+    setActiveSessionId(session.id);
+    history.pushState(null, "", liveUrl(session));
   }
 
   // ---- Agents -----------------------------------------------------------
@@ -1141,6 +1242,13 @@ export default function App() {
             workspaces={workspaces}
             activeId={activeWorkspaceId}
             onSelect={handleSelectWorkspace}
+          />
+        }
+        liveSlot={
+          <LiveList
+            sessions={meetingSessions}
+            activeId={activeSessionId}
+            onSelect={handleSelectSession}
           />
         }
         agentSlot={
@@ -1268,6 +1376,10 @@ export default function App() {
           ) : sidebarMode === "workspaces" ? (
             <span className="truncate font-medium min-w-0 flex-1">
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
+            </span>
+          ) : sidebarMode === "live" ? (
+            <span className="truncate font-medium min-w-0 flex-1">
+              {activeSession ? activeSession.title : "Live"}
             </span>
           ) : (
             <>
@@ -1430,6 +1542,34 @@ export default function App() {
               />
             ) : (
               <EmptyHero label="No workspaces yet." />
+            )
+          ) : sidebarMode === "live" ? (
+            activeSession ? (
+              <LiveView
+                key={activeSession.id}
+                session={activeSession}
+                topics={tree}
+                onUpdated={(updated) =>
+                  setMeetingSessions((prev) =>
+                    prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
+                  )
+                }
+                onDeleted={async () => {
+                  const list = await loadMeetingSessions();
+                  setActiveSessionId(null);
+                  history.pushState(null, "", liveUrl(null));
+                  void list;
+                }}
+              />
+            ) : (
+              <LiveStartHero
+                topics={tree}
+                onCreated={async (session) => {
+                  await loadMeetingSessions();
+                  setActiveSessionId(session.id);
+                  history.pushState(null, "", liveUrl(session));
+                }}
+              />
             )
           ) : (
             <AgentView

@@ -8,6 +8,7 @@ from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
+from precursor.backend.models.meeting import MeetingInsight, MeetingSegment, MeetingSession
 from precursor.backend.models.memory import Memory
 from precursor.backend.models.message import Message, MessageRole
 from precursor.backend.models.note_draft import NoteDraft
@@ -31,6 +32,9 @@ __all__ = [
     "Chat",
     "IssueContextCache",
     "MCPServer",
+    "MeetingInsight",
+    "MeetingSegment",
+    "MeetingSession",
     "Memory",
     "Message",
     "MessageRole",

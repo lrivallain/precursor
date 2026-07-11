@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   Pin,
   Plus,
+  Radio,
   Search,
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
@@ -24,13 +25,15 @@ import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
-export type SidebarMode = "topics" | "chats" | "workspaces" | "agents";
+export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents";
 
 // Label for the header "New" action, which is mode-aware.
 function newActionLabel(mode: SidebarMode): string {
   switch (mode) {
     case "chats":
       return "New chat";
+    case "live":
+      return "New session";
     case "workspaces":
       return "New workspace";
     case "agents":
@@ -49,6 +52,8 @@ interface Props {
   onModeChange: (mode: SidebarMode) => void;
   /** Rendered in the body when mode === "chats" (the chat list). */
   chatSlot?: ReactNode;
+  /** Rendered in the body when mode === "live" (the meeting session list). */
+  liveSlot?: ReactNode;
   /** Rendered in the body when mode === "workspaces" (the workspace list). */
   workspaceSlot?: ReactNode;
   /** Rendered in the body when mode === "agents" (the agent session list). */
@@ -81,6 +86,7 @@ export function Sidebar({
   mode,
   onModeChange,
   chatSlot,
+  liveSlot,
   workspaceSlot,
   agentSlot,
   onToggleCollapsed,
@@ -248,6 +254,8 @@ export function Sidebar({
 
       {mode === "chats" ? (
         chatSlot
+      ) : mode === "live" ? (
+        liveSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
       ) : mode === "agents" ? (
@@ -572,6 +580,7 @@ function collectPinned(tree: TopicNode[]): TopicNode[] {
 const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
   { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
   { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
+  { mode: "live", label: "Live", icon: <Radio size={14} /> },
   { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
   { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
 ];
