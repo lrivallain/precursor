@@ -19,8 +19,9 @@ import {
 } from "../lib/useConversationTranscriber";
 import { useConfirm } from "./ConfirmDialog";
 import { LiveAudioHelp } from "./LiveAudioHelp";
-import { LiveSummary } from "./LiveSummary";
+import { SummaryPanel } from "./SummaryPanel";
 import { ResizeHandle } from "./ResizeHandle";
+import { liveSummaryStore } from "../lib/liveSummaryStore";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -111,6 +112,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   const [captureMic, setCaptureMic] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryText, setSummaryText] = useState("");
+  const [summaryGenerating, setSummaryGenerating] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const summaryStartedRef = useRef(false);
   // Raw diarization label currently being renamed inline, keyed by segment id so
   // only the clicked occurrence shows the editor (the rename applies to all).
   const [editingSegId, setEditingSegId] = useState<number | null>(null);
@@ -120,15 +125,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   const { width: asideWidth, onMouseDown: onAsideResize } = useResizableWidth({
     storageKey: "precursor:live-aside:width",
     defaultWidth: 320,
-    min: 240,
-    max: 620,
+    min: 150,
+    max: 900,
     side: "left",
   });
   const { height: qaHeight, onMouseDown: onQaResize } = useResizableHeight({
     storageKey: "precursor:live-qa:height",
     defaultHeight: 200,
-    min: 120,
-    max: 520,
+    min: 60,
+    max: 760,
     side: "top",
   });
 
@@ -152,6 +157,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     if (session.topic_id == null) return null;
     return flattenTopics(topics).find((t) => t.id === session.topic_id)?.title ?? null;
   }, [topics, session.topic_id]);
+
+  const topicOptions = useMemo(() => flattenTopics(topics), [topics]);
 
   const handleFinalSegment = useCallback(
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
@@ -214,6 +221,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     setInterim("");
     setInsights([]);
     setAnswer("");
+    setSummaryOpen(false);
+    setSummaryText("");
+    setSummaryError(null);
+    summaryStartedRef.current = false;
     lastAnalyzedRef.current = 0;
     void api
       .listMeetingSegments(session.id)
@@ -284,6 +295,44 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     }
   }
 
+  async function applyTopic(value: string): Promise<void> {
+    const topic_id = value ? Number(value) : null;
+    const updated = await api.updateMeetingSession(session.id, { topic_id });
+    onUpdated(updated);
+  }
+
+  async function openSummary(): Promise<void> {
+    setSummaryOpen(true);
+    if (summaryStartedRef.current) return;
+    summaryStartedRef.current = true;
+    setSummaryGenerating(true);
+    setSummaryError(null);
+    try {
+      const res = await api.summarizeMeeting(session.id);
+      setSummaryText(res.summary);
+    } catch (e) {
+      setSummaryError(
+        e instanceof Error ? e.message : "Couldn't generate a summary — record more first.",
+      );
+    } finally {
+      setSummaryGenerating(false);
+    }
+  }
+
+  function popOutSummary(body: string): void {
+    liveSummaryStore.open({
+      sessionId: session.id,
+      topicId: session.topic_id,
+      topicTitle,
+      title: `Meeting summary — ${session.title}`,
+      initialText: body,
+    });
+    // Reset so re-opening in the tab generates a fresh draft.
+    setSummaryOpen(false);
+    setSummaryText("");
+    summaryStartedRef.current = false;
+  }
+
   async function setStatus(next: "active" | "ended"): Promise<void> {
     if (busy) return;
     if (next === "ended" && transcriber.listening) transcriber.stop();
@@ -292,7 +341,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
       const updated = await api.updateMeetingSession(session.id, { status: next });
       onUpdated(updated);
       // Auto-draft a summary when the meeting ends (if anything was recorded).
-      if (next === "ended" && segCountRef.current > 0) setSummaryOpen(true);
+      if (next === "ended" && segCountRef.current > 0) void openSummary();
     } finally {
       setBusy(false);
     }
@@ -458,11 +507,27 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
           ))}
         </select>
 
+        <label className="inline-flex items-center gap-1 text-[11px] text-muted">
+          Topic
+          <select
+            value={session.topic_id ?? ""}
+            onChange={(e) => void applyTopic(e.target.value)}
+            aria-label="Attached topic"
+            className="max-w-[12rem] rounded border border-border bg-surface px-2 py-1 text-sm text-text outline-none focus:border-accent"
+          >
+            <option value="">No topic</option>
+            {topicOptions.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] text-muted">Topic: {topicTitle ?? "none"}</span>
           <button
             type="button"
-            onClick={() => setSummaryOpen(true)}
+            onClick={() => void openSummary()}
             disabled={segments.length === 0}
             data-tooltip="Generate a summary"
             className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-50"
@@ -693,11 +758,18 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
 
       {helpOpen && <LiveAudioHelp onClose={() => setHelpOpen(false)} />}
       {summaryOpen && (
-        <LiveSummary
-          sessionId={session.id}
-          topicId={session.topic_id}
+        <SummaryPanel
+          windowStorageKey="precursor:live-summary:window"
+          title={`Meeting summary — ${session.title}`}
+          generating={summaryGenerating}
+          genError={summaryError}
+          text={summaryText}
+          onTextChange={setSummaryText}
+          canPost={session.topic_id != null}
           topicTitle={topicTitle}
+          onPost={(t) => api.postMeetingSummary(session.id, t).then(() => undefined)}
           onClose={() => setSummaryOpen(false)}
+          onPopOut={popOutSummary}
         />
       )}
     </div>
