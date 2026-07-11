@@ -106,13 +106,19 @@ def test_backup_writes_snapshot_and_mirrors_blobs(tmp_path) -> None:
         assert snap[0].stat().st_size > 0
         # Both freshly written blobs are present in the mirror.
         assert result.blobs_copied >= 2
+        assert result.blobs_total >= 2
+        assert result.blobs_total >= result.blobs_copied
         assert (dest / "blobs" / blob_store.blob_path(sha_a).relative_to(blobs_root)).exists()
         assert (dest / "blobs" / blob_store.blob_path(sha_b).relative_to(blobs_root)).exists()
 
-        # Second run: nothing new to mirror (content-addressed dedupe).
+        # Second run: nothing new to mirror (content-addressed dedupe), but the
+        # total still reflects everything already present in the mirror.
         second = await run_backup()
         assert second.ok
         assert second.blobs_copied == 0
+        assert second.blobs_total == result.blobs_total
+        assert "0 new" in second.detail
+        assert str(second.blobs_total) in second.detail
 
     asyncio.run(_run())
 

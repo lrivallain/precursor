@@ -258,4 +258,5 @@ async def run_backup_now() -> dict[str, Any]:
         "detail": result.detail,
         "db_snapshot": result.db_snapshot,
         "blobs_copied": result.blobs_copied,
+        "blobs_total": result.blobs_total,
     }

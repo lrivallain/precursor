@@ -64,6 +64,9 @@ class BackupResult:
     detail: str
     db_snapshot: str | None = None
     blobs_copied: int = 0
+    # Total blob files present in the destination mirror after the run (a
+    # superset of ``blobs_copied`` — it counts everything already there too).
+    blobs_total: int = 0
 
 
 async def resolve_backup_enabled(session: AsyncSession) -> bool:
@@ -145,27 +148,38 @@ def _vacuum_into(src: Path, dest: Path) -> None:
         conn.close()
 
 
-def _mirror_blobs(src_root: Path, dest_root: Path) -> int:
-    """Copy blob files missing from the destination mirror. Returns the count.
+def _mirror_blobs(src_root: Path, dest_root: Path) -> tuple[int, int]:
+    """Copy blob files missing from the destination mirror.
 
-    Content addressing means a given relative path always holds the same bytes,
-    so an existing destination file is never stale — we skip it. ``.tmp`` files
-    are in-flight writes from the live store and are ignored.
+    Returns ``(copied, total)`` where ``copied`` is the number of files newly
+    written this run and ``total`` is the number of blob files present in the
+    destination mirror afterwards (a superset of ``copied`` — an unchanged run
+    copies 0 but ``total`` still reflects everything already mirrored). Content
+    addressing means a given relative path always holds the same bytes, so an
+    existing destination file is never stale — we skip it. ``.tmp`` files are
+    in-flight writes from the live store and are ignored.
     """
-    if not src_root.exists():
-        return 0
     copied = 0
-    for path in src_root.rglob("*"):
-        if not path.is_file() or path.name.endswith(".tmp"):
-            continue
-        rel = path.relative_to(src_root)
-        dest = dest_root / rel
-        if dest.exists():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, dest)
-        copied += 1
-    return copied
+    if src_root.exists():
+        for path in src_root.rglob("*"):
+            if not path.is_file() or path.name.endswith(".tmp"):
+                continue
+            rel = path.relative_to(src_root)
+            dest = dest_root / rel
+            if dest.exists():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+            copied += 1
+    total = _count_blobs(dest_root)
+    return copied, total
+
+
+def _count_blobs(root: Path) -> int:
+    """Count blob files under ``root`` (ignoring in-flight ``.tmp`` writes)."""
+    if not root.exists():
+        return 0
+    return sum(1 for p in root.rglob("*") if p.is_file() and not p.name.endswith(".tmp"))
 
 
 def _prune_snapshots(db_dir: Path, retention: int) -> None:
@@ -201,18 +215,20 @@ def _run_backup_sync(
         _prune_snapshots(snap_dir, retention)
         db_snapshot = str(snapshot)
 
-    copied = _mirror_blobs(blobs_dir, dest_dir / "blobs")
+    copied, total = _mirror_blobs(blobs_dir, dest_dir / "blobs")
 
+    blobs_summary = f"blobs: {total} mirrored ({copied} new)"
     if db_snapshot is None:
-        detail = f"Blobs mirrored ({copied} new). No SQLite DB file to snapshot."
+        detail = f"{blobs_summary.capitalize()}. No SQLite DB file to snapshot."
     else:
-        detail = f"DB snapshot written; {copied} new blob(s) mirrored."
+        detail = f"DB snapshot written; {blobs_summary}."
     return BackupResult(
         ok=True,
         status="ok",
         detail=detail,
         db_snapshot=db_snapshot,
         blobs_copied=copied,
+        blobs_total=total,
     )
 
 

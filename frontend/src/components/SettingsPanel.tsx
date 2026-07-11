@@ -408,6 +408,7 @@ export function SettingsPanel({ onClose }: Props) {
         detail: e instanceof Error ? e.message : String(e),
         db_snapshot: null,
         blobs_copied: 0,
+        blobs_total: 0,
       });
     } finally {
       setBackupRunning(false);
