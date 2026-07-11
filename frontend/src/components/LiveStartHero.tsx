@@ -3,6 +3,7 @@ import { Radio } from "lucide-react";
 import type { MeetingSession, MeetingSessionCreate, TopicNode } from "../lib/types";
 import { useSettings } from "../lib/settingsStore";
 import { api } from "../lib/api";
+import { TopicPicker } from "./TopicPicker";
 
 // Common BCP-47 tags offered in the create form. An empty value means "use the
 // configured Azure Speech default"; the meeting can still be switched later.
@@ -18,21 +19,16 @@ const LANGUAGES: { value: string; label: string }[] = [
   { value: "nl-NL", label: "Dutch" },
 ];
 
-interface TopicOption {
-  id: number;
-  label: string;
-}
-
-// Flatten the topic tree into indented options for the attach-topic picker.
-function flattenTopics(tree: TopicNode[]): TopicOption[] {
-  const out: TopicOption[] = [];
-  const walk = (nodes: TopicNode[], depth: number): void => {
+// Flatten the topic tree into a flat list for the searchable topic picker.
+function flattenTopicNodes(tree: TopicNode[]): TopicNode[] {
+  const out: TopicNode[] = [];
+  const walk = (nodes: TopicNode[]): void => {
     for (const n of nodes) {
-      out.push({ id: n.id, label: `${"\u00a0\u00a0".repeat(depth)}${n.title}` });
-      if (n.children.length) walk(n.children, depth + 1);
+      out.push(n);
+      if (n.children.length) walk(n.children);
     }
   };
-  walk(tree, 0);
+  walk(tree);
   return out;
 }
 
@@ -58,7 +54,7 @@ export function LiveStartHero({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const topicOptions = useMemo(() => flattenTopics(topics), [topics]);
+  const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
 
   async function create(): Promise<void> {
     if (busy) return;
@@ -113,20 +109,9 @@ export function LiveStartHero({
           />
         </label>
 
-        <label className="flex flex-col gap-1 text-[12px] text-muted">
+        <label className="flex flex-col items-start gap-1 text-[12px] text-muted">
           Attach a topic for context <span className="opacity-70">(optional)</span>
-          <select
-            value={topicId ?? ""}
-            onChange={(e) => setTopicId(e.target.value ? Number(e.target.value) : null)}
-            className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
-          >
-            <option value="">No topic</option>
-            {topicOptions.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+          <TopicPicker topics={allTopics} value={topicId} onChange={setTopicId} />
         </label>
 
         <label className="flex flex-col gap-1 text-[12px] text-muted">

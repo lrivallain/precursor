@@ -21,6 +21,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { LiveAudioHelp } from "./LiveAudioHelp";
 import { SummaryPanel } from "./SummaryPanel";
 import { ResizeHandle } from "./ResizeHandle";
+import { TopicPicker } from "./TopicPicker";
+import { DevicePicker } from "./DevicePicker";
 import { liveSummaryStore } from "../lib/liveSummaryStore";
 
 const LANGUAGES: { value: string; label: string }[] = [
@@ -158,7 +160,17 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     return flattenTopics(topics).find((t) => t.id === session.topic_id)?.title ?? null;
   }, [topics, session.topic_id]);
 
-  const topicOptions = useMemo(() => flattenTopics(topics), [topics]);
+  const allTopics = useMemo(() => {
+    const out: TopicNode[] = [];
+    const walk = (nodes: TopicNode[]): void => {
+      for (const n of nodes) {
+        out.push(n);
+        if (n.children.length) walk(n.children);
+      }
+    };
+    walk(topics);
+    return out;
+  }, [topics]);
 
   const handleFinalSegment = useCallback(
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
@@ -295,9 +307,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     }
   }
 
-  async function applyTopic(value: string): Promise<void> {
-    const topic_id = value ? Number(value) : null;
-    const updated = await api.updateMeetingSession(session.id, { topic_id });
+  async function applyTopic(topicId: number | null): Promise<void> {
+    const updated = await api.updateMeetingSession(session.id, { topic_id: topicId });
     onUpdated(updated);
   }
 
@@ -458,20 +469,12 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
         )}
 
         <div className="flex items-center gap-1">
-          <select
+          <DevicePicker
+            devices={devices}
             value={deviceId}
-            onChange={(e) => setDeviceId(e.target.value)}
+            onChange={setDeviceId}
             disabled={recording || !sttReady}
-            aria-label="Input device"
-            className="max-w-[14rem] rounded border border-border bg-surface px-2 py-1 text-sm text-text outline-none focus:border-accent disabled:opacity-60"
-          >
-            <option value="">Default input</option>
-            {devices.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label}
-              </option>
-            ))}
-          </select>
+          />
           <button
             type="button"
             onClick={() => setHelpOpen(true)}
@@ -509,19 +512,11 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
 
         <label className="inline-flex items-center gap-1 text-[11px] text-muted">
           Topic
-          <select
-            value={session.topic_id ?? ""}
-            onChange={(e) => void applyTopic(e.target.value)}
-            aria-label="Attached topic"
-            className="max-w-[12rem] rounded border border-border bg-surface px-2 py-1 text-sm text-text outline-none focus:border-accent"
-          >
-            <option value="">No topic</option>
-            {topicOptions.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title}
-              </option>
-            ))}
-          </select>
+          <TopicPicker
+            topics={allTopics}
+            value={session.topic_id}
+            onChange={(id) => void applyTopic(id)}
+          />
         </label>
 
         <div className="ml-auto flex items-center gap-2">
