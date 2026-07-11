@@ -14,6 +14,7 @@ from precursor.backend.schemas.chat import (
     ChatUpdate,
 )
 from precursor.backend.schemas.meeting import (
+    AttendeesUpdate,
     MeetingAskRequest,
     MeetingInsightRead,
     MeetingSegmentCreate,
@@ -82,6 +83,7 @@ __all__ = [
     "AgentSessionCreate",
     "AgentSessionRead",
     "AttachmentRead",
+    "AttendeesUpdate",
     "ChatCreate",
     "ChatRead",
     "ChatRequest",

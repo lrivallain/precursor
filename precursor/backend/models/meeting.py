@@ -71,6 +71,22 @@ class MeetingSession(Base, TimestampMixin):
             return {}
         return {str(k): str(v) for k, v in data.items()}
 
+    # JSON-encoded list[str] of attendee display names for the summary. Seeded
+    # from renamed speakers + any linked meeting's invitees; user-editable.
+    attendees_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+
+    @property
+    def attendees(self) -> list[str]:
+        try:
+            data = json.loads(self.attendees_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [str(x) for x in data]
+
     segments: Mapped[list[MeetingSegment]] = relationship(
         "MeetingSegment",
         back_populates="session",

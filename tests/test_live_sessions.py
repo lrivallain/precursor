@@ -271,3 +271,16 @@ def test_speaker_rename_maps_all_and_clears() -> None:
         # Clearing (empty name) removes the mapping.
         cleared = client.post(f"/api/live/{sid}/speakers", json={"label": "Guest-2", "name": ""})
         assert cleared.json()["speaker_names"] == {}
+
+
+def test_attendees_roundtrip_and_dedupe() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Attn"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["attendees"] == []
+        r = client.put(
+            f"/api/live/{sid}/attendees",
+            json={"attendees": ["Thomas", " ", "Marie", "Thomas"]},
+        )
+        assert r.status_code == 200
+        assert r.json()["attendees"] == ["Thomas", "Marie"]

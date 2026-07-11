@@ -30,6 +30,7 @@ from precursor.backend.models import (
     Topic,
 )
 from precursor.backend.schemas import (
+    AttendeesUpdate,
     MeetingAskRequest,
     MeetingInsightRead,
     MeetingSegmentCreate,
@@ -241,6 +242,29 @@ async def rename_speaker(
     else:
         names[label] = name
     ms.speaker_names_json = json.dumps(names, ensure_ascii=False)
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
+@router.put("/{session_id}/attendees", response_model=MeetingSessionRead)
+async def set_attendees(
+    session_id: int,
+    payload: AttendeesUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Replace the meeting's attendee list (used in the summary)."""
+    ms = await _get_session_or_404(session_id, session)
+    # De-dupe while preserving order; drop blanks.
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for name in payload.attendees:
+        n = name.strip()
+        if n and n not in seen:
+            seen.add(n)
+            cleaned.append(n)
+    ms.attendees_json = json.dumps(cleaned, ensure_ascii=False)
     await session.commit()
     await session.refresh(ms)
     await publish_meeting_changed(ms.id)

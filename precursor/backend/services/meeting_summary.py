@@ -40,6 +40,7 @@ _SYSTEM_PROMPT = (
     "attached topic context. Use these sections, omitting any that have no "
     "content:\n"
     "## Summary — 2-4 sentences of what the meeting was about and its outcome.\n"
+    "## Attendees — bullet list of who took part (only if attendees are given).\n"
     "## Decisions — bullet list.\n"
     "## Action items — bullet list, include an owner when one was named.\n"
     "## Open questions — bullet list.\n"
@@ -111,8 +112,10 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
 
     user_parts = [
         f"Meeting title: {ms.title}",
-        f"\nTranscript:\n{_format_transcript(segments, ms.speaker_names)}",
     ]
+    if ms.attendees:
+        user_parts.append("Attendees: " + ", ".join(ms.attendees))
+    user_parts.append(f"\nTranscript:\n{_format_transcript(segments, ms.speaker_names)}")
     insight_block = _format_insights(insights)
     if insight_block:
         user_parts.append(f"\nDerived insights:\n{insight_block}")

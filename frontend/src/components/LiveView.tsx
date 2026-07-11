@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, FileText, Mic, Radio, RefreshCw, Send, Square, Trash2 } from "lucide-react";
+import { CircleHelp, Mic, Radio, RefreshCw, Send, Square, Trash2 } from "lucide-react";
 import type {
   MeetingInsight,
   MeetingInsightKind,
@@ -10,8 +10,6 @@ import type {
 import { api } from "../lib/api";
 import { streamMeetingAsk } from "../lib/sse";
 import { useSettings } from "../lib/settingsStore";
-import { useResizableWidth } from "../lib/useResizableWidth";
-import { useResizableHeight } from "../lib/useResizableHeight";
 import {
   listAudioInputDevices,
   useConversationTranscriber,
@@ -19,12 +17,12 @@ import {
 } from "../lib/useConversationTranscriber";
 import { useConfirm } from "./ConfirmDialog";
 import { LiveAudioHelp } from "./LiveAudioHelp";
-import { SummaryPanel } from "./SummaryPanel";
-import { ResizeHandle } from "./ResizeHandle";
 import { TopicPicker } from "./TopicPicker";
 import { DevicePicker } from "./DevicePicker";
 import { Select } from "./Select";
-import { liveSummaryStore } from "../lib/liveSummaryStore";
+import { LivePanel, type LiveTab } from "./LivePanel";
+import { SummarySection } from "./SummarySection";
+import { ContextSection } from "./ContextSection";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -72,11 +70,11 @@ function formatOffset(ms: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function flattenTopics(tree: TopicNode[]): { id: number; title: string }[] {
-  const out: { id: number; title: string }[] = [];
+function flattenTopicNodes(tree: TopicNode[]): TopicNode[] {
+  const out: TopicNode[] = [];
   const walk = (nodes: TopicNode[]): void => {
     for (const n of nodes) {
-      out.push({ id: n.id, title: n.title });
+      out.push(n);
       if (n.children.length) walk(n.children);
     }
   };
@@ -97,10 +95,9 @@ interface LiveViewProps {
 }
 
 /**
- * Live meeting session view: capture, the diarized transcript, rolling live
- * insights, and a direct Q&A box. Audio is captured in the browser and streamed
- * to Azure; finalized phrases persist as they arrive. Insights are re-derived
- * from the rolling window on a silence/interval cadence while recording.
+ * Live meeting session view. A toolbar drives capture; the content is a tabbed,
+ * splittable panel with four sections — Transcript, Live Insights (+ Q&A),
+ * Summary, and Context — so the user can view two at once side by side.
  */
 export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProps) {
   const confirmAction = useConfirm();
@@ -114,31 +111,18 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   const [deviceId, setDeviceId] = useState<string>("");
   const [captureMic, setCaptureMic] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [summaryOpen, setSummaryOpen] = useState(false);
+
   const [summaryText, setSummaryText] = useState("");
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const summaryStartedRef = useRef(false);
+  const [summaryFocus, setSummaryFocus] = useState(0);
+  const genRef = useRef(false);
+
   // Raw diarization label currently being renamed inline, keyed by segment id so
   // only the clicked occurrence shows the editor (the rename applies to all).
   const [editingSegId, setEditingSegId] = useState<number | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const cancelEditRef = useRef(false);
-
-  const { width: asideWidth, onMouseDown: onAsideResize } = useResizableWidth({
-    storageKey: "precursor:live-aside:width",
-    defaultWidth: 320,
-    min: 150,
-    max: 900,
-    side: "left",
-  });
-  const { height: qaHeight, onMouseDown: onQaResize } = useResizableHeight({
-    storageKey: "precursor:live-qa:height",
-    defaultHeight: 200,
-    min: 60,
-    max: 760,
-    side: "top",
-  });
 
   const [insights, setInsights] = useState<MeetingInsight[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
@@ -156,22 +140,11 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
 
   const isEnded = session.status === "ended";
 
-  const topicTitle = useMemo(() => {
-    if (session.topic_id == null) return null;
-    return flattenTopics(topics).find((t) => t.id === session.topic_id)?.title ?? null;
-  }, [topics, session.topic_id]);
-
-  const allTopics = useMemo(() => {
-    const out: TopicNode[] = [];
-    const walk = (nodes: TopicNode[]): void => {
-      for (const n of nodes) {
-        out.push(n);
-        if (n.children.length) walk(n.children);
-      }
-    };
-    walk(topics);
-    return out;
-  }, [topics]);
+  const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
+  const topicTitle = useMemo(
+    () => allTopics.find((t) => t.id === session.topic_id)?.title ?? null,
+    [allTopics, session.topic_id],
+  );
 
   const handleFinalSegment = useCallback(
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
@@ -234,10 +207,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     setInterim("");
     setInsights([]);
     setAnswer("");
-    setSummaryOpen(false);
     setSummaryText("");
     setSummaryError(null);
-    summaryStartedRef.current = false;
     lastAnalyzedRef.current = 0;
     void api
       .listMeetingSegments(session.id)
@@ -313,10 +284,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     onUpdated(updated);
   }
 
-  async function openSummary(): Promise<void> {
-    setSummaryOpen(true);
-    if (summaryStartedRef.current) return;
-    summaryStartedRef.current = true;
+  async function generateSummary(): Promise<void> {
+    setSummaryFocus((n) => n + 1);
+    if (genRef.current) return;
+    genRef.current = true;
     setSummaryGenerating(true);
     setSummaryError(null);
     try {
@@ -327,22 +298,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
         e instanceof Error ? e.message : "Couldn't generate a summary — record more first.",
       );
     } finally {
+      genRef.current = false;
       setSummaryGenerating(false);
     }
-  }
-
-  function popOutSummary(body: string): void {
-    liveSummaryStore.open({
-      sessionId: session.id,
-      topicId: session.topic_id,
-      topicTitle,
-      title: `Meeting summary — ${session.title}`,
-      initialText: body,
-    });
-    // Reset so re-opening in the tab generates a fresh draft.
-    setSummaryOpen(false);
-    setSummaryText("");
-    summaryStartedRef.current = false;
   }
 
   async function setStatus(next: "active" | "ended"): Promise<void> {
@@ -353,7 +311,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
       const updated = await api.updateMeetingSession(session.id, { status: next });
       onUpdated(updated);
       // Auto-draft a summary when the meeting ends (if anything was recorded).
-      if (next === "ended" && segCountRef.current > 0) void openSummary();
+      if (next === "ended" && segCountRef.current > 0) void generateSummary();
     } finally {
       setBusy(false);
     }
@@ -426,12 +384,231 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     }
   }
 
-  const groupedInsights = useMemo(() => {
-    return KIND_META.map((meta) => ({
-      ...meta,
-      items: insights.filter((i) => i.kind === meta.kind),
-    })).filter((g) => g.items.length > 0);
-  }, [insights]);
+  const groupedInsights = useMemo(
+    () =>
+      KIND_META.map((meta) => ({
+        ...meta,
+        items: insights.filter((i) => i.kind === meta.kind),
+      })).filter((g) => g.items.length > 0),
+    [insights],
+  );
+
+  // Attendee suggestions: distinct display names seen in the transcript that
+  // aren't already listed.
+  const suggestedAttendees = useMemo(() => {
+    const seen = new Set<string>();
+    const existing = new Set(session.attendees ?? []);
+    const out: string[] = [];
+    for (const seg of segments) {
+      const name = displayName(seg.speaker_label);
+      if (name && !seen.has(name) && !existing.has(name)) {
+        seen.add(name);
+        out.push(name);
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segments, session.attendees, session.speaker_names]);
+
+  // ---- Section nodes -----------------------------------------------------
+  const transcriptNode = (
+    <div ref={transcriptRef} className="h-full overflow-y-auto px-4 py-4">
+      {segments.length === 0 && !interim ? (
+        <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
+          <Radio size={20} className="mb-2 opacity-70" aria-hidden="true" />
+          <p className="mb-1 font-medium text-text">No transcript yet</p>
+          <p className="max-w-sm">
+            Pick the input carrying your meeting audio, then press Record. Each
+            phrase is transcribed with a speaker label and saved as you go.
+          </p>
+        </div>
+      ) : (
+        <div className="mx-auto max-w-3xl space-y-2">
+          {segments.map((seg) => (
+            <div key={seg.id} className="flex gap-2 text-sm">
+              <span className="w-10 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-muted">
+                {formatOffset(seg.offset_ms)}
+              </span>
+              <div className="min-w-0 flex-1">
+                {seg.speaker_label &&
+                  (editingSegId === seg.id ? (
+                    <input
+                      autoFocus
+                      value={editingValue}
+                      onChange={(e) => setEditingValue(e.target.value)}
+                      onBlur={() => {
+                        if (cancelEditRef.current) {
+                          cancelEditRef.current = false;
+                          setEditingSegId(null);
+                          return;
+                        }
+                        void commitRename(seg.speaker_label as string);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          e.currentTarget.blur();
+                        } else if (e.key === "Escape") {
+                          cancelEditRef.current = true;
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => beginRename(seg)}
+                      data-tooltip="Rename speaker"
+                      className={`mr-1.5 rounded text-[12px] font-medium hover:underline ${speakerColor(
+                        seg.speaker_label,
+                      )}`}
+                    >
+                      {displayName(seg.speaker_label)}
+                    </button>
+                  ))}
+                <span className="text-text">{seg.text}</span>
+              </div>
+            </div>
+          ))}
+          {interim && (
+            <div className="flex gap-2 text-sm">
+              <span className="w-10 shrink-0" />
+              <span className="min-w-0 flex-1 italic text-muted">{interim}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const insightsNode = (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-[12px] font-medium">Live insights</span>
+        <button
+          type="button"
+          onClick={() => void runAnalysis()}
+          disabled={analyzing || segments.length === 0}
+          data-tooltip="Analyze now"
+          aria-label="Analyze now"
+          className="rounded p-1 text-muted hover:bg-surface hover:text-accent disabled:opacity-40"
+        >
+          <RefreshCw size={14} className={analyzing ? "animate-spin" : ""} />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        {groupedInsights.length === 0 ? (
+          <p className="text-[12px] text-muted">
+            {segments.length === 0
+              ? "Insights appear here once the meeting gets going."
+              : "No insights yet — analysis runs as the discussion pauses."}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {groupedInsights.map((g) => (
+              <div key={g.kind}>
+                <div className="mb-1 flex items-center gap-1.5">
+                  <span className={`h-1.5 w-1.5 rounded-full ${g.dot}`} />
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                    {g.label}
+                  </span>
+                </div>
+                <ul className="space-y-1">
+                  {g.items.map((it) => (
+                    <li key={it.id} className="text-[13px] leading-snug text-text">
+                      {it.content}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="border-t border-border p-2">
+        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+          Ask assistant
+        </div>
+        {answer && (
+          <div className="mb-2 max-h-40 overflow-y-auto rounded bg-surface px-2 py-1.5 text-[13px] text-text">
+            {answer}
+          </div>
+        )}
+        <div className="flex items-end gap-1.5">
+          <textarea
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void ask();
+              }
+            }}
+            rows={2}
+            placeholder="Ask about anything discussed…"
+            className="min-h-[2.25rem] min-w-0 flex-1 resize-y rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            onClick={() => void ask()}
+            disabled={asking || !question.trim()}
+            aria-label="Ask"
+            className="rounded bg-accent p-2 text-white disabled:opacity-50"
+          >
+            <Send size={15} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const summaryNode = (
+    <SummarySection
+      session={session}
+      onUpdated={onUpdated}
+      text={summaryText}
+      setText={setSummaryText}
+      generating={summaryGenerating}
+      error={summaryError}
+      onGenerate={() => void generateSummary()}
+      suggestedAttendees={suggestedAttendees}
+      topicTitle={topicTitle}
+      canGenerate={segments.length > 0}
+    />
+  );
+
+  const contextNode = <ContextSection session={session} topicTitle={topicTitle} />;
+
+  const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
+  const tabs: LiveTab[] = hasSummary
+    ? [
+        { id: "transcript", label: "Transcript" },
+        { id: "summary", label: "Summary" },
+        { id: "insights", label: "Live insights", badge: insights.length },
+        { id: "context", label: "Context" },
+      ]
+    : [
+        { id: "transcript", label: "Transcript" },
+        { id: "insights", label: "Live insights", badge: insights.length },
+        { id: "summary", label: "Summary" },
+        { id: "context", label: "Context" },
+      ];
+
+  function renderSection(id: string): React.ReactNode {
+    switch (id) {
+      case "transcript":
+        return transcriptNode;
+      case "insights":
+        return insightsNode;
+      case "summary":
+        return summaryNode;
+      case "context":
+        return contextNode;
+      default:
+        return null;
+    }
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -516,15 +693,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
         </label>
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void openSummary()}
-            disabled={segments.length === 0}
-            data-tooltip="Generate a summary"
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-50"
-          >
-            <FileText size={14} /> Summarize
-          </button>
           {isEnded ? (
             <button
               type="button"
@@ -569,200 +737,14 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        {/* Transcript */}
-        <div ref={transcriptRef} className="flex-1 overflow-y-auto px-4 py-4">
-          {segments.length === 0 && !interim ? (
-            <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
-              <Radio size={20} className="mb-2 opacity-70" aria-hidden="true" />
-              <p className="mb-1 font-medium text-text">No transcript yet</p>
-              <p className="max-w-sm">
-                Pick the input carrying your meeting audio, then press Record.
-                Each phrase is transcribed with a speaker label and saved as you
-                go.
-              </p>
-            </div>
-          ) : (
-            <div className="mx-auto max-w-3xl space-y-2">
-              {segments.map((seg) => (
-                <div key={seg.id} className="flex gap-2 text-sm">
-                  <span className="w-10 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-muted">
-                    {formatOffset(seg.offset_ms)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    {seg.speaker_label &&
-                      (editingSegId === seg.id ? (
-                        <input
-                          autoFocus
-                          value={editingValue}
-                          onChange={(e) => setEditingValue(e.target.value)}
-                          onBlur={() => {
-                            if (cancelEditRef.current) {
-                              cancelEditRef.current = false;
-                              setEditingSegId(null);
-                              return;
-                            }
-                            void commitRename(seg.speaker_label as string);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              e.currentTarget.blur();
-                            } else if (e.key === "Escape") {
-                              cancelEditRef.current = true;
-                              e.currentTarget.blur();
-                            }
-                          }}
-                          className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => beginRename(seg)}
-                          data-tooltip="Rename speaker"
-                          className={`mr-1.5 rounded text-[12px] font-medium hover:underline ${speakerColor(
-                            seg.speaker_label,
-                          )}`}
-                        >
-                          {displayName(seg.speaker_label)}
-                        </button>
-                      ))}
-                    <span className="text-text">{seg.text}</span>
-                  </div>
-                </div>
-              ))}
-              {interim && (
-                <div className="flex gap-2 text-sm">
-                  <span className="w-10 shrink-0" />
-                  <span className="min-w-0 flex-1 italic text-muted">{interim}</span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Insights + Q&A (resizable width) */}
-        <aside
-          className="relative flex shrink-0 flex-col border-l border-border"
-          style={{ width: asideWidth }}
-        >
-          <ResizeHandle onMouseDown={onAsideResize} side="left" />
-
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-[12px] font-medium">Live insights</span>
-            <button
-              type="button"
-              onClick={() => void runAnalysis()}
-              disabled={analyzing || segments.length === 0}
-              data-tooltip="Analyze now"
-              aria-label="Analyze now"
-              className="rounded p-1 text-muted hover:bg-surface hover:text-accent disabled:opacity-40"
-            >
-              <RefreshCw size={14} className={analyzing ? "animate-spin" : ""} />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-3 py-3">
-            {groupedInsights.length === 0 ? (
-              <p className="text-[12px] text-muted">
-                {segments.length === 0
-                  ? "Insights appear here once the meeting gets going."
-                  : "No insights yet — analysis runs as the discussion pauses."}
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {groupedInsights.map((g) => (
-                  <div key={g.kind}>
-                    <div className="mb-1 flex items-center gap-1.5">
-                      <span className={`h-1.5 w-1.5 rounded-full ${g.dot}`} />
-                      <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
-                        {g.label}
-                      </span>
-                    </div>
-                    <ul className="space-y-1">
-                      {g.items.map((it) => (
-                        <li key={it.id} className="text-[13px] leading-snug text-text">
-                          {it.content}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Ask assistant (resizable height) */}
-          <div
-            className="relative flex shrink-0 flex-col border-t border-border"
-            style={{ height: qaHeight }}
-          >
-            <div
-              role="separator"
-              aria-orientation="horizontal"
-              onMouseDown={onQaResize}
-              className="group absolute -top-0.5 left-0 z-10 h-1 w-full cursor-row-resize select-none"
-            >
-              <div className="mx-auto h-px w-full bg-transparent transition-colors group-hover:bg-accent/60" />
-            </div>
-
-            <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-              Ask assistant
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3">
-              {answer ? (
-                <div className="rounded bg-surface px-2 py-1.5 text-[13px] text-text">{answer}</div>
-              ) : (
-                <p className="text-[12px] text-muted">
-                  Ask about anything discussed — answered from the transcript and
-                  attached topic.
-                </p>
-              )}
-            </div>
-            <div className="flex items-end gap-1.5 p-2">
-              <textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void ask();
-                  }
-                }}
-                rows={2}
-                placeholder="Ask the assistant…"
-                className="min-h-[2.25rem] min-w-0 flex-1 resize-y rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
-              />
-              <button
-                type="button"
-                onClick={() => void ask()}
-                disabled={asking || !question.trim()}
-                aria-label="Ask"
-                className="rounded bg-accent p-2 text-white disabled:opacity-50"
-              >
-                <Send size={15} />
-              </button>
-            </div>
-          </div>
-        </aside>
-      </div>
+      <LivePanel
+        tabs={tabs}
+        render={renderSection}
+        storageKey="precursor:live-panel"
+        focus={{ id: "summary", nonce: summaryFocus }}
+      />
 
       {helpOpen && <LiveAudioHelp onClose={() => setHelpOpen(false)} />}
-      {summaryOpen && (
-        <SummaryPanel
-          windowStorageKey="precursor:live-summary:window"
-          title={`Meeting summary — ${session.title}`}
-          generating={summaryGenerating}
-          genError={summaryError}
-          text={summaryText}
-          onTextChange={setSummaryText}
-          canPost={session.topic_id != null}
-          topicTitle={topicTitle}
-          onPost={(t) => api.postMeetingSummary(session.id, t).then(() => undefined)}
-          onClose={() => setSummaryOpen(false)}
-          onPopOut={popOutSummary}
-        />
-      )}
     </div>
   );
 }

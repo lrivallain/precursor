@@ -43,6 +43,7 @@ class MeetingSessionRead(BaseModel):
     language: str | None = None
     topic_id: int | None = None
     speaker_names: dict[str, str] = Field(default_factory=dict)
+    attendees: list[str] = Field(default_factory=list)
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime
@@ -54,6 +55,10 @@ class SpeakerRenameRequest(BaseModel):
     label: str = Field(min_length=1, max_length=64)
     # The chosen display name. Empty (or equal to the label) clears the mapping.
     name: str = Field(default="", max_length=64)
+
+
+class AttendeesUpdate(BaseModel):
+    attendees: list[str] = Field(default_factory=list)
 
 
 class MeetingSegmentCreate(BaseModel):

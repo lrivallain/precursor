@@ -801,6 +801,8 @@ export interface MeetingSession {
   topic_id: number | null;
   // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
   speaker_names: Record<string, string>;
+  // Attendee display names used in the summary (editable).
+  attendees: string[];
   started_at: string | null;
   ended_at: string | null;
   created_at: string;

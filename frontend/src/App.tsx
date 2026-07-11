@@ -34,7 +34,6 @@ import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
-import { DetachedLiveSummaryHost } from "./components/DetachedLiveSummaryHost";
 import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
@@ -1226,7 +1225,6 @@ export default function App() {
     <div className="flex h-full w-full bg-bg text-text">
       <TooltipProvider />
       <DetachedDraftHost />
-      <DetachedLiveSummaryHost />
       <Sidebar
         tree={tree}
         activeId={activeTopic?.id ?? null}
