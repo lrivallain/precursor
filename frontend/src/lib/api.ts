@@ -10,6 +10,7 @@ import type {
   AgentSession,
   AgentSessionCreate,
   AppVersion,
+  BackupRunResult,
   Attachment,
   Chat,
   ChatCreate,
@@ -366,6 +367,8 @@ export const api = {
   getSettings: () => request<Settings>(`/api/settings`),
   updateSettings: (data: SettingsUpdate) =>
     request<Settings>(`/api/settings`, { method: "PUT", body: JSON.stringify(data) }),
+  runBackupNow: () =>
+    request<BackupRunResult>(`/api/settings/backup/run`, { method: "POST" }),
 
   // Version
   getVersion: () => request<AppVersion>(`/api/version`),

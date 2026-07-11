@@ -19,6 +19,7 @@ import {
   Bot,
   LogIn,
   RefreshCw,
+  HardDriveDownload,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -31,6 +32,7 @@ import {
   requestNotificationPermission,
 } from "../lib/notifications";
 import type {
+  BackupRunResult,
   LLMModel,
   LLMProviderSpec,
   MCPServerStatus,
@@ -95,6 +97,7 @@ type Category =
   | "memory"
   | "agents"
   | "stats"
+  | "backup"
   | "system";
 
 const CATEGORIES: ReadonlyArray<{
@@ -114,6 +117,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
+  { id: "backup", label: "Backup", icon: HardDriveDownload, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
 ];
 
@@ -162,6 +166,12 @@ export function SettingsPanel({ onClose }: Props) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
+  // Folder backup (DB + blobs) — editable prefs plus a manual "run now" action.
+  const [backupEnabled, setBackupEnabled] = useState(false);
+  const [backupDir, setBackupDir] = useState("");
+  const [backupRetention, setBackupRetention] = useState(7);
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupRunResult, setBackupRunResult] = useState<BackupRunResult | null>(null);
   // System settings (env default + DB override). Loaded as a single object.
   const [sys, setSys] = useState<SystemSettings | null>(null);
   const [dockerAvailable, setDockerAvailable] = useState(false);
@@ -246,6 +256,9 @@ export function SettingsPanel({ onClose }: Props) {
       setNotificationsEnabled(s.notifications_enabled);
       setMaxToolRounds(s.max_tool_rounds);
       setIssueAssociationsEnabled(s.issue_associations_enabled);
+      setBackupEnabled(s.backup_enabled);
+      setBackupDir(s.backup_dir);
+      setBackupRetention(s.backup_retention);
       setAzureEndpoint(s.azure_speech_endpoint);
       setAzureLanguage(s.azure_speech_language);
       setSys(pickSystem(s));
@@ -340,6 +353,9 @@ export function SettingsPanel({ onClose }: Props) {
         azure_speech_language: azureLanguage,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
+        backup_enabled: backupEnabled,
+        backup_dir: backupDir,
+        backup_retention: backupRetention,
         ...(sys ?? {}),
       };
       const llmProviders = buildLlmProvidersPayload();
@@ -362,6 +378,39 @@ export function SettingsPanel({ onClose }: Props) {
       onClose();
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Persist the current backup prefs, then run one immediately so the button
+  // acts on exactly what the user sees (not a stale saved value). Refreshes the
+  // settings snapshot afterwards so the last-run status updates in place.
+  async function runBackupNow(): Promise<void> {
+    setBackupRunning(true);
+    setBackupRunResult(null);
+    try {
+      const updated = await api.updateSettings({
+        backup_enabled: backupEnabled,
+        backup_dir: backupDir,
+        backup_retention: backupRetention,
+      });
+      setSettings(updated);
+      settingsStore.set(updated);
+      const result = await api.runBackupNow();
+      setBackupRunResult(result);
+      // Pull the fresh last-run status into the snapshot the tab reads.
+      const refreshed = await api.getSettings();
+      setSettings(refreshed);
+      settingsStore.set(refreshed);
+    } catch (e) {
+      setBackupRunResult({
+        ok: false,
+        status: "error",
+        detail: e instanceof Error ? e.message : String(e),
+        db_snapshot: null,
+        blobs_copied: 0,
+      });
+    } finally {
+      setBackupRunning(false);
     }
   }
 
@@ -1065,6 +1114,23 @@ export function SettingsPanel({ onClose }: Props) {
 
             {category === "stats" && <StatsTab />}
 
+            {category === "backup" && (
+              <BackupTab
+                enabled={backupEnabled}
+                setEnabled={setBackupEnabled}
+                dir={backupDir}
+                setDir={setBackupDir}
+                retention={backupRetention}
+                setRetention={setBackupRetention}
+                lastRunAt={settings?.backup_last_run_at ?? null}
+                lastStatus={settings?.backup_last_status ?? null}
+                lastError={settings?.backup_last_error ?? null}
+                running={backupRunning}
+                runResult={backupRunResult}
+                onRunNow={() => void runBackupNow()}
+              />
+            )}
+
             {category === "system" && sys && (
               <SystemTab
                 sys={sys}
@@ -1097,6 +1163,147 @@ export function SettingsPanel({ onClose }: Props) {
           </button>
         </footer>
       </div>
+    </div>
+  );
+}
+
+function BackupTab({
+  enabled,
+  setEnabled,
+  dir,
+  setDir,
+  retention,
+  setRetention,
+  lastRunAt,
+  lastStatus,
+  lastError,
+  running,
+  runResult,
+  onRunNow,
+}: {
+  enabled: boolean;
+  setEnabled: (v: boolean) => void;
+  dir: string;
+  setDir: (v: string) => void;
+  retention: number;
+  setRetention: (v: number) => void;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  running: boolean;
+  runResult: BackupRunResult | null;
+  onRunNow: () => void;
+}) {
+  const lastRunLabel = lastRunAt ? new Date(lastRunAt).toLocaleString() : "Never";
+  return (
+    <div className="space-y-6">
+      <p className="text-[11px] text-muted">
+        Copy the database and attachment files into a folder on a daily schedule.
+        Point this at a cloud-synced directory (e.g. OneDrive, Dropbox, iCloud
+        Drive) to keep an off-machine copy. The live database stays on local disk —
+        only a consistent snapshot is written to the folder, which is safe to sync.
+      </p>
+
+      <section className="space-y-3">
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="mt-0.5 accent-accent"
+          />
+          <span>
+            <span className="block text-sm">Enable daily backup</span>
+            <span className="block text-[11px] text-muted">
+              Runs about once every 24 hours while the app is running.
+            </span>
+          </span>
+        </label>
+
+        <div>
+          <label className="block text-xs text-muted mb-1">Backup folder</label>
+          <input
+            type="text"
+            value={dir}
+            onChange={(e) => setDir(e.target.value)}
+            placeholder="/Users/you/OneDrive/precursor-backups"
+            className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+          />
+          <p className="text-[11px] text-muted mt-1">
+            Absolute path to an existing, writable directory. Snapshots go under{" "}
+            <code className="font-mono">db/</code> and attachment files under{" "}
+            <code className="font-mono">blobs/</code>.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs text-muted mb-1">
+            Snapshots to keep
+          </label>
+          <NumberInput
+            value={retention}
+            min={1}
+            max={3650}
+            onCommit={setRetention}
+          />
+          <p className="text-[11px] text-muted mt-1">
+            Older dated database snapshots are pruned. Attachment files are kept
+            indefinitely (they are de-duplicated, so this is cheap).
+          </p>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium">Status</h3>
+        <div className="text-[11px] text-muted">
+          <div>
+            Last run: <span className="text-fg">{lastRunLabel}</span>
+            {lastStatus && (
+              <span
+                className={
+                  lastStatus === "ok"
+                    ? " text-emerald-600 dark:text-emerald-400"
+                    : " text-red-600 dark:text-red-400"
+                }
+              >
+                {" "}
+                ({lastStatus})
+              </span>
+            )}
+          </div>
+          {lastError && (
+            <div className="text-red-600 dark:text-red-400 mt-1">{lastError}</div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onRunNow}
+            disabled={running || !dir}
+            className="px-3 py-1.5 rounded border border-border text-sm hover:bg-surface disabled:opacity-50"
+          >
+            {running ? "Backing up..." : "Back up now"}
+          </button>
+          {!dir && (
+            <span className="text-[11px] text-muted">
+              Set a backup folder first.
+            </span>
+          )}
+        </div>
+
+        {runResult && (
+          <div
+            className={
+              "text-[11px] rounded border px-3 py-2 " +
+              (runResult.ok
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300")
+            }
+          >
+            {runResult.detail}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

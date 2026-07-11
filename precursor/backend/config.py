@@ -169,6 +169,18 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "agents" / "copilot-home")
 
+    # Backup (services/backup.py) — periodic copy of the SQLite DB + blob store
+    # into a plain folder the user picks (e.g. a OneDrive-synced directory).
+    # Disabled by default at the env level; the effective on/off, target dir and
+    # retention live in the DB app settings (Settings → Backup) so they can be
+    # changed at runtime. The ticker polls on ``backup_poll_seconds`` and runs a
+    # backup once ``backup_interval_seconds`` has elapsed since the last success.
+    backup_enabled: bool = False
+    backup_dir: str = ""
+    backup_interval_seconds: int = 86_400
+    backup_retention: int = 7
+    backup_poll_seconds: int = 3_600
+
 
 @lru_cache
 def get_settings() -> Settings:

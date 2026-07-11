@@ -369,6 +369,14 @@ export interface Settings {
   agents_approval_policy: AgentApprovalPolicy;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
+  // Folder backup (DB + blobs) into a user-picked directory, e.g. a
+  // OneDrive-synced folder. Last-run fields are read-only status.
+  backup_enabled: boolean;
+  backup_dir: string;
+  backup_retention: number;
+  backup_last_run_at: string | null;
+  backup_last_status: string | null;
+  backup_last_error: string | null;
 }
 
 export interface SettingsUpdate {
@@ -409,6 +417,19 @@ export interface SettingsUpdate {
   agents_approval_policy?: AgentApprovalPolicy;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
+  backup_enabled?: boolean;
+  backup_dir?: string;
+  backup_retention?: number;
+}
+
+// Outcome of a manual "Back up now" run (POST /api/settings/backup/run).
+export interface BackupRunResult {
+  ok: boolean;
+  // "ok" | "skipped" | "error"
+  status: string;
+  detail: string;
+  db_snapshot: string | null;
+  blobs_copied: number;
 }
 
 export interface IssueLabel {
