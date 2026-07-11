@@ -429,7 +429,10 @@ export interface BackupRunResult {
   status: string;
   detail: string;
   db_snapshot: string | null;
+  // Files newly copied this run.
   blobs_copied: number;
+  // Total blob files present in the destination mirror after the run.
+  blobs_total: number;
 }
 
 export interface IssueLabel {
