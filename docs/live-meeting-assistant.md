@@ -66,7 +66,9 @@ While recording, the assistant re-derives a snapshot of insights (action items,
 decisions, open questions, suggestions, risks) from the rolling transcript on a
 short pause / interval cadence — shown in the resizable right-hand panel. Ask
 free-form questions in the **Ask assistant** box; answers stream from the
-transcript plus the attached topic. Press **Summarize** (or end the session, which
+transcript plus the attached topic. **Click a speaker label** in the transcript
+to rename it (e.g. `Guest-2` → `Thomas`) — the name applies to every past and
+future phrase from that voice. Press **Summarize** (or end the session, which
 auto-drafts) to generate a markdown recap you can edit and **post into the linked
 topic** as a message.
 

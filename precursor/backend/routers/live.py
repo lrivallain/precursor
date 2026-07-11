@@ -40,6 +40,7 @@ from precursor.backend.schemas import (
     MeetingSummaryPost,
     MeetingSummaryPostResult,
     MeetingSummaryResult,
+    SpeakerRenameRequest,
 )
 from precursor.backend.services.app_settings import (
     resolve_live_fast_model,
@@ -48,7 +49,11 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
-from precursor.backend.services.meeting_analysis import analyze_session, language_name
+from precursor.backend.services.meeting_analysis import (
+    analyze_session,
+    display_label,
+    language_name,
+)
 from precursor.backend.services.meeting_summary import generate_summary
 
 logger = logging.getLogger(__name__)
@@ -215,6 +220,33 @@ async def append_segment(
     return segment
 
 
+@router.post("/{session_id}/speakers", response_model=MeetingSessionRead)
+async def rename_speaker(
+    session_id: int,
+    payload: SpeakerRenameRequest,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Map a raw diarization label to a display name for the whole session.
+
+    Segments keep their raw label; the mapping is applied at display + analysis
+    time, so renaming updates every past and future phrase from that speaker.
+    An empty name (or one equal to the label) clears the mapping.
+    """
+    ms = await _get_session_or_404(session_id, session)
+    label = payload.label.strip()
+    name = payload.name.strip()
+    names = ms.speaker_names
+    if not name or name == label:
+        names.pop(label, None)
+    else:
+        names[label] = name
+    ms.speaker_names_json = json.dumps(names, ensure_ascii=False)
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
 # --------------------------------------------------------------------------
 # Live analysis + insights + Q&A
 # --------------------------------------------------------------------------
@@ -269,7 +301,10 @@ async def ask(
         .scalars()
         .all()
     )
-    transcript = "\n".join(f"[{s.speaker_label or 'Speaker'}] {s.text}" for s in segments)[-6000:]
+    names = ms.speaker_names
+    transcript = "\n".join(f"[{display_label(s.speaker_label, names)}] {s.text}" for s in segments)[
+        -6000:
+    ]
 
     topic_context = ""
     if ms.topic_id is not None:

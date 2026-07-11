@@ -14,6 +14,7 @@ just detaches it from any sessions that referenced it.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
@@ -51,6 +52,24 @@ class MeetingSession(Base, TimestampMixin):
     # the respective event; distinct from created_at (row creation).
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # JSON-encoded dict[str, str] mapping a raw diarization label (e.g.
+    # "Guest-2") to a user-chosen display name (e.g. "Thomas"). Segments keep
+    # their raw label; names are applied at display + analysis time so renaming
+    # one speaker updates every past and future phrase from that voice.
+    speaker_names_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
+
+    @property
+    def speaker_names(self) -> dict[str, str]:
+        try:
+            data = json.loads(self.speaker_names_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {str(k): str(v) for k, v in data.items()}
 
     segments: Mapped[list[MeetingSegment]] = relationship(
         "MeetingSegment",

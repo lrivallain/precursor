@@ -87,11 +87,17 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _format_transcript(segments: list[MeetingSegment]) -> str:
+def display_label(raw: str | None, names: dict[str, str]) -> str:
+    """Resolve a raw diarization label to its display name (fallback: raw)."""
+    if not raw:
+        return "Speaker"
+    return names.get(raw, raw)
+
+
+def _format_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
     lines: list[str] = []
     for seg in segments:
-        speaker = seg.speaker_label or "Speaker"
-        lines.append(f"[{speaker}] {seg.text}")
+        lines.append(f"[{display_label(seg.speaker_label, names)}] {seg.text}")
     text = "\n".join(lines)
     # Keep the most recent window when the transcript is long.
     return text[-_TRANSCRIPT_CHARS:]
@@ -182,7 +188,7 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
     if not segments:
         return []
 
-    transcript = _format_transcript(segments)
+    transcript = _format_transcript(segments, ms.speaker_names)
     topic_ctx = await _topic_context(session, ms.topic_id)
 
     system = _SYSTEM_PROMPT

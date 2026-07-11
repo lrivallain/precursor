@@ -799,6 +799,8 @@ export interface MeetingSession {
   status: MeetingStatus;
   language: string | null;
   topic_id: number | null;
+  // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
+  speaker_names: Record<string, string>;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;

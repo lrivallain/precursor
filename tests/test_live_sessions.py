@@ -241,3 +241,33 @@ def test_live_enabled_setting_roundtrips() -> None:
         assert client.get("/api/settings").json()["live_enabled"] is True
         client.put("/api/settings", json={"live_enabled": False})
         assert client.get("/api/settings").json()["live_enabled"] is False
+
+
+def test_speaker_rename_maps_all_and_clears() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Diarized"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["speaker_names"] == {}
+
+        # Two phrases from the same raw diarization label.
+        client.post(f"/api/live/{sid}/segments", json={"text": "Hi", "speaker_label": "Guest-2"})
+        client.post(f"/api/live/{sid}/segments", json={"text": "Bye", "speaker_label": "Guest-2"})
+
+        # Rename maps the label for the whole session (segments keep raw label).
+        renamed = client.post(
+            f"/api/live/{sid}/speakers", json={"label": "Guest-2", "name": "Thomas"}
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["speaker_names"] == {"Guest-2": "Thomas"}
+
+        # Raw labels are preserved on the segments (display applies the map).
+        rows = client.get(f"/api/live/{sid}/segments").json()
+        assert [r["speaker_label"] for r in rows] == ["Guest-2", "Guest-2"]
+
+        # A future phrase with the same label inherits the name at display time.
+        client.post(f"/api/live/{sid}/segments", json={"text": "Again", "speaker_label": "Guest-2"})
+        assert client.get(f"/api/live/{sid}").json()["speaker_names"] == {"Guest-2": "Thomas"}
+
+        # Clearing (empty name) removes the mapping.
+        cleared = client.post(f"/api/live/{sid}/speakers", json={"label": "Guest-2", "name": ""})
+        assert cleared.json()["speaker_names"] == {}

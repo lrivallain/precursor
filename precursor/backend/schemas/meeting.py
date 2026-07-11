@@ -42,10 +42,18 @@ class MeetingSessionRead(BaseModel):
     status: MeetingStatus
     language: str | None = None
     topic_id: int | None = None
+    speaker_names: dict[str, str] = Field(default_factory=dict)
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class SpeakerRenameRequest(BaseModel):
+    # The raw diarization label to rename (e.g. "Guest-2").
+    label: str = Field(min_length=1, max_length=64)
+    # The chosen display name. Empty (or equal to the label) clears the mapping.
+    name: str = Field(default="", max_length=64)
 
 
 class MeetingSegmentCreate(BaseModel):

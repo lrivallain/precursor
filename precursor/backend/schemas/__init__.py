@@ -24,6 +24,7 @@ from precursor.backend.schemas.meeting import (
     MeetingSummaryPost,
     MeetingSummaryPostResult,
     MeetingSummaryResult,
+    SpeakerRenameRequest,
 )
 from precursor.backend.schemas.memory import (
     MemoryCreate,
@@ -120,6 +121,7 @@ __all__ = [
     "SkillCreate",
     "SkillRead",
     "SkillUpdate",
+    "SpeakerRenameRequest",
     "StoppedTurn",
     "TopicCreate",
     "TopicNode",

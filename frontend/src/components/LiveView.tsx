@@ -111,6 +111,11 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   const [captureMic, setCaptureMic] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  // Raw diarization label currently being renamed inline, keyed by segment id so
+  // only the clicked occurrence shows the editor (the rename applies to all).
+  const [editingSegId, setEditingSegId] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const cancelEditRef = useRef(false);
 
   const { width: asideWidth, onMouseDown: onAsideResize } = useResizableWidth({
     storageKey: "precursor:live-aside:width",
@@ -339,6 +344,27 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     }
   }
 
+  const speakerNames = session.speaker_names ?? {};
+  const displayName = (raw: string | null): string | null =>
+    raw ? (speakerNames[raw] ?? raw) : null;
+
+  function beginRename(seg: MeetingSegment): void {
+    if (!seg.speaker_label) return;
+    setEditingSegId(seg.id);
+    setEditingValue(displayName(seg.speaker_label) ?? "");
+  }
+
+  async function commitRename(rawLabel: string): Promise<void> {
+    const value = editingValue.trim();
+    setEditingSegId(null);
+    try {
+      const updated = await api.renameMeetingSpeaker(session.id, rawLabel, value);
+      onUpdated(updated);
+    } catch {
+      // Non-fatal — leave the previous name in place.
+    }
+  }
+
   const groupedInsights = useMemo(() => {
     return KIND_META.map((meta) => ({
       ...meta,
@@ -508,15 +534,43 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
                     {formatOffset(seg.offset_ms)}
                   </span>
                   <div className="min-w-0 flex-1">
-                    {seg.speaker_label && (
-                      <span
-                        className={`mr-1.5 text-[12px] font-medium ${speakerColor(
-                          seg.speaker_label,
-                        )}`}
-                      >
-                        {seg.speaker_label}
-                      </span>
-                    )}
+                    {seg.speaker_label &&
+                      (editingSegId === seg.id ? (
+                        <input
+                          autoFocus
+                          value={editingValue}
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          onBlur={() => {
+                            if (cancelEditRef.current) {
+                              cancelEditRef.current = false;
+                              setEditingSegId(null);
+                              return;
+                            }
+                            void commitRename(seg.speaker_label as string);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            } else if (e.key === "Escape") {
+                              cancelEditRef.current = true;
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => beginRename(seg)}
+                          data-tooltip="Rename speaker"
+                          className={`mr-1.5 rounded text-[12px] font-medium hover:underline ${speakerColor(
+                            seg.speaker_label,
+                          )}`}
+                        >
+                          {displayName(seg.speaker_label)}
+                        </button>
+                      ))}
                     <span className="text-text">{seg.text}</span>
                   </div>
                 </div>

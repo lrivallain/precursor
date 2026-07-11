@@ -17,7 +17,7 @@ from precursor.backend.models import MeetingInsight, MeetingSegment, MeetingSess
 from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
-from precursor.backend.services.meeting_analysis import language_name
+from precursor.backend.services.meeting_analysis import display_label, language_name
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -49,8 +49,8 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _format_transcript(segments: list[MeetingSegment]) -> str:
-    lines = [f"[{s.speaker_label or 'Speaker'}] {s.text}" for s in segments]
+def _format_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
+    lines = [f"[{display_label(s.speaker_label, names)}] {s.text}" for s in segments]
     return "\n".join(lines)[-_TRANSCRIPT_CHARS:]
 
 
@@ -109,7 +109,10 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
     if lang:
         system += f"\n\nWrite the entire summary in {lang}."
 
-    user_parts = [f"Meeting title: {ms.title}", f"\nTranscript:\n{_format_transcript(segments)}"]
+    user_parts = [
+        f"Meeting title: {ms.title}",
+        f"\nTranscript:\n{_format_transcript(segments, ms.speaker_names)}",
+    ]
     insight_block = _format_insights(insights)
     if insight_block:
         user_parts.append(f"\nDerived insights:\n{insight_block}")
