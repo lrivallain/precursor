@@ -103,6 +103,30 @@ async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:
     return DEFAULT_LLM_REASONING_EFFORT
 
 
+async def resolve_live_fast_model(session: AsyncSession) -> str:
+    """Return the model used for live meeting analysis + Q&A.
+
+    A dedicated "fast" model keeps live insights snappy without changing the
+    default chat model. Falls back to the configured chat model when unset.
+    """
+    db_value = await _get_db_value(session, "live_fast_model")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return await resolve_llm_model(session)
+
+
+async def resolve_live_reasoning_effort(session: AsyncSession) -> str:
+    """Return the reasoning-effort hint for live analysis (defaults to auto/off).
+
+    Live analysis prioritises latency over depth, so this defaults to ``""``
+    (omit the param). Any value outside the known set is treated as auto/off.
+    """
+    db_value = await _get_db_value(session, "live_reasoning_effort")
+    if isinstance(db_value, str) and db_value in LLM_REASONING_EFFORTS:
+        return db_value
+    return DEFAULT_LLM_REASONING_EFFORT
+
+
 async def resolve_llm_provider(session: AsyncSession) -> str:
     """Return the active LLM provider id, or the factory default."""
     from precursor.backend.services.llm.registry import DEFAULT_PROVIDER, PROVIDERS

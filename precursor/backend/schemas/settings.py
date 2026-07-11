@@ -46,6 +46,9 @@ class SettingsPayload(BaseModel):
     # `azure_speech_key`). Endpoint is the resource URL; language is BCP-47.
     azure_speech_endpoint: str | None = None
     azure_speech_language: str | None = None
+    # Live meeting assistant model + reasoning effort (fast analysis / Q&A).
+    live_fast_model: str | None = None
+    live_reasoning_effort: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
     mcp_expose: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
@@ -110,6 +113,10 @@ class SettingsRead(BaseModel):
     azure_speech_endpoint: str = ""
     azure_speech_language: str = ""
     stt_azure_ready: bool = False
+    # Live meeting assistant: model + reasoning effort for fast live analysis and
+    # Q&A. Empty model resolves to the default chat model.
+    live_fast_model: str = ""
+    live_reasoning_effort: str = ""
     # Which Precursor capability sections the built-in MCP server exposes.
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
     # HTTP transport for the built-in 'precursor' MCP server.

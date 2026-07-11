@@ -109,6 +109,32 @@ export async function streamChatSession(
   await consumeStream(res.body, onEvent);
 }
 
+/**
+ * POST a question to a live meeting session and stream the answer.
+ * The exchange is not persisted server-side; the caller renders it live.
+ */
+export async function streamMeetingAsk(
+  sessionId: number,
+  question: string,
+  { signal, onEvent }: StreamChatOptions,
+): Promise<void> {
+  const res = await fetch(`/api/live/${sessionId}/ask`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      "X-Client-Id": CLIENT_ID,
+    },
+    body: JSON.stringify({ question }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
+  }
+
+  await consumeStream(res.body, onEvent);
+}
+
 async function consumeStream(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: SSEEvent) => void,

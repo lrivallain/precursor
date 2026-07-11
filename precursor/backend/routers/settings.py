@@ -102,6 +102,8 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
         issue_associations_enabled=bool(
             data.get("issue_associations_enabled", DEFAULT_ISSUE_ASSOCIATIONS_ENABLED)
         ),
+        live_fast_model=str(data.get("live_fast_model", "") or ""),
+        live_reasoning_effort=str(data.get("live_reasoning_effort", "") or ""),
         docker_available=docker_ok,
         **system,
     )

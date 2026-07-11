@@ -1,32 +1,50 @@
-"""Live meeting assistant endpoints — session CRUD.
+"""Live meeting assistant endpoints.
 
-A meeting session records an ongoing meeting: the browser transcribes audio
-into segments while the backend derives live insights. This router owns the
-session lifecycle (create / list / get / update / delete); transcript ingestion,
-live analysis, and summary attachment land in later phases.
+A meeting session records an ongoing meeting: the browser transcribes audio into
+segments while the backend derives live insights from a rolling window. This
+router owns the session lifecycle, transcript ingestion, live analysis, and a
+direct Q&A endpoint. Summary-to-topic lands in the next phase.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import get_session
-from precursor.backend.models import MeetingSegment, MeetingSession, Topic
+from precursor.backend.models import (
+    MeetingInsight,
+    MeetingSegment,
+    MeetingSession,
+    Message,
+    Topic,
+)
 from precursor.backend.schemas import (
+    MeetingAskRequest,
+    MeetingInsightRead,
     MeetingSegmentCreate,
     MeetingSegmentRead,
     MeetingSessionCreate,
     MeetingSessionRead,
     MeetingSessionUpdate,
 )
+from precursor.backend.services.app_settings import (
+    resolve_live_fast_model,
+    resolve_live_reasoning_effort,
+)
 from precursor.backend.services.events import publish_meeting_changed
+from precursor.backend.services.llm import get_llm_provider
+from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
+from precursor.backend.services.meeting_analysis import analyze_session
 
 logger = logging.getLogger(__name__)
 
@@ -190,3 +208,121 @@ async def append_segment(
     await session.commit()
     await session.refresh(segment)
     return segment
+
+
+# --------------------------------------------------------------------------
+# Live analysis + insights + Q&A
+# --------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/insights", response_model=list[MeetingInsightRead])
+async def list_insights(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> list[MeetingInsight]:
+    await _get_session_or_404(session_id, session)
+    result = await session.execute(
+        select(MeetingInsight)
+        .where(MeetingInsight.session_id == session_id)
+        .order_by(MeetingInsight.created_at, MeetingInsight.id)
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/{session_id}/analyze", response_model=list[MeetingInsightRead])
+async def analyze(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> list[MeetingInsight]:
+    """Re-derive the insight snapshot from the rolling transcript window."""
+    await _get_session_or_404(session_id, session)
+    try:
+        return await analyze_session(session, session_id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Analysis failed: {exc}") from exc
+
+
+@router.post("/{session_id}/ask")
+async def ask(
+    session_id: int,
+    payload: MeetingAskRequest,
+    session: AsyncSession = Depends(get_session),
+) -> EventSourceResponse:
+    """Answer a direct question using the transcript + attached topic context.
+
+    Streams the answer as SSE ``token`` events, then a ``done`` event. The
+    exchange is not persisted (it's a live aide, not a transcript entry).
+    """
+    ms = await _get_session_or_404(session_id, session)
+
+    segments = list(
+        (
+            await session.execute(
+                select(MeetingSegment)
+                .where(MeetingSegment.session_id == session_id)
+                .order_by(MeetingSegment.created_at, MeetingSegment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    transcript = "\n".join(f"[{s.speaker_label or 'Speaker'}] {s.text}" for s in segments)[-6000:]
+
+    topic_context = ""
+    if ms.topic_id is not None:
+        topic = await session.get(Topic, ms.topic_id)
+        if topic is not None:
+            rows = (
+                (
+                    await session.execute(
+                        select(Message)
+                        .where(Message.topic_id == ms.topic_id)
+                        .order_by(Message.created_at.desc())
+                        .limit(40)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            parts = [f"Topic: {topic.title}"]
+            if topic.description:
+                parts.append(topic.description)
+            for msg in reversed(rows):
+                if msg.content:
+                    parts.append(f"{msg.role.value}: {msg.content}")
+            topic_context = "\n".join(parts)[-4000:]
+
+    system = (
+        "You are a live meeting assistant. Answer the user's question concisely "
+        "using the meeting transcript and any attached topic context below. If "
+        "the answer isn't in the material, say so briefly and offer your best "
+        "guidance. Prefer a short, direct answer over a long one."
+    )
+    user_parts = [
+        f"Question: {payload.question}",
+        f"\nTranscript so far:\n{transcript or '(empty)'}",
+    ]
+    if topic_context:
+        user_parts.append(f"\nAttached topic context:\n{topic_context}")
+
+    provider = await get_llm_provider(session)
+    model = await resolve_live_fast_model(session)
+    effort = await resolve_live_reasoning_effort(session)
+
+    async def event_stream() -> AsyncIterator[dict[str, str]]:
+        try:
+            async for event in provider.stream_chat_with_tools(
+                model=model,
+                messages=[
+                    ChatMessage(role="system", content=system),
+                    ChatMessage(role="user", content="\n".join(user_parts)),
+                ],
+                tools=[],
+                reasoning_effort=effort or None,
+            ):
+                if isinstance(event, TextDeltaEvent) and event.content:
+                    yield {"event": "token", "data": json.dumps({"content": event.content})}
+            yield {"event": "done", "data": json.dumps({})}
+        except Exception as exc:  # surface a clean error frame to the client
+            logger.warning("Meeting Q&A stream failed: %s", exc)
+            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+
+    return EventSourceResponse(event_stream())

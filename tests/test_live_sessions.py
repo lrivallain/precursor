@@ -128,3 +128,74 @@ def test_meeting_segments_reject_unknown_session() -> None:
     with TestClient(app) as client:
         assert client.get("/api/live/999999/segments").status_code == 404
         assert client.post("/api/live/999999/segments", json={"text": "x"}).status_code == 404
+
+
+def test_parse_insights_tolerates_fences_and_junk() -> None:
+    from precursor.backend.services.meeting_analysis import _parse_insights
+
+    good = '{"insights": [{"kind": "action_item", "content": "Ship the fix"}]}'
+    assert _parse_insights(good) == [("action_item", "Ship the fix")]
+
+    fenced = "```json\n" + good + "\n```"
+    assert _parse_insights(fenced) == [("action_item", "Ship the fix")]
+
+    prose = "Here you go:\n" + good + "\nHope that helps!"
+    assert _parse_insights(prose) == [("action_item", "Ship the fix")]
+
+    # Unknown kinds are dropped; empty content is dropped.
+    mixed = '{"insights": [{"kind":"bogus","content":"x"},{"kind":"risk","content":""}]}'
+    assert _parse_insights(mixed) == []
+
+    assert _parse_insights("not json at all") == []
+
+
+def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.services.meeting_analysis as analysis
+    from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+    class _FakeProvider:
+        name = "fake"
+
+        async def stream_chat_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+            payload = (
+                '{"insights": ['
+                '{"kind": "decision", "content": "Use Postgres"},'
+                '{"kind": "action_item", "content": "Draft the schema"}]}'
+            )
+            yield TextDeltaEvent(content=payload)
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    async def _fake_get_provider(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _FakeProvider()
+
+    monkeypatch.setattr(analysis, "get_llm_provider", _fake_get_provider)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Analyze"}).json()["id"]
+        # No transcript yet => analyze is a no-op.
+        assert client.post(f"/api/live/{sid}/analyze").json() == []
+
+        client.post(f"/api/live/{sid}/segments", json={"text": "Let's use Postgres"})
+        result = client.post(f"/api/live/{sid}/analyze")
+        assert result.status_code == 200
+        kinds = {i["kind"] for i in result.json()}
+        assert kinds == {"decision", "action_item"}
+
+        # The snapshot is readable and replaced (not appended) on re-analysis.
+        assert len(client.get(f"/api/live/{sid}/insights").json()) == 2
+        assert len(client.post(f"/api/live/{sid}/analyze").json()) == 2
+
+
+def test_meeting_ask_streams_answer() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Ask"}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "We discussed pricing"})
+        with client.stream(
+            "POST", f"/api/live/{sid}/ask", json={"question": "What was discussed?"}
+        ) as resp:
+            assert resp.status_code == 200
+            body = "".join(resp.iter_text())
+        assert "event: token" in body
+        assert "event: done" in body

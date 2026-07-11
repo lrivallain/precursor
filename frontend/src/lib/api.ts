@@ -37,6 +37,7 @@ import type {
   Memory,
   MemoryCreate,
   MemoryUpdate,
+  MeetingInsight,
   MeetingSegment,
   MeetingSegmentCreate,
   MeetingSession,
@@ -611,6 +612,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  listMeetingInsights: (id: number) =>
+    request<MeetingInsight[]>(`/api/live/${id}/insights`),
+  analyzeMeeting: (id: number) =>
+    request<MeetingInsight[]>(`/api/live/${id}/analyze`, { method: "POST" }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),

@@ -158,6 +158,8 @@ export function SettingsPanel({ onClose }: Props) {
   const [azureEndpoint, setAzureEndpoint] = useState("");
   const [azureLanguage, setAzureLanguage] = useState("");
   const [azureKey, setAzureKey] = useState("");
+  const [liveFastModel, setLiveFastModel] = useState("");
+  const [liveReasoningEffort, setLiveReasoningEffort] = useState("");
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
   >({ state: "idle" });
@@ -261,6 +263,8 @@ export function SettingsPanel({ onClose }: Props) {
       setBackupRetention(s.backup_retention);
       setAzureEndpoint(s.azure_speech_endpoint);
       setAzureLanguage(s.azure_speech_language);
+      setLiveFastModel(s.live_fast_model);
+      setLiveReasoningEffort(s.live_reasoning_effort);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -351,6 +355,8 @@ export function SettingsPanel({ onClose }: Props) {
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
         azure_speech_language: azureLanguage,
+        live_fast_model: liveFastModel,
+        live_reasoning_effort: liveReasoningEffort,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         backup_enabled: backupEnabled,
@@ -1014,6 +1020,47 @@ export function SettingsPanel({ onClose }: Props) {
                       {sttTest.detail ?? "Test failed."}
                     </span>
                   )}
+                </div>
+
+                <div className="mt-6 border-t border-border pt-4">
+                  <h3 className="text-sm font-medium">Live meeting analysis</h3>
+                  <p className="text-[11px] text-muted mt-1 mb-3">
+                    Model used for the Live section&apos;s rolling insights and
+                    Q&amp;A. A fast model keeps live analysis snappy; leave on the
+                    default to reuse your chat model.
+                  </p>
+
+                  <label className="block text-xs text-muted mb-1">Fast model</label>
+                  <select
+                    value={liveFastModel}
+                    onChange={(e) => setLiveFastModel(e.target.value)}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                  >
+                    <option value="">Use default chat model</option>
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <label className="block text-xs text-muted mt-4 mb-1">
+                    Reasoning effort
+                  </label>
+                  <select
+                    value={liveReasoningEffort}
+                    onChange={(e) => setLiveReasoningEffort(e.target.value)}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                  >
+                    <option value="">Auto / off (fastest)</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  <p className="text-[11px] text-muted mt-1">
+                    Live analysis favours speed — keep this low. Only applies to
+                    reasoning-capable models.
+                  </p>
                 </div>
               </section>
             )}

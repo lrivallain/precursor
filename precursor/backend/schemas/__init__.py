@@ -14,6 +14,7 @@ from precursor.backend.schemas.chat import (
     ChatUpdate,
 )
 from precursor.backend.schemas.meeting import (
+    MeetingAskRequest,
     MeetingInsightRead,
     MeetingSegmentCreate,
     MeetingSegmentRead,
@@ -92,6 +93,7 @@ __all__ = [
     "GitActionResult",
     "GitStatus",
     "LocalPath",
+    "MeetingAskRequest",
     "MeetingInsightRead",
     "MeetingSegmentCreate",
     "MeetingSegmentRead",
