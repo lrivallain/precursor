@@ -7,7 +7,7 @@ embed secrets; segment/insight reads carry only presentation fields.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,6 +44,7 @@ class MeetingSessionRead(BaseModel):
     topic_id: int | None = None
     speaker_names: dict[str, str] = Field(default_factory=dict)
     attendees: list[str] = Field(default_factory=list)
+    external_meeting: dict[str, Any] | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime
@@ -107,3 +108,38 @@ class MeetingSummaryPost(BaseModel):
 class MeetingSummaryPostResult(BaseModel):
     topic_id: int
     message_id: int
+
+
+class AgendaAttendee(BaseModel):
+    name: str
+    email: str | None = None
+
+
+class AgendaEvent(BaseModel):
+    id: str | None = None
+    subject: str
+    start: str | None = None
+    end: str | None = None
+    organizer: str | None = None
+    attendees: list[AgendaAttendee] = Field(default_factory=list)
+    is_online: bool = False
+
+
+class AgendaResponse(BaseModel):
+    available: bool
+    events: list[AgendaEvent] = Field(default_factory=list)
+    detail: str | None = None
+
+
+class LinkMeetingRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=500)
+    start: str | None = None
+    end: str | None = None
+    organizer: str | None = None
+    attendees: list[AgendaAttendee] = Field(default_factory=list)
+    is_online: bool = False
+
+
+class TopicSummaryResult(BaseModel):
+    summary: str
+    model: str

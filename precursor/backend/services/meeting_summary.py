@@ -146,3 +146,76 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
         )
         await session.commit()
     return text, model
+
+
+_TOPIC_SUMMARY_SYSTEM = (
+    "You are briefing someone who is about to join a meeting about this topic. "
+    "From the topic's conversation (and any linked GitHub issue summary), write a "
+    "short markdown context brief: 4-8 bullets covering what it's about, the "
+    "current state, key decisions so far, open questions, and likely next actions. "
+    "Be faithful; no preamble."
+)
+
+
+async def summarize_topic_conversation(
+    session: AsyncSession, topic_id: int, *, language: str | None = None
+) -> tuple[str, str]:
+    """Summarize a topic's conversation as meeting context. Returns (text, model)."""
+    from precursor.backend.models import IssueContextCache, Message
+
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
+        return "", ""
+
+    rows = list(
+        (
+            await session.execute(
+                select(Message)
+                .where(Message.topic_id == topic_id)
+                .order_by(Message.created_at.desc())
+                .limit(60)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    parts: list[str] = [f"Topic: {topic.title}"]
+    if topic.description:
+        parts.append(f"Description: {topic.description}")
+    cache = await session.get(IssueContextCache, topic_id)
+    if cache is not None and cache.summary:
+        parts.append(f"Linked issue summary:\n{cache.summary}")
+    convo = "\n".join(f"{m.role.value}: {m.content}" for m in reversed(rows) if m.content)
+    if convo:
+        parts.append(f"Conversation:\n{convo}")
+    if len(parts) <= 1 and cache is None:
+        return "", ""
+
+    system = _TOPIC_SUMMARY_SYSTEM
+    lang = language_name(language)
+    if lang:
+        system += f"\n\nWrite the brief in {lang}."
+
+    provider = await get_llm_provider(session)
+    model = await resolve_llm_model(session)
+    text, usage = await complete_text_with_usage(
+        provider,
+        model=model,
+        messages=[
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content="\n\n".join(parts)[-16000:]),
+        ],
+    )
+    if usage is not None:
+        await record_usage(
+            session,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            source="/live-topic-context",
+            model=model,
+            topic_id=topic_id,
+        )
+        await session.commit()
+    return text, model

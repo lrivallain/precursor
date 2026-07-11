@@ -284,3 +284,90 @@ def test_attendees_roundtrip_and_dedupe() -> None:
         )
         assert r.status_code == 200
         assert r.json()["attendees"] == ["Thomas", "Marie"]
+
+
+class _TextProvider:
+    name = "fake"
+
+    async def stream_chat_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+        from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+        yield TextDeltaEvent(content="## Context\n- It's about the roadmap.")
+        yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+
+def test_topic_context_summary(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.services.meeting_summary as summary
+
+    async def _fake_provider(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _TextProvider()
+
+    monkeypatch.setattr(summary, "get_llm_provider", _fake_provider)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post(
+            "/api/topics", json={"title": "Roadmap", "description": "Plan Q3 work"}
+        ).json()["id"]
+        sid = client.post("/api/live", json={"title": "Ctx", "topic_id": tid}).json()["id"]
+
+        res = client.post(f"/api/live/{sid}/topic-summary")
+        assert res.status_code == 200
+        assert "Context" in res.json()["summary"]
+
+        # No topic → 400.
+        sid2 = client.post("/api/live", json={"title": "NoTopic"}).json()["id"]
+        assert client.post(f"/api/live/{sid2}/topic-summary").status_code == 400
+
+
+def test_agenda_endpoint(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    async def _fake_agenda(days: int = 7):  # type: ignore[no-untyped-def]
+        return (
+            True,
+            [
+                {
+                    "id": "abc",
+                    "subject": "Sprint review",
+                    "start": "2026-07-12T09:00:00",
+                    "end": "2026-07-12T10:00:00",
+                    "organizer": "Marie",
+                    "attendees": [
+                        {"name": "Marie", "email": "m@x"},
+                        {"name": "Thomas", "email": None},
+                    ],
+                    "is_online": True,
+                }
+            ],
+            None,
+        )
+
+    monkeypatch.setattr(live_router, "fetch_agenda", _fake_agenda)
+
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/live/m365/agenda")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is True
+        assert body["events"][0]["subject"] == "Sprint review"
+
+
+def test_link_meeting_merges_attendees() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Link"}).json()["id"]
+        client.put(f"/api/live/{sid}/attendees", json={"attendees": ["Marie"]})
+        r = client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "attendees": [{"name": "Marie"}, {"name": "Thomas"}],
+                "is_online": True,
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["attendees"] == ["Marie", "Thomas"]
+        assert body["external_meeting"]["subject"] == "Sprint review"

@@ -578,7 +578,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     />
   );
 
-  const contextNode = <ContextSection session={session} topicTitle={topicTitle} />;
+  const contextNode = (
+    <ContextSection session={session} onUpdated={onUpdated} topicTitle={topicTitle} />
+  );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
   const tabs: LiveTab[] = hasSummary

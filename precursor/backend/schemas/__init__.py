@@ -14,7 +14,11 @@ from precursor.backend.schemas.chat import (
     ChatUpdate,
 )
 from precursor.backend.schemas.meeting import (
+    AgendaAttendee,
+    AgendaEvent,
+    AgendaResponse,
     AttendeesUpdate,
+    LinkMeetingRequest,
     MeetingAskRequest,
     MeetingInsightRead,
     MeetingSegmentCreate,
@@ -26,6 +30,7 @@ from precursor.backend.schemas.meeting import (
     MeetingSummaryPostResult,
     MeetingSummaryResult,
     SpeakerRenameRequest,
+    TopicSummaryResult,
 )
 from precursor.backend.schemas.memory import (
     MemoryCreate,
@@ -76,6 +81,9 @@ from precursor.backend.schemas.workspace import (
 )
 
 __all__ = [
+    "AgendaAttendee",
+    "AgendaEvent",
+    "AgendaResponse",
     "AgentEvent",
     "AgentLinkRequest",
     "AgentPermissionDecision",
@@ -98,6 +106,7 @@ __all__ = [
     "FolderCreate",
     "GitActionResult",
     "GitStatus",
+    "LinkMeetingRequest",
     "LocalPath",
     "MeetingAskRequest",
     "MeetingInsightRead",
@@ -128,6 +137,7 @@ __all__ = [
     "TopicCreate",
     "TopicNode",
     "TopicRead",
+    "TopicSummaryResult",
     "TopicUpdate",
     "UsageBucket",
     "UsageStats",

@@ -62,15 +62,24 @@ produced in the session's language.
 
 ## Insights, Q&A, and summary
 
+The Live view is a **tabbed, splittable panel** — Transcript · Live Insights ·
+Summary · Context. Use the **Split** toggle to view two sections side by side
+(each pane has its own tab-strip and a draggable divider).
+
 While recording, the assistant re-derives a snapshot of insights (action items,
 decisions, open questions, suggestions, risks) from the rolling transcript on a
-short pause / interval cadence — shown in the resizable right-hand panel. Ask
-free-form questions in the **Ask assistant** box; answers stream from the
-transcript plus the attached topic. **Click a speaker label** in the transcript
-to rename it (e.g. `Guest-2` → `Thomas`) — the name applies to every past and
-future phrase from that voice. Press **Summarize** (or end the session, which
-auto-drafts) to generate a markdown recap you can edit and **post into the linked
-topic** as a message.
+short pause / interval cadence. Ask free-form questions in the **Ask assistant**
+box; answers stream from the transcript plus the attached topic. **Click a
+speaker label** in the transcript to rename it (`Guest-2` → `Thomas`) — the name
+applies to every past and future phrase from that voice.
+
+The **Summary** tab generates an editable markdown recap — including an
+**Attendees** list (seeded from renamed speakers and any linked meeting's
+invitees) — which you can **post into the linked topic** as a message.
+
+The **Context** tab shows an AI summary of the attached topic's conversation and,
+via the **WorkIQ MCP** (Microsoft 365), lets you **link a meeting from your
+agenda** so its invitees flow into the summary's attendees.
 
 ## Settings
 

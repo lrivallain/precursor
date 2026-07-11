@@ -87,6 +87,21 @@ class MeetingSession(Base, TimestampMixin):
             return []
         return [str(x) for x in data]
 
+    # JSON-encoded dict describing a linked M365 calendar meeting (subject,
+    # times, organizer, attendees, is_online), fetched via WorkIQ. Null when
+    # none is linked.
+    external_meeting_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def external_meeting(self) -> dict[str, object] | None:
+        if not self.external_meeting_json:
+            return None
+        try:
+            data = json.loads(self.external_meeting_json)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return data if isinstance(data, dict) else None
+
     segments: Mapped[list[MeetingSegment]] = relationship(
         "MeetingSegment",
         back_populates="session",

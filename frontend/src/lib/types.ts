@@ -784,6 +784,36 @@ export interface WorkspaceChatMessage {
 // ---- Live meeting assistant --------------------------------------------
 export type MeetingStatus = "active" | "ended";
 
+export interface AgendaAttendee {
+  name: string;
+  email: string | null;
+}
+
+export interface AgendaEvent {
+  id: string | null;
+  subject: string;
+  start: string | null;
+  end: string | null;
+  organizer: string | null;
+  attendees: AgendaAttendee[];
+  is_online: boolean;
+}
+
+export interface AgendaResponse {
+  available: boolean;
+  events: AgendaEvent[];
+  detail: string | null;
+}
+
+export interface ExternalMeeting {
+  subject: string;
+  start?: string | null;
+  end?: string | null;
+  organizer?: string | null;
+  attendees?: AgendaAttendee[];
+  is_online?: boolean;
+}
+
 export type MeetingInsightKind =
   | "action_item"
   | "decision"
@@ -803,6 +833,8 @@ export interface MeetingSession {
   speaker_names: Record<string, string>;
   // Attendee display names used in the summary (editable).
   attendees: string[];
+  // A linked M365 calendar meeting (subject/times/attendees), or null.
+  external_meeting: ExternalMeeting | null;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;

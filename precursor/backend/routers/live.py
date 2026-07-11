@@ -30,7 +30,10 @@ from precursor.backend.models import (
     Topic,
 )
 from precursor.backend.schemas import (
+    AgendaEvent,
+    AgendaResponse,
     AttendeesUpdate,
+    LinkMeetingRequest,
     MeetingAskRequest,
     MeetingInsightRead,
     MeetingSegmentCreate,
@@ -42,6 +45,7 @@ from precursor.backend.schemas import (
     MeetingSummaryPostResult,
     MeetingSummaryResult,
     SpeakerRenameRequest,
+    TopicSummaryResult,
 )
 from precursor.backend.services.app_settings import (
     resolve_live_fast_model,
@@ -50,12 +54,16 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
+from precursor.backend.services.meeting_agenda import fetch_agenda
 from precursor.backend.services.meeting_analysis import (
     analyze_session,
     display_label,
     language_name,
 )
-from precursor.backend.services.meeting_summary import generate_summary
+from precursor.backend.services.meeting_summary import (
+    generate_summary,
+    summarize_topic_conversation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -445,3 +453,63 @@ async def post_summary_to_topic(
     await session.refresh(msg)
     await publish_message_changed(ms.topic_id)
     return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id)
+
+
+# --------------------------------------------------------------------------
+# Context: topic summary + M365 agenda (WorkIQ)
+# --------------------------------------------------------------------------
+
+
+@router.post("/{session_id}/topic-summary", response_model=TopicSummaryResult)
+async def topic_summary(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> TopicSummaryResult:
+    """Summarize the attached topic's conversation as meeting context."""
+    ms = await _get_session_or_404(session_id, session)
+    if ms.topic_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No topic attached to this session.")
+    try:
+        text, model = await summarize_topic_conversation(session, ms.topic_id, language=ms.language)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
+    if not text:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "The topic has no conversation to summarize yet."
+        )
+    return TopicSummaryResult(summary=text, model=model)
+
+
+@router.get("/m365/agenda", response_model=AgendaResponse)
+async def agenda(days: int = 7) -> AgendaResponse:
+    """List upcoming M365 calendar meetings via WorkIQ (fail-closed)."""
+    available, events, detail = await fetch_agenda(days=days)
+    return AgendaResponse(
+        available=available,
+        events=[AgendaEvent(**e) for e in events],
+        detail=detail,
+    )
+
+
+@router.post("/{session_id}/meeting", response_model=MeetingSessionRead)
+async def link_meeting(
+    session_id: int,
+    payload: LinkMeetingRequest,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Link an agenda meeting: store it and merge its invitees into attendees."""
+    ms = await _get_session_or_404(session_id, session)
+    ms.external_meeting_json = payload.model_dump_json()
+
+    merged: list[str] = list(ms.attendees)
+    seen = set(merged)
+    for att in payload.attendees:
+        name = att.name.strip()
+        if name and name not in seen:
+            seen.add(name)
+            merged.append(name)
+    ms.attendees_json = json.dumps(merged, ensure_ascii=False)
+
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms

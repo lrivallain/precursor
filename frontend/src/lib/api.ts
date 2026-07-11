@@ -37,6 +37,8 @@ import type {
   Memory,
   MemoryCreate,
   MemoryUpdate,
+  AgendaEvent,
+  AgendaResponse,
   MeetingInsight,
   MeetingSegment,
   MeetingSegmentCreate,
@@ -634,6 +636,23 @@ export const api = {
     request<{ topic_id: number; message_id: number }>(`/api/live/${id}/summary/post`, {
       method: "POST",
       body: JSON.stringify({ summary }),
+    }),
+  topicContextSummary: (id: number) =>
+    request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
+      method: "POST",
+    }),
+  getAgenda: (days = 7) => request<AgendaResponse>(`/api/live/m365/agenda?days=${days}`),
+  linkMeeting: (id: number, event: AgendaEvent) =>
+    request<MeetingSession>(`/api/live/${id}/meeting`, {
+      method: "POST",
+      body: JSON.stringify({
+        subject: event.subject,
+        start: event.start,
+        end: event.end,
+        organizer: event.organizer,
+        attendees: event.attendees,
+        is_online: event.is_online,
+      }),
     }),
 
   // Workspaces
