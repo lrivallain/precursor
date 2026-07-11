@@ -111,8 +111,43 @@ def _port_free(host: str, port: int) -> bool:
     return True
 
 
-def _ensure_frontend_built() -> bool:
+def _frontend_is_stale(frontend_dir: Path, dist_dir: Path) -> bool:
+    """Return True if the built SPA bundle is missing or out of date.
+
+    The bundle is stale when ``dist_dir`` or its ``index.html`` entry point is
+    absent, or when any frontend *source* input is newer than the newest file in
+    ``dist_dir``. Source inputs are everything under ``frontend/`` except the
+    ``node_modules/`` and ``dist/`` trees (dependencies and build outputs, which
+    say nothing about whether the app code changed).
+    """
+    if not dist_dir.is_dir() or not (dist_dir / "index.html").is_file():
+        return True
+
+    def _newest_mtime(root: Path, *, skip: frozenset[str] = frozenset()) -> float:
+        newest = 0.0
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in skip]
+            for name in filenames:
+                try:
+                    mtime = os.stat(os.path.join(dirpath, name)).st_mtime
+                except OSError:  # pragma: no cover - file vanished mid-walk
+                    continue
+                if mtime > newest:
+                    newest = mtime
+        return newest
+
+    newest_source = _newest_mtime(frontend_dir, skip=frozenset({"node_modules", "dist"}))
+    newest_dist = _newest_mtime(dist_dir)
+    return newest_source > newest_dist
+
+
+def _ensure_frontend_built(*, rebuild_if_stale: bool = False) -> bool:
     """Ensure the frontend is built; build it if necessary.
+
+    Builds when ``frontend/dist`` is missing, or — when ``rebuild_if_stale`` is
+    set (the production path) — when the built bundle is out of date relative to
+    its sources. Dev callers leave ``rebuild_if_stale`` False because Vite serves
+    source live and never serves ``dist``.
 
     Returns True if the frontend dist exists or was successfully built;
     returns False if npm is unavailable (non-fatal in production).
@@ -121,18 +156,29 @@ def _ensure_frontend_built() -> bool:
     frontend_dir = repo_root / "frontend"
     dist_dir = repo_root / "frontend" / "dist"
 
-    if dist_dir.is_dir():
+    dist_present = dist_dir.is_dir()
+    stale = rebuild_if_stale and _frontend_is_stale(frontend_dir, dist_dir)
+
+    if dist_present and not stale:
         logger.info("Frontend dist already built.")
         return True
 
     if not (frontend_dir / "package.json").is_file():
+        # No source checkout (e.g. wheel serving bundled static). Don't fail:
+        # serve whatever dist we have, or warn if there's nothing to serve.
+        if dist_present:
+            logger.info("Frontend dist present; no source checkout to rebuild from.")
+            return True
         logger.warning(
             "frontend/ not found or incomplete — cannot build frontend. "
             "Running from a source checkout requires a complete frontend setup."
         )
         return False
 
-    logger.info("Building frontend...")
+    if stale:
+        logger.info("Frontend dist is stale (sources changed since last build) — rebuilding.")
+    else:
+        logger.info("Building frontend...")
     try:
         result = subprocess.run(
             ["npm", "--prefix", str(frontend_dir), "run", "build"],
@@ -239,7 +285,7 @@ def _announce_when_ready(
 def _run_prod(
     host: str, port: int, log_level: str, *, strict_port: bool, open_browser: bool
 ) -> None:
-    _ensure_frontend_built()
+    _ensure_frontend_built(rebuild_if_stale=True)
     resolved = _resolve_port(host, port, strict=strict_port)
     connect_host = _loopback(host)
     url = f"http://{connect_host}:{resolved}/"
