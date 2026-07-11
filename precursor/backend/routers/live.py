@@ -18,8 +18,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import MeetingSession, Topic
+from precursor.backend.models import MeetingSegment, MeetingSession, Topic
 from precursor.backend.schemas import (
+    MeetingSegmentCreate,
+    MeetingSegmentRead,
     MeetingSessionCreate,
     MeetingSessionRead,
     MeetingSessionUpdate,
@@ -143,3 +145,48 @@ async def delete_session_endpoint(
     await session.delete(ms)
     await session.commit()
     await publish_meeting_changed(session_id)
+
+
+# --------------------------------------------------------------------------
+# Transcript segments
+# --------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/segments", response_model=list[MeetingSegmentRead])
+async def list_segments(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> list[MeetingSegment]:
+    await _get_session_or_404(session_id, session)
+    result = await session.execute(
+        select(MeetingSegment)
+        .where(MeetingSegment.session_id == session_id)
+        .order_by(MeetingSegment.created_at, MeetingSegment.id)
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/{session_id}/segments",
+    response_model=MeetingSegmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def append_segment(
+    session_id: int,
+    payload: MeetingSegmentCreate,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSegment:
+    ms = await _get_session_or_404(session_id, session)
+    # First persisted phrase marks when recording actually began.
+    if ms.started_at is None:
+        ms.started_at = datetime.now(UTC)
+
+    segment = MeetingSegment(
+        session_id=session_id,
+        text=payload.text.strip(),
+        speaker_label=(payload.speaker_label or "").strip() or None,
+        offset_ms=payload.offset_ms,
+    )
+    session.add(segment)
+    await session.commit()
+    await session.refresh(segment)
+    return segment

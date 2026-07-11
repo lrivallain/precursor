@@ -820,6 +820,12 @@ export interface MeetingSegment {
   created_at: string;
 }
 
+export interface MeetingSegmentCreate {
+  text: string;
+  speaker_label?: string | null;
+  offset_ms?: number | null;
+}
+
 export interface MeetingInsight {
   id: number;
   session_id: number;

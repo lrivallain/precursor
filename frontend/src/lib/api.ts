@@ -37,6 +37,8 @@ import type {
   Memory,
   MemoryCreate,
   MemoryUpdate,
+  MeetingSegment,
+  MeetingSegmentCreate,
   MeetingSession,
   MeetingSessionCreate,
   MeetingSessionUpdate,
@@ -602,6 +604,13 @@ export const api = {
     }),
   deleteMeetingSession: (id: number) =>
     request<void>(`/api/live/${id}`, { method: "DELETE" }),
+  listMeetingSegments: (id: number) =>
+    request<MeetingSegment[]>(`/api/live/${id}/segments`),
+  appendMeetingSegment: (id: number, data: MeetingSegmentCreate) =>
+    request<MeetingSegment>(`/api/live/${id}/segments`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),

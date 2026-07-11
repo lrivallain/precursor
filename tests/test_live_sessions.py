@@ -86,3 +86,45 @@ def test_meeting_session_slugs_are_unique() -> None:
         b = client.post("/api/live", json={"title": "Standup"})
         assert a.status_code == b.status_code == 201
         assert a.json()["slug"] != b.json()["slug"]
+
+
+def test_meeting_segments_append_and_list() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        created = client.post("/api/live", json={"title": "Transcript test"})
+        sid = created.json()["id"]
+        assert created.json()["started_at"] is None
+
+        # Append two diarized phrases.
+        seg1 = client.post(
+            f"/api/live/{sid}/segments",
+            json={"text": "Bonjour", "speaker_label": "Guest-1", "offset_ms": 0},
+        )
+        assert seg1.status_code == 201
+        assert seg1.json()["speaker_label"] == "Guest-1"
+        assert seg1.json()["text"] == "Bonjour"
+
+        client.post(
+            f"/api/live/{sid}/segments",
+            json={"text": "Salut", "speaker_label": "Guest-2", "offset_ms": 1500},
+        )
+
+        # The first segment stamps started_at on the session.
+        assert client.get(f"/api/live/{sid}").json()["started_at"] is not None
+
+        listing = client.get(f"/api/live/{sid}/segments")
+        assert listing.status_code == 200
+        rows = listing.json()
+        assert [r["text"] for r in rows] == ["Bonjour", "Salut"]
+        assert [r["speaker_label"] for r in rows] == ["Guest-1", "Guest-2"]
+
+        # Deleting the session cascades to its segments (404 on the list).
+        assert client.delete(f"/api/live/{sid}").status_code == 204
+        assert client.get(f"/api/live/{sid}/segments").status_code == 404
+
+
+def test_meeting_segments_reject_unknown_session() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/live/999999/segments").status_code == 404
+        assert client.post("/api/live/999999/segments", json={"text": "x"}).status_code == 404

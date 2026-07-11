@@ -48,6 +48,14 @@ class MeetingSessionRead(BaseModel):
     updated_at: datetime
 
 
+class MeetingSegmentCreate(BaseModel):
+    text: str = Field(min_length=1)
+    # Diarization label from Azure ConversationTranscriber (e.g. "Guest-1").
+    speaker_label: str | None = Field(default=None, max_length=64)
+    # Milliseconds from the session's recording start.
+    offset_ms: int | None = Field(default=None, ge=0)
+
+
 class MeetingSegmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
