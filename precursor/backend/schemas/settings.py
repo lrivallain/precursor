@@ -75,6 +75,11 @@ class SettingsPayload(BaseModel):
     agents_approval_policy: str | None = None
     agents_system_prompt: str | None = None
     agents_watchdog_timeout_seconds: int | None = None
+    # Folder backup (services/backup.py) — copy the DB + blob store into a
+    # user-picked directory (e.g. a OneDrive-synced folder) on a daily cadence.
+    backup_enabled: bool | None = None
+    backup_dir: str | None = None
+    backup_retention: int | None = None
 
 
 class SettingsRead(BaseModel):
@@ -145,3 +150,12 @@ class SettingsRead(BaseModel):
     # Minutes... seconds, actually: how long a running session may sit with no
     # new runtime events before the watchdog marks it interrupted (resumable).
     agents_watchdog_timeout_seconds: int = 600
+    # Folder backup (services/backup.py): the enabled preference, target folder,
+    # snapshot retention, and read-only last-run state for the UI.
+    backup_enabled: bool = False
+    backup_dir: str = ""
+    backup_retention: int = 7
+    backup_last_run_at: str | None = None
+    # "ok" | "error" | null (never run).
+    backup_last_status: str | None = None
+    backup_last_error: str | None = None

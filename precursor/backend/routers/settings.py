@@ -40,6 +40,7 @@ from precursor.backend.services.app_settings import (
     resolve_mcp_http_enabled,
     resolve_system_settings,
 )
+from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
 from precursor.backend.services.github_auth import github_token_source
 from precursor.backend.services.mcp.precursor_server import (
@@ -157,6 +158,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system.update(await _stt_block(session))
     system.update(await _llm_block(session, data))
     system.update(await _agents_block(session))
+    system.update(await resolve_backup_status(session))
     return _as_read(data, system, docker_available()[0])
 
 
@@ -220,6 +222,17 @@ async def update_settings(
         except Exception:
             logger.exception("Applying agent session overrides failed after settings update")
 
+    # Kick off a backup right away when the user just enabled it (or changed the
+    # target folder while enabled), so they don't wait up to a day for the first
+    # one. The ticker's nudge only runs if a backup is actually due.
+    if any(k in data for k in ("backup_enabled", "backup_dir")):
+        from precursor.backend.services.backup_ticker import get_backup_ticker
+
+        try:
+            await get_backup_ticker().nudge()
+        except Exception:
+            logger.exception("Backup nudge failed after settings update")
+
     refreshed = await _load_all(session)
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
@@ -227,4 +240,22 @@ async def update_settings(
     system.update(await _stt_block(session))
     system.update(await _llm_block(session, refreshed))
     system.update(await _agents_block(session))
+    system.update(await resolve_backup_status(session))
     return _as_read(refreshed, system, docker_available()[0])
+
+
+@router.post("/backup/run")
+async def run_backup_now() -> dict[str, Any]:
+    """Run a folder backup immediately, ignoring the daily cadence.
+
+    Returns the outcome so the Settings UI can surface success/failure inline.
+    A ``skipped`` status means backups are disabled or misconfigured.
+    """
+    result = await run_backup()
+    return {
+        "ok": result.ok,
+        "status": result.status,
+        "detail": result.detail,
+        "db_snapshot": result.db_snapshot,
+        "blobs_copied": result.blobs_copied,
+    }

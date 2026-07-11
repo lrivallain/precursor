@@ -101,6 +101,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     tool_result_ticker = get_tool_result_ticker()
     await tool_result_ticker.start()
+    from precursor.backend.services.backup_ticker import get_backup_ticker
+
+    backup_ticker = get_backup_ticker()
+    await backup_ticker.start()
     from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
 
     workiq_keepalive = get_workiq_keepalive()
@@ -122,6 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await scheduler.stop()
         await reminder_ticker.stop()
         await tool_result_ticker.stop()
+        await backup_ticker.stop()
         await workiq_keepalive.stop()
         await agent_manager.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
