@@ -4,6 +4,7 @@ import type { MeetingSession, MeetingSessionCreate, TopicNode } from "../lib/typ
 import { useSettings } from "../lib/settingsStore";
 import { api } from "../lib/api";
 import { TopicPicker } from "./TopicPicker";
+import { Select } from "./Select";
 
 // Common BCP-47 tags offered in the create form. An empty value means "use the
 // configured Azure Speech default"; the meeting can still be switched later.
@@ -55,6 +56,15 @@ export function LiveStartHero({
   const [error, setError] = useState<string | null>(null);
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
+  const languageOptions = useMemo(
+    () =>
+      LANGUAGES.map((l) =>
+        l.value === "" && defaultLang
+          ? { value: "", label: `Use configured default (${defaultLang})` }
+          : l,
+      ),
+    [defaultLang],
+  );
 
   async function create(): Promise<void> {
     if (busy) return;
@@ -114,21 +124,15 @@ export function LiveStartHero({
           <TopicPicker topics={allTopics} value={topicId} onChange={setTopicId} />
         </label>
 
-        <label className="flex flex-col gap-1 text-[12px] text-muted">
+        <label className="flex flex-col items-start gap-1 text-[12px] text-muted">
           Meeting language
-          <select
+          <Select
             value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
-          >
-            {LANGUAGES.map((l) => (
-              <option key={l.value} value={l.value}>
-                {l.value === "" && defaultLang
-                  ? `Use configured default (${defaultLang})`
-                  : l.label}
-              </option>
-            ))}
-          </select>
+            onChange={setLanguage}
+            options={languageOptions}
+            ariaLabel="Meeting language"
+            fullWidth
+          />
         </label>
       </div>
 

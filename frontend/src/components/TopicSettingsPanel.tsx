@@ -19,6 +19,7 @@ import { useSettings } from "../lib/settingsStore";
 import type { Schedule, Topic, TopicNode } from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
 import { useConfirm } from "./ConfirmDialog";
+import { Select } from "./Select";
 import { Markdown } from "./Markdown";
 import {
   defaultRecurrence,
@@ -315,21 +316,20 @@ export function TopicSettingsPanel({
 
               <section>
                 <label className="block text-xs text-muted mb-1">Parent topic</label>
-                <select
+                <Select
                   value={parentId === "" ? "" : String(parentId)}
-                  onChange={(e) =>
-                    setParentId(e.target.value === "" ? "" : Number(e.target.value))
-                  }
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                >
-                  <option value="">— top level —</option>
-                  {flatten(tree).map((opt) => (
-                    <option key={opt.id} value={opt.id} disabled={forbiddenIds.has(opt.id)}>
-                      {"\u00A0".repeat(opt.depth * 2)}
-                      {opt.title}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setParentId(v === "" ? "" : Number(v))}
+                  ariaLabel="Parent topic"
+                  fullWidth
+                  options={[
+                    { value: "", label: "— top level —" },
+                    ...flatten(tree).map((opt) => ({
+                      value: String(opt.id),
+                      label: `${"\u00A0".repeat(opt.depth * 2)}${opt.title}`,
+                      disabled: forbiddenIds.has(opt.id),
+                    })),
+                  ]}
+                />
               </section>
 
               {issueAssociationsEnabled && (

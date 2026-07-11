@@ -23,6 +23,7 @@ import { SummaryPanel } from "./SummaryPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { TopicPicker } from "./TopicPicker";
 import { DevicePicker } from "./DevicePicker";
+import { Select } from "./Select";
 import { liveSummaryStore } from "../lib/liveSummaryStore";
 
 const LANGUAGES: { value: string; label: string }[] = [
@@ -497,18 +498,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
           + mic
         </label>
 
-        <select
+        <Select
           value={session.language ?? ""}
-          onChange={(e) => void applyLanguage(e.target.value)}
-          aria-label="Meeting language"
-          className="rounded border border-border bg-surface px-2 py-1 text-sm text-text outline-none focus:border-accent"
-        >
-          {LANGUAGES.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => void applyLanguage(v)}
+          options={LANGUAGES}
+          ariaLabel="Meeting language"
+          size="sm"
+        />
 
         <label className="inline-flex items-center gap-1 text-[11px] text-muted">
           Topic

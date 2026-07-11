@@ -43,6 +43,7 @@ import type {
   Settings,
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { Select } from "./Select";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
@@ -702,17 +703,13 @@ export function SettingsPanel({ onClose }: Props) {
             {category === "model" && (
               <section>
                 <h3 className="text-sm font-medium mb-2">Provider</h3>
-                <select
+                <Select
                   value={provider}
-                  onChange={(e) => onProviderChange(e.target.value)}
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={onProviderChange}
+                  options={providers.map((p) => ({ value: p.id, label: p.label }))}
+                  ariaLabel="LLM provider"
+                  fullWidth
+                />
 
                 {(() => {
                   const activeSpec = providers.find((p) => p.id === provider);
@@ -965,17 +962,13 @@ export function SettingsPanel({ onClose }: Props) {
                 </p>
 
                 <label className="block text-xs text-muted mt-4 mb-1">Language</label>
-                <select
+                <Select
                   value={azureLanguage}
-                  onChange={(e) => setAzureLanguage(e.target.value)}
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                >
-                  {STT_LANGUAGES.map((l) => (
-                    <option key={l.value} value={l.value}>
-                      {l.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setAzureLanguage}
+                  options={STT_LANGUAGES}
+                  ariaLabel="Speech recognition language"
+                  fullWidth
+                />
                 <p className="text-[11px] text-muted mt-1">
                   Recognition language. "Auto (browser)" uses the browser's
                   current locale.
@@ -1059,34 +1052,34 @@ export function SettingsPanel({ onClose }: Props) {
                   </p>
 
                   <label className="block text-xs text-muted mb-1">Fast model</label>
-                  <select
+                  <Select
                     value={liveFastModel}
-                    onChange={(e) => setLiveFastModel(e.target.value)}
+                    onChange={setLiveFastModel}
                     disabled={!liveEnabled}
-                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-60"
-                  >
-                    <option value="">Use default chat model</option>
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
+                    ariaLabel="Live analysis fast model"
+                    fullWidth
+                    options={[
+                      { value: "", label: "Use default chat model" },
+                      ...models.map((m) => ({ value: m.id, label: m.name })),
+                    ]}
+                  />
 
                   <label className="block text-xs text-muted mt-4 mb-1">
                     Reasoning effort
                   </label>
-                  <select
+                  <Select
                     value={liveReasoningEffort}
-                    onChange={(e) => setLiveReasoningEffort(e.target.value)}
+                    onChange={setLiveReasoningEffort}
                     disabled={!liveEnabled}
-                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-60"
-                  >
-                    <option value="">Auto / off (fastest)</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
+                    ariaLabel="Live analysis reasoning effort"
+                    fullWidth
+                    options={[
+                      { value: "", label: "Auto / off (fastest)" },
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium" },
+                      { value: "high", label: "High" },
+                    ]}
+                  />
                   <p className="text-[11px] text-muted mt-1">
                     Live analysis favours speed — keep this low. Only applies to
                     reasoning-capable models.
