@@ -199,3 +199,45 @@ def test_meeting_ask_streams_answer() -> None:
             body = "".join(resp.iter_text())
         assert "event: token" in body
         assert "event: done" in body
+
+
+def test_meeting_summary_generate_and_post() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        topic = client.post("/api/topics", json={"title": "Roadmap"})
+        tid = topic.json()["id"]
+        sid = client.post("/api/live", json={"title": "Recap", "topic_id": tid}).json()["id"]
+
+        # Nothing recorded yet → 400.
+        assert client.post(f"/api/live/{sid}/summary").status_code == 400
+
+        client.post(f"/api/live/{sid}/segments", json={"text": "We shipped the API"})
+        gen = client.post(f"/api/live/{sid}/summary")
+        assert gen.status_code == 200
+        assert isinstance(gen.json()["summary"], str) and gen.json()["summary"]
+
+        # Post the summary into the linked topic → a new assistant message.
+        posted = client.post(
+            f"/api/live/{sid}/summary/post", json={"summary": "## Summary\nAll good."}
+        )
+        assert posted.status_code == 201
+        assert posted.json()["topic_id"] == tid
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        assert any("Meeting summary" in m["content"] for m in msgs)
+
+
+def test_meeting_summary_post_requires_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "No topic"}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "hi"})
+        resp = client.post(f"/api/live/{sid}/summary/post", json={"summary": "x"})
+        assert resp.status_code == 400
+
+
+def test_live_enabled_setting_roundtrips() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/settings").json()["live_enabled"] is True
+        client.put("/api/settings", json={"live_enabled": False})
+        assert client.get("/api/settings").json()["live_enabled"] is False

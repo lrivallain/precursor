@@ -26,6 +26,7 @@ from precursor.backend.models import (
     MeetingSegment,
     MeetingSession,
     Message,
+    MessageRole,
     Topic,
 )
 from precursor.backend.schemas import (
@@ -36,15 +37,19 @@ from precursor.backend.schemas import (
     MeetingSessionCreate,
     MeetingSessionRead,
     MeetingSessionUpdate,
+    MeetingSummaryPost,
+    MeetingSummaryPostResult,
+    MeetingSummaryResult,
 )
 from precursor.backend.services.app_settings import (
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
 )
-from precursor.backend.services.events import publish_meeting_changed
+from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
-from precursor.backend.services.meeting_analysis import analyze_session
+from precursor.backend.services.meeting_analysis import analyze_session, language_name
+from precursor.backend.services.meeting_summary import generate_summary
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +301,9 @@ async def ask(
         "the answer isn't in the material, say so briefly and offer your best "
         "guidance. Prefer a short, direct answer over a long one."
     )
+    lang = language_name(ms.language)
+    if lang:
+        system += f" Respond in {lang}."
     user_parts = [
         f"Question: {payload.question}",
         f"\nTranscript so far:\n{transcript or '(empty)'}",
@@ -326,3 +334,55 @@ async def ask(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
     return EventSourceResponse(event_stream())
+
+
+# --------------------------------------------------------------------------
+# Summary + post-to-topic
+# --------------------------------------------------------------------------
+
+
+@router.post("/{session_id}/summary", response_model=MeetingSummaryResult)
+async def summarize(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingSummaryResult:
+    """Generate a markdown recap of the session (not persisted)."""
+    await _get_session_or_404(session_id, session)
+    try:
+        text, model = await generate_summary(session, session_id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
+    if not text:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Nothing to summarise yet — record some of the meeting first.",
+        )
+    return MeetingSummaryResult(summary=text, model=model)
+
+
+@router.post(
+    "/{session_id}/summary/post",
+    response_model=MeetingSummaryPostResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_summary_to_topic(
+    session_id: int,
+    payload: MeetingSummaryPost,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSummaryPostResult:
+    """Append the (possibly edited) summary as a message in the linked topic."""
+    ms = await _get_session_or_404(session_id, session)
+    if ms.topic_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Attach a topic to this session before posting a summary.",
+        )
+    if await session.get(Topic, ms.topic_id) is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Linked topic no longer exists.")
+
+    body = f"**Meeting summary — {ms.title}**\n\n{payload.summary.strip()}"
+    msg = Message(topic_id=ms.topic_id, role=MessageRole.ASSISTANT, content=body)
+    session.add(msg)
+    await session.commit()
+    await session.refresh(msg)
+    await publish_message_changed(ms.topic_id)
+    return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id)

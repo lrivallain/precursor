@@ -308,6 +308,7 @@ export default function App() {
   const settings = useSettings();
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
   const agentsEnabled = settings?.agents_enabled ?? false;
+  const liveEnabled = settings?.live_enabled ?? true;
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
 
@@ -689,6 +690,15 @@ export default function App() {
     setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
   }
+
+  // If the Live section gets disabled while it's open (or a deep link lands on
+  // it while disabled), fall back to Topics.
+  useEffect(() => {
+    if (!liveEnabled && sidebarMode === "live") {
+      history.pushState(null, "", "/topics");
+      setSidebarMode("topics");
+    }
+  }, [liveEnabled, sidebarMode]);
 
   // Reflect the active workspace + open file in the URL so a reload returns to
   // the same place. replaceState keeps it as a single history entry.
@@ -1265,6 +1275,7 @@ export default function App() {
         onNew={handleNew}
         onCreate={handleCreate}
         onRename={handleRenameTopic}
+        liveEnabled={liveEnabled}
         reminders={reminders}
         reminderTopicIds={reminderTopicIds}
         onReminderSelect={handleReminderSelect}

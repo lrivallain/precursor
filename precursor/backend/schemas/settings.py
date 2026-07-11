@@ -46,7 +46,9 @@ class SettingsPayload(BaseModel):
     # `azure_speech_key`). Endpoint is the resource URL; language is BCP-47.
     azure_speech_endpoint: str | None = None
     azure_speech_language: str | None = None
-    # Live meeting assistant model + reasoning effort (fast analysis / Q&A).
+    # Live meeting assistant: enablement + model + reasoning effort (fast
+    # analysis / Q&A).
+    live_enabled: bool | None = None
     live_fast_model: str | None = None
     live_reasoning_effort: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
@@ -113,8 +115,9 @@ class SettingsRead(BaseModel):
     azure_speech_endpoint: str = ""
     azure_speech_language: str = ""
     stt_azure_ready: bool = False
-    # Live meeting assistant: model + reasoning effort for fast live analysis and
-    # Q&A. Empty model resolves to the default chat model.
+    # Live meeting assistant: enablement + model + reasoning effort (fast
+    # analysis / Q&A). Empty model resolves to the default chat model.
+    live_enabled: bool = True
     live_fast_model: str = ""
     live_reasoning_effort: str = ""
     # Which Precursor capability sections the built-in MCP server exposes.

@@ -104,6 +104,7 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
         ),
         live_fast_model=str(data.get("live_fast_model", "") or ""),
         live_reasoning_effort=str(data.get("live_reasoning_effort", "") or ""),
+        live_enabled=bool(data.get("live_enabled", True)),
         docker_available=docker_ok,
         **system,
     )

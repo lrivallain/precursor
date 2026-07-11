@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Cpu,
   Plug,
+  Radio,
   Plus,
   Pencil,
   Trash2,
@@ -91,6 +92,7 @@ type Category =
   | "model"
   | "github"
   | "speech"
+  | "live"
   | "mcp"
   | "skills"
   | "roles"
@@ -111,6 +113,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "model", label: "Model", icon: Cpu, group: "App" },
   { id: "github", label: "GitHub", icon: Github, group: "Integrations" },
   { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
+  { id: "live", label: "Live", icon: Radio, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
@@ -160,6 +163,7 @@ export function SettingsPanel({ onClose }: Props) {
   const [azureKey, setAzureKey] = useState("");
   const [liveFastModel, setLiveFastModel] = useState("");
   const [liveReasoningEffort, setLiveReasoningEffort] = useState("");
+  const [liveEnabled, setLiveEnabled] = useState(true);
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
   >({ state: "idle" });
@@ -265,6 +269,7 @@ export function SettingsPanel({ onClose }: Props) {
       setAzureLanguage(s.azure_speech_language);
       setLiveFastModel(s.live_fast_model);
       setLiveReasoningEffort(s.live_reasoning_effort);
+      setLiveEnabled(s.live_enabled);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -357,6 +362,7 @@ export function SettingsPanel({ onClose }: Props) {
         azure_speech_language: azureLanguage,
         live_fast_model: liveFastModel,
         live_reasoning_effort: liveReasoningEffort,
+        live_enabled: liveEnabled,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         backup_enabled: backupEnabled,
@@ -1021,20 +1027,43 @@ export function SettingsPanel({ onClose }: Props) {
                     </span>
                   )}
                 </div>
+              </section>
+            )}
 
-                <div className="mt-6 border-t border-border pt-4">
-                  <h3 className="text-sm font-medium">Live meeting analysis</h3>
+            {category === "live" && (
+              <section>
+                <p className="text-sm text-muted mb-3">
+                  The <strong>Live</strong> section records a meeting, transcribes
+                  it with speaker labels, surfaces live insights, and can attach a
+                  summary to a topic. Transcription uses your{" "}
+                  <strong>Azure Speech</strong> resource (configured under
+                  Speech-to-text).
+                </p>
+
+                <label className="flex items-center gap-2 mb-4 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={liveEnabled}
+                    onChange={(e) => setLiveEnabled(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  Enable the Live meeting assistant section
+                </label>
+
+                <div className="border-t border-border pt-4">
+                  <h3 className="text-sm font-medium">Analysis model</h3>
                   <p className="text-[11px] text-muted mt-1 mb-3">
-                    Model used for the Live section&apos;s rolling insights and
-                    Q&amp;A. A fast model keeps live analysis snappy; leave on the
-                    default to reuse your chat model.
+                    Model for the rolling live insights and Q&amp;A. A fast model
+                    keeps analysis snappy; leave on the default to reuse your chat
+                    model. (Summaries use the default chat model for quality.)
                   </p>
 
                   <label className="block text-xs text-muted mb-1">Fast model</label>
                   <select
                     value={liveFastModel}
                     onChange={(e) => setLiveFastModel(e.target.value)}
-                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    disabled={!liveEnabled}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-60"
                   >
                     <option value="">Use default chat model</option>
                     {models.map((m) => (
@@ -1050,7 +1079,8 @@ export function SettingsPanel({ onClose }: Props) {
                   <select
                     value={liveReasoningEffort}
                     onChange={(e) => setLiveReasoningEffort(e.target.value)}
-                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    disabled={!liveEnabled}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-60"
                   >
                     <option value="">Auto / off (fastest)</option>
                     <option value="low">Low</option>

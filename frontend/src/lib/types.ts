@@ -337,8 +337,9 @@ export interface Settings {
   azure_speech_endpoint: string;
   azure_speech_language: string;
   stt_azure_ready: boolean;
-  // Live meeting assistant: model + reasoning effort for fast analysis / Q&A.
-  // Empty model resolves to the default chat model.
+  // Live meeting assistant: enablement + model + reasoning effort for fast
+  // analysis / Q&A. Empty model resolves to the default chat model.
+  live_enabled: boolean;
   live_fast_model: string;
   live_reasoning_effort: string;
   // Which Precursor capability sections the built-in MCP server exposes.
@@ -400,6 +401,7 @@ export interface SettingsUpdate {
   llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
+  live_enabled?: boolean;
   live_fast_model?: string;
   live_reasoning_effort?: string;
   mcp_expose?: Record<string, boolean>;

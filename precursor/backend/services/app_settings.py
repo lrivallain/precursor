@@ -103,6 +103,14 @@ async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:
     return DEFAULT_LLM_REASONING_EFFORT
 
 
+async def resolve_live_enabled(session: AsyncSession) -> bool:
+    """Whether the Live meeting assistant section is enabled (default on)."""
+    db_value = await _get_db_value(session, "live_enabled")
+    if isinstance(db_value, bool):
+        return db_value
+    return True
+
+
 async def resolve_live_fast_model(session: AsyncSession) -> str:
     """Return the model used for live meeting analysis + Q&A.
 

@@ -21,6 +21,9 @@ from precursor.backend.schemas.meeting import (
     MeetingSessionCreate,
     MeetingSessionRead,
     MeetingSessionUpdate,
+    MeetingSummaryPost,
+    MeetingSummaryPostResult,
+    MeetingSummaryResult,
 )
 from precursor.backend.schemas.memory import (
     MemoryCreate,
@@ -100,6 +103,9 @@ __all__ = [
     "MeetingSessionCreate",
     "MeetingSessionRead",
     "MeetingSessionUpdate",
+    "MeetingSummaryPost",
+    "MeetingSummaryPostResult",
+    "MeetingSummaryResult",
     "MemoryCreate",
     "MemoryRead",
     "MemoryUpdate",

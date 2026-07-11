@@ -79,3 +79,18 @@ class MeetingInsightRead(BaseModel):
 
 class MeetingAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+
+
+class MeetingSummaryResult(BaseModel):
+    summary: str
+    model: str
+
+
+class MeetingSummaryPost(BaseModel):
+    # The (possibly user-edited) markdown to append to the linked topic.
+    summary: str = Field(min_length=1)
+
+
+class MeetingSummaryPostResult(BaseModel):
+    topic_id: int
+    message_id: int

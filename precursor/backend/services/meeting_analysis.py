@@ -34,6 +34,40 @@ _TOPIC_CHARS = 4000
 
 VALID_KINDS = {"action_item", "decision", "question", "suggestion", "risk", "note"}
 
+# BCP-47 tag -> human language name for prompting. Falls back to the raw tag.
+_LANG_NAMES = {
+    "en": "English",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "nl": "Dutch",
+    "sv": "Swedish",
+    "da": "Danish",
+    "no": "Norwegian",
+    "fi": "Finnish",
+    "pl": "Polish",
+    "cs": "Czech",
+    "ro": "Romanian",
+    "ja": "Japanese",
+    "zh": "Chinese",
+    "ko": "Korean",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "tr": "Turkish",
+}
+
+
+def language_name(tag: str | None) -> str | None:
+    """Map a BCP-47 tag (e.g. ``fr-FR``) to a language name, or None when unset."""
+    if not tag:
+        return None
+    base = tag.split("-")[0].lower()
+    return _LANG_NAMES.get(base, tag)
+
+
 _SYSTEM_PROMPT = (
     "You are a live meeting assistant. From the running transcript (and any "
     "attached topic context), extract the CURRENT state of the discussion as a "
@@ -151,6 +185,11 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
     transcript = _format_transcript(segments)
     topic_ctx = await _topic_context(session, ms.topic_id)
 
+    system = _SYSTEM_PROMPT
+    lang = language_name(ms.language)
+    if lang:
+        system += f"\n\nWrite every insight's content in {lang}."
+
     user_parts = [f"Transcript so far:\n{transcript}"]
     if topic_ctx:
         user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
@@ -163,7 +202,7 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
             provider,
             model=model,
             messages=[
-                ChatMessage(role="system", content=_SYSTEM_PROMPT),
+                ChatMessage(role="system", content=system),
                 ChatMessage(role="user", content="\n".join(user_parts)),
             ],
             reasoning_effort=effort or None,

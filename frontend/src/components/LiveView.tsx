@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Mic, Radio, RefreshCw, Send, Square, Trash2 } from "lucide-react";
+import { CircleHelp, FileText, Mic, Radio, RefreshCw, Send, Square, Trash2 } from "lucide-react";
 import type {
   MeetingInsight,
   MeetingInsightKind,
@@ -10,6 +10,8 @@ import type {
 import { api } from "../lib/api";
 import { streamMeetingAsk } from "../lib/sse";
 import { useSettings } from "../lib/settingsStore";
+import { useResizableWidth } from "../lib/useResizableWidth";
+import { useResizableHeight } from "../lib/useResizableHeight";
 import {
   listAudioInputDevices,
   useConversationTranscriber,
@@ -17,6 +19,8 @@ import {
 } from "../lib/useConversationTranscriber";
 import { useConfirm } from "./ConfirmDialog";
 import { LiveAudioHelp } from "./LiveAudioHelp";
+import { LiveSummary } from "./LiveSummary";
+import { ResizeHandle } from "./ResizeHandle";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -106,6 +110,22 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   const [deviceId, setDeviceId] = useState<string>("");
   const [captureMic, setCaptureMic] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  const { width: asideWidth, onMouseDown: onAsideResize } = useResizableWidth({
+    storageKey: "precursor:live-aside:width",
+    defaultWidth: 320,
+    min: 240,
+    max: 620,
+    side: "left",
+  });
+  const { height: qaHeight, onMouseDown: onQaResize } = useResizableHeight({
+    storageKey: "precursor:live-qa:height",
+    defaultHeight: 200,
+    min: 120,
+    max: 520,
+    side: "top",
+  });
 
   const [insights, setInsights] = useState<MeetingInsight[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
@@ -266,6 +286,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     try {
       const updated = await api.updateMeetingSession(session.id, { status: next });
       onUpdated(updated);
+      // Auto-draft a summary when the meeting ends (if anything was recorded).
+      if (next === "ended" && segCountRef.current > 0) setSummaryOpen(true);
     } finally {
       setBusy(false);
     }
@@ -412,6 +434,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px] text-muted">Topic: {topicTitle ?? "none"}</span>
+          <button
+            type="button"
+            onClick={() => setSummaryOpen(true)}
+            disabled={segments.length === 0}
+            data-tooltip="Generate a summary"
+            className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-50"
+          >
+            <FileText size={14} /> Summarize
+          </button>
           {isEnded ? (
             <button
               type="button"
@@ -500,8 +531,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
           )}
         </div>
 
-        {/* Insights + Q&A */}
-        <aside className="flex w-80 shrink-0 flex-col border-l border-border">
+        {/* Insights + Q&A (resizable width) */}
+        <aside
+          className="relative flex shrink-0 flex-col border-l border-border"
+          style={{ width: asideWidth }}
+        >
+          <ResizeHandle onMouseDown={onAsideResize} side="left" />
+
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-[12px] font-medium">Live insights</span>
             <button
@@ -546,14 +582,34 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
             )}
           </div>
 
-          {/* Q&A */}
-          <div className="border-t border-border p-3">
-            {answer && (
-              <div className="mb-2 max-h-40 overflow-y-auto rounded bg-surface px-2 py-1.5 text-[13px] text-text">
-                {answer}
-              </div>
-            )}
-            <div className="flex items-end gap-1.5">
+          {/* Ask assistant (resizable height) */}
+          <div
+            className="relative flex shrink-0 flex-col border-t border-border"
+            style={{ height: qaHeight }}
+          >
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              onMouseDown={onQaResize}
+              className="group absolute -top-0.5 left-0 z-10 h-1 w-full cursor-row-resize select-none"
+            >
+              <div className="mx-auto h-px w-full bg-transparent transition-colors group-hover:bg-accent/60" />
+            </div>
+
+            <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              Ask assistant
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3">
+              {answer ? (
+                <div className="rounded bg-surface px-2 py-1.5 text-[13px] text-text">{answer}</div>
+              ) : (
+                <p className="text-[12px] text-muted">
+                  Ask about anything discussed — answered from the transcript and
+                  attached topic.
+                </p>
+              )}
+            </div>
+            <div className="flex items-end gap-1.5 p-2">
               <textarea
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
@@ -565,7 +621,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
                 }}
                 rows={2}
                 placeholder="Ask the assistant…"
-                className="min-w-0 flex-1 resize-none rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
+                className="min-h-[2.25rem] min-w-0 flex-1 resize-y rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
               />
               <button
                 type="button"
@@ -582,6 +638,14 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
       </div>
 
       {helpOpen && <LiveAudioHelp onClose={() => setHelpOpen(false)} />}
+      {summaryOpen && (
+        <LiveSummary
+          sessionId={session.id}
+          topicId={session.topic_id}
+          topicTitle={topicTitle}
+          onClose={() => setSummaryOpen(false)}
+        />
+      )}
     </div>
   );
 }

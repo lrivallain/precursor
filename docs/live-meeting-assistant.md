@@ -57,7 +57,25 @@ transcribed together.
 
 Pick the meeting language when creating the session or from the Live toolbar.
 Changing it mid-session briefly restarts the recognizer (Azure can't switch a
-running recognizer's language in place).
+running recognizer's language in place). Live insights and Q&A answers are
+produced in the session's language.
+
+## Insights, Q&A, and summary
+
+While recording, the assistant re-derives a snapshot of insights (action items,
+decisions, open questions, suggestions, risks) from the rolling transcript on a
+short pause / interval cadence — shown in the resizable right-hand panel. Ask
+free-form questions in the **Ask assistant** box; answers stream from the
+transcript plus the attached topic. Press **Summarize** (or end the session, which
+auto-drafts) to generate a markdown recap you can edit and **post into the linked
+topic** as a message.
+
+## Settings
+
+Configure the section under **Settings → Live**: enable/disable it, and choose
+the fast model + reasoning effort used for live insights and Q&A (summaries use
+your default chat model for quality). Speech credentials live under
+**Settings → Speech-to-text**.
 
 ## Privacy
 

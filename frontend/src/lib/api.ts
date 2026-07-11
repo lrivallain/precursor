@@ -616,6 +616,15 @@ export const api = {
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/analyze`, { method: "POST" }),
+  summarizeMeeting: (id: number) =>
+    request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
+      method: "POST",
+    }),
+  postMeetingSummary: (id: number, summary: string) =>
+    request<{ topic_id: number; message_id: number }>(`/api/live/${id}/summary/post`, {
+      method: "POST",
+      body: JSON.stringify({ summary }),
+    }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),
