@@ -81,7 +81,7 @@ async def gc_orphan_blobs() -> int:
     Best-effort — failures are logged, not raised.
     """
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import Attachment, NoteDraftAttachment
+    from precursor.backend.models import Attachment, MeetingAttachment, NoteDraftAttachment
 
     root = _blobs_root()
     if not root.exists():
@@ -94,6 +94,7 @@ async def gc_orphan_blobs() -> int:
         referenced |= set(
             (await session.execute(select(NoteDraftAttachment.sha256))).scalars().all()
         )
+        referenced |= set((await session.execute(select(MeetingAttachment.sha256))).scalars().all())
 
     removed = 0
     for path in root.rglob("*"):

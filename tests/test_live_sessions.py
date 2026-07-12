@@ -458,6 +458,28 @@ def test_html_to_text_strips_tags_and_scripts() -> None:
     assert "color:red" not in out
 
 
+def test_gc_keeps_meeting_attachment_blobs() -> None:
+    import asyncio
+
+    from precursor.backend.services.blob_store import gc_orphan_blobs
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Att"}).json()["id"]
+        png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+            b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        att = client.post(
+            f"/api/live/{sid}/attachments", files={"file": ("shot.png", png, "image/png")}
+        ).json()
+        # The startup blob sweep must not delete meeting-note attachments.
+        asyncio.run(gc_orphan_blobs())
+        served = client.get(att["url"])
+        assert served.status_code == 200, served.text
+
+
 def test_post_summary_copies_attachments_to_topic() -> None:
     app = create_app()
     with TestClient(app) as client:
@@ -481,6 +503,10 @@ def test_post_summary_copies_attachments_to_topic() -> None:
         # The file was copied into the topic message's gallery…
         assert len(posted["attachments"]) == 1
         assert posted["attachments"][0]["original_filename"] == "shot.png"
+        # …the copied attachment actually serves its bytes…
+        served = client.get(f"/api/attachments/{posted['attachments'][0]['id']}")
+        assert served.status_code == 200, served.text
+        assert served.headers["content-type"].startswith("image/")
         # …and the raw live-URL reference was stripped from the body.
         assert "/api/live/attachments/" not in posted["content"]
 
