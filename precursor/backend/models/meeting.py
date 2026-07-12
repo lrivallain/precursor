@@ -49,10 +49,10 @@ class MeetingSession(Base, TimestampMixin):
     )
 
     # Chat spawned for the "Ask assistant" tab, created on the first question and
-    # grounded on the live context. SET NULL so deleting the chat just detaches.
-    chat_id: Mapped[int | None] = mapped_column(
-        ForeignKey("chats.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # grounded on the live context. Logically references chats.id; kept as a
+    # plain indexed column (no DB-level FK) because SQLite can't ADD a FK via
+    # ALTER and a dangling id is tolerated (ensure_chat re-fetches / re-spawns).
+    chat_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # When recording first began / when the session was ended. Both null until
     # the respective event; distinct from created_at (row creation).
@@ -90,6 +90,26 @@ class MeetingSession(Base, TimestampMixin):
     def attendees(self) -> list[str]:
         try:
             data = json.loads(self.attendees_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [str(x) for x in data]
+
+    # JSON-encoded list[str] of enabled Live features for this session. Gates the
+    # optional tabs/processing. Canonical ids: insights, notes, assistant,
+    # proactive, translation. Defaults to the always-on pair (insights, notes).
+    features_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default='["insights", "notes"]',
+        server_default='["insights", "notes"]',
+    )
+
+    @property
+    def features(self) -> list[str]:
+        try:
+            data = json.loads(self.features_json or "[]")
         except (json.JSONDecodeError, TypeError):
             return []
         if not isinstance(data, list):

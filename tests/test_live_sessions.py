@@ -680,3 +680,52 @@ def test_live_chat_grounding_includes_context() -> None:
         assert "Remember the deadline" in text
         # An unrelated chat id yields no grounding.
         assert asyncio.run(grounding_for(999999)) == ""
+
+
+def test_session_features_default_dedupe_validate() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Feat"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["features"] == ["insights", "notes"]
+        r = client.patch(
+            f"/api/live/{sid}",
+            json={"features": ["insights", "insights", "bogus", "assistant", "translation"]},
+        )
+        assert r.status_code == 200
+        assert r.json()["features"] == ["insights", "assistant", "translation"]
+
+
+def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.services.meeting_analysis as ma
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _TextProvider()
+
+    async def _model(_session):  # type: ignore[no-untyped-def]
+        return "fake"
+
+    async def _effort(_session):  # type: ignore[no-untyped-def]
+        return None
+
+    monkeypatch.setattr(ma, "get_llm_provider", _prov)
+    monkeypatch.setattr(ma, "resolve_live_fast_model", _model)
+    monkeypatch.setattr(ma, "resolve_live_reasoning_effort", _effort)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "T"}).json()["id"]
+        # Nothing recorded yet → 400.
+        assert client.post(f"/api/live/{sid}/suggest").status_code == 400
+        assert (
+            client.post(f"/api/live/{sid}/translate", json={"target_lang": "fr"}).status_code == 400
+        )
+        client.post(
+            f"/api/live/{sid}/segments", json={"text": "Bonjour", "speaker_label": "1:Guest-1"}
+        )
+        r = client.post(f"/api/live/{sid}/translate", json={"target_lang": "fr"})
+        assert r.status_code == 200
+        assert r.json()["text"]
+        assert r.json()["target_lang"] == "fr"
+        s = client.post(f"/api/live/{sid}/suggest")
+        assert s.status_code == 200
+        assert s.json()["suggestion"]

@@ -650,6 +650,20 @@ export const api = {
     return (await res.json()) as MeetingAttachment;
   },
   ensureMeetingChat: (id: number) => request<Chat>(`/api/live/${id}/chat`, { method: "POST" }),
+  setMeetingFeatures: (id: number, features: string[]) =>
+    request<MeetingSession>(`/api/live/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ features }),
+    }),
+  suggestMeeting: (id: number) =>
+    request<{ suggestion: string; model: string }>(`/api/live/${id}/suggest`, {
+      method: "POST",
+    }),
+  translateMeeting: (id: number, targetLang: string) =>
+    request<{ text: string; target_lang: string; model: string }>(`/api/live/${id}/translate`, {
+      method: "POST",
+      body: JSON.stringify({ target_lang: targetLang }),
+    }),
   listMeetingInsights: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>

@@ -443,3 +443,139 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
     for row in rows:
         await session.refresh(row)
     return rows
+
+
+async def translate_transcript(
+    session: AsyncSession, session_id: int, target_lang: str
+) -> tuple[str, str]:
+    """Translate the current transcript into ``target_lang``. Returns (text, model)."""
+    ms = await session.get(MeetingSession, session_id)
+    if ms is None:
+        return "", ""
+    segments = list(
+        (
+            await session.execute(
+                select(MeetingSegment)
+                .where(MeetingSegment.session_id == session_id)
+                .order_by(MeetingSegment.created_at, MeetingSegment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not segments:
+        return "", ""
+
+    transcript = _format_transcript(segments, ms.speaker_names)
+    lang = language_name(target_lang) or target_lang
+    system = (
+        f"Translate the meeting transcript into {lang}. Keep the '[Speaker] text' "
+        "structure and line order exactly; translate only the spoken text, not the "
+        "speaker labels. Output only the translation, with no commentary."
+    )
+    provider = await get_llm_provider(session)
+    model = await resolve_live_fast_model(session)
+    effort = await resolve_live_reasoning_effort(session)
+    text, usage = await complete_text_with_usage(
+        provider,
+        model=model,
+        messages=[
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content=transcript),
+        ],
+        reasoning_effort=effort or None,
+    )
+    if usage is not None:
+        await record_usage(
+            session,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            source="/live-translate",
+            model=model,
+        )
+        await session.commit()
+    return text, model
+
+
+_SUGGEST_SYSTEM = (
+    "You are a proactive live meeting copilot. From the recent discussion and the "
+    "context below, propose a concrete, actionable answer or solution to the CURRENT "
+    "open question or problem being discussed. Be specific and brief — a few bullet "
+    "points at most. If nothing needs solving right now, say so in one line."
+)
+
+
+async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tuple[str, str]:
+    """Propose a solution/answer to the current discussion. Returns (text, model)."""
+    ms = await session.get(MeetingSession, session_id)
+    if ms is None:
+        return "", ""
+    segments = list(
+        (
+            await session.execute(
+                select(MeetingSegment)
+                .where(MeetingSegment.session_id == session_id)
+                .order_by(MeetingSegment.created_at, MeetingSegment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not segments:
+        return "", ""
+    insights = list(
+        (
+            await session.execute(
+                select(MeetingInsight)
+                .where(MeetingInsight.session_id == session_id)
+                .order_by(MeetingInsight.created_at, MeetingInsight.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    system = _SUGGEST_SYSTEM
+    lang = language_name(ms.language)
+    if lang:
+        system += f" Respond in {lang}."
+
+    user_parts = [f"Recent discussion:\n{_format_transcript(segments, ms.speaker_names)}"]
+    if insights:
+        user_parts.append(
+            "Current insights:\n" + "\n".join(f"- [{i.kind}] {i.content}" for i in insights)
+        )
+    topic_ctx = await _topic_context(session, ms.topic_id)
+    if topic_ctx:
+        user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
+    meeting_ctx = meeting_context_text(ms.external_meeting)
+    if meeting_ctx:
+        user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
+    notes_ctx = context_notes_text(ms.context_notes)
+    if notes_ctx:
+        user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
+
+    provider = await get_llm_provider(session)
+    model = await resolve_live_fast_model(session)
+    effort = await resolve_live_reasoning_effort(session)
+    text, usage = await complete_text_with_usage(
+        provider,
+        model=model,
+        messages=[
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content="\n".join(user_parts)),
+        ],
+        reasoning_effort=effort or None,
+    )
+    if usage is not None:
+        await record_usage(
+            session,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            source="/live-suggest",
+            model=model,
+        )
+        await session.commit()
+    return text, model

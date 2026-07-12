@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Loader2, MessageSquare, Mic, Radio, RefreshCw, Square, Trash2 } from "lucide-react";
+import { CircleHelp, Mic, Radio, RefreshCw, Square, Trash2 } from "lucide-react";
 import type {
   Chat,
   MeetingInsight,
@@ -25,6 +25,9 @@ import { SummarySection } from "./SummarySection";
 import { NotesSection } from "./NotesSection";
 import { ContextSection } from "./ContextSection";
 import { LiveChatSection } from "./LiveChatSection";
+import { AssistSection } from "./AssistSection";
+import { TranslationSection } from "./TranslationSection";
+import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
 
 const LANGUAGES: { value: string; label: string }[] = [
@@ -47,6 +50,14 @@ const KIND_META: { kind: MeetingInsightKind; label: string; dot: string }[] = [
   { kind: "suggestion", label: "Suggestions", dot: "bg-violet-500" },
   { kind: "risk", label: "Risks", dot: "bg-rose-500" },
   { kind: "note", label: "Notes", dot: "bg-slate-400" },
+];
+
+const FEATURE_OPTIONS: FeatureOption[] = [
+  { id: "insights", label: "Live insights", description: "Rolling action items, decisions, risks" },
+  { id: "notes", label: "Notes", description: "Your Markdown scratch pad" },
+  { id: "assistant", label: "Assistant", description: "A grounded chat about the meeting" },
+  { id: "proactive", label: "Proactive assist", description: "On-demand solution suggestions" },
+  { id: "translation", label: "Translation", description: "On-demand transcript translation" },
 ];
 
 const SPEAKER_COLORS = [
@@ -171,20 +182,31 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   }, [session.id, session.chat_id]);
   const [startingAssistant, setStartingAssistant] = useState(false);
 
-  // Spawn + attach the assistant chat on demand (from the toolbar). Only after
-  // this is the Assistant tab shown — we never create a chat implicitly.
+  // Spawn + attach the assistant chat. Triggered when the "assistant" feature is
+  // enabled — we never create a chat implicitly.
   async function startAssistant(): Promise<void> {
     if (chat || startingAssistant) return;
     setStartingAssistant(true);
     try {
       const c = await api.ensureMeetingChat(session.id);
       setChat(c);
-      onUpdated({ ...session, chat_id: c.id });
       focusTab("assistant");
     } catch {
-      /* non-fatal — the button stays available to retry */
+      /* non-fatal — re-enabling the feature retries */
     } finally {
       setStartingAssistant(false);
+    }
+  }
+
+  // Enable/disable optional Live features for this session. Enabling the
+  // assistant spawns its chat; the others just reveal their tabs/processing.
+  async function applyFeatures(next: string[]): Promise<void> {
+    try {
+      const updated = await api.setMeetingFeatures(session.id, next);
+      onUpdated(updated);
+      if (next.includes("assistant") && !chat) void startAssistant();
+    } catch {
+      /* non-fatal */
     }
   }
 
@@ -218,6 +240,12 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   segCountRef.current = segments.length;
 
   const isEnded = session.status === "ended";
+  const features = session.features ?? [];
+  const insightsOn = features.includes("insights");
+  const notesOn = features.includes("notes");
+  const assistantOn = features.includes("assistant");
+  const proactiveOn = features.includes("proactive");
+  const translationOn = features.includes("translation");
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
   const topicTitle = useMemo(
@@ -350,20 +378,20 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   // Analyze shortly after speech pauses (resets on each new phrase).
   useEffect(() => {
-    if (!recording) return;
+    if (!recording || !insightsOn) return;
     if (segments.length <= lastAnalyzedRef.current) return;
     const t = setTimeout(() => void runAnalysis(), SILENCE_MS);
     return () => clearTimeout(t);
-  }, [segments, recording, runAnalysis]);
+  }, [segments, recording, runAnalysis, insightsOn]);
 
   // Safety net: analyze at least periodically during continuous talking.
   useEffect(() => {
-    if (!recording) return;
+    if (!recording || !insightsOn) return;
     const iv = setInterval(() => {
       if (segCountRef.current > lastAnalyzedRef.current) void runAnalysis();
     }, MAX_INTERVAL_MS);
     return () => clearInterval(iv);
-  }, [recording, runAnalysis]);
+  }, [recording, runAnalysis, insightsOn]);
 
   // Language changed mid-recording → cycle the recognizer once torn down.
   useEffect(() => {
@@ -720,6 +748,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     />
   ) : null;
 
+  const assistNode = <AssistSection sessionId={session.id} canRun={segments.length > 0} />;
+  const translationNode = (
+    <TranslationSection
+      sessionId={session.id}
+      canRun={segments.length > 0}
+      defaultLang={(session.language || "").split("-")[0]}
+    />
+  );
+
   const contextNode = (
     <ContextSection
       session={session}
@@ -733,12 +770,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
-  // Summary shows only once ended; the Assistant tab only once it's started.
+  // Optional tabs are gated by the session's enabled features; summary also
+  // requires the session to be ended, and the assistant its chat to exist.
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
-    { id: "insights", label: "Live insights", badge: insights.length },
-    ...(chat ? [{ id: "assistant", label: "Assistant" }] : []),
-    { id: "notes", label: notes.trim() ? "Notes ●" : "Notes" },
+    ...(insightsOn ? [{ id: "insights", label: "Live insights", badge: insights.length }] : []),
+    ...(assistantOn && chat ? [{ id: "assistant", label: "Assistant" }] : []),
+    ...(proactiveOn ? [{ id: "assist", label: "Assist" }] : []),
+    ...(translationOn ? [{ id: "translation", label: "Translation" }] : []),
+    ...(notesOn ? [{ id: "notes", label: notes.trim() ? "Notes ●" : "Notes" }] : []),
     ...(isEnded ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }] : []),
     { id: "context", label: "Context" },
   ];
@@ -751,6 +791,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         return insightsNode;
       case "assistant":
         return assistantNode;
+      case "assist":
+        return assistNode;
+      case "translation":
+        return translationNode;
       case "notes":
         return notesNode;
       case "summary":
@@ -845,22 +889,11 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         </label>
 
         <div className="ml-auto flex items-center gap-2">
-          {!chat && (
-            <button
-              type="button"
-              onClick={() => void startAssistant()}
-              disabled={startingAssistant}
-              data-tooltip="Start a chat grounded on this meeting"
-              className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-60"
-            >
-              {startingAssistant ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <MessageSquare size={14} />
-              )}
-              Start Assistant
-            </button>
-          )}
+          <FeaturePicker
+            options={FEATURE_OPTIONS}
+            value={features}
+            onChange={(next) => void applyFeatures(next)}
+          />
           {isEnded ? (
             <button
               type="button"

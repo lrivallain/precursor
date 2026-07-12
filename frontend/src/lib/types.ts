@@ -843,6 +843,8 @@ export interface MeetingSession {
   context_notes: string[];
   // Live Markdown notes the user takes during the meeting.
   notes: string;
+  // Enabled optional Live features (insights, notes, assistant, proactive, translation).
+  features: string[];
   // A linked M365 calendar meeting (subject/times/attendees), or null.
   external_meeting: ExternalMeeting | null;
   started_at: string | null;
@@ -864,6 +866,7 @@ export interface MeetingSessionUpdate {
   topic_id?: number | null;
   status?: MeetingStatus;
   notes?: string | null;
+  features?: string[];
 }
 
 export interface MeetingAttachment {

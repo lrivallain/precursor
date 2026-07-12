@@ -53,7 +53,10 @@ from precursor.backend.schemas import (
     MeetingSummaryPostResult,
     MeetingSummaryResult,
     SpeakerRenameRequest,
+    SuggestResult,
     TopicSummaryResult,
+    TranslateRequest,
+    TranslateResult,
 )
 from precursor.backend.services.app_settings import (
     resolve_live_fast_model,
@@ -72,6 +75,8 @@ from precursor.backend.services.meeting_analysis import (
     language_name,
     meeting_context_text,
     meeting_details_markdown,
+    suggest_for_discussion,
+    translate_transcript,
 )
 from precursor.backend.services.meeting_summary import (
     generate_summary,
@@ -82,6 +87,9 @@ from precursor.backend.services.slugs import allocate_unique_slug, slugify
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/live", tags=["live"])
+
+# Optional Live features a session can enable (gates tabs + background work).
+VALID_FEATURES = frozenset({"insights", "notes", "assistant", "proactive", "translation"})
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -178,6 +186,10 @@ async def update_session_endpoint(
         data["language"] = (data["language"] or "").strip() or None
     if "notes" in data and data["notes"] is None:
         data["notes"] = ""
+    if "features" in data:
+        feats = data.pop("features") or []
+        cleaned = [f for f in dict.fromkeys(feats) if f in VALID_FEATURES]
+        ms.features_json = json.dumps(cleaned, ensure_ascii=False)
     # Transitioning to "ended" stamps ended_at once.
     if data.get("status") == "ended" and ms.ended_at is None:
         ms.ended_at = datetime.now(UTC)
@@ -548,6 +560,42 @@ async def ask(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
     return EventSourceResponse(event_stream())
+
+
+@router.post("/{session_id}/suggest", response_model=SuggestResult)
+async def suggest(session_id: int, session: AsyncSession = Depends(get_session)) -> SuggestResult:
+    """Proactively propose a solution/answer to the current discussion (on demand)."""
+    await _get_session_or_404(session_id, session)
+    try:
+        text, model = await suggest_for_discussion(session, session_id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Suggestion failed: {exc}") from exc
+    if not text:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Nothing to suggest yet — record some of the meeting first.",
+        )
+    return SuggestResult(suggestion=text, model=model)
+
+
+@router.post("/{session_id}/translate", response_model=TranslateResult)
+async def translate(
+    session_id: int,
+    payload: TranslateRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TranslateResult:
+    """Translate the current transcript into the requested language (on demand)."""
+    await _get_session_or_404(session_id, session)
+    try:
+        text, model = await translate_transcript(session, session_id, payload.target_lang)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Translation failed: {exc}") from exc
+    if not text:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Nothing to translate yet — record some of the meeting first.",
+        )
+    return TranslateResult(text=text, target_lang=payload.target_lang, model=model)
 
 
 # --------------------------------------------------------------------------

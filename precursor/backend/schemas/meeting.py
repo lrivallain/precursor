@@ -32,6 +32,7 @@ class MeetingSessionUpdate(BaseModel):
     topic_id: int | None = None
     status: MeetingStatus | None = None
     notes: str | None = Field(default=None, max_length=100000)
+    features: list[str] | None = None
 
 
 class MeetingSessionRead(BaseModel):
@@ -48,6 +49,7 @@ class MeetingSessionRead(BaseModel):
     attendees: list[str] = Field(default_factory=list)
     context_notes: list[str] = Field(default_factory=list)
     notes: str = ""
+    features: list[str] = Field(default_factory=list)
     external_meeting: dict[str, Any] | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
@@ -80,6 +82,21 @@ class MeetingAttachmentRead(BaseModel):
     original_filename: str
     url: str
     is_image: bool
+
+
+class TranslateRequest(BaseModel):
+    target_lang: str = Field(min_length=2, max_length=32)
+
+
+class TranslateResult(BaseModel):
+    text: str
+    target_lang: str
+    model: str
+
+
+class SuggestResult(BaseModel):
+    suggestion: str
+    model: str
 
 
 class MeetingSegmentCreate(BaseModel):
