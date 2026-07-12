@@ -56,6 +56,7 @@ import type {
   Skill,
   SkillCreate,
   SkillUpdate,
+  SystemStats,
   Topic,
   TopicNode,
   UsageStats,
@@ -657,6 +658,7 @@ export const api = {
 
   // Usage statistics
   getUsageStats: () => request<UsageStats>(`/api/stats/usage`),
+  getSystemStats: () => request<SystemStats>(`/api/stats/system`),
 };
 
 /** URL that serves a workspace file's raw bytes (static-web-server style). */

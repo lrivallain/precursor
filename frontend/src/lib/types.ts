@@ -768,6 +768,47 @@ export interface UsageStats {
   yearly: UsageBucket[];
 }
 
+export interface TableStat {
+  name: string;
+  row_count: number;
+  size_bytes: number | null;
+}
+
+export interface DatabaseStats {
+  engine: string;
+  size_bytes: number | null;
+  path: string | null;
+  tables: TableStat[];
+}
+
+export interface BlobStats {
+  count: number;
+  size_bytes: number;
+  path: string | null;
+}
+
+export interface IssueStats {
+  configured: boolean;
+  repo: string | null;
+  open: number | null;
+  closed: number | null;
+  error: string | null;
+}
+
+export interface EntityCounts {
+  topics: number;
+  chats: number;
+  agents: number;
+  workspaces: number;
+}
+
+export interface SystemStats {
+  database: DatabaseStats;
+  blobs: BlobStats;
+  issues: IssueStats;
+  entities: EntityCounts;
+}
+
 export interface WorkspaceChatMessage {
   role: "user" | "assistant";
   content: string;
