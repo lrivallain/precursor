@@ -837,6 +837,8 @@ export interface MeetingSession {
   speaker_names: Record<string, string>;
   // Attendee display names used in the summary (editable).
   attendees: string[];
+  // Free-form notes pinned to the grounding context (e.g. saved Q&A answers).
+  context_notes: string[];
   // A linked M365 calendar meeting (subject/times/attendees), or null.
   external_meeting: ExternalMeeting | null;
   started_at: string | null;

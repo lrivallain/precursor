@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  BookmarkPlus,
   CalendarClock,
   Check,
   FileText,
@@ -10,6 +11,7 @@ import {
   Send,
   ShieldCheck,
   Users,
+  X,
 } from "lucide-react";
 import type { AgendaEvent, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
@@ -128,6 +130,16 @@ export function ContextSection({
     }
   }
 
+  async function removeNote(index: number): Promise<void> {
+    const next = (session.context_notes ?? []).filter((_, i) => i !== index);
+    try {
+      const updated = await api.setMeetingContextNotes(session.id, next);
+      onUpdated(updated);
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Topic context */}
@@ -169,6 +181,34 @@ export function ContextSection({
           <p className="text-sm text-muted">No conversation to summarize yet.</p>
         )}
       </section>
+
+      {/* Pinned context notes (e.g. saved Q&A answers) */}
+      {session.context_notes && session.context_notes.length > 0 && (
+        <section className="border-b border-border p-4">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+            <BookmarkPlus size={12} /> Pinned context
+          </div>
+          <ul className="space-y-1.5">
+            {session.context_notes.map((note, i) => (
+              <li
+                key={`${i}-${note.slice(0, 24)}`}
+                className="flex items-start gap-2 rounded border border-border px-2.5 py-1.5 text-[13px]"
+              >
+                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{note}</span>
+                <button
+                  type="button"
+                  onClick={() => void removeNote(i)}
+                  aria-label="Remove note"
+                  data-tooltip="Remove from context"
+                  className="shrink-0 text-muted hover:text-red-500"
+                >
+                  <X size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Linked meeting (context grounding) or today's agenda picker */}
       <section className="p-4">

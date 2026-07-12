@@ -624,6 +624,16 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ attendees }),
     }),
+  addMeetingContextNote: (id: number, text: string) =>
+    request<MeetingSession>(`/api/live/${id}/context-notes`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  setMeetingContextNotes: (id: number, notes: string[]) =>
+    request<MeetingSession>(`/api/live/${id}/context-notes`, {
+      method: "PUT",
+      body: JSON.stringify({ notes }),
+    }),
   listMeetingInsights: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>

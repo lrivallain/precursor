@@ -90,6 +90,23 @@ class MeetingSession(Base, TimestampMixin):
             return []
         return [str(x) for x in data]
 
+    # JSON-encoded list[str] of free-form context notes the user pins to the
+    # session (e.g. a saved Q&A answer). Injected into the live analysis, Q&A
+    # and summary prompts alongside the topic/meeting context.
+    context_notes_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+
+    @property
+    def context_notes(self) -> list[str]:
+        try:
+            data = json.loads(self.context_notes_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [str(x) for x in data]
+
     # JSON-encoded dict describing a linked M365 calendar meeting (subject,
     # times, organizer, attendees, is_online), fetched via WorkIQ. Null when
     # none is linked.

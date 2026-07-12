@@ -458,6 +458,29 @@ def test_html_to_text_strips_tags_and_scripts() -> None:
     assert "color:red" not in out
 
 
+def test_context_notes_add_remove_and_read() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Notes"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["context_notes"] == []
+        # Add (dedupes).
+        client.post(f"/api/live/{sid}/context-notes", json={"text": "Use Redis for cache"})
+        r = client.post(f"/api/live/{sid}/context-notes", json={"text": "Use Redis for cache"})
+        assert r.json()["context_notes"] == ["Use Redis for cache"]
+        client.post(f"/api/live/{sid}/context-notes", json={"text": "Deadline is Friday"})
+        # Replace (used for removal).
+        r = client.put(f"/api/live/{sid}/context-notes", json={"notes": ["Deadline is Friday"]})
+        assert r.json()["context_notes"] == ["Deadline is Friday"]
+
+
+def test_context_notes_text_helper() -> None:
+    from precursor.backend.services.meeting_analysis import context_notes_text
+
+    assert context_notes_text(None) == ""
+    assert context_notes_text([]) == ""
+    assert context_notes_text(["a", " ", "b"]) == "- a\n- b"
+
+
 def test_unlink_meeting_clears_meeting_keeps_attendees() -> None:
     app = create_app()
     with TestClient(app) as client:

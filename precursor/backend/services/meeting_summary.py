@@ -18,6 +18,7 @@ from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.meeting_analysis import (
+    context_notes_text,
     display_label,
     language_name,
     meeting_context_text,
@@ -129,6 +130,9 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
     topic_ctx = await _topic_context(session, ms.topic_id)
     if topic_ctx:
         user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
+    notes_ctx = context_notes_text(ms.context_notes)
+    if notes_ctx:
+        user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
     provider = await get_llm_provider(session)
     # Use the default chat model for a higher-quality recap (not the fast model).

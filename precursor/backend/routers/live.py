@@ -33,6 +33,8 @@ from precursor.backend.schemas import (
     AgendaEvent,
     AgendaResponse,
     AttendeesUpdate,
+    ContextNoteAdd,
+    ContextNotesUpdate,
     LinkMeetingRequest,
     MeetingAskRequest,
     MeetingInsightRead,
@@ -57,6 +59,7 @@ from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
 from precursor.backend.services.meeting_agenda import fetch_agenda
 from precursor.backend.services.meeting_analysis import (
     analyze_session,
+    context_notes_text,
     display_label,
     language_name,
     meeting_context_text,
@@ -287,6 +290,47 @@ async def set_attendees(
     return ms
 
 
+@router.post("/{session_id}/context-notes", response_model=MeetingSessionRead)
+async def add_context_note(
+    session_id: int,
+    payload: ContextNoteAdd,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Pin a free-form note to the session's grounding context (e.g. a Q&A answer)."""
+    ms = await _get_session_or_404(session_id, session)
+    text = payload.text.strip()
+    notes = ms.context_notes
+    if text and text not in notes:
+        notes.append(text)
+        ms.context_notes_json = json.dumps(notes, ensure_ascii=False)
+        await session.commit()
+        await session.refresh(ms)
+        await publish_meeting_changed(ms.id)
+    return ms
+
+
+@router.put("/{session_id}/context-notes", response_model=MeetingSessionRead)
+async def set_context_notes(
+    session_id: int,
+    payload: ContextNotesUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Replace the session's context notes (used to remove/edit pinned notes)."""
+    ms = await _get_session_or_404(session_id, session)
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for note in payload.notes:
+        n = note.strip()
+        if n and n not in seen:
+            seen.add(n)
+            cleaned.append(n)
+    ms.context_notes_json = json.dumps(cleaned, ensure_ascii=False)
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
 # --------------------------------------------------------------------------
 # Live analysis + insights + Q&A
 # --------------------------------------------------------------------------
@@ -388,6 +432,9 @@ async def ask(
         user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
     if topic_context:
         user_parts.append(f"\nAttached topic context:\n{topic_context}")
+    notes_ctx = context_notes_text(ms.context_notes)
+    if notes_ctx:
+        user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
     provider = await get_llm_provider(session)
     model = await resolve_live_fast_model(session)

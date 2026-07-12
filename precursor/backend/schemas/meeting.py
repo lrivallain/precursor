@@ -44,6 +44,7 @@ class MeetingSessionRead(BaseModel):
     topic_id: int | None = None
     speaker_names: dict[str, str] = Field(default_factory=dict)
     attendees: list[str] = Field(default_factory=list)
+    context_notes: list[str] = Field(default_factory=list)
     external_meeting: dict[str, Any] | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
@@ -60,6 +61,14 @@ class SpeakerRenameRequest(BaseModel):
 
 class AttendeesUpdate(BaseModel):
     attendees: list[str] = Field(default_factory=list)
+
+
+class ContextNoteAdd(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+
+
+class ContextNotesUpdate(BaseModel):
+    notes: list[str] = Field(default_factory=list)
 
 
 class MeetingSegmentCreate(BaseModel):

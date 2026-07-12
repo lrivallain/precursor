@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Mic, Radio, RefreshCw, Send, Square, Trash2 } from "lucide-react";
+import {
+  BookmarkPlus,
+  Check,
+  CircleHelp,
+  Loader2,
+  Mic,
+  Radio,
+  RefreshCw,
+  Send,
+  Square,
+  Trash2,
+} from "lucide-react";
 import type {
   MeetingInsight,
   MeetingInsightKind,
@@ -25,6 +36,7 @@ import { LivePanel, type LiveTab } from "./LivePanel";
 import { SummarySection } from "./SummarySection";
 import { ContextSection } from "./ContextSection";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
+import { Markdown } from "./Markdown";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -159,6 +171,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [asking, setAsking] = useState(false);
+  // The question currently being answered (echoed above the answer).
+  const [askedQuestion, setAskedQuestion] = useState("");
+  const [noteAdded, setNoteAdded] = useState(false);
   // Ask-assistant input height, resized from a top handle like the app composer.
   const { height: askHeight, onMouseDown: onAskResize } = useResizableHeight({
     storageKey: "precursor:live-ask-height",
@@ -437,6 +452,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     if (!q || asking) return;
     setAsking(true);
     setAnswer("");
+    setAskedQuestion(q);
+    setQuestion("");
+    setNoteAdded(false);
     try {
       await streamMeetingAsk(session.id, q, {
         onEvent: (e) => {
@@ -452,11 +470,23 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
           }
         },
       });
-      setQuestion("");
     } catch {
       setAnswer("Sorry — the assistant couldn't answer that.");
     } finally {
       setAsking(false);
+    }
+  }
+
+  async function addAnswerToContext(): Promise<void> {
+    const note = answer.trim();
+    if (!note) return;
+    try {
+      const updated = await api.addMeetingContextNote(session.id, note);
+      onUpdated(updated);
+      setNoteAdded(true);
+      setTimeout(() => setNoteAdded(false), 2000);
+    } catch {
+      /* non-fatal */
     }
   }
 
@@ -641,9 +671,38 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
           Ask assistant
         </div>
-        {answer && (
-          <div className="mb-2 max-h-40 overflow-y-auto rounded bg-surface px-2 py-1.5 text-[13px] text-text">
-            {answer}
+        {(askedQuestion || asking || answer) && (
+          <div className="mb-2 max-h-56 space-y-1.5 overflow-y-auto rounded bg-surface px-2 py-2">
+            {askedQuestion && (
+              <div className="flex justify-end">
+                <div className="max-w-[85%] rounded-lg bg-accent/15 px-2.5 py-1.5 text-[13px] text-text">
+                  {askedQuestion}
+                </div>
+              </div>
+            )}
+            {asking && !answer ? (
+              <div className="flex items-center gap-2 text-[12px] text-muted">
+                <Loader2 size={13} className="animate-spin" /> Thinking…
+              </div>
+            ) : answer ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
+                <Markdown>{answer}</Markdown>
+              </div>
+            ) : null}
+            {answer && !asking && (
+              <div className="flex items-center gap-2 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => void addAnswerToContext()}
+                  disabled={noteAdded}
+                  data-tooltip="Pin this answer so it grounds future insights, Q&A and the summary"
+                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-bg disabled:opacity-60"
+                >
+                  {noteAdded ? <Check size={12} /> : <BookmarkPlus size={12} />}
+                  {noteAdded ? "Added to context" : "Add to context"}
+                </button>
+              </div>
+            )}
           </div>
         )}
         <div className="relative flex items-end gap-1.5">

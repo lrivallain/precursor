@@ -135,6 +135,14 @@ def meeting_context_text(external_meeting: dict[str, object] | None) -> str:
     return "\n".join(parts)
 
 
+def context_notes_text(notes: list[str] | None) -> str:
+    """Render user-pinned context notes as a compact bulleted block for prompts."""
+    if not notes:
+        return ""
+    lines = [f"- {n.strip()}" for n in notes if n and n.strip()]
+    return "\n".join(lines)[:4000]
+
+
 class _HTMLTextExtractor(HTMLParser):
     """Collapse HTML into readable plain text (block tags become line breaks)."""
 
@@ -323,6 +331,9 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
         user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
     if topic_ctx:
         user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
+    notes_ctx = context_notes_text(ms.context_notes)
+    if notes_ctx:
+        user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
     provider = await get_llm_provider(session)
     model = await resolve_live_fast_model(session)
