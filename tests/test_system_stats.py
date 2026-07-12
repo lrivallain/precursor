@@ -9,6 +9,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import AgentSession, Chat, Topic, Workspace
 from precursor.backend.services import system_stats as system_stats_module
+from precursor.backend.services.github_client import GitHubRepoNotAccessibleError
 from precursor.backend.services.system_stats import compute_system_stats
 
 
@@ -99,8 +100,8 @@ async def test_issue_stats_counts_open_and_closed(monkeypatch) -> None:
         def __init__(self, *, token: str) -> None:
             pass
 
-        async def count_issues(self, repo: str, *, state: str) -> int:
-            return 7 if state == "open" else 3
+        async def count_issues_by_state(self, repo: str) -> tuple[int, int]:
+            return (7, 3)
 
         async def aclose(self) -> None:
             pass
@@ -115,6 +116,42 @@ async def test_issue_stats_counts_open_and_closed(monkeypatch) -> None:
     assert stats.issues.open == 7
     assert stats.issues.closed == 3
     assert stats.issues.error is None
+
+
+async def test_issue_stats_degrades_when_repo_inaccessible(monkeypatch) -> None:
+    _init_db()
+
+    async def _repo(_session) -> str:
+        return "owner/private"
+
+    async def _token(_session) -> str:
+        return "tok"
+
+    monkeypatch.setattr(system_stats_module, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(system_stats_module, "resolve_github_token", _token)
+
+    class _NotFoundClient:
+        def __init__(self, *, token: str) -> None:
+            pass
+
+        async def count_issues_by_state(self, repo: str) -> tuple[int, int]:
+            raise GitHubRepoNotAccessibleError(repo)
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr(system_stats_module, "GitHubClient", _NotFoundClient)
+
+    async with SessionLocal() as session:
+        stats = await compute_system_stats(session)
+
+    # A private/nonexistent repo degrades to a clean, friendly state — no
+    # counts, no raw 422 URL leaking to the UI.
+    assert stats.issues.configured is True
+    assert stats.issues.repo == "owner/private"
+    assert stats.issues.open is None
+    assert stats.issues.closed is None
+    assert stats.issues.error == "Repository not found or not accessible"
 
 
 def test_system_stats_endpoint() -> None:

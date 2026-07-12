@@ -10,6 +10,19 @@ GITHUB_API = "https://api.github.com"
 GITHUB_UPLOADS = "https://uploads.github.com"
 
 
+class GitHubRepoNotAccessibleError(Exception):
+    """The repository can't be resolved for the current token.
+
+    Raised when GitHub reports the repo as nonexistent or invisible (e.g. a
+    private repo the token can't see). Lets callers degrade to a friendly
+    message instead of surfacing a raw API error.
+    """
+
+    def __init__(self, repo: str) -> None:
+        super().__init__(f"Repository '{repo}' not found or not accessible")
+        self.repo = repo
+
+
 class GitHubClient:
     def __init__(self, *, token: str, base_url: str = GITHUB_API) -> None:
         self._token = token
@@ -53,20 +66,38 @@ class GitHubClient:
         # /issues returns PRs too — filter them out.
         return [self._issue_summary(i) for i in r.json() if "pull_request" not in i]
 
-    async def count_issues(self, repo: str, *, state: str) -> int:
-        """Return the total issue count for ``repo`` in ``state`` (open|closed).
+    async def count_issues_by_state(self, repo: str) -> tuple[int, int]:
+        """Return ``(open, closed)`` issue counts via the GraphQL API.
 
-        Uses the search API's ``total_count`` (PRs excluded via ``is:issue``),
-        which is exact and cheap — we request a single result per page and read
-        only the count.
+        GraphQL yields exact counts in a single request and, unlike the REST
+        ``/search/issues`` endpoint, distinguishes an inaccessible or
+        nonexistent repo (a ``NOT_FOUND`` error with ``repository: null``, HTTP
+        200) from a valid but empty repo. The search endpoint instead returns a
+        raw 422 for an unresolvable ``repo:`` qualifier, so switching to GraphQL
+        lets us degrade cleanly and avoids the search API's migration quirks.
         """
         owner, name = self._split(repo)
-        r = await self._client.get(
-            "/search/issues",
-            params={"q": f"repo:{owner}/{name} is:issue is:{state}", "per_page": 1},
+        query = (
+            "query($o:String!,$n:String!){"
+            "repository(owner:$o,name:$n){"
+            "open:issues(states:OPEN){totalCount}"
+            "closed:issues(states:CLOSED){totalCount}"
+            "}}"
+        )
+        r = await self._client.post(
+            "/graphql",
+            json={"query": query, "variables": {"o": owner, "n": name}},
         )
         r.raise_for_status()
-        return int(r.json().get("total_count", 0))
+        payload = r.json()
+        repository = (payload.get("data") or {}).get("repository")
+        if repository is None:
+            # null repository ⇒ NOT_FOUND / no permission for this token.
+            raise GitHubRepoNotAccessibleError(repo)
+        return (
+            int(repository["open"]["totalCount"]),
+            int(repository["closed"]["totalCount"]),
+        )
 
     async def get_issue(self, repo: str, number: int) -> dict[str, Any]:
         owner, name = self._split(repo)
