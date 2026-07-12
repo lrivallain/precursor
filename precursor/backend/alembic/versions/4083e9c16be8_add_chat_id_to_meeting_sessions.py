@@ -20,20 +20,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("meeting_sessions", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("chat_id", sa.Integer(), nullable=True))
-        batch_op.create_index(batch_op.f("ix_meeting_sessions_chat_id"), ["chat_id"], unique=False)
-        batch_op.create_foreign_key(
-            "fk_meeting_sessions_chat_id_chats",
-            "chats",
-            ["chat_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
+    # NOTE: plain ADD COLUMN (no batch recreate). SQLite can't ADD a FK
+    # constraint via ALTER, and batch-recreating meeting_sessions hangs once the
+    # table has child rows (segments/insights/attachments) under
+    # foreign_keys=ON. The ORM still models the chats.id relationship; a dangling
+    # chat_id (deleted chat) is tolerated — ensure_chat re-fetches and re-spawns.
+    op.add_column("meeting_sessions", sa.Column("chat_id", sa.Integer(), nullable=True))
+    op.create_index(
+        op.f("ix_meeting_sessions_chat_id"), "meeting_sessions", ["chat_id"], unique=False
+    )
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("meeting_sessions", schema=None) as batch_op:
-        batch_op.drop_constraint("fk_meeting_sessions_chat_id_chats", type_="foreignkey")
-        batch_op.drop_index(batch_op.f("ix_meeting_sessions_chat_id"))
-        batch_op.drop_column("chat_id")
+    op.drop_index(op.f("ix_meeting_sessions_chat_id"), table_name="meeting_sessions")
+    op.drop_column("meeting_sessions", "chat_id")
