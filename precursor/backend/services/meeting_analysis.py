@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from html.parser import HTMLParser
+from typing import ClassVar
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,6 +135,52 @@ def meeting_context_text(external_meeting: dict[str, object] | None) -> str:
     return "\n".join(parts)
 
 
+class _HTMLTextExtractor(HTMLParser):
+    """Collapse HTML into readable plain text (block tags become line breaks)."""
+
+    _BLOCK: ClassVar[set[str]] = {"p", "div", "li", "tr", "br", "h1", "h2", "h3", "h4", "h5", "h6"}
+    _DROP: ClassVar[set[str]] = {"script", "style", "head"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._skip = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: object) -> None:
+        if tag in self._DROP:
+            self._skip += 1
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._DROP:
+            self._skip = max(0, self._skip - 1)
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip == 0:
+            self.parts.append(data)
+
+
+def html_to_text(raw_html: str) -> str:
+    """Best-effort HTML → plain text, collapsing runs of blank lines."""
+    parser = _HTMLTextExtractor()
+    try:
+        parser.feed(raw_html)
+    except Exception:
+        return ""
+    text = "".join(parser.parts).replace("\xa0", " ")
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line:
+            lines.append(line)
+        elif lines and lines[-1] != "":
+            lines.append("")
+    return "\n".join(lines).strip()
+
+
 def meeting_details_markdown(external_meeting: dict[str, object] | None) -> str:
     """Render a linked meeting's details as a Markdown block for a topic post."""
     if not external_meeting:
@@ -153,9 +201,17 @@ def meeting_details_markdown(external_meeting: dict[str, object] | None) -> str:
         if names:
             lines.append(f"- **Invitees:** {', '.join(names[:60])}")
 
+    # Prefer the full body (HTML) over Graph's ~255-char bodyPreview so the post
+    # isn't cut mid-sentence; fall back to the preview when there's no body.
+    body_html = m.get("body")
     preview = m.get("body_preview")
-    if isinstance(preview, str) and preview.strip():
-        lines += ["", preview.strip()[:4000]]
+    body_text = ""
+    if isinstance(body_html, str) and body_html.strip():
+        body_text = html_to_text(body_html)
+    if not body_text and isinstance(preview, str):
+        body_text = preview.strip()
+    if body_text:
+        lines += ["", body_text[:8000]]
     return "\n".join(lines)
 
 

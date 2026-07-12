@@ -428,7 +428,10 @@ def test_post_meeting_details_to_topic() -> None:
                 "subject": "Sprint review",
                 "organizer": "Marie",
                 "attendees": [{"name": "Marie"}, {"name": "Thomas"}],
+                # Graph's bodyPreview is truncated; the full body (HTML) has more.
                 "body_preview": "Agenda: ship v2.",
+                "body": "<html><body><p>Agenda: ship v2.</p><p>Then discuss the "
+                "full roadmap in detail.</p></body></html>",
                 "is_online": True,
             },
         )
@@ -436,9 +439,23 @@ def test_post_meeting_details_to_topic() -> None:
         assert r.status_code == 201
         assert r.json()["topic_id"] == tid
         msgs = client.get(f"/api/topics/{tid}/messages").json()
+        # The post uses the full body, not just the truncated preview.
         assert any(
-            "Sprint review" in m["content"] and "Agenda: ship v2." in m["content"] for m in msgs
+            "Sprint review" in m["content"] and "roadmap in detail" in m["content"] for m in msgs
         )
+
+
+def test_html_to_text_strips_tags_and_scripts() -> None:
+    from precursor.backend.services.meeting_analysis import html_to_text
+
+    out = html_to_text(
+        "<html><head><style>p{color:red}</style></head><body>"
+        "<p>Hello&nbsp;world</p><script>evil()</script><div>Line two</div></body></html>"
+    )
+    assert "Hello world" in out
+    assert "Line two" in out
+    assert "evil" not in out
+    assert "color:red" not in out
 
 
 def test_unlink_meeting_clears_meeting_keeps_attendees() -> None:
