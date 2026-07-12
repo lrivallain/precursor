@@ -57,7 +57,7 @@ export function ContextSection({
       const res = await api.getAgenda();
       setEvents(res.events);
       if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
-      else if (res.events.length === 0) setAgendaDetail("No upcoming meetings found.");
+      else if (res.events.length === 0) setAgendaDetail("No meetings on your calendar today.");
     } catch (e) {
       setAgendaDetail(e instanceof Error ? e.message : "Couldn't load the agenda.");
       setEvents([]);
@@ -130,7 +130,7 @@ export function ContextSection({
       <section className="p-4">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            <CalendarClock size={12} /> Upcoming meetings
+            <CalendarClock size={12} /> Today&apos;s meetings
           </div>
           <button
             type="button"
