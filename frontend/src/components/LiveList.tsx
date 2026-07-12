@@ -67,19 +67,26 @@ export function LiveList({ sessions, activeId, recordingId, onSelect, onRename }
                     }`}
                   >
                     {isRecording ? (
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500"
+                      <Radio
+                        size={14}
+                        className="shrink-0 animate-pulse text-red-500"
                         data-tooltip="Recording"
                         aria-label="Recording"
                       />
                     ) : isOpen ? (
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full bg-green-500"
+                      <Radio
+                        size={14}
+                        className="shrink-0 text-green-500"
                         data-tooltip="Open"
                         aria-label="Open"
                       />
                     ) : (
-                      <Radio size={14} className="shrink-0 opacity-50" />
+                      <Radio
+                        size={14}
+                        className="shrink-0 text-muted opacity-60"
+                        data-tooltip="Ended"
+                        aria-label="Ended"
+                      />
                     )}
                     <span className="flex-1 truncate">
                       {onRename ? (
