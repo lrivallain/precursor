@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../lib/api";
-import type { UsageBucket, UsageStats } from "../lib/types";
+import type {
+  DatabaseStats,
+  IssueStats,
+  SystemStats,
+  UsageBucket,
+  UsageStats,
+} from "../lib/types";
 
 type Granularity = "weekly" | "monthly" | "yearly";
 
@@ -12,6 +19,19 @@ const GRANULARITIES: ReadonlyArray<{ id: Granularity; label: string }> = [
 
 function formatNumber(n: number): string {
   return n.toLocaleString();
+}
+
+function formatBytes(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = n / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 100 || value < 10 ? 1 : 2)} ${units[unit]}`;
 }
 
 function compact(n: number): string {
@@ -47,6 +67,170 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <div className="flex-1 min-w-[120px] rounded border border-border bg-surface px-3 py-2">
       <div className="text-[11px] text-muted">{label}</div>
       <div className="text-lg font-semibold tabular-nums">{formatNumber(value)}</div>
+    </div>
+  );
+}
+
+function TextStatCard({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
+  return (
+    <div className="flex-1 min-w-[120px] rounded border border-border bg-surface px-3 py-2">
+      <div className="text-[11px] text-muted">{label}</div>
+      <div className="text-lg font-semibold tabular-nums">{value}</div>
+      {sub && <div className="text-[11px] text-muted mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function IssuesSection({ issues }: { issues: IssueStats }) {
+  if (!issues.configured) {
+    return (
+      <section className="space-y-2">
+        <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
+          GitHub issues
+        </h4>
+        <p className="text-[11px] text-muted">
+          No GitHub repository configured. Set one in Settings → GitHub to see
+          open vs. closed issue counts.
+        </p>
+      </section>
+    );
+  }
+  const total =
+    issues.open != null && issues.closed != null ? issues.open + issues.closed : null;
+  return (
+    <section className="space-y-2">
+      <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
+        GitHub issues{issues.repo ? ` · ${issues.repo}` : ""}
+      </h4>
+      {issues.error ? (
+        <p className="text-[11px] text-red-500">
+          Couldn't load issue counts: {issues.error}
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <StatCard label="Open" value={issues.open ?? 0} />
+          <StatCard label="Closed" value={issues.closed ?? 0} />
+          {total != null && <StatCard label="Total" value={total} />}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DatabaseSection({ database }: { database: DatabaseStats }) {
+  const [open, setOpen] = useState(false);
+  // Largest tables first so the heaviest rows surface at the top.
+  const tables = useMemo(
+    () =>
+      [...database.tables].sort(
+        (a, b) => (b.size_bytes ?? 0) - (a.size_bytes ?? 0) || b.row_count - a.row_count,
+      ),
+    [database.tables],
+  );
+  const hasSizes = tables.some((t) => t.size_bytes != null);
+  const totalRows = tables.reduce((n, t) => n + t.row_count, 0);
+  return (
+    <section className="space-y-2">
+      <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
+        Database
+      </h4>
+      <div className="flex flex-wrap gap-2">
+        <TextStatCard
+          label="On-disk size"
+          value={formatBytes(database.size_bytes)}
+          sub={database.engine}
+        />
+        <StatCard label="Tables" value={tables.length} />
+        <StatCard label="Total rows" value={totalRows} />
+      </div>
+      <div className="rounded border border-border bg-surface overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-muted hover:text-text"
+        >
+          <span className="text-muted">
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
+          <span className="flex-1 text-left uppercase tracking-wide">
+            Per-table breakdown
+          </span>
+          <span className="tabular-nums font-normal normal-case tracking-normal">
+            {tables.length} tables
+          </span>
+        </button>
+        {open && (
+          <>
+            <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-muted border-t border-border">
+              <div className="flex-1">Table</div>
+              <div className="w-20 text-right">Rows</div>
+              {hasSizes && <div className="w-20 text-right">Size</div>}
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {tables.map((t) => (
+                <div
+                  key={t.name}
+                  className="flex items-center gap-2 px-3 py-1 text-xs border-t border-border/50"
+                >
+                  <div className="flex-1 truncate font-mono text-[11px]" title={t.name}>
+                    {t.name}
+                  </div>
+                  <div className="w-20 text-right tabular-nums">
+                    {formatNumber(t.row_count)}
+                  </div>
+                  {hasSizes && (
+                    <div className="w-20 text-right tabular-nums text-muted">
+                      {formatBytes(t.size_bytes)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SystemStatsView({ system }: { system: SystemStats }) {
+  const { entities, blobs, database, issues } = system;
+  return (
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
+          Content
+        </h4>
+        <div className="flex flex-wrap gap-2">
+          <StatCard label="Topics" value={entities.topics} />
+          <StatCard label="Chats" value={entities.chats} />
+          <StatCard label="Agents" value={entities.agents} />
+          <StatCard label="Workspaces" value={entities.workspaces} />
+        </div>
+      </section>
+
+      <DatabaseSection database={database} />
+
+      <section className="space-y-2">
+        <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
+          Attachment blobs
+        </h4>
+        <div className="flex flex-wrap gap-2">
+          <TextStatCard label="Total size" value={formatBytes(blobs.size_bytes)} />
+          <StatCard label="Files" value={blobs.count} />
+        </div>
+      </section>
+
+      <IssuesSection issues={issues} />
     </div>
   );
 }
@@ -145,6 +329,7 @@ function UsageChart({ buckets }: { buckets: UsageBucket[] }) {
 
 export function StatsTab() {
   const [stats, setStats] = useState<UsageStats | null>(null);
+  const [system, setSystem] = useState<SystemStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [granularity, setGranularity] = useState<Granularity>("monthly");
@@ -153,8 +338,14 @@ export function StatsTab() {
     let cancelled = false;
     void (async () => {
       try {
-        const data = await api.getUsageStats();
-        if (!cancelled) setStats(data);
+        const [usage, sys] = await Promise.all([
+          api.getUsageStats(),
+          api.getSystemStats(),
+        ]);
+        if (!cancelled) {
+          setStats(usage);
+          setSystem(sys);
+        }
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       } finally {
@@ -190,11 +381,17 @@ export function StatsTab() {
   const rows = [...series].reverse();
 
   return (
-    <div className="space-y-6">
-      <p className="text-[11px] text-muted">
-        Combined token usage reported by the model across every topic and chat.
-        Turns that don't report usage are not counted.
-      </p>
+    <div className="space-y-8">
+      {system && <SystemStatsView system={system} />}
+
+      <div className="space-y-6">
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium">AI consumption</h3>
+          <p className="text-[11px] text-muted">
+            Combined token usage reported by the model across every topic and
+            chat. Turns that don't report usage are not counted.
+          </p>
+        </div>
 
       <section className="space-y-2">
         <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
@@ -275,6 +472,7 @@ export function StatsTab() {
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }

@@ -53,6 +53,21 @@ class GitHubClient:
         # /issues returns PRs too — filter them out.
         return [self._issue_summary(i) for i in r.json() if "pull_request" not in i]
 
+    async def count_issues(self, repo: str, *, state: str) -> int:
+        """Return the total issue count for ``repo`` in ``state`` (open|closed).
+
+        Uses the search API's ``total_count`` (PRs excluded via ``is:issue``),
+        which is exact and cheap — we request a single result per page and read
+        only the count.
+        """
+        owner, name = self._split(repo)
+        r = await self._client.get(
+            "/search/issues",
+            params={"q": f"repo:{owner}/{name} is:issue is:{state}", "per_page": 1},
+        )
+        r.raise_for_status()
+        return int(r.json().get("total_count", 0))
+
     async def get_issue(self, repo: str, number: int) -> dict[str, Any]:
         owner, name = self._split(repo)
         r = await self._client.get(f"/repos/{owner}/{name}/issues/{number}")
