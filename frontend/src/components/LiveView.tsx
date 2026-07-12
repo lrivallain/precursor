@@ -583,19 +583,12 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
-  const tabs: LiveTab[] = hasSummary
-    ? [
-        { id: "transcript", label: "Transcript" },
-        { id: "summary", label: "Summary" },
-        { id: "insights", label: "Live insights", badge: insights.length },
-        { id: "context", label: "Context" },
-      ]
-    : [
-        { id: "transcript", label: "Transcript" },
-        { id: "insights", label: "Live insights", badge: insights.length },
-        { id: "summary", label: "Summary" },
-        { id: "context", label: "Context" },
-      ];
+  const tabs: LiveTab[] = [
+    { id: "transcript", label: "Transcript" },
+    { id: "insights", label: "Live insights", badge: insights.length },
+    { id: "summary", label: hasSummary ? "Summary ●" : "Summary" },
+    { id: "context", label: "Context" },
+  ];
 
   function renderSection(id: string): React.ReactNode {
     switch (id) {
