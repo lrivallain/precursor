@@ -320,6 +320,18 @@ def test_topic_context_summary(monkeypatch) -> None:  # type: ignore[no-untyped-
         assert client.post(f"/api/live/{sid2}/topic-summary").status_code == 400
 
 
+def test_topic_summary_empty_conversation_returns_empty_not_error() -> None:
+    """A topic with nothing to summarize is a normal state, not a 400 error."""
+    app = create_app()
+    with TestClient(app) as client:
+        # Title-only topic: no description, no messages → nothing to summarize.
+        tid = client.post("/api/topics", json={"title": "Blank"}).json()["id"]
+        sid = client.post("/api/live", json={"title": "Ctx", "topic_id": tid}).json()["id"]
+        res = client.post(f"/api/live/{sid}/topic-summary")
+        assert res.status_code == 200
+        assert res.json()["summary"] == ""
+
+
 def test_agenda_endpoint(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import precursor.backend.routers.live as live_router
 

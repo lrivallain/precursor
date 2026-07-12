@@ -476,10 +476,8 @@ async def topic_summary(
         text, model = await summarize_topic_conversation(session, ms.topic_id, language=ms.language)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
-    if not text:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "The topic has no conversation to summarize yet."
-        )
+    # An empty topic (no messages yet) is a normal state, not an error: return an
+    # empty summary so the UI shows its "nothing to summarize yet" empty state.
     return TopicSummaryResult(summary=text, model=model)
 
 
