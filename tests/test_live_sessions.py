@@ -458,6 +458,20 @@ def test_html_to_text_strips_tags_and_scripts() -> None:
     assert "color:red" not in out
 
 
+def test_notes_persist_via_update() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "N"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["notes"] == ""
+        r = client.patch(f"/api/live/{sid}", json={"notes": "## Agenda\n- item one"})
+        assert r.status_code == 200
+        assert r.json()["notes"] == "## Agenda\n- item one"
+        # Ending the session can carry a final notes payload.
+        r = client.patch(f"/api/live/{sid}", json={"status": "ended", "notes": "final notes"})
+        assert r.json()["status"] == "ended"
+        assert r.json()["notes"] == "final notes"
+
+
 def test_context_notes_add_remove_and_read() -> None:
     app = create_app()
     with TestClient(app) as client:

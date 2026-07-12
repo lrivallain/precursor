@@ -34,6 +34,7 @@ import { DevicePicker } from "./DevicePicker";
 import { Select } from "./Select";
 import { LivePanel, type LiveTab } from "./LivePanel";
 import { SummarySection } from "./SummarySection";
+import { NotesSection } from "./NotesSection";
 import { ContextSection } from "./ContextSection";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
 import { Markdown } from "./Markdown";
@@ -145,6 +146,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryFocus, setSummaryFocus] = useState(0);
   const genRef = useRef(false);
+
+  // Live notes (Markdown). Owned here so switching tabs never drops in-progress
+  // content; autosaved (debounced) and flushed when the session is ended.
+  const [notes, setNotes] = useState(session.notes ?? "");
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const savedNotesRef = useRef(session.notes ?? "");
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
 
   // Topic-context summary (Context tab). Auto-generated when a topic is linked.
   const [topicSummary, setTopicSummary] = useState("");
@@ -420,7 +430,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     if (next === "ended" && transcriber.listening) transcriber.stop();
     setBusy(true);
     try {
-      const updated = await api.updateMeetingSession(session.id, { status: next });
+      // Persist any in-progress notes together with the status change on end.
+      const payload =
+        next === "ended" && notesRef.current !== savedNotesRef.current
+          ? { status: next, notes: notesRef.current }
+          : { status: next };
+      const updated = await api.updateMeetingSession(session.id, payload);
+      savedNotesRef.current = notesRef.current;
       onUpdated(updated);
       // Auto-draft a summary when the meeting ends (if anything was recorded).
       if (next === "ended" && segCountRef.current > 0) void generateSummary();
@@ -428,6 +444,28 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       setBusy(false);
     }
   }
+
+  // Debounced autosave of live notes while the user types.
+  useEffect(() => {
+    if (notes === savedNotesRef.current) return;
+    setNotesSaved(false);
+    const t = setTimeout(() => {
+      setNotesSaving(true);
+      void api
+        .updateMeetingSession(session.id, { notes })
+        .then((updated) => {
+          savedNotesRef.current = notes;
+          onUpdated(updated);
+          setNotesSaved(true);
+        })
+        .catch(() => {
+          /* non-fatal — will retry on the next edit or on end */
+        })
+        .finally(() => setNotesSaving(false));
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notes, session.id]);
 
   async function remove(): Promise<void> {
     const ok = await confirmAction({
@@ -753,8 +791,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       onGenerate={() => void generateSummary()}
       suggestedAttendees={suggestedAttendees}
       topicTitle={topicTitle}
-      canGenerate={segments.length > 0}
+      canGenerate={isEnded && segments.length > 0}
+      unavailableReason={
+        !isEnded ? "The summary is available once the session is ended." : null
+      }
     />
+  );
+
+  const notesNode = (
+    <NotesSection text={notes} setText={setNotes} saving={notesSaving} saved={notesSaved} />
   );
 
   const contextNode = (
@@ -773,6 +818,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
     { id: "insights", label: "Live insights", badge: insights.length },
+    { id: "notes", label: notes.trim() ? "Notes ●" : "Notes" },
     { id: "summary", label: hasSummary ? "Summary ●" : "Summary" },
     { id: "context", label: "Context" },
   ];
@@ -783,6 +829,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         return transcriptNode;
       case "insights":
         return insightsNode;
+      case "notes":
+        return notesNode;
       case "summary":
         return summaryNode;
       case "context":

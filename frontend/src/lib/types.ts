@@ -839,6 +839,8 @@ export interface MeetingSession {
   attendees: string[];
   // Free-form notes pinned to the grounding context (e.g. saved Q&A answers).
   context_notes: string[];
+  // Live Markdown notes the user takes during the meeting.
+  notes: string;
   // A linked M365 calendar meeting (subject/times/attendees), or null.
   external_meeting: ExternalMeeting | null;
   started_at: string | null;
@@ -859,6 +861,7 @@ export interface MeetingSessionUpdate {
   language?: string | null;
   topic_id?: number | null;
   status?: MeetingStatus;
+  notes?: string | null;
 }
 
 export interface MeetingSegment {

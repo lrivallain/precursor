@@ -107,6 +107,10 @@ class MeetingSession(Base, TimestampMixin):
             return []
         return [str(x) for x in data]
 
+    # Free-form Markdown notes the user takes live during the meeting. Saved as
+    # they type (debounced) and when the session is ended.
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
     # JSON-encoded dict describing a linked M365 calendar meeting (subject,
     # times, organizer, attendees, is_online), fetched via WorkIQ. Null when
     # none is linked.

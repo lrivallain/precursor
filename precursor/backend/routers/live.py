@@ -167,6 +167,8 @@ async def update_session_endpoint(
         data["title"] = data["title"].strip() or ms.title
     if "language" in data:
         data["language"] = (data["language"] or "").strip() or None
+    if "notes" in data and data["notes"] is None:
+        data["notes"] = ""
     # Transitioning to "ended" stamps ended_at once.
     if data.get("status") == "ended" and ms.ended_at is None:
         ms.ended_at = datetime.now(UTC)
