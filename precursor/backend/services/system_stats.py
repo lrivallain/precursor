@@ -26,7 +26,10 @@ from precursor.backend.schemas.stats import (
 )
 from precursor.backend.services.app_settings import resolve_global_github_repo
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.github_client import GitHubClient
+from precursor.backend.services.github_client import (
+    GitHubClient,
+    GitHubRepoNotAccessibleError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,11 +137,16 @@ async def _issue_stats(session: AsyncSession) -> IssueStats:
 
     client = GitHubClient(token=token)
     try:
-        open_count = await client.count_issues(repo, state="open")
-        closed_count = await client.count_issues(repo, state="closed")
-    except (httpx.HTTPError, ValueError) as exc:
+        open_count, closed_count = await client.count_issues_by_state(repo)
+    except GitHubRepoNotAccessibleError:
+        # Expected when the configured repo is private/nonexistent for this
+        # token — surface a short, friendly note rather than a raw API error.
+        return IssueStats(
+            configured=True, repo=repo, error="Repository not found or not accessible"
+        )
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
         logger.debug("issue count lookup failed for %s: %s", repo, exc)
-        return IssueStats(configured=True, repo=repo, error=str(exc))
+        return IssueStats(configured=True, repo=repo, error="Couldn't reach GitHub")
     finally:
         await client.aclose()
 
