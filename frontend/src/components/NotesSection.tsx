@@ -1,5 +1,5 @@
 import { Check, Eye, Loader2, Pencil } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
 import type { MeetingAttachment } from "../lib/types";
 
@@ -12,6 +12,8 @@ interface Props {
   saved: boolean;
   /** Upload a pasted/dropped file; returns the stored attachment (or null). */
   onUpload: (file: File) => Promise<MeetingAttachment | null>;
+  /** Show the rendered preview by default (e.g. once the session is ended). */
+  defaultPreview?: boolean;
 }
 
 /**
@@ -20,8 +22,12 @@ interface Props {
  * content; edits autosave (debounced) and on session end. Files pasted or
  * dropped are uploaded and inserted as Markdown links/images.
  */
-export function NotesSection({ text, setText, saving, saved, onUpload }: Props) {
-  const [mode, setMode] = useState<"edit" | "preview">("edit");
+export function NotesSection({ text, setText, saving, saved, onUpload, defaultPreview }: Props) {
+  const [mode, setMode] = useState<"edit" | "preview">(defaultPreview ? "preview" : "edit");
+  // If the session ends while these notes are open, flip to the rendered view.
+  useEffect(() => {
+    if (defaultPreview) setMode("preview");
+  }, [defaultPreview]);
   const [uploading, setUploading] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);

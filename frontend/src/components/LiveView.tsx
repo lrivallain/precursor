@@ -703,6 +703,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       saving={notesSaving}
       saved={notesSaved}
       onUpload={(file) => api.uploadMeetingAttachment(session.id, file)}
+      defaultPreview={isEnded}
     />
   );
 
