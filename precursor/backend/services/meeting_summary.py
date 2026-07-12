@@ -13,7 +13,13 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.models import MeetingInsight, MeetingSegment, MeetingSession, Topic
+from precursor.backend.models import (
+    MeetingAttachment,
+    MeetingInsight,
+    MeetingSegment,
+    MeetingSession,
+    Topic,
+)
 from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
@@ -76,6 +82,33 @@ async def _topic_context(session: AsyncSession, topic_id: int | None) -> str:
     if topic.description:
         parts.append(topic.description)
     return "\n".join(parts)[-_TOPIC_CHARS:]
+
+
+async def _attachments_markdown(session: AsyncSession, session_id: int, existing_text: str) -> str:
+    """A Markdown '## Attachments' block for the session's note attachments that
+    aren't already referenced in the summary text (keeps them in the recap)."""
+    rows = list(
+        (
+            await session.execute(
+                select(MeetingAttachment)
+                .where(MeetingAttachment.session_id == session_id)
+                .order_by(MeetingAttachment.created_at, MeetingAttachment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    lines: list[str] = []
+    for att in rows:
+        url = f"/api/live/attachments/{att.id}"
+        if url in existing_text:
+            continue
+        label = att.original_filename or "attachment"
+        prefix = "!" if att.mime.startswith("image/") else ""
+        lines.append(f"- {prefix}[{label}]({url})")
+    if not lines:
+        return ""
+    return "## Attachments\n" + "\n".join(lines)
 
 
 async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str, str]:
@@ -158,6 +191,10 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
             topic_id=ms.topic_id,
         )
         await session.commit()
+    # Keep note attachments in the recap even if the model dropped them.
+    attach_md = await _attachments_markdown(session, session_id, text)
+    if attach_md:
+        text = text.rstrip() + "\n\n" + attach_md
     return text, model
 
 

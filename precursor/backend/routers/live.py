@@ -23,6 +23,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import get_session
 from precursor.backend.models import (
+    Attachment,
     MeetingAttachment,
     MeetingInsight,
     MeetingSegment,
@@ -563,11 +564,49 @@ async def post_summary_to_topic(
     if await session.get(Topic, ms.topic_id) is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Linked topic no longer exists.")
 
-    body = f"**Meeting summary — {ms.title}**\n\n{payload.summary.strip()}"
+    # Copy the note attachments into the topic so they survive the meeting
+    # session and render in the posted message's gallery.
+    attachments = list(
+        (
+            await session.execute(
+                select(MeetingAttachment)
+                .where(MeetingAttachment.session_id == ms.id)
+                .order_by(MeetingAttachment.created_at, MeetingAttachment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    summary = payload.summary.strip()
+    if attachments:
+        # The files move to the message gallery, so strip their raw live-URL
+        # references (and any now-empty "Attachments" heading) from the body.
+        summary = re.sub(r"^#+\s*Attachments\s*$", "", summary, flags=re.MULTILINE)
+        summary = re.sub(r"!?\[[^\]]*\]\(/api/live/attachments/\d+\)", "", summary)
+        summary = re.sub(r"^\s*[-*]\s*$", "", summary, flags=re.MULTILINE)
+        summary = re.sub(r"\n{3,}", "\n\n", summary).strip()
+
+    body = f"**Meeting summary — {ms.title}**\n\n{summary}"
     msg = Message(topic_id=ms.topic_id, role=MessageRole.ASSISTANT, content=body)
     session.add(msg)
     await session.commit()
     await session.refresh(msg)
+
+    for att in attachments:
+        session.add(
+            Attachment(
+                topic_id=ms.topic_id,
+                message_id=msg.id,
+                mime=att.mime,
+                size=att.size,
+                original_filename=att.original_filename,
+                sha256=att.sha256,
+            )
+        )
+    if attachments:
+        await session.commit()
+
     await publish_message_changed(ms.topic_id)
     return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id)
 
