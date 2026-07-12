@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../lib/api";
 import type {
   DatabaseStats,
@@ -125,6 +126,7 @@ function IssuesSection({ issues }: { issues: IssueStats }) {
 }
 
 function DatabaseSection({ database }: { database: DatabaseStats }) {
+  const [open, setOpen] = useState(false);
   // Largest tables first so the heaviest rows surface at the top.
   const tables = useMemo(
     () =>
@@ -150,31 +152,51 @@ function DatabaseSection({ database }: { database: DatabaseStats }) {
         <StatCard label="Total rows" value={totalRows} />
       </div>
       <div className="rounded border border-border bg-surface overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-muted border-b border-border">
-          <div className="flex-1">Table</div>
-          <div className="w-20 text-right">Rows</div>
-          {hasSizes && <div className="w-20 text-right">Size</div>}
-        </div>
-        <div className="max-h-64 overflow-y-auto">
-          {tables.map((t) => (
-            <div
-              key={t.name}
-              className="flex items-center gap-2 px-3 py-1 text-xs border-b border-border/50 last:border-b-0"
-            >
-              <div className="flex-1 truncate font-mono text-[11px]" title={t.name}>
-                {t.name}
-              </div>
-              <div className="w-20 text-right tabular-nums">
-                {formatNumber(t.row_count)}
-              </div>
-              {hasSizes && (
-                <div className="w-20 text-right tabular-nums text-muted">
-                  {formatBytes(t.size_bytes)}
-                </div>
-              )}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-muted hover:text-text"
+        >
+          <span className="text-muted">
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
+          <span className="flex-1 text-left uppercase tracking-wide">
+            Per-table breakdown
+          </span>
+          <span className="tabular-nums font-normal normal-case tracking-normal">
+            {tables.length} tables
+          </span>
+        </button>
+        {open && (
+          <>
+            <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-muted border-t border-border">
+              <div className="flex-1">Table</div>
+              <div className="w-20 text-right">Rows</div>
+              {hasSizes && <div className="w-20 text-right">Size</div>}
             </div>
-          ))}
-        </div>
+            <div className="max-h-64 overflow-y-auto">
+              {tables.map((t) => (
+                <div
+                  key={t.name}
+                  className="flex items-center gap-2 px-3 py-1 text-xs border-t border-border/50"
+                >
+                  <div className="flex-1 truncate font-mono text-[11px]" title={t.name}>
+                    {t.name}
+                  </div>
+                  <div className="w-20 text-right tabular-nums">
+                    {formatNumber(t.row_count)}
+                  </div>
+                  {hasSizes && (
+                    <div className="w-20 text-right tabular-nums text-muted">
+                      {formatBytes(t.size_bytes)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
