@@ -10,6 +10,7 @@ import type {
 import { api } from "../lib/api";
 import { streamMeetingAsk } from "../lib/sse";
 import { useSettings } from "../lib/settingsStore";
+import { useResizableHeight } from "../lib/useResizableHeight";
 import {
   listAudioInputDevices,
   useConversationTranscriber,
@@ -158,6 +159,14 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [asking, setAsking] = useState(false);
+  // Ask-assistant input height, resized from a top handle like the app composer.
+  const { height: askHeight, onMouseDown: onAskResize } = useResizableHeight({
+    storageKey: "precursor:live-ask-height",
+    defaultHeight: 56,
+    min: 36,
+    max: 320,
+    side: "top",
+  });
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const restartRef = useRef(false);
@@ -637,7 +646,16 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
             {answer}
           </div>
         )}
-        <div className="flex items-end gap-1.5">
+        <div className="relative flex items-end gap-1.5">
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            onMouseDown={onAskResize}
+            title="Drag to resize"
+            className="group absolute -top-2 left-0 right-0 z-10 h-2 cursor-row-resize"
+          >
+            <div className="mx-auto mt-1 h-px w-12 bg-border transition-colors group-hover:bg-accent/60" />
+          </div>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -647,9 +665,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
                 void ask();
               }
             }}
-            rows={2}
+            style={{ height: askHeight }}
             placeholder="Ask about anything discussed…"
-            className="min-h-[2.25rem] min-w-0 flex-1 resize-y rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
+            className="min-w-0 flex-1 resize-none rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
           />
           <button
             type="button"
