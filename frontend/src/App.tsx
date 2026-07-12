@@ -679,9 +679,11 @@ export default function App() {
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
     } else if (next === "live") {
-      const active =
-        meetingSessionsRef.current?.find((s) => s.id === activeSessionIdRef.current) ?? null;
-      target = liveUrl(active);
+      // Entering the Live section lands on the create surface (like starting a
+      // fresh topic/agent): drop the selection so the "new session" hero shows.
+      // Existing sessions stay one click away in the list.
+      setActiveSessionId(null);
+      target = "/live";
     } else if (next === "agents") {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else {
@@ -1150,6 +1152,13 @@ export default function App() {
     history.pushState(null, "", liveUrl(session));
   }
 
+  async function handleRenameSession(session: MeetingSession, title: string): Promise<void> {
+    const updated = await api.updateMeetingSession(session.id, { title });
+    setMeetingSessions((prev) =>
+      prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
+    );
+  }
+
   // ---- Agents -----------------------------------------------------------
   async function loadAgents(): Promise<AgentSession[]> {
     try {
@@ -1261,6 +1270,7 @@ export default function App() {
             activeId={activeSessionId}
             recordingId={liveRecordingId}
             onSelect={handleSelectSession}
+            onRename={handleRenameSession}
           />
         }
         agentSlot={
@@ -1391,9 +1401,16 @@ export default function App() {
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
             </span>
           ) : sidebarMode === "live" ? (
-            <span className="truncate font-medium min-w-0 flex-1">
-              {activeSession ? activeSession.title : "Live"}
-            </span>
+            activeSession ? (
+              <InlineTitle
+                title={activeSession.title}
+                onRename={(t) => handleRenameSession(activeSession, t)}
+                className="truncate font-medium min-w-0 flex-1"
+                inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+              />
+            ) : (
+              <span className="truncate font-medium min-w-0 flex-1">Live</span>
+            )
           ) : (
             <>
               {activeAgent ? (

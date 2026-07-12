@@ -381,7 +381,7 @@ def test_agenda_endpoint(monkeypatch) -> None:  # type: ignore[no-untyped-def]
         assert body["events"][0]["subject"] == "Sprint review"
 
 
-def test_link_meeting_merges_attendees() -> None:
+def test_link_meeting_does_not_add_invitees_to_attendees() -> None:
     app = create_app()
     with TestClient(app) as client:
         sid = client.post("/api/live", json={"title": "Link"}).json()["id"]
@@ -396,14 +396,56 @@ def test_link_meeting_merges_attendees() -> None:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["attendees"] == ["Marie", "Thomas"]
+        # Invitees are NOT auto-added — only confirmed transcript speakers seed
+        # the attendee list; the existing attendee is untouched.
+        assert body["attendees"] == ["Marie"]
         assert body["external_meeting"]["subject"] == "Sprint review"
+
+
+def test_rename_confirmed_speaker_seeds_attendees() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Confirm"}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "Hi", "speaker_label": "1:Guest-2"})
+        renamed = client.post(
+            f"/api/live/{sid}/speakers", json={"label": "1:Guest-2", "name": "Thomas"}
+        )
+        assert renamed.status_code == 200
+        # Naming a speaker confirms them present → added to the attendee list.
+        assert renamed.json()["attendees"] == ["Thomas"]
+
+
+def test_post_meeting_details_to_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Roadmap"}).json()["id"]
+        sid = client.post("/api/live", json={"title": "M", "topic_id": tid}).json()["id"]
+        # No meeting linked yet → 400.
+        assert client.post(f"/api/live/{sid}/meeting/post").status_code == 400
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "organizer": "Marie",
+                "attendees": [{"name": "Marie"}, {"name": "Thomas"}],
+                "body_preview": "Agenda: ship v2.",
+                "is_online": True,
+            },
+        )
+        r = client.post(f"/api/live/{sid}/meeting/post")
+        assert r.status_code == 201
+        assert r.json()["topic_id"] == tid
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        assert any(
+            "Sprint review" in m["content"] and "Agenda: ship v2." in m["content"] for m in msgs
+        )
 
 
 def test_unlink_meeting_clears_meeting_keeps_attendees() -> None:
     app = create_app()
     with TestClient(app) as client:
         sid = client.post("/api/live", json={"title": "Unlink"}).json()["id"]
+        client.put(f"/api/live/{sid}/attendees", json={"attendees": ["Marie"]})
         client.post(
             f"/api/live/{sid}/meeting",
             json={"subject": "Standup", "attendees": [{"name": "Marie"}], "is_online": True},

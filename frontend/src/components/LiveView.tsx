@@ -23,6 +23,7 @@ import { Select } from "./Select";
 import { LivePanel, type LiveTab } from "./LivePanel";
 import { SummarySection } from "./SummarySection";
 import { ContextSection } from "./ContextSection";
+import { SpeakerNamePicker } from "./SpeakerNamePicker";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -142,8 +143,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   // Raw diarization label currently being renamed inline, keyed by segment id so
   // only the clicked occurrence shows the editor (the rename applies to all).
   const [editingSegId, setEditingSegId] = useState<number | null>(null);
-  const [editingValue, setEditingValue] = useState("");
-  const cancelEditRef = useRef(false);
 
   // Segment indices where recording resumed (draw a separator before them).
   const [recordingBoundaries, setRecordingBoundaries] = useState<number[]>([]);
@@ -459,14 +458,12 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   function beginRename(seg: MeetingSegment): void {
     if (!seg.speaker_label) return;
     setEditingSegId(seg.id);
-    setEditingValue(displayName(seg.speaker_label) ?? "");
   }
 
-  async function commitRename(rawLabel: string): Promise<void> {
-    const value = editingValue.trim();
+  async function commitRename(rawLabel: string, value: string): Promise<void> {
     setEditingSegId(null);
     try {
-      const updated = await api.renameMeetingSpeaker(session.id, rawLabel, value);
+      const updated = await api.renameMeetingSpeaker(session.id, rawLabel, value.trim());
       onUpdated(updated);
     } catch {
       // Non-fatal — leave the previous name in place.
@@ -482,23 +479,25 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     [insights],
   );
 
-  // Attendee suggestions for the Summary: distinct transcript display names not
-  // already listed. Linked-meeting invitees are NOT suggested here — they are
-  // added directly to the attendee list when the meeting is linked.
+  // Attendee suggestions for the Summary: meeting invitees (and any transcript
+  // display names) not already confirmed in the list. Confirmed speakers are
+  // auto-added when named, so they don't reappear here.
   const suggestedAttendees = useMemo(() => {
     const seen = new Set<string>();
     const existing = new Set(session.attendees ?? []);
     const out: string[] = [];
-    for (const seg of segments) {
-      const name = (displayName(seg.speaker_label) ?? "").trim();
-      if (name && !seen.has(name) && !existing.has(name)) {
-        seen.add(name);
-        out.push(name);
+    const push = (name: string | null | undefined) => {
+      const n = (name ?? "").trim();
+      if (n && !seen.has(n) && !existing.has(n)) {
+        seen.add(n);
+        out.push(n);
       }
-    }
+    };
+    for (const a of session.external_meeting?.attendees ?? []) push(a.name || a.email);
+    for (const seg of segments) push(displayName(seg.speaker_label));
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segments, session.attendees, session.speaker_names]);
+  }, [segments, session.attendees, session.speaker_names, session.external_meeting]);
 
   // Names offered as autocomplete when renaming a transcript speaker: the
   // linked meeting's invitees plus any attendees already on the summary.
@@ -521,11 +520,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
   const transcriptNode = (
     <div ref={transcriptRef} className="h-full overflow-y-auto px-4 py-4">
-      <datalist id="live-speaker-names">
-        {speakerNameOptions.map((n) => (
-          <option key={n} value={n} />
-        ))}
-      </datalist>
       {segments.length === 0 && !interim ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
           <Radio size={20} className="mb-2 opacity-70" aria-hidden="true" />
@@ -553,29 +547,14 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
                 <div className="min-w-0 flex-1">
                   {seg.speaker_label &&
                     (editingSegId === seg.id ? (
-                      <input
-                        autoFocus
-                        value={editingValue}
-                        onChange={(e) => setEditingValue(e.target.value)}
-                        onBlur={() => {
-                          if (cancelEditRef.current) {
-                            cancelEditRef.current = false;
-                            setEditingSegId(null);
-                            return;
-                          }
-                          void commitRename(seg.speaker_label as string);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            e.currentTarget.blur();
-                          } else if (e.key === "Escape") {
-                            cancelEditRef.current = true;
-                            e.currentTarget.blur();
-                          }
-                        }}
-                        list="live-speaker-names"
-                        className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
+                      <SpeakerNamePicker
+                        value={displayName(seg.speaker_label) ?? ""}
+                        options={speakerNameOptions}
+                        color={speakerColor(seg.speaker_label)}
+                        onCommit={(name) =>
+                          void commitRename(seg.speaker_label as string, name)
+                        }
+                        onCancel={() => setEditingSegId(null)}
                       />
                     ) : (
                       <button

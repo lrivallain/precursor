@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   CalendarClock,
+  Check,
   FileText,
   Link2,
   Link2Off,
   Loader2,
   RefreshCw,
+  Send,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -58,8 +60,12 @@ export function ContextSection({
   const [agendaDetail, setAgendaDetail] = useState<string | null>(null);
   const [linking, setLinking] = useState<string | null>(null);
   const [unlinking, setUnlinking] = useState(false);
+  const [postingMeeting, setPostingMeeting] = useState(false);
+  const [postedMeeting, setPostedMeeting] = useState(false);
+  const [postMeetingError, setPostMeetingError] = useState<string | null>(null);
 
   const linked = session.external_meeting;
+  const canPost = session.topic_id != null;
 
   async function loadAgenda(): Promise<void> {
     setAgendaLoading(true);
@@ -104,6 +110,21 @@ export function ContextSection({
       /* non-fatal */
     } finally {
       setUnlinking(false);
+    }
+  }
+
+  async function postMeeting(): Promise<void> {
+    if (postingMeeting || !canPost) return;
+    setPostingMeeting(true);
+    setPostMeetingError(null);
+    try {
+      await api.postMeetingToTopic(session.id);
+      setPostedMeeting(true);
+      setTimeout(() => setPostedMeeting(false), 2000);
+    } catch (e) {
+      setPostMeetingError(e instanceof Error ? e.message : "Couldn't post to the topic.");
+    } finally {
+      setPostingMeeting(false);
     }
   }
 
@@ -211,6 +232,26 @@ export function ContextSection({
                   This meeting grounds the transcript, live insights and summary as
                   additional context.
                 </span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void postMeeting()}
+                  disabled={postingMeeting || !canPost}
+                  data-tooltip={canPost ? undefined : "Attach a topic to post"}
+                  className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-[12px] text-white disabled:opacity-50"
+                >
+                  {postedMeeting ? <Check size={13} /> : <Send size={13} />}
+                  {postedMeeting
+                    ? "Posted"
+                    : postingMeeting
+                      ? "Posting…"
+                      : "Post to topic"}
+                </button>
+                {postMeetingError && (
+                  <span className="text-[11px] text-red-500">{postMeetingError}</span>
+                )}
               </div>
             </div>
           </>

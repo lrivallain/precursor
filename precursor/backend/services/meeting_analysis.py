@@ -133,6 +133,32 @@ def meeting_context_text(external_meeting: dict[str, object] | None) -> str:
     return "\n".join(parts)
 
 
+def meeting_details_markdown(external_meeting: dict[str, object] | None) -> str:
+    """Render a linked meeting's details as a Markdown block for a topic post."""
+    if not external_meeting:
+        return ""
+    m = external_meeting
+    lines: list[str] = [f"**Meeting — {m.get('subject') or '(no subject)'}**", ""]
+
+    start, end = m.get("start"), m.get("end")
+    when = " to ".join(str(x) for x in (start, end) if x)
+    if when:
+        lines.append(f"- **When:** {when}")
+    organizer = m.get("organizer")
+    if organizer:
+        lines.append(f"- **Organizer:** {organizer}")
+    attendees = m.get("attendees")
+    if isinstance(attendees, list) and attendees:
+        names = [str(a.get("name")) for a in attendees if isinstance(a, dict) and a.get("name")]
+        if names:
+            lines.append(f"- **Invitees:** {', '.join(names[:60])}")
+
+    preview = m.get("body_preview")
+    if isinstance(preview, str) and preview.strip():
+        lines += ["", preview.strip()[:4000]]
+    return "\n".join(lines)
+
+
 def _format_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
     lines: list[str] = []
     for seg in segments:

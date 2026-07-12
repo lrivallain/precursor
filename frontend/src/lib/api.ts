@@ -668,6 +668,10 @@ export const api = {
     }),
   unlinkMeeting: (id: number) =>
     request<MeetingSession>(`/api/live/${id}/meeting`, { method: "DELETE" }),
+  postMeetingToTopic: (id: number) =>
+    request<{ topic_id: number; message_id: number }>(`/api/live/${id}/meeting/post`, {
+      method: "POST",
+    }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),

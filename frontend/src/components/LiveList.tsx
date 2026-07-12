@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Radio, Search } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
+import { InlineTitle } from "./InlineTitle";
 
 interface LiveListProps {
   sessions: MeetingSession[] | null;
@@ -8,10 +9,12 @@ interface LiveListProps {
   /** Session currently recording (red dot), if any. */
   recordingId?: number | null;
   onSelect: (session: MeetingSession) => void;
+  /** Rename a session (double-click its title). */
+  onRename?: (session: MeetingSession, title: string) => void | Promise<void>;
 }
 
 /** Sidebar list of live meeting sessions (the "Live" section). */
-export function LiveList({ sessions, activeId, recordingId, onSelect }: LiveListProps) {
+export function LiveList({ sessions, activeId, recordingId, onSelect, onRename }: LiveListProps) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -49,10 +52,17 @@ export function LiveList({ sessions, activeId, recordingId, onSelect }: LiveList
               const isOpen = s.status === "active";
               return (
                 <li key={s.id}>
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onSelect(s)}
-                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelect(s);
+                      }
+                    }}
+                    className={`flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
                       isActive ? "bg-accent/15 text-accent" : "hover:bg-surface"
                     }`}
                   >
@@ -71,13 +81,23 @@ export function LiveList({ sessions, activeId, recordingId, onSelect }: LiveList
                     ) : (
                       <Radio size={14} className="shrink-0 opacity-50" />
                     )}
-                    <span className="flex-1 truncate">{s.title}</span>
+                    <span className="flex-1 truncate">
+                      {onRename ? (
+                        <InlineTitle
+                          title={s.title}
+                          onRename={(t) => onRename(s, t)}
+                          className="block truncate"
+                        />
+                      ) : (
+                        s.title
+                      )}
+                    </span>
                     {s.status === "ended" && (
                       <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted">
                         ended
                       </span>
                     )}
-                  </button>
+                  </div>
                 </li>
               );
             })}

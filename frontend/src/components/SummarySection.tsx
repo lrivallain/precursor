@@ -129,7 +129,7 @@ export function SummarySection({
         </div>
         {suggestedAttendees.length > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            <span className="text-[11px] text-muted">From speakers:</span>
+            <span className="text-[11px] text-muted">Suggested:</span>
             {suggestedAttendees.map((s) => (
               <button
                 key={s}

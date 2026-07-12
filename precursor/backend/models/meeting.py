@@ -74,7 +74,8 @@ class MeetingSession(Base, TimestampMixin):
         return {str(k): str(v) for k, v in data.items()}
 
     # JSON-encoded list[str] of attendee display names for the summary. Seeded
-    # from renamed speakers + any linked meeting's invitees; user-editable.
+    # from speakers confirmed in the transcript (i.e. renamed to a real name);
+    # a linked meeting's invitees are only *suggested*, not auto-added. Editable.
     attendees_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="[]", server_default="[]"
     )

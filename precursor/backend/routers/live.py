@@ -60,6 +60,7 @@ from precursor.backend.services.meeting_analysis import (
     display_label,
     language_name,
     meeting_context_text,
+    meeting_details_markdown,
 )
 from precursor.backend.services.meeting_summary import (
     generate_summary,
@@ -250,6 +251,12 @@ async def rename_speaker(
         names.pop(label, None)
     else:
         names[label] = name
+        # A named speaker is confirmed present, so seed the summary's attendee
+        # list with them (invitees who never speak stay suggestions only).
+        attendees = ms.attendees
+        if name not in attendees:
+            attendees.append(name)
+            ms.attendees_json = json.dumps(attendees, ensure_ascii=False)
     ms.speaker_names_json = json.dumps(names, ensure_ascii=False)
     await session.commit()
     await session.refresh(ms)
@@ -502,23 +509,43 @@ async def link_meeting(
     payload: LinkMeetingRequest,
     session: AsyncSession = Depends(get_session),
 ) -> MeetingSession:
-    """Link an agenda meeting: store it and merge its invitees into attendees."""
+    """Link an agenda meeting as grounding context. Invitees are NOT auto-added
+    to attendees — only speakers confirmed in the transcript seed that list;
+    invitees stay suggestions in the summary."""
     ms = await _get_session_or_404(session_id, session)
     ms.external_meeting_json = payload.model_dump_json()
-
-    merged: list[str] = list(ms.attendees)
-    seen = set(merged)
-    for att in payload.attendees:
-        name = att.name.strip()
-        if name and name not in seen:
-            seen.add(name)
-            merged.append(name)
-    ms.attendees_json = json.dumps(merged, ensure_ascii=False)
-
     await session.commit()
     await session.refresh(ms)
     await publish_meeting_changed(ms.id)
     return ms
+
+
+@router.post(
+    "/{session_id}/meeting/post",
+    response_model=MeetingSummaryPostResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_meeting_to_topic(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingSummaryPostResult:
+    """Post the linked meeting's details as a message in the attached topic."""
+    ms = await _get_session_or_404(session_id, session)
+    if ms.topic_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Attach a topic to this session before posting."
+        )
+    if await session.get(Topic, ms.topic_id) is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Linked topic no longer exists.")
+    if ms.external_meeting is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No meeting is linked to this session.")
+
+    body = meeting_details_markdown(ms.external_meeting)
+    msg = Message(topic_id=ms.topic_id, role=MessageRole.ASSISTANT, content=body)
+    session.add(msg)
+    await session.commit()
+    await session.refresh(msg)
+    await publish_message_changed(ms.topic_id)
+    return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id)
 
 
 @router.delete("/{session_id}/meeting", response_model=MeetingSessionRead)
