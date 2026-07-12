@@ -46,6 +46,7 @@ export function LiveList({ sessions, activeId, recordingId, onSelect }: LiveList
             {filtered.map((s) => {
               const isActive = s.id === activeId;
               const isRecording = s.id === recordingId;
+              const isOpen = s.status === "active";
               return (
                 <li key={s.id}>
                   <button
@@ -61,17 +62,14 @@ export function LiveList({ sessions, activeId, recordingId, onSelect }: LiveList
                         data-tooltip="Recording"
                         aria-label="Recording"
                       />
-                    ) : isActive ? (
+                    ) : isOpen ? (
                       <span
                         className="h-2.5 w-2.5 shrink-0 rounded-full bg-green-500"
                         data-tooltip="Open"
                         aria-label="Open"
                       />
                     ) : (
-                      <Radio
-                        size={14}
-                        className={`shrink-0 ${s.status === "active" ? "text-accent" : "opacity-60"}`}
-                      />
+                      <Radio size={14} className="shrink-0 opacity-50" />
                     )}
                     <span className="flex-1 truncate">{s.title}</span>
                     {s.status === "ended" && (
