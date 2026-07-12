@@ -587,7 +587,9 @@ async def translate(
     """Translate the current transcript into the requested language (on demand)."""
     await _get_session_or_404(session_id, session)
     try:
-        text, model = await translate_transcript(session, session_id, payload.target_lang)
+        text, model = await translate_transcript(
+            session, session_id, payload.target_lang, payload.text
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Translation failed: {exc}") from exc
     if not text:

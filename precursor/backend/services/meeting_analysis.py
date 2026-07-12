@@ -446,27 +446,33 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
 
 
 async def translate_transcript(
-    session: AsyncSession, session_id: int, target_lang: str
+    session: AsyncSession, session_id: int, target_lang: str, text: str | None = None
 ) -> tuple[str, str]:
-    """Translate the current transcript into ``target_lang``. Returns (text, model)."""
+    """Translate the transcript (or the given ``text`` batch) into ``target_lang``.
+
+    Returns (translated_text, model).
+    """
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
         return "", ""
-    segments = list(
-        (
-            await session.execute(
-                select(MeetingSegment)
-                .where(MeetingSegment.session_id == session_id)
-                .order_by(MeetingSegment.created_at, MeetingSegment.id)
+    if text is not None:
+        source = text.strip()
+    else:
+        segments = list(
+            (
+                await session.execute(
+                    select(MeetingSegment)
+                    .where(MeetingSegment.session_id == session_id)
+                    .order_by(MeetingSegment.created_at, MeetingSegment.id)
+                )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
-    if not segments:
+        source = _format_transcript(segments, ms.speaker_names) if segments else ""
+    if not source:
         return "", ""
 
-    transcript = _format_transcript(segments, ms.speaker_names)
     lang = language_name(target_lang) or target_lang
     system = (
         f"Translate the meeting transcript into {lang}. Keep the '[Speaker] text' "
@@ -476,12 +482,12 @@ async def translate_transcript(
     provider = await get_llm_provider(session)
     model = await resolve_live_fast_model(session)
     effort = await resolve_live_reasoning_effort(session)
-    text, usage = await complete_text_with_usage(
+    translated, usage = await complete_text_with_usage(
         provider,
         model=model,
         messages=[
             ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content=transcript),
+            ChatMessage(role="user", content=source),
         ],
         reasoning_effort=effort or None,
     )
@@ -495,7 +501,7 @@ async def translate_transcript(
             model=model,
         )
         await session.commit()
-    return text, model
+    return translated, model
 
 
 _SUGGEST_SYSTEM = (

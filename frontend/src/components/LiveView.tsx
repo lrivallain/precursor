@@ -57,7 +57,7 @@ const FEATURE_OPTIONS: FeatureOption[] = [
   { id: "notes", label: "Notes", description: "Your Markdown scratch pad" },
   { id: "assistant", label: "Assistant", description: "A grounded chat about the meeting" },
   { id: "proactive", label: "Proactive assist", description: "On-demand solution suggestions" },
-  { id: "translation", label: "Translation", description: "On-demand transcript translation" },
+  { id: "translation", label: "Translation", description: "Live transcript translation" },
 ];
 
 const SPEAKER_COLORS = [
@@ -594,6 +594,17 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     return out;
   }, [session.external_meeting, session.attendees]);
 
+  // Formatted transcript lines ("[Speaker] text") fed to live translation.
+  const transcriptLines = useMemo(
+    () =>
+      segments.map((seg) => {
+        const spk = displayName(seg.speaker_label);
+        return spk ? `[${spk}] ${seg.text}` : seg.text;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [segments, session.speaker_names],
+  );
+
   // ---- Section nodes -----------------------------------------------------
   const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
   const transcriptNode = (
@@ -752,7 +763,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const translationNode = (
     <TranslationSection
       sessionId={session.id}
-      canRun={segments.length > 0}
+      lines={transcriptLines}
       defaultLang={(session.language || "").split("-")[0]}
     />
   );
