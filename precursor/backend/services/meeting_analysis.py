@@ -561,18 +561,43 @@ async def translate_lines(
 
 
 _SUGGEST_SYSTEM = (
-    "You are a proactive live meeting copilot. From the recent discussion and the "
-    "context below, propose a concrete, actionable answer or solution to the CURRENT "
-    "open question or problem being discussed. Be specific and brief — a few bullet "
-    "points at most. If nothing needs solving right now, say so in one line."
+    "You are a proactive live meeting copilot. Watch the ongoing discussion and "
+    "ONLY step in when there is a clear, current open question or problem you can "
+    "materially help with — a concrete answer, solution, fact, or next step. Most "
+    "of the time nothing is needed; that is the expected default, so stay silent "
+    "unless your input would genuinely help right now.\n\n"
+    'Return ONLY a JSON object: {"help": <true|false>, "suggestion": "<text>"}. '
+    "Set help=false with an empty suggestion when nothing is needed. When help=true, "
+    "keep the suggestion specific and brief — a sentence or a few bullet points."
 )
 
 
-async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tuple[str, str]:
-    """Propose a solution/answer to the current discussion. Returns (text, model)."""
+def _parse_suggestion(raw: str) -> tuple[bool, str]:
+    """Parse the model's JSON suggestion into (help, text). Best-effort."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        nl = text.find("\n")
+        if nl != -1:
+            text = text[nl + 1 :]
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start : end + 1]
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False, ""
+    if not isinstance(data, dict):
+        return False, ""
+    suggestion = str(data.get("suggestion", "")).strip()
+    return bool(data.get("help")) and bool(suggestion), suggestion
+
+
+async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tuple[bool, str, str]:
+    """Decide whether to help with the current discussion. Returns (help, text, model)."""
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
-        return "", ""
+        return False, "", ""
     segments = list(
         (
             await session.execute(
@@ -585,7 +610,7 @@ async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tupl
         .all()
     )
     if not segments:
-        return "", ""
+        return False, "", ""
     insights = list(
         (
             await session.execute(
@@ -601,7 +626,7 @@ async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tupl
     system = _SUGGEST_SYSTEM
     lang = language_name(ms.language)
     if lang:
-        system += f" Respond in {lang}."
+        system += f" Write the suggestion in {lang}."
 
     user_parts = [f"Recent discussion:\n{_format_transcript(segments, ms.speaker_names)}"]
     if insights:
@@ -640,4 +665,5 @@ async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tupl
             model=model,
         )
         await session.commit()
-    return text, model
+    help_needed, suggestion = _parse_suggestion(text)
+    return help_needed, suggestion, model

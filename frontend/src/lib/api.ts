@@ -656,9 +656,10 @@ export const api = {
       body: JSON.stringify({ features }),
     }),
   suggestMeeting: (id: number) =>
-    request<{ suggestion: string; model: string }>(`/api/live/${id}/suggest`, {
-      method: "POST",
-    }),
+    request<{ has_suggestion: boolean; suggestion: string; model: string }>(
+      `/api/live/${id}/suggest`,
+      { method: "POST" },
+    ),
   translateMeeting: (id: number, targetLang: string, texts?: string[]) =>
     request<{ text: string; lines: string[]; target_lang: string; model: string }>(
       `/api/live/${id}/translate`,

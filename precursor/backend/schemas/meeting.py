@@ -100,7 +100,9 @@ class TranslateResult(BaseModel):
 
 
 class SuggestResult(BaseModel):
-    suggestion: str
+    # True only when the model judges there's something worth helping with now.
+    has_suggestion: bool = False
+    suggestion: str = ""
     model: str
 
 

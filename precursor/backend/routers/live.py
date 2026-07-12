@@ -565,18 +565,15 @@ async def ask(
 
 @router.post("/{session_id}/suggest", response_model=SuggestResult)
 async def suggest(session_id: int, session: AsyncSession = Depends(get_session)) -> SuggestResult:
-    """Proactively propose a solution/answer to the current discussion (on demand)."""
+    """Live proactive assist: decide whether there's anything worth helping with
+    now. Returns has_suggestion=false (200) when nothing is needed — the common
+    case — so the client can poll quietly."""
     await _get_session_or_404(session_id, session)
     try:
-        text, model = await suggest_for_discussion(session, session_id)
+        help_needed, text, model = await suggest_for_discussion(session, session_id)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Suggestion failed: {exc}") from exc
-    if not text:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Nothing to suggest yet — record some of the meeting first.",
-        )
-    return SuggestResult(suggestion=text, model=model)
+    return SuggestResult(has_suggestion=help_needed, suggestion=text, model=model)
 
 
 @router.post("/{session_id}/translate", response_model=TranslateResult)

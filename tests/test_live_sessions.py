@@ -714,8 +714,11 @@ def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-
     app = create_app()
     with TestClient(app) as client:
         sid = client.post("/api/live", json={"title": "T"}).json()["id"]
-        # Nothing recorded yet → 400.
-        assert client.post(f"/api/live/{sid}/suggest").status_code == 400
+        # Suggest is quiet-by-default: 200 with has_suggestion=false, even empty.
+        empty = client.post(f"/api/live/{sid}/suggest")
+        assert empty.status_code == 200
+        assert empty.json()["has_suggestion"] is False
+        # Translate still 400s when there's nothing recorded.
         assert (
             client.post(f"/api/live/{sid}/translate", json={"target_lang": "fr"}).status_code == 400
         )
@@ -733,6 +736,23 @@ def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-
         )
         assert lm.status_code == 200
         assert len(lm.json()["lines"]) == 2
+        # The fake provider returns non-JSON, so suggest parses to help=false.
         s = client.post(f"/api/live/{sid}/suggest")
         assert s.status_code == 200
-        assert s.json()["suggestion"]
+        assert s.json()["has_suggestion"] is False
+
+
+def test_parse_suggestion_json() -> None:
+    from precursor.backend.services.meeting_analysis import _parse_suggestion
+
+    assert _parse_suggestion('{"help": false, "suggestion": ""}') == (False, "")
+    assert _parse_suggestion('{"help": true, "suggestion": "Try X"}') == (True, "Try X")
+    # help=true but empty suggestion → not actionable.
+    assert _parse_suggestion('{"help": true, "suggestion": ""}') == (False, "")
+    # Tolerates code fences and stray prose.
+    assert _parse_suggestion('```json\n{"help": true, "suggestion": "Do Y"}\n```') == (
+        True,
+        "Do Y",
+    )
+    # Non-JSON → no help.
+    assert _parse_suggestion("nothing to do here") == (False, "")

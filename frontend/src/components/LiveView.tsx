@@ -56,7 +56,7 @@ const FEATURE_OPTIONS: FeatureOption[] = [
   { id: "insights", label: "Live insights", description: "Rolling action items, decisions, risks" },
   { id: "notes", label: "Notes", description: "Your Markdown scratch pad" },
   { id: "assistant", label: "Assistant", description: "A grounded chat about the meeting" },
-  { id: "proactive", label: "Proactive assist", description: "On-demand solution suggestions" },
+  { id: "proactive", label: "Proactive assist", description: "Live help when it's needed" },
   { id: "translation", label: "Translation", description: "Live transcript translation" },
 ];
 
@@ -763,7 +763,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     />
   ) : null;
 
-  const assistNode = <AssistSection sessionId={session.id} canRun={segments.length > 0} />;
+  const assistNode = (
+    <AssistSection
+      sessionId={session.id}
+      segmentCount={segments.length}
+      canRun={segments.length > 0}
+    />
+  );
   const translationNode = (
     <TranslationSection
       sessionId={session.id}
