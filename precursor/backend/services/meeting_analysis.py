@@ -15,7 +15,7 @@ import re
 from html.parser import HTMLParser
 from typing import ClassVar
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import MeetingInsight, MeetingSegment, MeetingSession, Message, Topic
@@ -334,6 +334,11 @@ async def _topic_context(session: AsyncSession, topic_id: int | None) -> str:
     return "\n".join(parts)[-_TOPIC_CHARS:]
 
 
+def _norm_insight(content: str) -> str:
+    """Normalise an insight's text for de-duplication across analysis runs."""
+    return " ".join(content.lower().split())
+
+
 def _parse_insights(text: str) -> tuple[list[tuple[str, str]], bool, str]:
     """Best-effort parse of the model's JSON.
 
@@ -376,12 +381,12 @@ def _parse_insights(text: str) -> tuple[list[tuple[str, str]], bool, str]:
 async def analyze_session(
     session: AsyncSession, session_id: int
 ) -> tuple[list[MeetingInsight], str]:
-    """Re-derive and persist the insight snapshot for a session, and decide on a
-    proactive suggestion — in a single LLM pass.
+    """Re-derive insights for a session and decide on a proactive suggestion —
+    in a single LLM pass.
 
-    Replaces the session's existing insights with the fresh set. Returns
-    (rows, suggestion); suggestion is "" when no proactive help is warranted or
-    when there's no transcript yet.
+    Insights are *retained* across runs: the existing set is kept and only new,
+    de-duplicated items are appended. Returns (all_rows, suggestion); suggestion
+    is "" when no proactive help is warranted or there's no transcript yet.
     """
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
@@ -438,13 +443,29 @@ async def analyze_session(
 
     insights, _help, suggestion = _parse_insights(text)
 
-    # Replace the snapshot so the panel always reflects the latest understanding.
-    await session.execute(delete(MeetingInsight).where(MeetingInsight.session_id == session_id))
-    rows = [
-        MeetingInsight(session_id=session_id, kind=kind, content=content)
-        for kind, content in insights
-    ]
-    session.add_all(rows)
+    # Retain prior insights across runs: keep the existing set and append only
+    # genuinely new items (de-duplicated on kind + normalised content), so the
+    # panel accumulates the meeting's understanding instead of resetting each run.
+    existing = list(
+        (
+            await session.execute(
+                select(MeetingInsight)
+                .where(MeetingInsight.session_id == session_id)
+                .order_by(MeetingInsight.created_at, MeetingInsight.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    seen = {(row.kind, _norm_insight(row.content)) for row in existing}
+    added: list[MeetingInsight] = []
+    for kind, content in insights:
+        key = (kind, _norm_insight(content))
+        if key in seen:
+            continue
+        seen.add(key)
+        added.append(MeetingInsight(session_id=session_id, kind=kind, content=content))
+    session.add_all(added)
     if usage is not None:
         await record_usage(
             session,
@@ -455,9 +476,9 @@ async def analyze_session(
             model=model,
         )
     await session.commit()
-    for row in rows:
+    for row in added:
         await session.refresh(row)
-    return rows, suggestion
+    return existing + added, suggestion
 
 
 async def translate_transcript(

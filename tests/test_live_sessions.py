@@ -188,9 +188,45 @@ def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore
         # The proactive suggestion rides along on the same pass.
         assert body["suggestion"] == "Consider connection pooling"
 
-        # The snapshot is readable and replaced (not appended) on re-analysis.
+        # Insights are retained + de-duplicated: re-analysing the same content
+        # doesn't grow or reset the set.
         assert len(client.get(f"/api/live/{sid}/insights").json()) == 2
         assert len(client.post(f"/api/live/{sid}/analyze").json()["insights"]) == 2
+
+
+def test_meeting_analyze_retains_across_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.services.meeting_analysis as analysis
+    from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+    payloads = iter(
+        [
+            '{"insights": [{"kind": "decision", "content": "Use Postgres"}], "help": false, "suggestion": ""}',
+            # A later run surfaces a different insight; the first must be kept.
+            '{"insights": [{"kind": "risk", "content": "Tight deadline"}], "help": false, "suggestion": ""}',
+        ]
+    )
+
+    class _SeqProvider:
+        name = "fake"
+
+        async def stream_chat_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+            yield TextDeltaEvent(content=next(payloads))
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _SeqProvider()
+
+    monkeypatch.setattr(analysis, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Retain"}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "hi"})
+        first = client.post(f"/api/live/{sid}/analyze").json()["insights"]
+        assert {i["content"] for i in first} == {"Use Postgres"}
+        second = client.post(f"/api/live/{sid}/analyze").json()["insights"]
+        # The earlier insight is retained alongside the new one.
+        assert {i["content"] for i in second} == {"Use Postgres", "Tight deadline"}
 
 
 def test_meeting_ask_streams_answer() -> None:
