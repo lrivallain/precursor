@@ -662,8 +662,12 @@ export const api = {
         organizer: event.organizer,
         attendees: event.attendees,
         is_online: event.is_online,
+        body: event.body,
+        body_preview: event.body_preview,
       }),
     }),
+  unlinkMeeting: (id: number) =>
+    request<MeetingSession>(`/api/live/${id}/meeting`, { method: "DELETE" }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),

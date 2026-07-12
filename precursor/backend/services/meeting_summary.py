@@ -17,7 +17,11 @@ from precursor.backend.models import MeetingInsight, MeetingSegment, MeetingSess
 from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
-from precursor.backend.services.meeting_analysis import display_label, language_name
+from precursor.backend.services.meeting_analysis import (
+    display_label,
+    language_name,
+    meeting_context_text,
+)
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -119,6 +123,9 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
     insight_block = _format_insights(insights)
     if insight_block:
         user_parts.append(f"\nDerived insights:\n{insight_block}")
+    meeting_ctx = meeting_context_text(ms.external_meeting)
+    if meeting_ctx:
+        user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
     topic_ctx = await _topic_context(session, ms.topic_id)
     if topic_ctx:
         user_parts.append(f"\nAttached topic context:\n{topic_ctx}")

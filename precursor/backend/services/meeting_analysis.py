@@ -94,6 +94,29 @@ def display_label(raw: str | None, names: dict[str, str]) -> str:
     return names.get(raw, raw)
 
 
+def meeting_context_text(external_meeting: dict[str, object] | None) -> str:
+    """Compact text describing a linked calendar meeting, for grounding prompts."""
+    if not external_meeting:
+        return ""
+    m = external_meeting
+    parts: list[str] = []
+    subject = m.get("subject")
+    if subject:
+        parts.append(f"Meeting: {subject}")
+    organizer = m.get("organizer")
+    if organizer:
+        parts.append(f"Organizer: {organizer}")
+    attendees = m.get("attendees")
+    if isinstance(attendees, list) and attendees:
+        names = [str(a.get("name")) for a in attendees if isinstance(a, dict) and a.get("name")]
+        if names:
+            parts.append("Invitees: " + ", ".join(names[:40]))
+    preview = m.get("body_preview")
+    if isinstance(preview, str) and preview.strip():
+        parts.append("Meeting notes:\n" + preview.strip()[:2000])
+    return "\n".join(parts)
+
+
 def _format_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
     lines: list[str] = []
     for seg in segments:
@@ -197,6 +220,9 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
         system += f"\n\nWrite every insight's content in {lang}."
 
     user_parts = [f"Transcript so far:\n{transcript}"]
+    meeting_ctx = meeting_context_text(ms.external_meeting)
+    if meeting_ctx:
+        user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
     if topic_ctx:
         user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
 

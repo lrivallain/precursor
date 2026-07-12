@@ -457,27 +457,51 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     [insights],
   );
 
-  // Attendee suggestions: distinct display names seen in the transcript that
-  // aren't already listed.
+  // Attendee suggestions for the Summary: linked-meeting invitees + distinct
+  // transcript display names that aren't listed yet.
   const suggestedAttendees = useMemo(() => {
     const seen = new Set<string>();
     const existing = new Set(session.attendees ?? []);
     const out: string[] = [];
-    for (const seg of segments) {
-      const name = displayName(seg.speaker_label);
-      if (name && !seen.has(name) && !existing.has(name)) {
-        seen.add(name);
-        out.push(name);
+    const push = (name: string | null | undefined) => {
+      const n = (name ?? "").trim();
+      if (n && !seen.has(n) && !existing.has(n)) {
+        seen.add(n);
+        out.push(n);
       }
-    }
+    };
+    for (const a of session.external_meeting?.attendees ?? []) push(a.name || a.email);
+    for (const seg of segments) push(displayName(seg.speaker_label));
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segments, session.attendees, session.speaker_names]);
+  }, [segments, session.attendees, session.speaker_names, session.external_meeting]);
+
+  // Names offered as autocomplete when renaming a transcript speaker: the
+  // linked meeting's invitees plus any attendees already on the summary.
+  const speakerNameOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const push = (name: string | null | undefined) => {
+      const n = (name ?? "").trim();
+      if (n && !seen.has(n)) {
+        seen.add(n);
+        out.push(n);
+      }
+    };
+    for (const a of session.external_meeting?.attendees ?? []) push(a.name || a.email);
+    for (const n of session.attendees ?? []) push(n);
+    return out;
+  }, [session.external_meeting, session.attendees]);
 
   // ---- Section nodes -----------------------------------------------------
   const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
   const transcriptNode = (
     <div ref={transcriptRef} className="h-full overflow-y-auto px-4 py-4">
+      <datalist id="live-speaker-names">
+        {speakerNameOptions.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
       {segments.length === 0 && !interim ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
           <Radio size={20} className="mb-2 opacity-70" aria-hidden="true" />
@@ -526,6 +550,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
                             e.currentTarget.blur();
                           }
                         }}
+                        list="live-speaker-names"
                         className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
                       />
                     ) : (

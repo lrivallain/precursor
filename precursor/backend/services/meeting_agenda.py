@@ -127,6 +127,11 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
         name, email = _person_name(a)
         if name:
             attendees.append({"name": name, "email": email})
+    body = raw.get("body")
+    body_html = None
+    if isinstance(body, dict) and isinstance(body.get("content"), str):
+        body_html = body["content"][:60000]
+    preview = raw.get("bodyPreview")
     return {
         "id": raw.get("id"),
         "subject": str(raw.get("subject") or "(no subject)"),
@@ -135,6 +140,8 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
         "organizer": organizer_name or None,
         "attendees": attendees,
         "is_online": bool(raw.get("isOnlineMeeting")),
+        "body": body_html,
+        "body_preview": (str(preview)[:4000] if isinstance(preview, str) else None),
     }
 
 
@@ -174,7 +181,7 @@ async def fetch_agenda(
             "/me/calendarView"
             f"?startDateTime={start}"
             f"&endDateTime={end}"
-            "&$select=subject,start,end,organizer,attendees,isOnlineMeeting"
+            "&$select=subject,start,end,organizer,attendees,isOnlineMeeting,bodyPreview,body"
             "&$orderby=start/dateTime&$top=50"
         )
         try:

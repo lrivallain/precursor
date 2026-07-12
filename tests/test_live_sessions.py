@@ -373,6 +373,38 @@ def test_link_meeting_merges_attendees() -> None:
         assert body["external_meeting"]["subject"] == "Sprint review"
 
 
+def test_unlink_meeting_clears_meeting_keeps_attendees() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Unlink"}).json()["id"]
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={"subject": "Standup", "attendees": [{"name": "Marie"}], "is_online": True},
+        )
+        r = client.delete(f"/api/live/{sid}/meeting")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["external_meeting"] is None
+        assert body["attendees"] == ["Marie"]
+
+
+def test_meeting_context_text_includes_body_preview() -> None:
+    from precursor.backend.services.meeting_analysis import meeting_context_text
+
+    assert meeting_context_text(None) == ""
+    text = meeting_context_text(
+        {
+            "subject": "Roadmap sync",
+            "organizer": "Ludovic",
+            "attendees": [{"name": "Marie"}, {"name": "Thomas"}],
+            "body_preview": "Discuss Q3 milestones and blockers.",
+        }
+    )
+    assert "Roadmap sync" in text
+    assert "Marie" in text
+    assert "Q3 milestones" in text
+
+
 def test_agenda_parser_unwraps_workiq_envelope() -> None:
     from precursor.backend.services.meeting_agenda import _events_from, _normalize_event
 

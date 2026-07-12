@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react";
-import { CalendarClock, FileText, Link2, Loader2, RefreshCw, Users } from "lucide-react";
+import {
+  CalendarClock,
+  FileText,
+  Link2,
+  Link2Off,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import type { AgendaEvent, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
 import { Markdown } from "./Markdown";
+import { MeetingBody } from "./MeetingBody";
 
 interface Props {
   session: MeetingSession;
@@ -47,6 +57,7 @@ export function ContextSection({
   const [agendaLoading, setAgendaLoading] = useState(false);
   const [agendaDetail, setAgendaDetail] = useState<string | null>(null);
   const [linking, setLinking] = useState<string | null>(null);
+  const [unlinking, setUnlinking] = useState(false);
 
   const linked = session.external_meeting;
 
@@ -81,6 +92,18 @@ export function ContextSection({
       /* non-fatal */
     } finally {
       setLinking(null);
+    }
+  }
+
+  async function unlink(): Promise<void> {
+    setUnlinking(true);
+    try {
+      const updated = await api.unlinkMeeting(session.id);
+      onUpdated(updated);
+    } catch {
+      /* non-fatal */
+    } finally {
+      setUnlinking(false);
     }
   }
 
@@ -126,88 +149,138 @@ export function ContextSection({
         )}
       </section>
 
-      {/* Today's agenda */}
+      {/* Linked meeting (context grounding) or today's agenda picker */}
       <section className="p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            <CalendarClock size={12} /> Today&apos;s meetings
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadAgenda()}
-            disabled={agendaLoading}
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-          >
-            {agendaLoading ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
-            Refresh
-          </button>
-        </div>
-
-        {linked && (
-          <div className="mb-3 rounded border border-accent/40 bg-accent/5 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-sm font-medium">
-              <Link2 size={13} className="text-accent" /> {linked.subject}
+        {linked ? (
+          <>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                <Link2 size={12} /> Linked meeting
+              </div>
+              <button
+                type="button"
+                onClick={() => void unlink()}
+                disabled={unlinking}
+                className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+              >
+                {unlinking ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Link2Off size={12} />
+                )}
+                Unlink
+              </button>
             </div>
-            <div className="mt-0.5 text-[12px] text-muted">
-              {formatWhen(linked.start)}
-              {linked.attendees && linked.attendees.length > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1">
-                  <Users size={11} /> {linked.attendees.length}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
 
-        {agendaLoading && !events && (
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 size={14} className="animate-spin" /> Loading your agenda…
-          </div>
-        )}
-        {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
-
-        {events && events.length > 0 && (
-          <ul className="space-y-1.5">
-            {events.map((ev) => {
-              const key = ev.id ?? ev.subject;
-              const isLinked = linked?.subject === ev.subject;
-              return (
-                <li
-                  key={key}
-                  className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm">{ev.subject}</div>
-                    <div className="text-[11px] text-muted">
-                      {formatWhen(ev.start)}
-                      {ev.attendees.length > 0 && (
-                        <span className="ml-2 inline-flex items-center gap-0.5">
-                          <Users size={10} /> {ev.attendees.length}
-                        </span>
-                      )}
-                    </div>
+            <div className="rounded border border-accent/40 bg-accent/5 px-3 py-3">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <CalendarClock size={13} className="text-accent" /> {linked.subject}
+              </div>
+              <div className="mt-1 space-y-0.5 text-[12px] text-muted">
+                {(linked.start || linked.end) && (
+                  <div>
+                    {formatWhen(linked.start)}
+                    {linked.end && ` – ${formatWhen(linked.end)}`}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void link(ev)}
-                    disabled={linking === key || isLinked}
-                    className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
-                  >
-                    {linking === key ? (
-                      <Loader2 size={11} className="animate-spin" />
-                    ) : (
-                      <Link2 size={11} />
-                    )}
-                    {isLinked ? "Linked" : "Link"}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                )}
+                {linked.organizer && <div>Organizer: {linked.organizer}</div>}
+              </div>
+
+              {linked.attendees && linked.attendees.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {linked.attendees.map((a, i) => (
+                    <span
+                      key={`${a.email ?? a.name}-${i}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px]"
+                    >
+                      <Users size={10} /> {a.name || a.email}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {linked.body && (
+                <div className="mt-3">
+                  <MeetingBody html={linked.body} />
+                </div>
+              )}
+
+              <div className="mt-3 flex items-start gap-1.5 rounded bg-bg/60 px-2 py-1.5 text-[11px] text-muted">
+                <ShieldCheck size={13} className="mt-px shrink-0 text-accent" />
+                <span>
+                  This meeting grounds the transcript, live insights and summary as
+                  additional context.
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                <CalendarClock size={12} /> Today&apos;s meetings
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadAgenda()}
+                disabled={agendaLoading}
+                className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+              >
+                {agendaLoading ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )}
+                Refresh
+              </button>
+            </div>
+
+            {agendaLoading && !events && (
+              <div className="flex items-center gap-2 text-sm text-muted">
+                <Loader2 size={14} className="animate-spin" /> Loading your agenda…
+              </div>
+            )}
+            {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
+
+            {events && events.length > 0 && (
+              <ul className="space-y-1.5">
+                {events.map((ev) => {
+                  const key = ev.id ?? ev.subject;
+                  return (
+                    <li
+                      key={key}
+                      className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm">{ev.subject}</div>
+                        <div className="text-[11px] text-muted">
+                          {formatWhen(ev.start)}
+                          {ev.attendees.length > 0 && (
+                            <span className="ml-2 inline-flex items-center gap-0.5">
+                              <Users size={10} /> {ev.attendees.length}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void link(ev)}
+                        disabled={linking === key}
+                        className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
+                      >
+                        {linking === key ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Link2 size={11} />
+                        )}
+                        Link
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
         )}
       </section>
     </div>

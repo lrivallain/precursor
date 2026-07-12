@@ -123,6 +123,8 @@ class AgendaEvent(BaseModel):
     organizer: str | None = None
     attendees: list[AgendaAttendee] = Field(default_factory=list)
     is_online: bool = False
+    body: str | None = None
+    body_preview: str | None = None
 
 
 class AgendaResponse(BaseModel):
@@ -138,6 +140,8 @@ class LinkMeetingRequest(BaseModel):
     organizer: str | None = None
     attendees: list[AgendaAttendee] = Field(default_factory=list)
     is_online: bool = False
+    body: str | None = None
+    body_preview: str | None = None
 
 
 class TopicSummaryResult(BaseModel):

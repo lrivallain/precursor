@@ -59,6 +59,7 @@ from precursor.backend.services.meeting_analysis import (
     analyze_session,
     display_label,
     language_name,
+    meeting_context_text,
 )
 from precursor.backend.services.meeting_summary import (
     generate_summary,
@@ -375,6 +376,9 @@ async def ask(
         f"Question: {payload.question}",
         f"\nTranscript so far:\n{transcript or '(empty)'}",
     ]
+    meeting_ctx = meeting_context_text(ms.external_meeting)
+    if meeting_ctx:
+        user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
     if topic_context:
         user_parts.append(f"\nAttached topic context:\n{topic_context}")
 
@@ -513,6 +517,19 @@ async def link_meeting(
             merged.append(name)
     ms.attendees_json = json.dumps(merged, ensure_ascii=False)
 
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
+@router.delete("/{session_id}/meeting", response_model=MeetingSessionRead)
+async def unlink_meeting(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingSession:
+    """Detach the linked meeting (attendees are kept — edit them if needed)."""
+    ms = await _get_session_or_404(session_id, session)
+    ms.external_meeting_json = None
     await session.commit()
     await session.refresh(ms)
     await publish_meeting_changed(ms.id)

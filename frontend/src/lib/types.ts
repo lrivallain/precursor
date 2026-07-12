@@ -797,6 +797,8 @@ export interface AgendaEvent {
   organizer: string | null;
   attendees: AgendaAttendee[];
   is_online: boolean;
+  body: string | null;
+  body_preview: string | null;
 }
 
 export interface AgendaResponse {
@@ -812,6 +814,8 @@ export interface ExternalMeeting {
   organizer?: string | null;
   attendees?: AgendaAttendee[];
   is_online?: boolean;
+  body?: string | null;
+  body_preview?: string | null;
 }
 
 export type MeetingInsightKind =
