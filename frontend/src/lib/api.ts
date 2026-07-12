@@ -641,7 +641,17 @@ export const api = {
     request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
       method: "POST",
     }),
-  getAgenda: () => request<AgendaResponse>(`/api/live/m365/agenda`),
+  getAgenda: () => {
+    // Compute the user's *local* day window so the agenda matches their
+    // calendar day, then convert to UTC ISO for the backend/Graph.
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const qs = `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
+      end.toISOString(),
+    )}`;
+    return request<AgendaResponse>(`/api/live/m365/agenda${qs}`);
+  },
   linkMeeting: (id: number, event: AgendaEvent) =>
     request<MeetingSession>(`/api/live/${id}/meeting`, {
       method: "POST",

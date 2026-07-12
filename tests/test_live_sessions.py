@@ -323,7 +323,7 @@ def test_topic_context_summary(monkeypatch) -> None:  # type: ignore[no-untyped-
 def test_agenda_endpoint(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import precursor.backend.routers.live as live_router
 
-    async def _fake_agenda(days: int = 7):  # type: ignore[no-untyped-def]
+    async def _fake_agenda(start=None, end=None):  # type: ignore[no-untyped-def]
         return (
             True,
             [

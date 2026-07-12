@@ -480,9 +480,13 @@ async def topic_summary(
 
 
 @router.get("/m365/agenda", response_model=AgendaResponse)
-async def agenda() -> AgendaResponse:
-    """List today's M365 calendar meetings via WorkIQ (fail-closed)."""
-    available, events, detail = await fetch_agenda()
+async def agenda(start: str | None = None, end: str | None = None) -> AgendaResponse:
+    """List the user's M365 meetings for the given window via WorkIQ (fail-closed).
+
+    ``start``/``end`` are ISO-8601 UTC bounds computed by the client for the
+    user's local day; defaults to the UTC day when omitted.
+    """
+    available, events, detail = await fetch_agenda(start, end)
     return AgendaResponse(
         available=available,
         events=[AgendaEvent(**e) for e in events],

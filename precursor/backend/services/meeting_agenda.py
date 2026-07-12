@@ -22,6 +22,26 @@ logger = logging.getLogger(__name__)
 WORKIQ_SERVER = "workiq"
 
 
+def _sanitize_iso(value: str | None) -> str | None:
+    """Accept a browser ISO timestamp (e.g. 2026-07-13T00:00:00.000Z) for Graph.
+
+    Trims to whole seconds and ensures a trailing ``Z``; rejects anything that
+    doesn't look like an ISO datetime so a bad query param can't break the call.
+    """
+    if not value or "T" not in value:
+        return None
+    v = value.strip()
+    if "." in v:
+        head, _, tail = v.partition(".")
+        v = head + ("Z" if tail.endswith("Z") or v.endswith("Z") else "")
+    if not v.endswith("Z") and "+" not in v[11:]:
+        v = f"{v}Z"
+    # Basic shape guard: YYYY-MM-DDTHH:MM:SSZ
+    if len(v) < 17:
+        return None
+    return v
+
+
 def _result_to_json(payload: Any) -> Any:
     """Coerce an MCP tool result (text blocks or structuredContent) to JSON."""
     structured = getattr(payload, "structuredContent", None)
@@ -118,8 +138,15 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def fetch_agenda() -> tuple[bool, list[dict[str, Any]], str | None]:
-    """Return (available, today's events, detail). Never raises."""
+async def fetch_agenda(
+    start_iso: str | None = None, end_iso: str | None = None
+) -> tuple[bool, list[dict[str, Any]], str | None]:
+    """Return (available, events, detail) for the window. Never raises.
+
+    ``start_iso``/``end_iso`` are ISO-8601 UTC bounds; the caller passes the
+    user's *local* day so the agenda matches their calendar day. Falls back to
+    the UTC day when omitted.
+    """
     manager = get_mcp_client_manager()
     try:
         bundle = await manager.acquire([WORKIQ_SERVER])
@@ -137,13 +164,16 @@ async def fetch_agenda() -> tuple[bool, list[dict[str, Any]], str | None]:
             return False, [], detail
 
         tool_names = {t.name for t in bundle.tools if t.server == WORKIQ_SERVER}
-        # Today's window, in UTC (start of day → start of next day).
-        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1)
+        start = _sanitize_iso(start_iso)
+        end = _sanitize_iso(end_iso)
+        if not start or not end:
+            day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = f"{day:%Y-%m-%dT%H:%M:%SZ}"
+            end = f"{day + timedelta(days=1):%Y-%m-%dT%H:%M:%SZ}"
         path = (
             "/me/calendarView"
-            f"?startDateTime={start:%Y-%m-%dT%H:%M:%SZ}"
-            f"&endDateTime={end:%Y-%m-%dT%H:%M:%SZ}"
+            f"?startDateTime={start}"
+            f"&endDateTime={end}"
             "&$select=subject,start,end,organizer,attendees,isOnlineMeeting"
             "&$orderby=start/dateTime&$top=50"
         )
