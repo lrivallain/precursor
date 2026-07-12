@@ -371,3 +371,41 @@ def test_link_meeting_merges_attendees() -> None:
         body = r.json()
         assert body["attendees"] == ["Marie", "Thomas"]
         assert body["external_meeting"]["subject"] == "Sprint review"
+
+
+def test_agenda_parser_unwraps_workiq_envelope() -> None:
+    from precursor.backend.services.meeting_agenda import _events_from, _normalize_event
+
+    payload = {
+        "results": [
+            {
+                "data": {
+                    "value": [
+                        {
+                            "id": "e1",
+                            "subject": "Café du matin",
+                            "isOnlineMeeting": True,
+                            "start": {"dateTime": "2026-07-12T06:45:00.0000000", "timeZone": "UTC"},
+                            "end": {"dateTime": "2026-07-12T07:00:00.0000000", "timeZone": "UTC"},
+                            "organizer": {"emailAddress": {"name": "Ludovic", "address": "l@x"}},
+                            "attendees": [
+                                {"emailAddress": {"name": "Mickaël", "address": "m@x"}},
+                            ],
+                        }
+                    ]
+                },
+                "statusCode": 200,
+            }
+        ],
+        "note": "Results limited to 50 items per collection.",
+    }
+    raws = _events_from(payload)
+    assert len(raws) == 1
+    ev = _normalize_event(raws[0])
+    assert ev["subject"] == "Café du matin"
+    assert ev["start"] == "2026-07-12T06:45:00.000Z"
+    assert ev["organizer"] == "Ludovic"
+    assert ev["attendees"] == [{"name": "Mickaël", "email": "m@x"}]
+
+    # Non-200 results are skipped.
+    assert _events_from({"results": [{"data": {}, "statusCode": 400, "error": "denied"}]}) == []

@@ -44,13 +44,23 @@ def _result_to_json(payload: Any) -> Any:
 
 
 def _events_from(data: Any) -> list[dict[str, Any]]:
-    """Extract a list of raw Graph event dicts from a variety of shapes."""
+    """Extract a list of raw Graph event dicts from a variety of shapes.
+
+    WorkIQ's ``fetch`` wraps results as ``{"results": [{"data": {...}, ...}]}``
+    where each ``data`` is the Graph payload (with a ``value`` collection). We
+    also tolerate a bare Graph payload or a plain list.
+    """
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        out: list[dict[str, Any]] = []
+        for res in data["results"]:
+            if isinstance(res, dict) and res.get("statusCode") in (None, 200):
+                out.extend(_events_from(res.get("data")))
+        return out
     if isinstance(data, dict):
-        for key in ("value", "events", "items", "data"):
+        for key in ("value", "events", "items"):
             v = data.get(key)
             if isinstance(v, list):
                 return [e for e in v if isinstance(e, dict)]
-        # A single event object.
         if "subject" in data:
             return [data]
         return []
@@ -70,9 +80,27 @@ def _person_name(entry: Any) -> tuple[str, str | None]:
     return (str(name).strip(), entry.get("address") or entry.get("email"))
 
 
+def _iso(value: Any) -> str | None:
+    """Turn a Graph dateTimeTimeZone ({dateTime, timeZone}) into an ISO string.
+
+    Graph returns naive dateTimes with a separate timeZone; append 'Z' when it's
+    UTC (and trim the 7-digit fraction) so the browser doesn't read it as local.
+    """
+    if isinstance(value, dict):
+        dt = value.get("dateTime")
+        tz = str(value.get("timeZone") or "")
+        if isinstance(dt, str):
+            if "." in dt:
+                head, frac = dt.split(".", 1)
+                dt = f"{head}.{frac[:3]}"
+            if tz.upper() in ("UTC", "") and not dt.endswith("Z") and "+" not in dt:
+                dt = f"{dt}Z"
+            return dt
+        return None
+    return value if isinstance(value, str) else None
+
+
 def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
-    start = raw.get("start")
-    end = raw.get("end")
     organizer_name, _ = _person_name(raw.get("organizer"))
     attendees: list[dict[str, Any]] = []
     for a in raw.get("attendees") or []:
@@ -82,8 +110,8 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": raw.get("id"),
         "subject": str(raw.get("subject") or "(no subject)"),
-        "start": start.get("dateTime") if isinstance(start, dict) else start,
-        "end": end.get("dateTime") if isinstance(end, dict) else end,
+        "start": _iso(raw.get("start")),
+        "end": _iso(raw.get("end")),
         "organizer": organizer_name or None,
         "attendees": attendees,
         "is_online": bool(raw.get("isOnlineMeeting")),
@@ -113,18 +141,19 @@ async def fetch_agenda() -> tuple[bool, list[dict[str, Any]], str | None]:
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         path = (
-            f"/me/calendarView(startDateTime='{start:%Y-%m-%dT%H:%M:%SZ}',"
-            f"endDateTime='{end:%Y-%m-%dT%H:%M:%SZ}')"
-            "?$select=subject,start,end,organizer,attendees,isOnlineMeeting"
+            "/me/calendarView"
+            f"?startDateTime={start:%Y-%m-%dT%H:%M:%SZ}"
+            f"&endDateTime={end:%Y-%m-%dT%H:%M:%SZ}"
+            "&$select=subject,start,end,organizer,attendees,isOnlineMeeting"
             "&$orderby=start/dateTime&$top=50"
         )
         try:
-            if "call_function" in tool_names:
+            if "fetch" in tool_names:
+                result = await bundle.call_tool(WORKIQ_SERVER, "fetch", {"entityUrls": [path]})
+            elif "call_function" in tool_names:
                 result = await bundle.call_tool(
                     WORKIQ_SERVER, "call_function", {"functionUrl": path}
                 )
-            elif "fetch" in tool_names:
-                result = await bundle.call_tool(WORKIQ_SERVER, "fetch", {"entityUrls": [path]})
             else:
                 return False, [], "WorkIQ doesn't expose a calendar tool."
         except Exception as exc:
