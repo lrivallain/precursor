@@ -363,10 +363,13 @@ export function StatsTab() {
       {system && <SystemStatsView system={system} />}
 
       <div className="space-y-6">
-        <p className="text-[11px] text-muted">
-          Combined token usage reported by the model across every topic and chat.
-          Turns that don't report usage are not counted.
-        </p>
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium">AI consumption</h3>
+          <p className="text-[11px] text-muted">
+            Combined token usage reported by the model across every topic and
+            chat. Turns that don't report usage are not counted.
+          </p>
+        </div>
 
       <section className="space-y-2">
         <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
