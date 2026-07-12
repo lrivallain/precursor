@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Mic, Radio, RefreshCw, Square, Trash2 } from "lucide-react";
+import { CircleHelp, Loader2, MessageSquare, Mic, Radio, RefreshCw, Square, Trash2 } from "lucide-react";
 import type {
   Chat,
   MeetingInsight,
@@ -132,7 +132,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const [summaryText, setSummaryText] = useState("");
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryFocus, setSummaryFocus] = useState(0);
+  // Ask the panel to surface a tab (bump the nonce). Used after generating the
+  // summary and after starting the assistant.
+  const [panelFocus, setPanelFocus] = useState<{ id: string; nonce: number }>({
+    id: "",
+    nonce: 0,
+  });
+  const focusTab = (id: string) => setPanelFocus((f) => ({ id, nonce: f.nonce + 1 }));
   const genRef = useRef(false);
 
   // Live notes (Markdown). Owned here so switching tabs never drops in-progress
@@ -163,6 +169,24 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       cancelled = true;
     };
   }, [session.id, session.chat_id]);
+  const [startingAssistant, setStartingAssistant] = useState(false);
+
+  // Spawn + attach the assistant chat on demand (from the toolbar). Only after
+  // this is the Assistant tab shown — we never create a chat implicitly.
+  async function startAssistant(): Promise<void> {
+    if (chat || startingAssistant) return;
+    setStartingAssistant(true);
+    try {
+      const c = await api.ensureMeetingChat(session.id);
+      setChat(c);
+      onUpdated({ ...session, chat_id: c.id });
+      focusTab("assistant");
+    } catch {
+      /* non-fatal — the button stays available to retry */
+    } finally {
+      setStartingAssistant(false);
+    }
+  }
 
   // Topic-context summary (Context tab). Auto-generated when a topic is linked.
   const [topicSummary, setTopicSummary] = useState("");
@@ -399,7 +423,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   }
 
   async function generateSummary(): Promise<void> {
-    setSummaryFocus((n) => n + 1);
+    focusTab("summary");
     if (genRef.current) return;
     genRef.current = true;
     setSummaryGenerating(true);
@@ -682,16 +706,18 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     />
   );
 
-  const assistantNode = (
+  const assistantNode = chat ? (
     <LiveChatSection
-      session={session}
       chat={chat}
-      onChat={(c) => {
-        setChat(c);
-        if (c && session.chat_id !== c.id) onUpdated({ ...session, chat_id: c.id });
+      onChatUpdated={() => {
+        void api
+          .getChat(chat.id)
+          .then(setChat)
+          .catch(() => {});
       }}
+      onArchived={() => setChat(null)}
     />
-  );
+  ) : null;
 
   const contextNode = (
     <ContextSection
@@ -706,11 +732,11 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
-  // The summary only exists for an ended session — hide the whole tab until then.
+  // Summary shows only once ended; the Assistant tab only once it's started.
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
     { id: "insights", label: "Live insights", badge: insights.length },
-    { id: "assistant", label: "Assistant" },
+    ...(chat ? [{ id: "assistant", label: "Assistant" }] : []),
     { id: "notes", label: notes.trim() ? "Notes ●" : "Notes" },
     ...(isEnded ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }] : []),
     { id: "context", label: "Context" },
@@ -818,6 +844,22 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         </label>
 
         <div className="ml-auto flex items-center gap-2">
+          {!chat && (
+            <button
+              type="button"
+              onClick={() => void startAssistant()}
+              disabled={startingAssistant}
+              data-tooltip="Start a chat grounded on this meeting"
+              className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-60"
+            >
+              {startingAssistant ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <MessageSquare size={14} />
+              )}
+              Start Assistant
+            </button>
+          )}
           {isEnded ? (
             <button
               type="button"
@@ -866,7 +908,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         tabs={tabs}
         render={renderSection}
         storageKey="precursor:live-panel"
-        focus={{ id: "summary", nonce: summaryFocus }}
+        focus={panelFocus}
       />
 
       {helpOpen && <LiveAudioHelp onClose={() => setHelpOpen(false)} />}
