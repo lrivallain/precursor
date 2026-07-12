@@ -1,48 +1,48 @@
-import { useState } from "react";
-import { Loader2, MessageSquare, Send } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import type { Chat, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
-import { streamStore, convKey } from "../lib/streamStore";
 import { ChatSessionPanel } from "./ChatSessionPanel";
 
 interface Props {
   session: MeetingSession;
-  /** The attached chat, or null until the first ask spawns it. */
+  /** The attached chat, or null until it's spawned. */
   chat: Chat | null;
   /** Report the chat that was created/updated/detached back to the parent. */
   onChat: (chat: Chat | null) => void;
 }
 
 /**
- * The "Ask assistant" tab, now a full chat session grounded on the live meeting.
- * On the first ask we spawn + attach a real Chat (see the backend
- * `ensure_chat` + `live_chat_grounding`) and render the standard ChatSessionPanel
- * — tools, attachments, history and all. Until then, a lightweight composer
- * seeds that first message.
+ * The "Ask assistant" tab: a full chat session grounded on the live meeting.
+ * The chat is spawned + attached the first time this tab is opened (see the
+ * backend `ensure_chat` + `live_chat_grounding`), then the standard
+ * ChatSessionPanel is rendered — same composer, tools, attachments, model
+ * picker and history as a regular chat.
  */
 export function LiveChatSection({ session, chat, onChat }: Props) {
-  const [draft, setDraft] = useState("");
-  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const creatingRef = useRef(false);
 
-  async function startChat(): Promise<void> {
-    const content = draft.trim();
-    if (!content || starting) return;
-    setStarting(true);
-    setError(null);
-    try {
-      const c = await api.ensureMeetingChat(session.id);
-      onChat(c);
-      setDraft("");
-      // Stream the first message straight away; the panel that mounts next
-      // picks up the in-flight session from the shared stream store.
-      void streamStore.start(convKey("chat", c.id), content);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't start the chat.");
-    } finally {
-      setStarting(false);
-    }
-  }
+  useEffect(() => {
+    if (chat || creatingRef.current) return;
+    creatingRef.current = true;
+    let cancelled = false;
+    void api
+      .ensureMeetingChat(session.id)
+      .then((c) => {
+        if (!cancelled) onChat(c);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't start the chat.");
+      })
+      .finally(() => {
+        creatingRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat, session.id]);
 
   if (chat) {
     return (
@@ -60,43 +60,15 @@ export function LiveChatSection({ session, chat, onChat }: Props) {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-        <MessageSquare size={22} className="opacity-70" aria-hidden="true" />
-        <div>
-          <p className="mb-1 text-sm font-medium text-text">Ask the meeting assistant</p>
-          <p className="max-w-sm text-[13px] text-muted">
-            Start a chat grounded on this meeting — the live transcript, insights, your notes
-            and any attached topic. It&apos;s a full chat: tools, attachments and history
-            included.
-          </p>
-        </div>
-      </div>
-      {error && <div className="px-3 pb-2 text-center text-[12px] text-red-500">{error}</div>}
-      <div className="flex items-end gap-1.5 border-t border-border p-2">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void startChat();
-            }
-          }}
-          rows={2}
-          placeholder="Ask anything about the meeting…"
-          className="min-h-[2.5rem] min-w-0 flex-1 resize-none rounded border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
-        />
-        <button
-          type="button"
-          onClick={() => void startChat()}
-          disabled={starting || !draft.trim()}
-          aria-label="Ask"
-          className="rounded bg-accent p-2 text-white disabled:opacity-50"
-        >
-          {starting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-        </button>
-      </div>
+    <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted">
+      {error ? (
+        <p className="text-red-500">{error}</p>
+      ) : (
+        <>
+          <Loader2 size={18} className="animate-spin" />
+          Starting the meeting assistant…
+        </>
+      )}
     </div>
   );
 }
