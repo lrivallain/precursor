@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Check, Languages, Loader2, RefreshCw } from "lucide-react";
-import { api } from "../lib/api";
 import { Select } from "./Select";
 
 // Target languages for live translation of the transcript.
@@ -17,12 +16,6 @@ const LANGS: { value: string; label: string }[] = [
   { value: "ar", label: "Arabic" },
 ];
 
-const DEBOUNCE_MS = 1200;
-// When translation is (re)started mid-meeting, only the last few lines are
-// translated first — the backlog is skipped so the user gets instant, relevant
-// output rather than waiting for the whole conversation.
-const INITIAL_WINDOW = 6;
-
 export interface TranslationItem {
   id: number;
   speaker: string | null;
@@ -32,82 +25,37 @@ export interface TranslationItem {
 }
 
 /**
- * Live translation, laid out like the transcript: one line per segment with the
- * (colored) speaker label and time, translated text streamed in as the meeting
- * progresses. Only the newest lines are translated on (re)start.
+ * Live translation view, laid out like the transcript (colored speaker labels +
+ * timestamps). Presentational: the translation loop runs in LiveView so it keeps
+ * going even when this tab isn't the active pane. Auto-scrolls to the newest line.
  */
 export function TranslationSection({
-  sessionId,
   items,
-  defaultLang,
+  translations,
+  startIndex,
+  lang,
+  loading,
+  error,
+  onRestart,
 }: {
-  sessionId: number;
   items: TranslationItem[];
-  defaultLang: string;
+  translations: Record<number, string>;
+  startIndex: number;
+  lang: string;
+  loading: boolean;
+  error: string | null;
+  onRestart: (lang: string) => void;
 }) {
-  const [lang, setLang] = useState(defaultLang || "en");
-  const [translations, setTranslations] = useState<Record<number, string>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const shown = useMemo(() => items.slice(startIndex), [items, startIndex]);
+  const translatedCount = shown.filter((it) => translations[it.id]).length;
+  const pending = shown.length - translatedCount;
 
-  const langRef = useRef(lang);
-  const runningRef = useRef(false);
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
-  // Index of the first segment we translate — fixed when the tab (re)starts, so
-  // the earlier backlog is left untranslated.
-  const startRef = useRef<number>(Math.max(0, items.length - INITIAL_WINDOW));
-  // Next segment index to translate.
-  const nextRef = useRef<number>(startRef.current);
-
-  function restart(nextLang: string): void {
-    setLang(nextLang);
-    langRef.current = nextLang;
-    startRef.current = Math.max(0, itemsRef.current.length - INITIAL_WINDOW);
-    nextRef.current = startRef.current;
-    setTranslations({});
-    setError(null);
-  }
-
-  // Translate any not-yet-translated lines (debounced), oldest-first.
+  // Auto-scroll to the bottom as lines/translations arrive (and on mount).
   useEffect(() => {
-    if (items.length <= nextRef.current || runningRef.current) return;
-    const t = setTimeout(() => {
-      void (async () => {
-        if (runningRef.current || itemsRef.current.length <= nextRef.current) return;
-        const start = nextRef.current;
-        const batch = itemsRef.current.slice(start);
-        runningRef.current = true;
-        setLoading(true);
-        setError(null);
-        try {
-          const res = await api.translateMeeting(
-            sessionId,
-            langRef.current,
-            batch.map((b) => b.text),
-          );
-          const lines = res.lines ?? [];
-          setTranslations((prev) => {
-            const next = { ...prev };
-            batch.forEach((b, i) => {
-              next[b.id] = lines[i] ?? b.text;
-            });
-            return next;
-          });
-          nextRef.current = start + batch.length;
-        } catch (e) {
-          setError(e instanceof Error ? e.message : "Couldn't translate.");
-        } finally {
-          runningRef.current = false;
-          setLoading(false);
-        }
-      })();
-    }, DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [items, lang, sessionId]);
-
-  const shown = useMemo(() => items.slice(startRef.current), [items]);
-  const pending = items.length - nextRef.current;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [shown.length, translatedCount]);
 
   return (
     <div className="flex h-full flex-col">
@@ -129,10 +77,10 @@ export function TranslationSection({
               </>
             ) : null}
           </span>
-          <Select value={lang} onChange={restart} options={LANGS} ariaLabel="Target language" />
+          <Select value={lang} onChange={onRestart} options={LANGS} ariaLabel="Target language" />
           <button
             type="button"
-            onClick={() => restart(lang)}
+            onClick={() => onRestart(lang)}
             data-tooltip="Re-translate the latest lines"
             aria-label="Re-translate"
             className="rounded border border-border p-1.5 text-muted hover:bg-surface hover:text-accent"
@@ -141,7 +89,7 @@ export function TranslationSection({
           </button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {error && <p className="mb-2 text-[12px] text-red-500">{error}</p>}
         {shown.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">

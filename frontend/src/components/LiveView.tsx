@@ -69,6 +69,20 @@ const SPEAKER_COLORS = [
   "text-teal-600 dark:text-teal-400",
 ];
 
+// Live translation runs continuously in the background (even when its tab isn't
+// visible); only the newest lines are translated when it (re)starts.
+const TRANSLATE_DEBOUNCE_MS = 1200;
+const TRANSLATE_WINDOW = 6;
+// Proactive assist re-checks after enough new speech; quiet unless it can help.
+const ASSIST_DEBOUNCE_MS = 9000;
+const ASSIST_MIN_NEW = 2;
+
+export interface Suggestion {
+  id: number;
+  text: string;
+  at: number;
+}
+
 function speakerColor(label: string | null): string {
   if (!label) return "text-muted";
   let h = 0;
@@ -231,6 +245,27 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   const [insights, setInsights] = useState<MeetingInsight[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
+
+  // Live translation state (loop runs in this always-mounted component so it
+  // keeps translating even when the Translation tab isn't the active pane).
+  const [translationLang, setTranslationLang] = useState(
+    (session.language || "").split("-")[0] || "en",
+  );
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [translateStart, setTranslateStart] = useState<number | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+  const translateRunningRef = useRef(false);
+  const translateNextRef = useRef(0);
+
+  // Live proactive-assist state (also loops here so it monitors continuously).
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [assistAuto, setAssistAuto] = useState(true);
+  const [assistLoading, setAssistLoading] = useState(false);
+  const [assistError, setAssistError] = useState<string | null>(null);
+  const assistRunningRef = useRef(false);
+  const assistLastCountRef = useRef(0);
+  const assistLastTextRef = useRef("");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const restartRef = useRef(false);
@@ -608,6 +643,108 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [segments, session.speaker_names],
   );
+  const translationItemsRef = useRef(translationItems);
+  translationItemsRef.current = translationItems;
+
+  // Restart translation from a fresh window (language change / manual refresh).
+  function restartTranslation(nextLang: string): void {
+    setTranslationLang(nextLang);
+    const s = Math.max(0, translationItemsRef.current.length - TRANSLATE_WINDOW);
+    translateNextRef.current = s;
+    setTranslateStart(s);
+    setTranslations({});
+    setTranslateError(null);
+  }
+
+  const runTranslation = useCallback(async (): Promise<void> => {
+    if (translateRunningRef.current) return;
+    const items = translationItemsRef.current;
+    const start = translateNextRef.current;
+    if (items.length <= start) return;
+    const batch = items.slice(start);
+    translateRunningRef.current = true;
+    setTranslating(true);
+    setTranslateError(null);
+    try {
+      const res = await api.translateMeeting(
+        session.id,
+        translationLang,
+        batch.map((b) => b.text),
+      );
+      const lines = res.lines ?? [];
+      setTranslations((prev) => {
+        const next = { ...prev };
+        batch.forEach((b, i) => {
+          next[b.id] = lines[i] ?? b.text;
+        });
+        return next;
+      });
+      translateNextRef.current = start + batch.length;
+    } catch (e) {
+      setTranslateError(e instanceof Error ? e.message : "Couldn't translate.");
+    } finally {
+      translateRunningRef.current = false;
+      setTranslating(false);
+    }
+  }, [session.id, translationLang]);
+
+  // Continuous translation: initialise the window on enable, then translate new
+  // lines (debounced) regardless of which pane is active. Reset when disabled.
+  useEffect(() => {
+    if (!translationOn) {
+      if (translateStart !== null) {
+        setTranslateStart(null);
+        translateNextRef.current = 0;
+        setTranslations({});
+      }
+      return;
+    }
+    if (translateStart === null) {
+      const s = Math.max(0, segments.length - TRANSLATE_WINDOW);
+      translateNextRef.current = s;
+      setTranslateStart(s);
+      return;
+    }
+    if (segments.length <= translateNextRef.current) return;
+    const t = setTimeout(() => void runTranslation(), TRANSLATE_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [segments, translationOn, translateStart, translationLang, runTranslation]);
+
+  // Proactive assist: check whether help is needed (grounded, on the backend),
+  // and only surface genuinely-new suggestions. Runs continuously while enabled.
+  const runAssist = useCallback(
+    async (force: boolean): Promise<void> => {
+      if (assistRunningRef.current || segCountRef.current === 0) return;
+      if (!force && segCountRef.current < assistLastCountRef.current + ASSIST_MIN_NEW) return;
+      assistRunningRef.current = true;
+      assistLastCountRef.current = segCountRef.current;
+      setAssistLoading(true);
+      setAssistError(null);
+      try {
+        const res = await api.suggestMeeting(session.id);
+        const text = res.suggestion.trim();
+        if (res.has_suggestion && text && text !== assistLastTextRef.current) {
+          assistLastTextRef.current = text;
+          setSuggestions((prev) =>
+            [{ id: Date.now(), text, at: Date.now() }, ...prev].slice(0, 12),
+          );
+        }
+      } catch (e) {
+        setAssistError(e instanceof Error ? e.message : "Couldn't check for suggestions.");
+      } finally {
+        assistRunningRef.current = false;
+        setAssistLoading(false);
+      }
+    },
+    [session.id],
+  );
+
+  useEffect(() => {
+    if (!proactiveOn || !assistAuto) return;
+    if (segments.length < assistLastCountRef.current + ASSIST_MIN_NEW) return;
+    const t = setTimeout(() => void runAssist(false), ASSIST_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [segments, proactiveOn, assistAuto, runAssist]);
 
   // ---- Section nodes -----------------------------------------------------
   const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
@@ -765,16 +902,25 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   const assistNode = (
     <AssistSection
-      sessionId={session.id}
-      segmentCount={segments.length}
+      suggestions={suggestions}
+      loading={assistLoading}
+      error={assistError}
+      auto={assistAuto}
       canRun={segments.length > 0}
+      onToggleAuto={() => setAssistAuto((v) => !v)}
+      onCheckNow={() => void runAssist(true)}
+      onDismiss={(id) => setSuggestions((prev) => prev.filter((s) => s.id !== id))}
     />
   );
   const translationNode = (
     <TranslationSection
-      sessionId={session.id}
       items={translationItems}
-      defaultLang={(session.language || "").split("-")[0]}
+      translations={translations}
+      startIndex={translateStart ?? Math.max(0, translationItems.length - TRANSLATE_WINDOW)}
+      lang={translationLang}
+      loading={translating}
+      error={translateError}
+      onRestart={restartTranslation}
     />
   );
 

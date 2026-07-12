@@ -1,79 +1,36 @@
-import { useEffect, useRef, useState } from "react";
 import { Check, Lightbulb, Loader2, Pause, Play, X } from "lucide-react";
-import { api } from "../lib/api";
 import { Markdown } from "./Markdown";
 
-// Poll cadence and gating for live proactive assist.
-const DEBOUNCE_MS = 9000;
-// Only re-check once at least this many new lines have been spoken.
-const MIN_NEW_SEGMENTS = 2;
-
-interface Suggestion {
+export interface Suggestion {
   id: number;
   text: string;
   at: number;
 }
 
 /**
- * Proactive assist, live: quietly watches the discussion and only surfaces a
- * card when the model judges there's something worth helping with. Most of the
- * time it stays idle. Auto-monitoring can be paused; a manual "Check now" forces
- * an immediate look.
+ * Proactive assist view. Presentational: the monitoring loop runs in LiveView so
+ * it keeps watching the discussion even when this tab isn't the active pane, and
+ * only surfaces a card when the assistant can genuinely help.
  */
 export function AssistSection({
-  sessionId,
-  segmentCount,
+  suggestions,
+  loading,
+  error,
+  auto,
   canRun,
+  onToggleAuto,
+  onCheckNow,
+  onDismiss,
 }: {
-  sessionId: number;
-  segmentCount: number;
+  suggestions: Suggestion[];
+  loading: boolean;
+  error: string | null;
+  auto: boolean;
   canRun: boolean;
+  onToggleAuto: () => void;
+  onCheckNow: () => void;
+  onDismiss: (id: number) => void;
 }) {
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [auto, setAuto] = useState(true);
-
-  const runningRef = useRef(false);
-  const lastCheckedCountRef = useRef(0);
-  const lastTextRef = useRef("");
-
-  async function check(force: boolean): Promise<void> {
-    if (runningRef.current || !canRun) return;
-    if (!force && segmentCount < lastCheckedCountRef.current + MIN_NEW_SEGMENTS) return;
-    runningRef.current = true;
-    lastCheckedCountRef.current = segmentCount;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.suggestMeeting(sessionId);
-      const text = res.suggestion.trim();
-      // Only surface genuinely new help — skip repeats of the last suggestion.
-      if (res.has_suggestion && text && text !== lastTextRef.current) {
-        lastTextRef.current = text;
-        setSuggestions((prev) => [{ id: Date.now(), text, at: Date.now() }, ...prev].slice(0, 12));
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't check for suggestions.");
-    } finally {
-      runningRef.current = false;
-      setLoading(false);
-    }
-  }
-
-  // Live loop: re-check (debounced) as new lines arrive while auto is on.
-  useEffect(() => {
-    if (!auto || !canRun) return;
-    if (segmentCount < lastCheckedCountRef.current + MIN_NEW_SEGMENTS) return;
-    const t = setTimeout(() => void check(false), DEBOUNCE_MS);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segmentCount, auto, canRun]);
-
-  function dismiss(id: number): void {
-    setSuggestions((prev) => prev.filter((s) => s.id !== id));
-  }
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -94,7 +51,7 @@ export function AssistSection({
           </span>
           <button
             type="button"
-            onClick={() => setAuto((v) => !v)}
+            onClick={onToggleAuto}
             data-tooltip={auto ? "Pause monitoring" : "Resume monitoring"}
             aria-label={auto ? "Pause monitoring" : "Resume monitoring"}
             className="rounded border border-border p-1.5 text-muted hover:bg-surface hover:text-accent"
@@ -103,7 +60,7 @@ export function AssistSection({
           </button>
           <button
             type="button"
-            onClick={() => void check(true)}
+            onClick={onCheckNow}
             disabled={loading || !canRun}
             className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-[12px] text-white disabled:opacity-50"
           >
@@ -116,10 +73,7 @@ export function AssistSection({
         {suggestions.length > 0 ? (
           <div className="space-y-2">
             {suggestions.map((s) => (
-              <div
-                key={s.id}
-                className="rounded border border-accent/40 bg-accent/5 px-3 py-2"
-              >
+              <div key={s.id} className="rounded border border-accent/40 bg-accent/5 px-3 py-2">
                 <div className="mb-1 flex items-center gap-1.5">
                   <Lightbulb size={12} className="text-accent" />
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
@@ -133,7 +87,7 @@ export function AssistSection({
                   </span>
                   <button
                     type="button"
-                    onClick={() => dismiss(s.id)}
+                    onClick={() => onDismiss(s.id)}
                     aria-label="Dismiss"
                     className="text-muted hover:text-red-500"
                   >
