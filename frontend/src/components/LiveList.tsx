@@ -5,11 +5,13 @@ import type { MeetingSession } from "../lib/types";
 interface LiveListProps {
   sessions: MeetingSession[] | null;
   activeId: number | null;
+  /** Session currently recording (red dot), if any. */
+  recordingId?: number | null;
   onSelect: (session: MeetingSession) => void;
 }
 
 /** Sidebar list of live meeting sessions (the "Live" section). */
-export function LiveList({ sessions, activeId, onSelect }: LiveListProps) {
+export function LiveList({ sessions, activeId, recordingId, onSelect }: LiveListProps) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -43,6 +45,7 @@ export function LiveList({ sessions, activeId, onSelect }: LiveListProps) {
           <ul className="space-y-0.5">
             {filtered.map((s) => {
               const isActive = s.id === activeId;
+              const isRecording = s.id === recordingId;
               return (
                 <li key={s.id}>
                   <button
@@ -52,12 +55,24 @@ export function LiveList({ sessions, activeId, onSelect }: LiveListProps) {
                       isActive ? "bg-accent/15 text-accent" : "hover:bg-surface"
                     }`}
                   >
-                    <Radio
-                      size={14}
-                      className={`shrink-0 ${
-                        s.status === "active" ? "text-accent" : "opacity-60"
-                      }`}
-                    />
+                    {isRecording ? (
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500"
+                        data-tooltip="Recording"
+                        aria-label="Recording"
+                      />
+                    ) : isActive ? (
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full bg-green-500"
+                        data-tooltip="Open"
+                        aria-label="Open"
+                      />
+                    ) : (
+                      <Radio
+                        size={14}
+                        className={`shrink-0 ${s.status === "active" ? "text-accent" : "opacity-60"}`}
+                      />
+                    )}
                     <span className="flex-1 truncate">{s.title}</span>
                     {s.status === "ended" && (
                       <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted">

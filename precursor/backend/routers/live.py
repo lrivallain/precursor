@@ -480,9 +480,9 @@ async def topic_summary(
 
 
 @router.get("/m365/agenda", response_model=AgendaResponse)
-async def agenda(days: int = 7) -> AgendaResponse:
-    """List upcoming M365 calendar meetings via WorkIQ (fail-closed)."""
-    available, events, detail = await fetch_agenda(days=days)
+async def agenda() -> AgendaResponse:
+    """List today's M365 calendar meetings via WorkIQ (fail-closed)."""
+    available, events, detail = await fetch_agenda()
     return AgendaResponse(
         available=available,
         events=[AgendaEvent(**e) for e in events],

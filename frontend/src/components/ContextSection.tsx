@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarClock, FileText, Link2, Loader2, RefreshCw, Users } from "lucide-react";
 import type { AgendaEvent, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
@@ -8,52 +8,39 @@ interface Props {
   session: MeetingSession;
   onUpdated: (session: MeetingSession) => void;
   topicTitle: string | null;
+  topicSummary: string;
+  topicSummaryLoading: boolean;
+  topicSummaryError: string | null;
+  onRefreshTopicSummary: () => void;
 }
 
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 /**
- * Context tab: an AI summary of the attached topic's conversation, plus the
- * user's M365 agenda (via WorkIQ) so they can link a meeting — folding its
- * invitees into the summary's attendees.
+ * Context tab: an AI summary of the attached topic's conversation (auto-generated
+ * on link), plus today's M365 agenda (via WorkIQ) so the user can pick the
+ * meeting for context — folding its invitees into the summary's attendees.
  */
-export function ContextSection({ session, onUpdated, topicTitle }: Props) {
-  const [topicSummary, setTopicSummary] = useState("");
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
-
+export function ContextSection({
+  session,
+  onUpdated,
+  topicTitle,
+  topicSummary,
+  topicSummaryLoading,
+  topicSummaryError,
+  onRefreshTopicSummary,
+}: Props) {
   const [events, setEvents] = useState<AgendaEvent[] | null>(null);
   const [agendaLoading, setAgendaLoading] = useState(false);
   const [agendaDetail, setAgendaDetail] = useState<string | null>(null);
   const [linking, setLinking] = useState<string | null>(null);
 
   const linked = session.external_meeting;
-
-  async function loadTopicSummary(): Promise<void> {
-    setSummaryLoading(true);
-    setSummaryError(null);
-    try {
-      const res = await api.topicContextSummary(session.id);
-      setTopicSummary(res.summary);
-    } catch (e) {
-      setSummaryError(
-        e instanceof Error ? e.message : "Couldn't summarize the topic.",
-      );
-    } finally {
-      setSummaryLoading(false);
-    }
-  }
 
   async function loadAgenda(): Promise<void> {
     setAgendaLoading(true);
@@ -62,7 +49,7 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
       const res = await api.getAgenda();
       setEvents(res.events);
       if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
-      else if (res.events.length === 0) setAgendaDetail("No upcoming meetings found.");
+      else if (res.events.length === 0) setAgendaDetail("No meetings on your calendar today.");
     } catch (e) {
       setAgendaDetail(e instanceof Error ? e.message : "Couldn't load the agenda.");
       setEvents([]);
@@ -70,6 +57,12 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
       setAgendaLoading(false);
     }
   }
+
+  // Auto-load today's agenda when the Context tab first mounts.
+  useEffect(() => {
+    void loadAgenda();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function link(event: AgendaEvent): Promise<void> {
     setLinking(event.id ?? event.subject);
@@ -94,16 +87,16 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
           {session.topic_id != null && (
             <button
               type="button"
-              onClick={() => void loadTopicSummary()}
-              disabled={summaryLoading}
+              onClick={onRefreshTopicSummary}
+              disabled={topicSummaryLoading}
               className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
             >
-              {summaryLoading ? (
+              {topicSummaryLoading ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <RefreshCw size={12} />
               )}
-              {topicSummary ? "Refresh" : "Summarize topic"}
+              Refresh
             </button>
           )}
         </div>
@@ -111,23 +104,25 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
           <p className="text-sm text-muted">
             No topic attached. Pick one from the toolbar to bring its context in.
           </p>
-        ) : summaryError ? (
-          <p className="text-[12px] text-red-500">{summaryError}</p>
+        ) : topicSummaryError ? (
+          <p className="text-[12px] text-red-500">{topicSummaryError}</p>
         ) : topicSummary ? (
           <Markdown>{topicSummary}</Markdown>
+        ) : topicSummaryLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Loader2 size={14} className="animate-spin" /> Summarizing{" "}
+            {topicTitle ?? "the topic"}…
+          </div>
         ) : (
-          <p className="text-sm text-muted">
-            Summarize the conversation in <strong>{topicTitle ?? "the topic"}</strong>{" "}
-            to brief yourself before the meeting.
-          </p>
+          <p className="text-sm text-muted">No conversation to summarize yet.</p>
         )}
       </section>
 
-      {/* Linked meeting / agenda */}
+      {/* Today's agenda */}
       <section className="p-4">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            <CalendarClock size={12} /> Meeting from your agenda
+            <CalendarClock size={12} /> Today&apos;s meetings
           </div>
           <button
             type="button"
@@ -140,7 +135,7 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
             ) : (
               <RefreshCw size={12} />
             )}
-            {events ? "Refresh" : "Load agenda"}
+            Refresh
           </button>
         </div>
 
@@ -160,12 +155,18 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
           </div>
         )}
 
+        {agendaLoading && !events && (
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Loader2 size={14} className="animate-spin" /> Loading your agenda…
+          </div>
+        )}
         {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
 
         {events && events.length > 0 && (
           <ul className="space-y-1.5">
             {events.map((ev) => {
               const key = ev.id ?? ev.subject;
+              const isLinked = linked?.subject === ev.subject;
               return (
                 <li
                   key={key}
@@ -185,23 +186,20 @@ export function ContextSection({ session, onUpdated, topicTitle }: Props) {
                   <button
                     type="button"
                     onClick={() => void link(ev)}
-                    disabled={linking === key}
+                    disabled={linking === key || isLinked}
                     className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
                   >
-                    {linking === key ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
-                    Link
+                    {linking === key ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <Link2 size={11} />
+                    )}
+                    {isLinked ? "Linked" : "Link"}
                   </button>
                 </li>
               );
             })}
           </ul>
-        )}
-
-        {!events && !agendaDetail && (
-          <p className="text-sm text-muted">
-            Load your Microsoft 365 agenda (via WorkIQ) to link a meeting — its
-            invitees are added to the summary&apos;s attendees.
-          </p>
         )}
       </section>
     </div>

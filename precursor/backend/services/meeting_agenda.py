@@ -90,8 +90,8 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def fetch_agenda(days: int = 7) -> tuple[bool, list[dict[str, Any]], str | None]:
-    """Return (available, events, detail). Never raises."""
+async def fetch_agenda() -> tuple[bool, list[dict[str, Any]], str | None]:
+    """Return (available, today's events, detail). Never raises."""
     manager = get_mcp_client_manager()
     try:
         bundle = await manager.acquire([WORKIQ_SERVER])
@@ -109,13 +109,14 @@ async def fetch_agenda(days: int = 7) -> tuple[bool, list[dict[str, Any]], str |
             return False, [], detail
 
         tool_names = {t.name for t in bundle.tools if t.server == WORKIQ_SERVER}
-        now = datetime.now(UTC)
-        end = now + timedelta(days=max(1, days))
+        # Today's window, in UTC (start of day → start of next day).
+        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
         path = (
-            f"/me/calendarView(startDateTime='{now:%Y-%m-%dT%H:%M:%SZ}',"
+            f"/me/calendarView(startDateTime='{start:%Y-%m-%dT%H:%M:%SZ}',"
             f"endDateTime='{end:%Y-%m-%dT%H:%M:%SZ}')"
             "?$select=subject,start,end,organizer,attendees,isOnlineMeeting"
-            "&$orderby=start/dateTime&$top=25"
+            "&$orderby=start/dateTime&$top=50"
         )
         try:
             if "call_function" in tool_names:

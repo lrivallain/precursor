@@ -92,6 +92,8 @@ interface LiveViewProps {
   topics: TopicNode[];
   onUpdated: (session: MeetingSession) => void;
   onDeleted: () => void | Promise<void>;
+  /** Report the recording session id (or null) so the sidebar can show a dot. */
+  onRecordingChange?: (sessionId: number | null) => void;
 }
 
 /**
@@ -99,7 +101,7 @@ interface LiveViewProps {
  * splittable panel with four sections — Transcript, Live Insights (+ Q&A),
  * Summary, and Context — so the user can view two at once side by side.
  */
-export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProps) {
+export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingChange }: LiveViewProps) {
   const confirmAction = useConfirm();
   const settings = useSettings();
   const sttReady = settings?.stt_azure_ready ?? false;
@@ -118,11 +120,22 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   const [summaryFocus, setSummaryFocus] = useState(0);
   const genRef = useRef(false);
 
+  // Topic-context summary (Context tab). Auto-generated when a topic is linked.
+  const [topicSummary, setTopicSummary] = useState("");
+  const [topicSummaryLoading, setTopicSummaryLoading] = useState(false);
+  const [topicSummaryError, setTopicSummaryError] = useState<string | null>(null);
+  const topicGenRef = useRef(false);
+  const summarizedTopicRef = useRef<number | null>(null);
+
   // Raw diarization label currently being renamed inline, keyed by segment id so
   // only the clicked occurrence shows the editor (the rename applies to all).
   const [editingSegId, setEditingSegId] = useState<number | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const cancelEditRef = useRef(false);
+
+  // Segment indices where recording resumed (draw a separator before them).
+  const [recordingBoundaries, setRecordingBoundaries] = useState<number[]>([]);
+  const prevListeningRef = useRef(false);
 
   const [insights, setInsights] = useState<MeetingInsight[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
@@ -184,6 +197,21 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   });
   const recording = transcriber.listening;
 
+  // Report recording state to the sidebar (red dot) + clear on unmount.
+  useEffect(() => {
+    onRecordingChange?.(recording ? session.id : null);
+  }, [recording, session.id, onRecordingChange]);
+  useEffect(() => () => onRecordingChange?.(null), [onRecordingChange]);
+
+  // When recording resumes in a session that already has transcript, mark a
+  // boundary so the transcript shows a separator.
+  useEffect(() => {
+    if (recording && !prevListeningRef.current && segCountRef.current > 0) {
+      setRecordingBoundaries((b) => [...b, segCountRef.current]);
+    }
+    prevListeningRef.current = recording;
+  }, [recording]);
+
   const runAnalysis = useCallback(async (): Promise<void> => {
     if (analyzingRef.current) return;
     analyzingRef.current = true;
@@ -209,6 +237,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
     setAnswer("");
     setSummaryText("");
     setSummaryError(null);
+    setRecordingBoundaries([]);
+    prevListeningRef.current = false;
     lastAnalyzedRef.current = 0;
     void api
       .listMeetingSegments(session.id)
@@ -278,6 +308,40 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
       transcriber.stop();
     }
   }
+
+  async function generateTopicSummary(): Promise<void> {
+    if (topicGenRef.current || session.topic_id == null) return;
+    topicGenRef.current = true;
+    setTopicSummaryLoading(true);
+    setTopicSummaryError(null);
+    try {
+      const res = await api.topicContextSummary(session.id);
+      setTopicSummary(res.summary);
+    } catch (e) {
+      setTopicSummaryError(
+        e instanceof Error ? e.message : "Couldn't summarize the topic.",
+      );
+    } finally {
+      topicGenRef.current = false;
+      setTopicSummaryLoading(false);
+    }
+  }
+
+  // Always (re)summarize the attached topic when it changes — on link, or when
+  // opening a session that already has a topic.
+  useEffect(() => {
+    if (session.topic_id == null) {
+      summarizedTopicRef.current = null;
+      setTopicSummary("");
+      setTopicSummaryError(null);
+      return;
+    }
+    if (summarizedTopicRef.current === session.topic_id) return;
+    summarizedTopicRef.current = session.topic_id;
+    setTopicSummary("");
+    void generateTopicSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id, session.topic_id]);
 
   async function applyTopic(topicId: number | null): Promise<void> {
     const updated = await api.updateMeetingSession(session.id, { topic_id: topicId });
@@ -411,6 +475,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   }, [segments, session.attendees, session.speaker_names]);
 
   // ---- Section nodes -----------------------------------------------------
+  const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
   const transcriptNode = (
     <div ref={transcriptRef} className="h-full overflow-y-auto px-4 py-4">
       {segments.length === 0 && !interim ? (
@@ -424,50 +489,59 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
         </div>
       ) : (
         <div className="mx-auto max-w-3xl space-y-2">
-          {segments.map((seg) => (
-            <div key={seg.id} className="flex gap-2 text-sm">
-              <span className="w-10 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-muted">
-                {formatOffset(seg.offset_ms)}
-              </span>
-              <div className="min-w-0 flex-1">
-                {seg.speaker_label &&
-                  (editingSegId === seg.id ? (
-                    <input
-                      autoFocus
-                      value={editingValue}
-                      onChange={(e) => setEditingValue(e.target.value)}
-                      onBlur={() => {
-                        if (cancelEditRef.current) {
-                          cancelEditRef.current = false;
-                          setEditingSegId(null);
-                          return;
-                        }
-                        void commitRename(seg.speaker_label as string);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          e.currentTarget.blur();
-                        } else if (e.key === "Escape") {
-                          cancelEditRef.current = true;
-                          e.currentTarget.blur();
-                        }
-                      }}
-                      className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => beginRename(seg)}
-                      data-tooltip="Rename speaker"
-                      className={`mr-1.5 rounded text-[12px] font-medium hover:underline ${speakerColor(
-                        seg.speaker_label,
-                      )}`}
-                    >
-                      {displayName(seg.speaker_label)}
-                    </button>
-                  ))}
-                <span className="text-text">{seg.text}</span>
+          {segments.map((seg, i) => (
+            <div key={seg.id}>
+              {boundarySet.has(i) && (
+                <div className="my-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted">
+                  <div className="h-px flex-1 bg-border" />
+                  Recording resumed
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              <div className="flex gap-2 text-sm">
+                <span className="w-10 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-muted">
+                  {formatOffset(seg.offset_ms)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  {seg.speaker_label &&
+                    (editingSegId === seg.id ? (
+                      <input
+                        autoFocus
+                        value={editingValue}
+                        onChange={(e) => setEditingValue(e.target.value)}
+                        onBlur={() => {
+                          if (cancelEditRef.current) {
+                            cancelEditRef.current = false;
+                            setEditingSegId(null);
+                            return;
+                          }
+                          void commitRename(seg.speaker_label as string);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          } else if (e.key === "Escape") {
+                            cancelEditRef.current = true;
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        className="mr-1.5 w-28 rounded border border-accent/60 bg-bg px-1 py-0 text-[12px] font-medium outline-none"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => beginRename(seg)}
+                        data-tooltip="Rename speaker"
+                        className={`mr-1.5 rounded text-[12px] font-medium hover:underline ${speakerColor(
+                          seg.speaker_label,
+                        )}`}
+                      >
+                        {displayName(seg.speaker_label)}
+                      </button>
+                    ))}
+                  <span className="text-text">{seg.text}</span>
+                </div>
               </div>
             </div>
           ))}
@@ -579,7 +653,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted }: LiveViewProp
   );
 
   const contextNode = (
-    <ContextSection session={session} onUpdated={onUpdated} topicTitle={topicTitle} />
+    <ContextSection
+      session={session}
+      onUpdated={onUpdated}
+      topicTitle={topicTitle}
+      topicSummary={topicSummary}
+      topicSummaryLoading={topicSummaryLoading}
+      topicSummaryError={topicSummaryError}
+      onRefreshTopicSummary={() => void generateTopicSummary()}
+    />
   );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;

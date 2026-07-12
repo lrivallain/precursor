@@ -641,7 +641,7 @@ export const api = {
     request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
       method: "POST",
     }),
-  getAgenda: (days = 7) => request<AgendaResponse>(`/api/live/m365/agenda?days=${days}`),
+  getAgenda: () => request<AgendaResponse>(`/api/live/m365/agenda`),
   linkMeeting: (id: number, event: AgendaEvent) =>
     request<MeetingSession>(`/api/live/${id}/meeting`, {
       method: "POST",

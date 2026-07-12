@@ -309,6 +309,7 @@ export default function App() {
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
   const agentsEnabled = settings?.agents_enabled ?? false;
   const liveEnabled = settings?.live_enabled ?? true;
+  const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
 
@@ -1258,6 +1259,7 @@ export default function App() {
           <LiveList
             sessions={meetingSessions}
             activeId={activeSessionId}
+            recordingId={liveRecordingId}
             onSelect={handleSelectSession}
           />
         }
@@ -1571,6 +1573,7 @@ export default function App() {
                   history.pushState(null, "", liveUrl(null));
                   void list;
                 }}
+                onRecordingChange={setLiveRecordingId}
               />
             ) : (
               <LiveStartHero
