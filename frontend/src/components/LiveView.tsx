@@ -791,10 +791,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       onGenerate={() => void generateSummary()}
       suggestedAttendees={suggestedAttendees}
       topicTitle={topicTitle}
-      canGenerate={isEnded && segments.length > 0}
-      unavailableReason={
-        !isEnded ? "The summary is available once the session is ended." : null
-      }
+      canGenerate={segments.length > 0}
     />
   );
 
@@ -815,11 +812,12 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
+  // The summary only exists for an ended session — hide the whole tab until then.
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
     { id: "insights", label: "Live insights", badge: insights.length },
     { id: "notes", label: notes.trim() ? "Notes ●" : "Notes" },
-    { id: "summary", label: hasSummary ? "Summary ●" : "Summary" },
+    ...(isEnded ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }] : []),
     { id: "context", label: "Context" },
   ];
 

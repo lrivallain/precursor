@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, Eye, Loader2, Lock, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
+import { Check, Copy, Eye, Loader2, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
 import { Markdown } from "./Markdown";
@@ -16,8 +16,6 @@ interface Props {
   suggestedAttendees: string[];
   topicTitle: string | null;
   canGenerate: boolean;
-  /** When set, the summary can't be generated yet — explains why (e.g. not ended). */
-  unavailableReason?: string | null;
 }
 
 /**
@@ -36,7 +34,6 @@ export function SummarySection({
   suggestedAttendees,
   topicTitle,
   canGenerate,
-  unavailableReason,
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [newAttendee, setNewAttendee] = useState("");
@@ -153,7 +150,6 @@ export function SummarySection({
           type="button"
           onClick={onGenerate}
           disabled={generating || !canGenerate}
-          data-tooltip={unavailableReason ?? undefined}
           className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-sm text-white disabled:opacity-50"
         >
           {generating ? (
@@ -227,12 +223,6 @@ export function SummarySection({
           />
         ) : text.trim() ? (
           <Markdown>{text}</Markdown>
-        ) : unavailableReason ? (
-          <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
-            <Lock size={18} className="mb-2 opacity-70" aria-hidden="true" />
-            <p className="mb-1 font-medium text-text">Summary not available yet</p>
-            <p className="max-w-sm">{unavailableReason}</p>
-          </div>
         ) : (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
             <p className="mb-1 font-medium text-text">No summary yet</p>
