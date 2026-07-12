@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Mic, Radio, RefreshCw, Square, Trash2 } from "lucide-react";
+import { CircleHelp, Lightbulb, Mic, Radio, RefreshCw, Square, Trash2, X } from "lucide-react";
 import type {
   Chat,
   MeetingInsight,
@@ -25,10 +25,10 @@ import { SummarySection } from "./SummarySection";
 import { NotesSection } from "./NotesSection";
 import { ContextSection } from "./ContextSection";
 import { LiveChatSection } from "./LiveChatSection";
-import { AssistSection } from "./AssistSection";
 import { TranslationSection } from "./TranslationSection";
 import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
+import { Markdown } from "./Markdown";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -53,10 +53,13 @@ const KIND_META: { kind: MeetingInsightKind; label: string; dot: string }[] = [
 ];
 
 const FEATURE_OPTIONS: FeatureOption[] = [
-  { id: "insights", label: "Live insights", description: "Rolling action items, decisions, risks" },
+  {
+    id: "insights",
+    label: "Live insights & assist",
+    description: "Action items, decisions, risks + proactive help",
+  },
   { id: "notes", label: "Notes", description: "Your Markdown scratch pad" },
   { id: "assistant", label: "Assistant", description: "A grounded chat about the meeting" },
-  { id: "proactive", label: "Proactive assist", description: "Live help when it's needed" },
   { id: "translation", label: "Translation", description: "Live transcript translation" },
 ];
 
@@ -73,11 +76,8 @@ const SPEAKER_COLORS = [
 // visible); only the newest lines are translated when it (re)starts.
 const TRANSLATE_DEBOUNCE_MS = 1200;
 const TRANSLATE_WINDOW = 6;
-// Proactive assist re-checks after enough new speech; quiet unless it can help.
-const ASSIST_DEBOUNCE_MS = 9000;
-const ASSIST_MIN_NEW = 2;
 
-export interface Suggestion {
+interface Suggestion {
   id: number;
   text: string;
   at: number;
@@ -258,13 +258,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const translateRunningRef = useRef(false);
   const translateNextRef = useRef(0);
 
-  // Live proactive-assist state (also loops here so it monitors continuously).
+  // Proactive suggestions now ride along on the unified analysis pass (see
+  // runAnalysis). Surfaced as dismissible cards in the Insights tab.
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [assistAuto, setAssistAuto] = useState(true);
-  const [assistLoading, setAssistLoading] = useState(false);
-  const [assistError, setAssistError] = useState<string | null>(null);
-  const assistRunningRef = useRef(false);
-  const assistLastCountRef = useRef(0);
   const assistLastTextRef = useRef("");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -279,7 +275,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const insightsOn = features.includes("insights");
   const notesOn = features.includes("notes");
   const assistantOn = features.includes("assistant");
-  const proactiveOn = features.includes("proactive");
   const translationOn = features.includes("translation");
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
@@ -352,8 +347,15 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setAnalyzing(true);
     lastAnalyzedRef.current = segCountRef.current;
     try {
-      const rows = await api.analyzeMeeting(session.id);
-      setInsights(rows);
+      const res = await api.analyzeMeeting(session.id);
+      setInsights(res.insights);
+      // A proactive suggestion rides along on the same pass — surface genuinely
+      // new ones as dismissible cards in the Insights tab.
+      const text = (res.suggestion ?? "").trim();
+      if (text && text !== assistLastTextRef.current) {
+        assistLastTextRef.current = text;
+        setSuggestions((prev) => [{ id: Date.now(), text, at: Date.now() }, ...prev].slice(0, 12));
+      }
     } catch {
       // Non-fatal — keep the prior snapshot.
     } finally {
@@ -710,42 +712,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     return () => clearTimeout(t);
   }, [segments, translationOn, translateStart, translationLang, runTranslation]);
 
-  // Proactive assist: check whether help is needed (grounded, on the backend),
-  // and only surface genuinely-new suggestions. Runs continuously while enabled.
-  const runAssist = useCallback(
-    async (force: boolean): Promise<void> => {
-      if (assistRunningRef.current || segCountRef.current === 0) return;
-      if (!force && segCountRef.current < assistLastCountRef.current + ASSIST_MIN_NEW) return;
-      assistRunningRef.current = true;
-      assistLastCountRef.current = segCountRef.current;
-      setAssistLoading(true);
-      setAssistError(null);
-      try {
-        const res = await api.suggestMeeting(session.id);
-        const text = res.suggestion.trim();
-        if (res.has_suggestion && text && text !== assistLastTextRef.current) {
-          assistLastTextRef.current = text;
-          setSuggestions((prev) =>
-            [{ id: Date.now(), text, at: Date.now() }, ...prev].slice(0, 12),
-          );
-        }
-      } catch (e) {
-        setAssistError(e instanceof Error ? e.message : "Couldn't check for suggestions.");
-      } finally {
-        assistRunningRef.current = false;
-        setAssistLoading(false);
-      }
-    },
-    [session.id],
-  );
-
-  useEffect(() => {
-    if (!proactiveOn || !assistAuto) return;
-    if (segments.length < assistLastCountRef.current + ASSIST_MIN_NEW) return;
-    const t = setTimeout(() => void runAssist(false), ASSIST_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [segments, proactiveOn, assistAuto, runAssist]);
-
   // ---- Section nodes -----------------------------------------------------
   const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
   const transcriptNode = (
@@ -830,6 +796,41 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-3 py-3">
+        {/* Proactive help rides along on the analysis pass: shown as cards when
+            the assistant judges it can materially help right now. */}
+        {suggestions.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {suggestions.map((s) => (
+              <div key={s.id} className="rounded border border-accent/40 bg-accent/5 px-3 py-2">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <Lightbulb size={12} className="text-accent" />
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Suggestion
+                  </span>
+                  <span className="ml-auto text-[10px] text-muted">
+                    {new Date(s.at).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSuggestions((prev) => prev.filter((x) => x.id !== s.id))
+                    }
+                    aria-label="Dismiss"
+                    className="text-muted hover:text-red-500"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+                <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
+                  <Markdown>{s.text}</Markdown>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {groupedInsights.length === 0 ? (
           <p className="text-[12px] text-muted">
             {segments.length === 0
@@ -900,18 +901,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     />
   ) : null;
 
-  const assistNode = (
-    <AssistSection
-      suggestions={suggestions}
-      loading={assistLoading}
-      error={assistError}
-      auto={assistAuto}
-      canRun={segments.length > 0}
-      onToggleAuto={() => setAssistAuto((v) => !v)}
-      onCheckNow={() => void runAssist(true)}
-      onDismiss={(id) => setSuggestions((prev) => prev.filter((s) => s.id !== id))}
-    />
-  );
   const translationNode = (
     <TranslationSection
       items={translationItems}
@@ -941,9 +930,16 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   // requires the session to be ended, and the assistant its chat to exist.
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
-    ...(insightsOn ? [{ id: "insights", label: "Live insights", badge: insights.length }] : []),
+    ...(insightsOn
+      ? [
+          {
+            id: "insights",
+            label: "Live insights",
+            badge: insights.length + suggestions.length || null,
+          },
+        ]
+      : []),
     ...(assistantOn && chat ? [{ id: "assistant", label: "Assistant" }] : []),
-    ...(proactiveOn ? [{ id: "assist", label: "Assist" }] : []),
     ...(translationOn ? [{ id: "translation", label: "Translation" }] : []),
     ...(notesOn ? [{ id: "notes", label: notes.trim() ? "Notes ●" : "Notes" }] : []),
     ...(isEnded ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }] : []),
@@ -958,8 +954,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         return insightsNode;
       case "assistant":
         return assistantNode;
-      case "assist":
-        return assistNode;
       case "translation":
         return translationNode;
       case "notes":

@@ -41,6 +41,7 @@ from precursor.backend.schemas import (
     ContextNoteAdd,
     ContextNotesUpdate,
     LinkMeetingRequest,
+    MeetingAnalyzeResult,
     MeetingAskRequest,
     MeetingAttachmentRead,
     MeetingInsightRead,
@@ -53,7 +54,6 @@ from precursor.backend.schemas import (
     MeetingSummaryPostResult,
     MeetingSummaryResult,
     SpeakerRenameRequest,
-    SuggestResult,
     TopicSummaryResult,
     TranslateRequest,
     TranslateResult,
@@ -75,7 +75,6 @@ from precursor.backend.services.meeting_analysis import (
     language_name,
     meeting_context_text,
     meeting_details_markdown,
-    suggest_for_discussion,
     translate_lines,
     translate_transcript,
 )
@@ -451,16 +450,21 @@ async def list_insights(
     return list(result.scalars().all())
 
 
-@router.post("/{session_id}/analyze", response_model=list[MeetingInsightRead])
+@router.post("/{session_id}/analyze", response_model=MeetingAnalyzeResult)
 async def analyze(
     session_id: int, session: AsyncSession = Depends(get_session)
-) -> list[MeetingInsight]:
-    """Re-derive the insight snapshot from the rolling transcript window."""
+) -> MeetingAnalyzeResult:
+    """Unified pass: re-derive the insight snapshot from the rolling transcript
+    window and decide on a proactive suggestion (empty when none is warranted)."""
     await _get_session_or_404(session_id, session)
     try:
-        return await analyze_session(session, session_id)
+        rows, suggestion = await analyze_session(session, session_id)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Analysis failed: {exc}") from exc
+    return MeetingAnalyzeResult(
+        insights=[MeetingInsightRead.model_validate(r) for r in rows],
+        suggestion=suggestion,
+    )
 
 
 @router.post("/{session_id}/ask")
@@ -561,19 +565,6 @@ async def ask(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
     return EventSourceResponse(event_stream())
-
-
-@router.post("/{session_id}/suggest", response_model=SuggestResult)
-async def suggest(session_id: int, session: AsyncSession = Depends(get_session)) -> SuggestResult:
-    """Live proactive assist: decide whether there's anything worth helping with
-    now. Returns has_suggestion=false (200) when nothing is needed — the common
-    case — so the client can poll quietly."""
-    await _get_session_or_404(session_id, session)
-    try:
-        help_needed, text, model = await suggest_for_discussion(session, session_id)
-    except Exception as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Suggestion failed: {exc}") from exc
-    return SuggestResult(has_suggestion=help_needed, suggestion=text, model=model)
 
 
 @router.post("/{session_id}/translate", response_model=TranslateResult)

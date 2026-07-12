@@ -135,6 +135,14 @@ class MeetingInsightRead(BaseModel):
     created_at: datetime
 
 
+class MeetingAnalyzeResult(BaseModel):
+    """The result of one unified analysis pass: the insight snapshot plus an
+    optional proactive suggestion (empty when no help is warranted)."""
+
+    insights: list[MeetingInsightRead] = Field(default_factory=list)
+    suggestion: str = ""
+
+
 class MeetingAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
 

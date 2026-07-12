@@ -134,19 +134,19 @@ def test_parse_insights_tolerates_fences_and_junk() -> None:
     from precursor.backend.services.meeting_analysis import _parse_insights
 
     good = '{"insights": [{"kind": "action_item", "content": "Ship the fix"}]}'
-    assert _parse_insights(good) == [("action_item", "Ship the fix")]
+    assert _parse_insights(good)[0] == [("action_item", "Ship the fix")]
 
     fenced = "```json\n" + good + "\n```"
-    assert _parse_insights(fenced) == [("action_item", "Ship the fix")]
+    assert _parse_insights(fenced)[0] == [("action_item", "Ship the fix")]
 
     prose = "Here you go:\n" + good + "\nHope that helps!"
-    assert _parse_insights(prose) == [("action_item", "Ship the fix")]
+    assert _parse_insights(prose)[0] == [("action_item", "Ship the fix")]
 
     # Unknown kinds are dropped; empty content is dropped.
     mixed = '{"insights": [{"kind":"bogus","content":"x"},{"kind":"risk","content":""}]}'
-    assert _parse_insights(mixed) == []
+    assert _parse_insights(mixed)[0] == []
 
-    assert _parse_insights("not json at all") == []
+    assert _parse_insights("not json at all")[0] == []
 
 
 def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -160,7 +160,8 @@ def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore
             payload = (
                 '{"insights": ['
                 '{"kind": "decision", "content": "Use Postgres"},'
-                '{"kind": "action_item", "content": "Draft the schema"}]}'
+                '{"kind": "action_item", "content": "Draft the schema"}],'
+                '"help": true, "suggestion": "Consider connection pooling"}'
             )
             yield TextDeltaEvent(content=payload)
             yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
@@ -174,17 +175,22 @@ def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore
     with TestClient(app) as client:
         sid = client.post("/api/live", json={"title": "Analyze"}).json()["id"]
         # No transcript yet => analyze is a no-op.
-        assert client.post(f"/api/live/{sid}/analyze").json() == []
+        empty = client.post(f"/api/live/{sid}/analyze").json()
+        assert empty["insights"] == []
+        assert empty["suggestion"] == ""
 
         client.post(f"/api/live/{sid}/segments", json={"text": "Let's use Postgres"})
         result = client.post(f"/api/live/{sid}/analyze")
         assert result.status_code == 200
-        kinds = {i["kind"] for i in result.json()}
+        body = result.json()
+        kinds = {i["kind"] for i in body["insights"]}
         assert kinds == {"decision", "action_item"}
+        # The proactive suggestion rides along on the same pass.
+        assert body["suggestion"] == "Consider connection pooling"
 
         # The snapshot is readable and replaced (not appended) on re-analysis.
         assert len(client.get(f"/api/live/{sid}/insights").json()) == 2
-        assert len(client.post(f"/api/live/{sid}/analyze").json()) == 2
+        assert len(client.post(f"/api/live/{sid}/analyze").json()["insights"]) == 2
 
 
 def test_meeting_ask_streams_answer() -> None:
@@ -695,7 +701,7 @@ def test_session_features_default_dedupe_validate() -> None:
         assert r.json()["features"] == ["insights", "assistant", "translation"]
 
 
-def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_translate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import precursor.backend.services.meeting_analysis as ma
 
     async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
@@ -714,11 +720,7 @@ def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-
     app = create_app()
     with TestClient(app) as client:
         sid = client.post("/api/live", json={"title": "T"}).json()["id"]
-        # Suggest is quiet-by-default: 200 with has_suggestion=false, even empty.
-        empty = client.post(f"/api/live/{sid}/suggest")
-        assert empty.status_code == 200
-        assert empty.json()["has_suggestion"] is False
-        # Translate still 400s when there's nothing recorded.
+        # Translate 400s when there's nothing recorded.
         assert (
             client.post(f"/api/live/{sid}/translate", json={"target_lang": "fr"}).status_code == 400
         )
@@ -736,23 +738,21 @@ def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-
         )
         assert lm.status_code == 200
         assert len(lm.json()["lines"]) == 2
-        # The fake provider returns non-JSON, so suggest parses to help=false.
-        s = client.post(f"/api/live/{sid}/suggest")
-        assert s.status_code == 200
-        assert s.json()["has_suggestion"] is False
 
 
-def test_parse_suggestion_json() -> None:
-    from precursor.backend.services.meeting_analysis import _parse_suggestion
+def test_parse_insights_help_and_suggestion() -> None:
+    from precursor.backend.services.meeting_analysis import _parse_insights
 
-    assert _parse_suggestion('{"help": false, "suggestion": ""}') == (False, "")
-    assert _parse_suggestion('{"help": true, "suggestion": "Try X"}') == (True, "Try X")
-    # help=true but empty suggestion → not actionable.
-    assert _parse_suggestion('{"help": true, "suggestion": ""}') == (False, "")
-    # Tolerates code fences and stray prose.
-    assert _parse_suggestion('```json\n{"help": true, "suggestion": "Do Y"}\n```') == (
-        True,
-        "Do Y",
+    rows, help_needed, sug = _parse_insights(
+        '{"insights": [{"kind": "risk", "content": "Tight deadline"}], '
+        '"help": true, "suggestion": "Cut scope to the MVP"}'
     )
-    # Non-JSON → no help.
-    assert _parse_suggestion("nothing to do here") == (False, "")
+    assert rows == [("risk", "Tight deadline")]
+    assert help_needed is True
+    assert sug == "Cut scope to the MVP"
+    # help=true but empty suggestion → not actionable.
+    assert _parse_insights('{"insights": [], "help": true, "suggestion": ""}') == ([], False, "")
+    # Tolerates code fences; no help key → false.
+    assert _parse_insights('```json\n{"insights": []}\n```') == ([], False, "")
+    # Non-JSON → empty.
+    assert _parse_insights("nothing here") == ([], False, "")

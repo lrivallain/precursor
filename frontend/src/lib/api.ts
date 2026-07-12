@@ -655,11 +655,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ features }),
     }),
-  suggestMeeting: (id: number) =>
-    request<{ has_suggestion: boolean; suggestion: string; model: string }>(
-      `/api/live/${id}/suggest`,
-      { method: "POST" },
-    ),
   translateMeeting: (id: number, targetLang: string, texts?: string[]) =>
     request<{ text: string; lines: string[]; target_lang: string; model: string }>(
       `/api/live/${id}/translate`,
@@ -671,7 +666,9 @@ export const api = {
   listMeetingInsights: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>
-    request<MeetingInsight[]>(`/api/live/${id}/analyze`, { method: "POST" }),
+    request<{ insights: MeetingInsight[]; suggestion: string }>(`/api/live/${id}/analyze`, {
+      method: "POST",
+    }),
   summarizeMeeting: (id: number) =>
     request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
       method: "POST",

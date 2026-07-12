@@ -74,10 +74,11 @@ def language_name(tag: str | None) -> str | None:
 _SYSTEM_PROMPT = (
     "You are a live meeting assistant. From the running transcript (and any "
     "attached topic context), extract the CURRENT state of the discussion as a "
-    "concise, de-duplicated set of insights. Prioritise being fast and useful "
-    "over exhaustive.\n\n"
+    "concise, de-duplicated set of insights, AND decide whether to proactively "
+    "help right now. Prioritise being fast and useful over exhaustive.\n\n"
     "Return ONLY a JSON object of this exact shape, with no prose or code fences:\n"
-    '{"insights": [{"kind": "<kind>", "content": "<one short sentence>"}]}\n\n'
+    '{"insights": [{"kind": "<kind>", "content": "<one short sentence>"}], '
+    '"help": <true|false>, "suggestion": "<text>"}\n\n'
     "Allowed kinds: action_item, decision, question, suggestion, risk, note.\n"
     "- action_item: a concrete task, ideally with an owner if stated.\n"
     "- decision: something the group agreed or concluded.\n"
@@ -86,7 +87,11 @@ _SYSTEM_PROMPT = (
     "- risk: a blocker, concern, or risk.\n"
     "- note: any other salient point.\n"
     "Keep each content under ~140 characters. Return at most ~12 insights. "
-    "If nothing substantive has been said yet, return an empty list."
+    "If nothing substantive has been said yet, return an empty insights list.\n\n"
+    "For help/suggestion: ONLY set help=true when there is a clear, current open "
+    "question or problem you can materially help with — give a specific, brief "
+    "answer or next step in 'suggestion'. Most of the time nothing is needed: set "
+    "help=false with an empty suggestion. Do not repeat the insights as a suggestion."
 )
 
 
@@ -329,8 +334,11 @@ async def _topic_context(session: AsyncSession, topic_id: int | None) -> str:
     return "\n".join(parts)[-_TOPIC_CHARS:]
 
 
-def _parse_insights(text: str) -> list[tuple[str, str]]:
-    """Best-effort parse of the model's JSON into (kind, content) pairs."""
+def _parse_insights(text: str) -> tuple[list[tuple[str, str]], bool, str]:
+    """Best-effort parse of the model's JSON.
+
+    Returns (insight (kind, content) pairs, help_needed, suggestion).
+    """
     raw = text.strip()
     # Tolerate accidental code fences.
     if raw.startswith("```"):
@@ -347,30 +355,37 @@ def _parse_insights(text: str) -> list[tuple[str, str]]:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         logger.warning("Meeting analysis returned unparseable JSON")
-        return []
-    items = data.get("insights") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        return []
+        return [], False, ""
+    if not isinstance(data, dict):
+        return [], False, ""
+    items = data.get("insights")
     out: list[tuple[str, str]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind", "")).strip().lower()
-        content = str(item.get("content", "")).strip()
-        if kind in VALID_KINDS and content:
-            out.append((kind, content[:500]))
-    return out[:12]
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind", "")).strip().lower()
+            content = str(item.get("content", "")).strip()
+            if kind in VALID_KINDS and content:
+                out.append((kind, content[:500]))
+    suggestion = str(data.get("suggestion", "")).strip()
+    help_needed = bool(data.get("help")) and bool(suggestion)
+    return out[:12], help_needed, (suggestion if help_needed else "")
 
 
-async def analyze_session(session: AsyncSession, session_id: int) -> list[MeetingInsight]:
-    """Re-derive and persist the insight snapshot for a session.
+async def analyze_session(
+    session: AsyncSession, session_id: int
+) -> tuple[list[MeetingInsight], str]:
+    """Re-derive and persist the insight snapshot for a session, and decide on a
+    proactive suggestion — in a single LLM pass.
 
-    Replaces the session's existing insights with the fresh set. Returns the new
-    rows (ordered), or the existing set unchanged when there's no transcript yet.
+    Replaces the session's existing insights with the fresh set. Returns
+    (rows, suggestion); suggestion is "" when no proactive help is warranted or
+    when there's no transcript yet.
     """
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
-        return []
+        return [], ""
 
     segments = list(
         (
@@ -384,7 +399,7 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
         .all()
     )
     if not segments:
-        return []
+        return [], ""
 
     transcript = _format_transcript(segments, ms.speaker_names)
     topic_ctx = await _topic_context(session, ms.topic_id)
@@ -392,7 +407,7 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
     system = _SYSTEM_PROMPT
     lang = language_name(ms.language)
     if lang:
-        system += f"\n\nWrite every insight's content in {lang}."
+        system += f"\n\nWrite every insight's content and the suggestion in {lang}."
 
     user_parts = [f"Transcript so far:\n{transcript}"]
     meeting_ctx = meeting_context_text(ms.external_meeting)
@@ -421,7 +436,7 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
         logger.warning("Meeting analysis LLM call failed: %s", exc)
         raise
 
-    insights = _parse_insights(text)
+    insights, _help, suggestion = _parse_insights(text)
 
     # Replace the snapshot so the panel always reflects the latest understanding.
     await session.execute(delete(MeetingInsight).where(MeetingInsight.session_id == session_id))
@@ -442,7 +457,7 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
     await session.commit()
     for row in rows:
         await session.refresh(row)
-    return rows
+    return rows, suggestion
 
 
 async def translate_transcript(
@@ -558,112 +573,3 @@ async def translate_lines(
                 by_index[idx] = m.group(2).strip()
     result = [by_index.get(i) or texts[i] for i in range(len(texts))]
     return result, model
-
-
-_SUGGEST_SYSTEM = (
-    "You are a proactive live meeting copilot. Watch the ongoing discussion and "
-    "ONLY step in when there is a clear, current open question or problem you can "
-    "materially help with — a concrete answer, solution, fact, or next step. Most "
-    "of the time nothing is needed; that is the expected default, so stay silent "
-    "unless your input would genuinely help right now.\n\n"
-    'Return ONLY a JSON object: {"help": <true|false>, "suggestion": "<text>"}. '
-    "Set help=false with an empty suggestion when nothing is needed. When help=true, "
-    "keep the suggestion specific and brief — a sentence or a few bullet points."
-)
-
-
-def _parse_suggestion(raw: str) -> tuple[bool, str]:
-    """Parse the model's JSON suggestion into (help, text). Best-effort."""
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        nl = text.find("\n")
-        if nl != -1:
-            text = text[nl + 1 :]
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return False, ""
-    if not isinstance(data, dict):
-        return False, ""
-    suggestion = str(data.get("suggestion", "")).strip()
-    return bool(data.get("help")) and bool(suggestion), suggestion
-
-
-async def suggest_for_discussion(session: AsyncSession, session_id: int) -> tuple[bool, str, str]:
-    """Decide whether to help with the current discussion. Returns (help, text, model)."""
-    ms = await session.get(MeetingSession, session_id)
-    if ms is None:
-        return False, "", ""
-    segments = list(
-        (
-            await session.execute(
-                select(MeetingSegment)
-                .where(MeetingSegment.session_id == session_id)
-                .order_by(MeetingSegment.created_at, MeetingSegment.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not segments:
-        return False, "", ""
-    insights = list(
-        (
-            await session.execute(
-                select(MeetingInsight)
-                .where(MeetingInsight.session_id == session_id)
-                .order_by(MeetingInsight.created_at, MeetingInsight.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    system = _SUGGEST_SYSTEM
-    lang = language_name(ms.language)
-    if lang:
-        system += f" Write the suggestion in {lang}."
-
-    user_parts = [f"Recent discussion:\n{_format_transcript(segments, ms.speaker_names)}"]
-    if insights:
-        user_parts.append(
-            "Current insights:\n" + "\n".join(f"- [{i.kind}] {i.content}" for i in insights)
-        )
-    topic_ctx = await _topic_context(session, ms.topic_id)
-    if topic_ctx:
-        user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
-    meeting_ctx = meeting_context_text(ms.external_meeting)
-    if meeting_ctx:
-        user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
-    notes_ctx = context_notes_text(ms.context_notes)
-    if notes_ctx:
-        user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
-
-    provider = await get_llm_provider(session)
-    model = await resolve_live_fast_model(session)
-    effort = await resolve_live_reasoning_effort(session)
-    text, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content="\n".join(user_parts)),
-        ],
-        reasoning_effort=effort or None,
-    )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-suggest",
-            model=model,
-        )
-        await session.commit()
-    help_needed, suggestion = _parse_suggestion(text)
-    return help_needed, suggestion, model
