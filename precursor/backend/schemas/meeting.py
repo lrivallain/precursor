@@ -86,13 +86,15 @@ class MeetingAttachmentRead(BaseModel):
 
 class TranslateRequest(BaseModel):
     target_lang: str = Field(min_length=2, max_length=32)
-    # When given, translate this text directly (a batch of new transcript lines);
-    # otherwise the whole current transcript is translated.
-    text: str | None = Field(default=None, max_length=40000)
+    # When given, translate these spoken-text lines independently (a batch of new
+    # transcript segments), returning one translation per line. Otherwise the
+    # whole current transcript is translated as a single block.
+    texts: list[str] | None = Field(default=None)
 
 
 class TranslateResult(BaseModel):
     text: str
+    lines: list[str] = Field(default_factory=list)
     target_lang: str
     model: str
 

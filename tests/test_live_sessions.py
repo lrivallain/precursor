@@ -726,6 +726,13 @@ def test_translate_and_suggest(monkeypatch) -> None:  # type: ignore[no-untyped-
         assert r.status_code == 200
         assert r.json()["text"]
         assert r.json()["target_lang"] == "fr"
+        # Line mode: returns one translation per input line, aligned.
+        lm = client.post(
+            f"/api/live/{sid}/translate",
+            json={"target_lang": "fr", "texts": ["Hello", "How are you"]},
+        )
+        assert lm.status_code == 200
+        assert len(lm.json()["lines"]) == 2
         s = client.post(f"/api/live/{sid}/suggest")
         assert s.status_code == 200
         assert s.json()["suggestion"]

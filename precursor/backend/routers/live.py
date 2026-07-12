@@ -76,6 +76,7 @@ from precursor.backend.services.meeting_analysis import (
     meeting_context_text,
     meeting_details_markdown,
     suggest_for_discussion,
+    translate_lines,
     translate_transcript,
 )
 from precursor.backend.services.meeting_summary import (
@@ -584,12 +585,21 @@ async def translate(
     payload: TranslateRequest,
     session: AsyncSession = Depends(get_session),
 ) -> TranslateResult:
-    """Translate the current transcript into the requested language (on demand)."""
+    """Translate the transcript into the requested language. With ``texts`` it
+    translates those lines (live, incremental); otherwise the whole transcript."""
     await _get_session_or_404(session_id, session)
     try:
-        text, model = await translate_transcript(
-            session, session_id, payload.target_lang, payload.text
-        )
+        if payload.texts is not None:
+            lines, model = await translate_lines(
+                session, session_id, payload.target_lang, payload.texts
+            )
+            return TranslateResult(
+                text="\n".join(lines),
+                lines=lines,
+                target_lang=payload.target_lang,
+                model=model,
+            )
+        text, model = await translate_transcript(session, session_id, payload.target_lang)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Translation failed: {exc}") from exc
     if not text:
@@ -597,7 +607,7 @@ async def translate(
             status.HTTP_400_BAD_REQUEST,
             "Nothing to translate yet — record some of the meeting first.",
         )
-    return TranslateResult(text=text, target_lang=payload.target_lang, model=model)
+    return TranslateResult(text=text, lines=[text], target_lang=payload.target_lang, model=model)
 
 
 # --------------------------------------------------------------------------

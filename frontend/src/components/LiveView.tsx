@@ -594,13 +594,17 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     return out;
   }, [session.external_meeting, session.attendees]);
 
-  // Formatted transcript lines ("[Speaker] text") fed to live translation.
-  const transcriptLines = useMemo(
+  // Transcript segments prepared for live translation — same layout + speaker
+  // colors as the transcript.
+  const translationItems = useMemo(
     () =>
-      segments.map((seg) => {
-        const spk = displayName(seg.speaker_label);
-        return spk ? `[${spk}] ${seg.text}` : seg.text;
-      }),
+      segments.map((seg) => ({
+        id: seg.id,
+        speaker: displayName(seg.speaker_label),
+        colorClass: speakerColor(seg.speaker_label),
+        time: formatOffset(seg.offset_ms),
+        text: seg.text,
+      })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [segments, session.speaker_names],
   );
@@ -763,7 +767,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const translationNode = (
     <TranslationSection
       sessionId={session.id}
-      lines={transcriptLines}
+      items={translationItems}
       defaultLang={(session.language || "").split("-")[0]}
     />
   );

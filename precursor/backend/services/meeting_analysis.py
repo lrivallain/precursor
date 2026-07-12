@@ -446,33 +446,26 @@ async def analyze_session(session: AsyncSession, session_id: int) -> list[Meetin
 
 
 async def translate_transcript(
-    session: AsyncSession, session_id: int, target_lang: str, text: str | None = None
+    session: AsyncSession, session_id: int, target_lang: str
 ) -> tuple[str, str]:
-    """Translate the transcript (or the given ``text`` batch) into ``target_lang``.
-
-    Returns (translated_text, model).
-    """
+    """Translate the whole current transcript into ``target_lang`` as one block."""
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
         return "", ""
-    if text is not None:
-        source = text.strip()
-    else:
-        segments = list(
-            (
-                await session.execute(
-                    select(MeetingSegment)
-                    .where(MeetingSegment.session_id == session_id)
-                    .order_by(MeetingSegment.created_at, MeetingSegment.id)
-                )
+    segments = list(
+        (
+            await session.execute(
+                select(MeetingSegment)
+                .where(MeetingSegment.session_id == session_id)
+                .order_by(MeetingSegment.created_at, MeetingSegment.id)
             )
-            .scalars()
-            .all()
         )
-        source = _format_transcript(segments, ms.speaker_names) if segments else ""
-    if not source:
+        .scalars()
+        .all()
+    )
+    if not segments:
         return "", ""
-
+    source = _format_transcript(segments, ms.speaker_names)
     lang = language_name(target_lang) or target_lang
     system = (
         f"Translate the meeting transcript into {lang}. Keep the '[Speaker] text' "
@@ -502,6 +495,69 @@ async def translate_transcript(
         )
         await session.commit()
     return translated, model
+
+
+_LINE_RE = re.compile(r"^\s*(\d+)\.\s?(.*)$")
+
+
+async def translate_lines(
+    session: AsyncSession, session_id: int, target_lang: str, texts: list[str]
+) -> tuple[list[str], str]:
+    """Translate ``texts`` line-for-line into ``target_lang`` (aligned output).
+
+    Used for live, incremental translation: only the newest transcript lines are
+    sent. Speaker labels are handled by the client, so only spoken text is
+    translated. Returns (translated_lines, model) — same length as ``texts``.
+    """
+    clean = [t.strip() for t in texts]
+    if not any(clean):
+        return list(texts), ""
+    ms = await session.get(MeetingSession, session_id)
+    if ms is None:
+        return list(texts), ""
+
+    lang = language_name(target_lang) or target_lang
+    system = (
+        f"Translate each numbered line of meeting speech into {lang}. Return every "
+        "translation on its own line, prefixed with the SAME number and a period "
+        "(e.g. '1. ...'), in the same order, one line per input line. Translate only "
+        "the text — no labels, no commentary, no extra lines."
+    )
+    numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(clean))
+    provider = await get_llm_provider(session)
+    model = await resolve_live_fast_model(session)
+    effort = await resolve_live_reasoning_effort(session)
+    out, usage = await complete_text_with_usage(
+        provider,
+        model=model,
+        messages=[
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content=numbered),
+        ],
+        reasoning_effort=effort or None,
+    )
+    if usage is not None:
+        await record_usage(
+            session,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            source="/live-translate",
+            model=model,
+        )
+        await session.commit()
+
+    # Parse "N. translation" lines back into position; fall back to the source
+    # text for any line the model dropped or mis-numbered.
+    by_index: dict[int, str] = {}
+    for line in out.splitlines():
+        m = _LINE_RE.match(line)
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(clean):
+                by_index[idx] = m.group(2).strip()
+    result = [by_index.get(i) or texts[i] for i in range(len(texts))]
+    return result, model
 
 
 _SUGGEST_SYSTEM = (

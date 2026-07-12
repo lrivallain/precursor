@@ -659,11 +659,14 @@ export const api = {
     request<{ suggestion: string; model: string }>(`/api/live/${id}/suggest`, {
       method: "POST",
     }),
-  translateMeeting: (id: number, targetLang: string, text?: string) =>
-    request<{ text: string; target_lang: string; model: string }>(`/api/live/${id}/translate`, {
-      method: "POST",
-      body: JSON.stringify({ target_lang: targetLang, text }),
-    }),
+  translateMeeting: (id: number, targetLang: string, texts?: string[]) =>
+    request<{ text: string; lines: string[]; target_lang: string; model: string }>(
+      `/api/live/${id}/translate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ target_lang: targetLang, texts }),
+      },
+    ),
   listMeetingInsights: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>
