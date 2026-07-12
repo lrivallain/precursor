@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
+import { Select } from "./Select";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 import { useConfirm } from "./ConfirmDialog";
 import type { AgentApprovalPolicy, AgentModelInfo, AgentPermissionGrant } from "../lib/types";
@@ -161,23 +162,21 @@ export function AgentsSettings() {
         <label className="block space-y-1">
           <span className="block text-sm">Default model</span>
           {models.length > 0 ? (
-            <select
+            <Select
               value={defaultModel}
               disabled={busy}
-              onChange={(e) => void patch({ agents_default_model: e.target.value })}
-              className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
-            >
-              <option value="">Runtime default</option>
-              {/* Keep the saved value selectable even if the runtime no longer lists it. */}
-              {defaultModel && !models.some((m) => m.id === defaultModel) && (
-                <option value={defaultModel}>{defaultModel}</option>
-              )}
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => void patch({ agents_default_model: v })}
+              ariaLabel="Default agent model"
+              fullWidth
+              options={[
+                { value: "", label: "Runtime default" },
+                // Keep the saved value selectable even if the runtime no longer lists it.
+                ...(defaultModel && !models.some((m) => m.id === defaultModel)
+                  ? [{ value: defaultModel, label: defaultModel }]
+                  : []),
+                ...models.map((m) => ({ value: m.id, label: m.name })),
+              ]}
+            />
           ) : (
             <input
               type="text"
@@ -203,20 +202,14 @@ export function AgentsSettings() {
       {enabled && (
         <label className="block space-y-1">
           <span className="block text-sm">Default approval policy</span>
-          <select
+          <Select
             value={approvalPolicy}
             disabled={busy}
-            onChange={(e) =>
-              void patch({ agents_approval_policy: e.target.value as AgentApprovalPolicy })
-            }
-            className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
-          >
-            {APPROVAL_POLICIES.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => void patch({ agents_approval_policy: v as AgentApprovalPolicy })}
+            ariaLabel="Default approval policy"
+            fullWidth
+            options={APPROVAL_POLICIES.map((p) => ({ value: p.value, label: p.label }))}
+          />
           <span className="block text-[11px] text-muted">
             {APPROVAL_POLICIES.find((p) => p.value === approvalPolicy)?.hint}
           </span>

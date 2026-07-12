@@ -67,17 +67,24 @@ async def complete_text_with_usage(
     *,
     model: str,
     messages: Sequence[ChatMessage],
+    reasoning_effort: str | None = None,
 ) -> tuple[str, UsageEvent | None]:
     """Run a tool-less completion and return its text plus token usage.
 
-    Utility callers (slash commands, issue-summary refresh) use this instead of
-    ``stream_chat`` so the round-trip's token usage is captured and can be
-    written to the usage ledger. Goes through ``stream_chat_with_tools`` with no
-    tools because that path requests ``include_usage`` and emits a UsageEvent.
+    Utility callers (slash commands, issue-summary refresh, live meeting
+    analysis) use this instead of ``stream_chat`` so the round-trip's token
+    usage is captured and can be written to the usage ledger. Goes through
+    ``stream_chat_with_tools`` with no tools because that path requests
+    ``include_usage`` and emits a UsageEvent.
     """
     chunks: list[str] = []
     usage: UsageEvent | None = None
-    async for event in provider.stream_chat_with_tools(model=model, messages=messages, tools=[]):
+    async for event in provider.stream_chat_with_tools(
+        model=model,
+        messages=messages,
+        tools=[],
+        reasoning_effort=reasoning_effort or None,
+    ):
         if isinstance(event, TextDeltaEvent):
             chunks.append(event.content)
         elif isinstance(event, UsageEvent):

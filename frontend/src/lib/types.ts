@@ -337,6 +337,11 @@ export interface Settings {
   azure_speech_endpoint: string;
   azure_speech_language: string;
   stt_azure_ready: boolean;
+  // Live meeting assistant: enablement + model + reasoning effort for fast
+  // analysis / Q&A. Empty model resolves to the default chat model.
+  live_enabled: boolean;
+  live_fast_model: string;
+  live_reasoning_effort: string;
   // Which Precursor capability sections the built-in MCP server exposes.
   mcp_expose: Record<string, boolean>;
   // HTTP transport for the built-in 'precursor' MCP server.
@@ -396,6 +401,9 @@ export interface SettingsUpdate {
   llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
+  live_enabled?: boolean;
+  live_fast_model?: string;
+  live_reasoning_effort?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   llm_max_input_tokens?: number;
@@ -812,4 +820,123 @@ export interface SystemStats {
 export interface WorkspaceChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+// ---- Live meeting assistant --------------------------------------------
+export type MeetingStatus = "active" | "ended";
+
+export interface AgendaAttendee {
+  name: string;
+  email: string | null;
+}
+
+export interface AgendaEvent {
+  id: string | null;
+  subject: string;
+  start: string | null;
+  end: string | null;
+  organizer: string | null;
+  attendees: AgendaAttendee[];
+  is_online: boolean;
+  body: string | null;
+  body_preview: string | null;
+}
+
+export interface AgendaResponse {
+  available: boolean;
+  events: AgendaEvent[];
+  detail: string | null;
+}
+
+export interface ExternalMeeting {
+  subject: string;
+  start?: string | null;
+  end?: string | null;
+  organizer?: string | null;
+  attendees?: AgendaAttendee[];
+  is_online?: boolean;
+  body?: string | null;
+  body_preview?: string | null;
+}
+
+export type MeetingInsightKind =
+  | "action_item"
+  | "decision"
+  | "question"
+  | "suggestion"
+  | "risk"
+  | "note";
+
+export interface MeetingSession {
+  id: number;
+  title: string;
+  slug: string;
+  status: MeetingStatus;
+  language: string | null;
+  topic_id: number | null;
+  // Chat spawned for the "Ask assistant" tab (created on first ask), or null.
+  chat_id: number | null;
+  // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
+  speaker_names: Record<string, string>;
+  // Attendee display names used in the summary (editable).
+  attendees: string[];
+  // Free-form notes pinned to the grounding context (e.g. saved Q&A answers).
+  context_notes: string[];
+  // Live Markdown notes the user takes during the meeting.
+  notes: string;
+  // Enabled optional Live features (insights, notes, assistant, proactive, translation).
+  features: string[];
+  // A linked M365 calendar meeting (subject/times/attendees), or null.
+  external_meeting: ExternalMeeting | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MeetingSessionCreate {
+  title?: string | null;
+  language?: string | null;
+  topic_id?: number | null;
+  slug?: string | null;
+}
+
+export interface MeetingSessionUpdate {
+  title?: string | null;
+  language?: string | null;
+  topic_id?: number | null;
+  status?: MeetingStatus;
+  notes?: string | null;
+  features?: string[];
+}
+
+export interface MeetingAttachment {
+  id: number;
+  mime: string;
+  original_filename: string;
+  url: string;
+  is_image: boolean;
+}
+
+export interface MeetingSegment {
+  id: number;
+  session_id: number;
+  speaker_label: string | null;
+  text: string;
+  offset_ms: number | null;
+  created_at: string;
+}
+
+export interface MeetingSegmentCreate {
+  text: string;
+  speaker_label?: string | null;
+  offset_ms?: number | null;
+}
+
+export interface MeetingInsight {
+  id: number;
+  session_id: number;
+  kind: MeetingInsightKind;
+  content: string;
+  created_at: string;
 }

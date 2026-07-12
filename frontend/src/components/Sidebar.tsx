@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   Pin,
   Plus,
+  Radio,
   Search,
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
@@ -24,13 +25,15 @@ import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
-export type SidebarMode = "topics" | "chats" | "workspaces" | "agents";
+export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents";
 
 // Label for the header "New" action, which is mode-aware.
 function newActionLabel(mode: SidebarMode): string {
   switch (mode) {
     case "chats":
       return "New chat";
+    case "live":
+      return "New session";
     case "workspaces":
       return "New workspace";
     case "agents":
@@ -49,6 +52,8 @@ interface Props {
   onModeChange: (mode: SidebarMode) => void;
   /** Rendered in the body when mode === "chats" (the chat list). */
   chatSlot?: ReactNode;
+  /** Rendered in the body when mode === "live" (the meeting session list). */
+  liveSlot?: ReactNode;
   /** Rendered in the body when mode === "workspaces" (the workspace list). */
   workspaceSlot?: ReactNode;
   /** Rendered in the body when mode === "agents" (the agent session list). */
@@ -71,6 +76,8 @@ interface Props {
   onOpenArchive: () => void;
   /** Per-mode unread totals, used to badge the mode switcher tabs. */
   unreadByMode?: Partial<Record<SidebarMode, number>>;
+  /** Whether the Live section is enabled (hides its tab when off). */
+  liveEnabled?: boolean;
 }
 
 export function Sidebar({
@@ -81,6 +88,7 @@ export function Sidebar({
   mode,
   onModeChange,
   chatSlot,
+  liveSlot,
   workspaceSlot,
   agentSlot,
   onToggleCollapsed,
@@ -95,6 +103,7 @@ export function Sidebar({
   onOpenGlobalSettings,
   onOpenArchive,
   unreadByMode,
+  liveEnabled = true,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
@@ -151,6 +160,16 @@ export function Sidebar({
           <MessageSquare size={18} />
           <ModeUnreadDot count={unreadByMode?.chats ?? 0} />
         </button>
+        {liveEnabled && (
+          <button
+            className={`relative p-2 rounded ${mode === "live" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+            aria-label="Live"
+            data-tooltip="Live"
+            onClick={() => onModeChange("live")}
+          >
+            <Radio size={18} />
+          </button>
+        )}
         <button
           className={`p-2 rounded ${mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Workspaces"
@@ -220,7 +239,12 @@ export function Sidebar({
       {/* Mode switcher: Topics ⟷ Chats ⟷ Files. Persona + settings stay
           visible at the bottom of the sidebar across every mode. When the
           sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
-      <ModeSwitcher mode={mode} onModeChange={onModeChange} unreadByMode={unreadByMode} />
+      <ModeSwitcher
+        mode={mode}
+        onModeChange={onModeChange}
+        unreadByMode={unreadByMode}
+        liveEnabled={liveEnabled}
+      />
 
       {/* Fired reminders surface here across every mode until acknowledged. */}
       {reminders.length > 0 && (
@@ -248,6 +272,8 @@ export function Sidebar({
 
       {mode === "chats" ? (
         chatSlot
+      ) : mode === "live" ? (
+        liveSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
       ) : mode === "agents" ? (
@@ -572,6 +598,7 @@ function collectPinned(tree: TopicNode[]): TopicNode[] {
 const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
   { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
   { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
+  { mode: "live", label: "Live", icon: <Radio size={14} /> },
   { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
   { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
 ];
@@ -582,13 +609,19 @@ function ModeSwitcher({
   mode,
   onModeChange,
   unreadByMode,
+  liveEnabled = true,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
+  liveEnabled?: boolean;
 }) {
+  const modes = useMemo(
+    () => MODES.filter((m) => m.mode !== "live" || liveEnabled),
+    [liveEnabled],
+  );
   const rowRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState(MODES.length);
+  const [visibleCount, setVisibleCount] = useState(modes.length);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
   useLayoutEffect(() => {
@@ -599,18 +632,18 @@ function ModeSwitcher({
     const compute = (): void => {
       const w = el.clientWidth;
       if (w <= 0) return;
-      if (Math.floor(w / MIN_BTN) >= MODES.length) {
-        setVisibleCount(MODES.length);
+      if (Math.floor(w / MIN_BTN) >= modes.length) {
+        setVisibleCount(modes.length);
         return;
       }
       const fit = Math.max(1, Math.floor((w - OVERFLOW_BTN) / MIN_BTN));
-      setVisibleCount(Math.min(MODES.length - 1, fit));
+      setVisibleCount(Math.min(modes.length - 1, fit));
     };
     compute();
     const ro = new ResizeObserver(compute);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [modes.length]);
 
   // Close the overflow popover on outside click / Escape.
   useEffect(() => {
@@ -631,8 +664,8 @@ function ModeSwitcher({
     };
   }, [overflowOpen]);
 
-  const visible = MODES.slice(0, visibleCount);
-  const overflow = MODES.slice(visibleCount);
+  const visible = modes.slice(0, visibleCount);
+  const overflow = modes.slice(visibleCount);
   const activeHidden = overflow.some((m) => m.mode === mode);
   const overflowUnread = overflow.reduce((n, m) => n + (unreadByMode?.[m.mode] ?? 0), 0);
 

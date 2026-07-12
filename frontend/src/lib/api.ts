@@ -37,6 +37,15 @@ import type {
   Memory,
   MemoryCreate,
   MemoryUpdate,
+  AgendaEvent,
+  AgendaResponse,
+  MeetingAttachment,
+  MeetingInsight,
+  MeetingSegment,
+  MeetingSegmentCreate,
+  MeetingSession,
+  MeetingSessionCreate,
+  MeetingSessionUpdate,
   Message,
   NotesDraft,
   NoteDraftAttachment,
@@ -583,6 +592,128 @@ export const api = {
 
   // Current user
   getMe: () => request<Me>(`/api/me`),
+
+  // Live meeting sessions
+  listMeetingSessions: () => request<MeetingSession[]>(`/api/live`),
+  getMeetingSession: (id: number) =>
+    request<MeetingSession>(`/api/live/${id}`),
+  createMeetingSession: (data: MeetingSessionCreate) =>
+    request<MeetingSession>(`/api/live`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateMeetingSession: (id: number, data: MeetingSessionUpdate) =>
+    request<MeetingSession>(`/api/live/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteMeetingSession: (id: number) =>
+    request<void>(`/api/live/${id}`, { method: "DELETE" }),
+  listMeetingSegments: (id: number) =>
+    request<MeetingSegment[]>(`/api/live/${id}/segments`),
+  appendMeetingSegment: (id: number, data: MeetingSegmentCreate) =>
+    request<MeetingSegment>(`/api/live/${id}/segments`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  renameMeetingSpeaker: (id: number, label: string, name: string) =>
+    request<MeetingSession>(`/api/live/${id}/speakers`, {
+      method: "POST",
+      body: JSON.stringify({ label, name }),
+    }),
+  setMeetingAttendees: (id: number, attendees: string[]) =>
+    request<MeetingSession>(`/api/live/${id}/attendees`, {
+      method: "PUT",
+      body: JSON.stringify({ attendees }),
+    }),
+  addMeetingContextNote: (id: number, text: string) =>
+    request<MeetingSession>(`/api/live/${id}/context-notes`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  setMeetingContextNotes: (id: number, notes: string[]) =>
+    request<MeetingSession>(`/api/live/${id}/context-notes`, {
+      method: "PUT",
+      body: JSON.stringify({ notes }),
+    }),
+  uploadMeetingAttachment: async (id: number, file: File): Promise<MeetingAttachment> => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`/api/live/${id}/attachments`, {
+      method: "POST",
+      headers: { "X-Client-Id": CLIENT_ID },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return (await res.json()) as MeetingAttachment;
+  },
+  ensureMeetingChat: (id: number) => request<Chat>(`/api/live/${id}/chat`, { method: "POST" }),
+  setMeetingFeatures: (id: number, features: string[]) =>
+    request<MeetingSession>(`/api/live/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ features }),
+    }),
+  translateMeeting: (id: number, targetLang: string, texts?: string[]) =>
+    request<{ text: string; lines: string[]; target_lang: string; model: string }>(
+      `/api/live/${id}/translate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ target_lang: targetLang, texts }),
+      },
+    ),
+  listMeetingInsights: (id: number) =>
+    request<MeetingInsight[]>(`/api/live/${id}/insights`),
+  analyzeMeeting: (id: number) =>
+    request<{ insights: MeetingInsight[]; suggestion: string }>(`/api/live/${id}/analyze`, {
+      method: "POST",
+    }),
+  summarizeMeeting: (id: number) =>
+    request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
+      method: "POST",
+    }),
+  postMeetingSummary: (id: number, summary: string) =>
+    request<{ topic_id: number; message_id: number }>(`/api/live/${id}/summary/post`, {
+      method: "POST",
+      body: JSON.stringify({ summary }),
+    }),
+  topicContextSummary: (id: number) =>
+    request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
+      method: "POST",
+    }),
+  getAgenda: () => {
+    // The user's *local* day window (local midnight → next local midnight),
+    // converted to UTC ISO so today's meetings match their calendar day.
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const qs = `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
+      end.toISOString(),
+    )}`;
+    return request<AgendaResponse>(`/api/live/m365/agenda${qs}`);
+  },
+  linkMeeting: (id: number, event: AgendaEvent) =>
+    request<MeetingSession>(`/api/live/${id}/meeting`, {
+      method: "POST",
+      body: JSON.stringify({
+        subject: event.subject,
+        start: event.start,
+        end: event.end,
+        organizer: event.organizer,
+        attendees: event.attendees,
+        is_online: event.is_online,
+        body: event.body,
+        body_preview: event.body_preview,
+      }),
+    }),
+  unlinkMeeting: (id: number) =>
+    request<MeetingSession>(`/api/live/${id}/meeting`, { method: "DELETE" }),
+  postMeetingToTopic: (id: number) =>
+    request<{ topic_id: number; message_id: number }>(`/api/live/${id}/meeting/post`, {
+      method: "POST",
+    }),
 
   // Workspaces
   listWorkspaces: () => request<Workspace[]>(`/api/workspaces`),

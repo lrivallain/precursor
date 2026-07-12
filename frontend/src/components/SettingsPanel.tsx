@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Cpu,
   Plug,
+  Radio,
   Plus,
   Pencil,
   Trash2,
@@ -42,6 +43,7 @@ import type {
   Settings,
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { Select } from "./Select";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
@@ -91,6 +93,7 @@ type Category =
   | "model"
   | "github"
   | "speech"
+  | "live"
   | "mcp"
   | "skills"
   | "roles"
@@ -111,6 +114,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "model", label: "Model", icon: Cpu, group: "App" },
   { id: "github", label: "GitHub", icon: Github, group: "Integrations" },
   { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
+  { id: "live", label: "Live", icon: Radio, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
@@ -158,6 +162,9 @@ export function SettingsPanel({ onClose }: Props) {
   const [azureEndpoint, setAzureEndpoint] = useState("");
   const [azureLanguage, setAzureLanguage] = useState("");
   const [azureKey, setAzureKey] = useState("");
+  const [liveFastModel, setLiveFastModel] = useState("");
+  const [liveReasoningEffort, setLiveReasoningEffort] = useState("");
+  const [liveEnabled, setLiveEnabled] = useState(true);
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
   >({ state: "idle" });
@@ -261,6 +268,9 @@ export function SettingsPanel({ onClose }: Props) {
       setBackupRetention(s.backup_retention);
       setAzureEndpoint(s.azure_speech_endpoint);
       setAzureLanguage(s.azure_speech_language);
+      setLiveFastModel(s.live_fast_model);
+      setLiveReasoningEffort(s.live_reasoning_effort);
+      setLiveEnabled(s.live_enabled);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -351,6 +361,9 @@ export function SettingsPanel({ onClose }: Props) {
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
         azure_speech_language: azureLanguage,
+        live_fast_model: liveFastModel,
+        live_reasoning_effort: liveReasoningEffort,
+        live_enabled: liveEnabled,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         backup_enabled: backupEnabled,
@@ -690,17 +703,13 @@ export function SettingsPanel({ onClose }: Props) {
             {category === "model" && (
               <section>
                 <h3 className="text-sm font-medium mb-2">Provider</h3>
-                <select
+                <Select
                   value={provider}
-                  onChange={(e) => onProviderChange(e.target.value)}
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={onProviderChange}
+                  options={providers.map((p) => ({ value: p.id, label: p.label }))}
+                  ariaLabel="LLM provider"
+                  fullWidth
+                />
 
                 {(() => {
                   const activeSpec = providers.find((p) => p.id === provider);
@@ -953,17 +962,13 @@ export function SettingsPanel({ onClose }: Props) {
                 </p>
 
                 <label className="block text-xs text-muted mt-4 mb-1">Language</label>
-                <select
+                <Select
                   value={azureLanguage}
-                  onChange={(e) => setAzureLanguage(e.target.value)}
-                  className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                >
-                  {STT_LANGUAGES.map((l) => (
-                    <option key={l.value} value={l.value}>
-                      {l.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setAzureLanguage}
+                  options={STT_LANGUAGES}
+                  ariaLabel="Speech recognition language"
+                  fullWidth
+                />
                 <p className="text-[11px] text-muted mt-1">
                   Recognition language. "Auto (browser)" uses the browser's
                   current locale.
@@ -1014,6 +1019,71 @@ export function SettingsPanel({ onClose }: Props) {
                       {sttTest.detail ?? "Test failed."}
                     </span>
                   )}
+                </div>
+              </section>
+            )}
+
+            {category === "live" && (
+              <section>
+                <p className="text-sm text-muted mb-3">
+                  The <strong>Live</strong> section records a meeting, transcribes
+                  it with speaker labels, surfaces live insights, and can attach a
+                  summary to a topic. Transcription uses your{" "}
+                  <strong>Azure Speech</strong> resource (configured under
+                  Speech-to-text).
+                </p>
+
+                <label className="flex items-center gap-2 mb-4 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={liveEnabled}
+                    onChange={(e) => setLiveEnabled(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  Enable the Live meeting assistant section
+                </label>
+
+                <div className="border-t border-border pt-4">
+                  <h3 className="text-sm font-medium">Analysis model</h3>
+                  <p className="text-[11px] text-muted mt-1 mb-3">
+                    Model for the rolling live insights and Q&amp;A. A fast model
+                    keeps analysis snappy; leave on the default to reuse your chat
+                    model. (Summaries use the default chat model for quality.)
+                  </p>
+
+                  <label className="block text-xs text-muted mb-1">Fast model</label>
+                  <Select
+                    value={liveFastModel}
+                    onChange={setLiveFastModel}
+                    disabled={!liveEnabled}
+                    ariaLabel="Live analysis fast model"
+                    fullWidth
+                    options={[
+                      { value: "", label: "Use default chat model" },
+                      ...models.map((m) => ({ value: m.id, label: m.name })),
+                    ]}
+                  />
+
+                  <label className="block text-xs text-muted mt-4 mb-1">
+                    Reasoning effort
+                  </label>
+                  <Select
+                    value={liveReasoningEffort}
+                    onChange={setLiveReasoningEffort}
+                    disabled={!liveEnabled}
+                    ariaLabel="Live analysis reasoning effort"
+                    fullWidth
+                    options={[
+                      { value: "", label: "Auto / off (fastest)" },
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium" },
+                      { value: "high", label: "High" },
+                    ]}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    Live analysis favours speed — keep this low. Only applies to
+                    reasoning-capable models.
+                  </p>
                 </div>
               </section>
             )}

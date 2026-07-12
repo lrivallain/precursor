@@ -4,6 +4,7 @@
 // Embeds the weekday picker so a consumer drops in one component.
 
 import { ALL_DAYS_MASK, WeekdayPicker } from "./WeekdayPicker";
+import { Select } from "./Select";
 
 export type RecurrenceMode = "interval" | "daily";
 export type IntervalUnit = "minutes" | "hours" | "days";
@@ -134,15 +135,17 @@ export function RecurrenceEditor({ value, onChange }: Props) {
               onChange={(e) => set({ intervalValue: Number(e.target.value) })}
               className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
             />
-            <select
+            <Select
               value={value.intervalUnit}
-              onChange={(e) => set({ intervalUnit: e.target.value as IntervalUnit })}
-              className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-            >
-              <option value="minutes">minutes</option>
-              <option value="hours">hours</option>
-              <option value="days">days</option>
-            </select>
+              onChange={(v) => set({ intervalUnit: v as IntervalUnit })}
+              ariaLabel="Interval unit"
+              fullWidth
+              options={[
+                { value: "minutes", label: "minutes" },
+                { value: "hours", label: "hours" },
+                { value: "days", label: "days" },
+              ]}
+            />
           </div>
           <p className="mt-1 text-[11px] text-muted">Minimum interval is 1 minute.</p>
         </div>

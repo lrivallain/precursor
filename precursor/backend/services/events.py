@@ -25,6 +25,7 @@ class Event(TypedDict, total=False):
     topic_id: int | None
     chat_id: int | None
     agent_session_id: int | None
+    meeting_session_id: int | None
     # Carried only by ``mcp.auth_required`` — which MCP server needs an
     # interactive sign-in and the human-readable reason to show.
     server: str | None
@@ -65,6 +66,7 @@ class EventBus:
             "topic_id": event.get("topic_id"),
             "chat_id": event.get("chat_id"),
             "agent_session_id": event.get("agent_session_id"),
+            "meeting_session_id": event.get("meeting_session_id"),
             "server": event.get("server"),
             "message": event.get("message"),
             "client_id": event.get("client_id") or _current_client_id.get(),
@@ -188,3 +190,13 @@ async def publish_read_changed(
             "agent_session_id": agent_session_id,
         }
     )
+
+
+async def publish_meeting_changed(meeting_session_id: int | None = None) -> None:
+    """Signal that the set of meeting sessions (or one session) changed.
+
+    Emitted by the ``/api/live`` endpoints so other windows refresh the Live
+    section list in real time (created / renamed / ended / deleted). Carries the
+    affected session id when it applies to a single session.
+    """
+    await _bus.publish({"type": "meeting.changed", "meeting_session_id": meeting_session_id})
