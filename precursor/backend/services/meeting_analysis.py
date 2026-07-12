@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,11 +88,26 @@ _SYSTEM_PROMPT = (
 )
 
 
+# Diarization labels are scoped to a recording run as ``"<run>:<label>"`` (e.g.
+# "2:Guest-1") because Azure re-numbers speakers on every stop/restart. The run
+# prefix keeps a rename ("2:Guest-1" -> "Marie") from bleeding onto a different
+# voice that happens to reuse the same raw label in another run. It's stripped
+# for display when no explicit name is set.
+_RUN_PREFIX = re.compile(r"^\d+:")
+
+
+def strip_run_prefix(label: str) -> str:
+    """Drop the ``<run>:`` recording-run prefix from a diarization label."""
+    return _RUN_PREFIX.sub("", label)
+
+
 def display_label(raw: str | None, names: dict[str, str]) -> str:
     """Resolve a raw diarization label to its display name (fallback: raw)."""
     if not raw:
         return "Speaker"
-    return names.get(raw, raw)
+    if raw in names:
+        return names[raw]
+    return strip_run_prefix(raw)
 
 
 def meeting_context_text(external_meeting: dict[str, object] | None) -> str:

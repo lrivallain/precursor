@@ -53,10 +53,12 @@ class MeetingSession(Base, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # JSON-encoded dict[str, str] mapping a raw diarization label (e.g.
-    # "Guest-2") to a user-chosen display name (e.g. "Thomas"). Segments keep
-    # their raw label; names are applied at display + analysis time so renaming
-    # one speaker updates every past and future phrase from that voice.
+    # JSON-encoded dict[str, str] mapping a raw diarization label to a
+    # user-chosen display name. Labels are namespaced per recording run as
+    # "<run>:<label>" (e.g. "2:Guest-1") because Azure re-numbers speakers on
+    # every stop/restart — so a rename stays scoped to the run it was made in
+    # and never bleeds onto a different voice that reuses the label later.
+    # Segments keep their raw label; names apply at display + analysis time.
     speaker_names_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="{}", server_default="{}"
     )

@@ -273,6 +273,21 @@ def test_speaker_rename_maps_all_and_clears() -> None:
         assert cleared.json()["speaker_names"] == {}
 
 
+def test_display_label_scopes_by_run_prefix() -> None:
+    from precursor.backend.services.meeting_analysis import display_label, strip_run_prefix
+
+    # Un-named labels strip their "<run>:" prefix for display.
+    assert strip_run_prefix("2:Guest-1") == "Guest-1"
+    assert display_label("2:Guest-1", {}) == "Guest-1"
+    # A rename is scoped to its own run: renaming run 1's Guest-2 does not
+    # touch run 2's Guest-2 (a different voice after the diarization reset).
+    names = {"1:Guest-2": "Thomas"}
+    assert display_label("1:Guest-2", names) == "Thomas"
+    assert display_label("2:Guest-2", names) == "Guest-2"
+    # Legacy un-prefixed labels still resolve.
+    assert display_label("Guest-3", {}) == "Guest-3"
+
+
 def test_attendees_roundtrip_and_dedupe() -> None:
     app = create_app()
     with TestClient(app) as client:

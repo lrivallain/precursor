@@ -62,6 +62,18 @@ function speakerColor(label: string | null): string {
   return SPEAKER_COLORS[h % SPEAKER_COLORS.length];
 }
 
+// Diarization labels are stored as "<run>:<label>" (e.g. "2:Guest-1"): Azure
+// re-numbers speakers on every stop/restart, so the run prefix scopes a rename
+// to its own recording run and prevents names bleeding onto a different voice.
+function stripRun(label: string): string {
+  return label.replace(/^\d+:/, "");
+}
+
+function labelRun(label: string | null): number {
+  const m = label ? /^(\d+):/.exec(label) : null;
+  return m ? Number(m[1]) : 0;
+}
+
 function formatOffset(ms: number | null): string {
   if (ms == null) return "";
   const total = Math.floor(ms / 1000);
@@ -136,6 +148,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   // Segment indices where recording resumed (draw a separator before them).
   const [recordingBoundaries, setRecordingBoundaries] = useState<number[]>([]);
   const prevListeningRef = useRef(false);
+  // Current recording-run ordinal. Diarization labels are namespaced with it so
+  // renames stay scoped to the run they were made in (Azure re-numbers speakers
+  // on each stop/restart). Seeded from the loaded transcript, bumped on start.
+  const runRef = useRef(0);
 
   const [insights, setInsights] = useState<MeetingInsight[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
@@ -161,11 +177,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   const handleFinalSegment = useCallback(
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
+      // Scope the raw diarization label to the current recording run.
+      const scopedLabel = seg.speakerLabel ? `${runRef.current}:${seg.speakerLabel}` : null;
       void (async () => {
         try {
           const saved = await api.appendMeetingSegment(session.id, {
             text: seg.text,
-            speaker_label: seg.speakerLabel,
+            speaker_label: scopedLabel,
             offset_ms: seg.offsetMs,
           });
           setSegments((prev) => [...prev, saved]);
@@ -175,7 +193,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
             {
               id: -Date.now(),
               session_id: session.id,
-              speaker_label: seg.speakerLabel,
+              speaker_label: scopedLabel,
               text: seg.text,
               offset_ms: seg.offsetMs,
               created_at: new Date().toISOString(),
@@ -203,11 +221,14 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   }, [recording, session.id, onRecordingChange]);
   useEffect(() => () => onRecordingChange?.(null), [onRecordingChange]);
 
-  // When recording resumes in a session that already has transcript, mark a
-  // boundary so the transcript shows a separator.
+  // When a new recording run starts, bump the run ordinal so its diarization
+  // labels are namespaced to this run; draw a boundary separator on a resume.
   useEffect(() => {
-    if (recording && !prevListeningRef.current && segCountRef.current > 0) {
-      setRecordingBoundaries((b) => [...b, segCountRef.current]);
+    if (recording && !prevListeningRef.current) {
+      runRef.current += 1;
+      if (segCountRef.current > 0) {
+        setRecordingBoundaries((b) => [...b, segCountRef.current]);
+      }
     }
     prevListeningRef.current = recording;
   }, [recording]);
@@ -239,6 +260,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setSummaryError(null);
     setRecordingBoundaries([]);
     prevListeningRef.current = false;
+    runRef.current = 0;
     lastAnalyzedRef.current = 0;
     void api
       .listMeetingSegments(session.id)
@@ -246,6 +268,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         if (!cancelled) {
           setSegments(rows);
           lastAnalyzedRef.current = rows.length;
+          // Continue run numbering above any run already present in the
+          // stored transcript so a restart never reuses a prior run's labels.
+          runRef.current = rows.reduce((m, r) => Math.max(m, labelRun(r.speaker_label)), 0);
         }
       })
       .catch(() => {});
@@ -429,7 +454,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   const speakerNames = session.speaker_names ?? {};
   const displayName = (raw: string | null): string | null =>
-    raw ? (speakerNames[raw] ?? raw) : null;
+    raw ? (speakerNames[raw] ?? stripRun(raw)) : null;
 
   function beginRename(seg: MeetingSegment): void {
     if (!seg.speaker_label) return;
@@ -457,24 +482,23 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     [insights],
   );
 
-  // Attendee suggestions for the Summary: linked-meeting invitees + distinct
-  // transcript display names that aren't listed yet.
+  // Attendee suggestions for the Summary: distinct transcript display names not
+  // already listed. Linked-meeting invitees are NOT suggested here — they are
+  // added directly to the attendee list when the meeting is linked.
   const suggestedAttendees = useMemo(() => {
     const seen = new Set<string>();
     const existing = new Set(session.attendees ?? []);
     const out: string[] = [];
-    const push = (name: string | null | undefined) => {
-      const n = (name ?? "").trim();
-      if (n && !seen.has(n) && !existing.has(n)) {
-        seen.add(n);
-        out.push(n);
+    for (const seg of segments) {
+      const name = (displayName(seg.speaker_label) ?? "").trim();
+      if (name && !seen.has(name) && !existing.has(name)) {
+        seen.add(name);
+        out.push(name);
       }
-    };
-    for (const a of session.external_meeting?.attendees ?? []) push(a.name || a.email);
-    for (const seg of segments) push(displayName(seg.speaker_label));
+    }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segments, session.attendees, session.speaker_names, session.external_meeting]);
+  }, [segments, session.attendees, session.speaker_names]);
 
   // Names offered as autocomplete when renaming a transcript speaker: the
   // linked meeting's invitees plus any attendees already on the summary.
