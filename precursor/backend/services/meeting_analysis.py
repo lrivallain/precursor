@@ -143,6 +143,75 @@ def context_notes_text(notes: list[str] | None) -> str:
     return "\n".join(lines)[:4000]
 
 
+async def live_chat_grounding(session: AsyncSession, chat_id: int) -> str:
+    """Grounding block for a chat attached to a live meeting session.
+
+    Returns the current meeting context — transcript tail, live insights, the
+    user's notes, pinned context notes, the linked meeting, and the attached
+    topic — rebuilt each turn so the chat always sees the latest state. Empty
+    when the chat isn't attached to a meeting session.
+    """
+    ms = (
+        (await session.execute(select(MeetingSession).where(MeetingSession.chat_id == chat_id)))
+        .scalars()
+        .first()
+    )
+    if ms is None:
+        return ""
+
+    segments = list(
+        (
+            await session.execute(
+                select(MeetingSegment)
+                .where(MeetingSegment.session_id == ms.id)
+                .order_by(MeetingSegment.created_at, MeetingSegment.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    insights = list(
+        (
+            await session.execute(
+                select(MeetingInsight)
+                .where(MeetingInsight.session_id == ms.id)
+                .order_by(MeetingInsight.created_at, MeetingInsight.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    parts: list[str] = [
+        "This chat assists during a LIVE meeting. Ground your answers in the "
+        "meeting context below; it updates as the meeting progresses. Prefer it "
+        "over prior assumptions for anything time-sensitive."
+    ]
+    if segments:
+        parts.append(f"Transcript so far:\n{_format_transcript(segments, ms.speaker_names)}")
+    if insights:
+        parts.append("Live insights:\n" + "\n".join(f"- [{i.kind}] {i.content}" for i in insights))
+    if ms.notes.strip():
+        parts.append(f"The user's live notes:\n{ms.notes.strip()[:4000]}")
+    notes_ctx = context_notes_text(ms.context_notes)
+    if notes_ctx:
+        parts.append(f"Pinned context notes:\n{notes_ctx}")
+    meeting_ctx = meeting_context_text(ms.external_meeting)
+    if meeting_ctx:
+        parts.append(f"Linked meeting:\n{meeting_ctx}")
+    if ms.topic_id is not None:
+        topic = await session.get(Topic, ms.topic_id)
+        if topic is not None:
+            line = f"Attached topic: {topic.title}"
+            if topic.description:
+                line += f" — {topic.description}"
+            parts.append(line)
+    lang = language_name(ms.language)
+    if lang:
+        parts.append(f"Reply in {lang} unless the user writes in another language.")
+    return "\n\n".join(parts)
+
+
 class _HTMLTextExtractor(HTMLParser):
     """Collapse HTML into readable plain text (block tags become line breaks)."""
 

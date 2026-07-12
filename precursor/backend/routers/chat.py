@@ -60,6 +60,7 @@ from precursor.backend.services.mcp.client import (
     MCPToolDef,
     get_mcp_client_manager,
 )
+from precursor.backend.services.meeting_analysis import live_chat_grounding
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import (
@@ -246,6 +247,13 @@ async def _build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     # discussion-level context.
     if chat.description and not chat.description_as_system_prompt:
         parts.append(f"Chat description: {chat.description}")
+
+    # When this chat is attached to a live meeting session, fold in the current
+    # meeting grounding (transcript/insights/notes/…), rebuilt every turn.
+    grounding = await live_chat_grounding(session, chat.id)
+    if grounding:
+        parts.append(grounding)
+
     parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
 

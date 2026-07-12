@@ -649,6 +649,7 @@ export const api = {
     }
     return (await res.json()) as MeetingAttachment;
   },
+  ensureMeetingChat: (id: number) => request<Chat>(`/api/live/${id}/chat`, { method: "POST" }),
   listMeetingInsights: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>

@@ -48,6 +48,12 @@ class MeetingSession(Base, TimestampMixin):
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Chat spawned for the "Ask assistant" tab, created on the first question and
+    # grounded on the live context. SET NULL so deleting the chat just detaches.
+    chat_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chats.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # When recording first began / when the session was ended. Both null until
     # the respective event; distinct from created_at (row creation).
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

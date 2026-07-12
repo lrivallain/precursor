@@ -43,6 +43,7 @@ class MeetingSessionRead(BaseModel):
     status: MeetingStatus
     language: str | None = None
     topic_id: int | None = None
+    chat_id: int | None = None
     speaker_names: dict[str, str] = Field(default_factory=dict)
     attendees: list[str] = Field(default_factory=list)
     context_notes: list[str] = Field(default_factory=list)

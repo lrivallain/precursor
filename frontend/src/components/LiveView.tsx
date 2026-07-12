@@ -1,17 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  BookmarkPlus,
-  Check,
-  CircleHelp,
-  Loader2,
-  Mic,
-  Radio,
-  RefreshCw,
-  Send,
-  Square,
-  Trash2,
-} from "lucide-react";
+import { CircleHelp, Mic, Radio, RefreshCw, Square, Trash2 } from "lucide-react";
 import type {
+  Chat,
   MeetingInsight,
   MeetingInsightKind,
   MeetingSegment,
@@ -19,9 +9,7 @@ import type {
   TopicNode,
 } from "../lib/types";
 import { api } from "../lib/api";
-import { streamMeetingAsk } from "../lib/sse";
 import { useSettings } from "../lib/settingsStore";
-import { useResizableHeight } from "../lib/useResizableHeight";
 import {
   listAudioInputDevices,
   useConversationTranscriber,
@@ -36,8 +24,8 @@ import { LivePanel, type LiveTab } from "./LivePanel";
 import { SummarySection } from "./SummarySection";
 import { NotesSection } from "./NotesSection";
 import { ContextSection } from "./ContextSection";
+import { LiveChatSection } from "./LiveChatSection";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
-import { Markdown } from "./Markdown";
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
@@ -156,6 +144,26 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const notesRef = useRef(notes);
   notesRef.current = notes;
 
+  // The chat spawned for the assistant tab (created on first ask). Held here so
+  // it survives tab switches; loaded from the session's chat_id when present.
+  const [chat, setChat] = useState<Chat | null>(null);
+  useEffect(() => {
+    if (session.chat_id == null) {
+      setChat(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .getChat(session.chat_id)
+      .then((c) => {
+        if (!cancelled) setChat(c);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [session.id, session.chat_id]);
+
   // Topic-context summary (Context tab). Auto-generated when a topic is linked.
   const [topicSummary, setTopicSummary] = useState("");
   const [topicSummaryLoading, setTopicSummaryLoading] = useState(false);
@@ -177,21 +185,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   const [insights, setInsights] = useState<MeetingInsight[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
-
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [asking, setAsking] = useState(false);
-  // The question currently being answered (echoed above the answer).
-  const [askedQuestion, setAskedQuestion] = useState("");
-  const [noteAdded, setNoteAdded] = useState(false);
-  // Ask-assistant input height, resized from a top handle like the app composer.
-  const { height: askHeight, onMouseDown: onAskResize } = useResizableHeight({
-    storageKey: "precursor:live-ask-height",
-    defaultHeight: 56,
-    min: 36,
-    max: 320,
-    side: "top",
-  });
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const restartRef = useRef(false);
@@ -288,7 +281,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setSegments([]);
     setInterim("");
     setInsights([]);
-    setAnswer("");
     setSummaryText("");
     setSummaryError(null);
     setRecordingBoundaries([]);
@@ -485,49 +477,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     }
   }
 
-  async function ask(): Promise<void> {
-    const q = question.trim();
-    if (!q || asking) return;
-    setAsking(true);
-    setAnswer("");
-    setAskedQuestion(q);
-    setQuestion("");
-    setNoteAdded(false);
-    try {
-      await streamMeetingAsk(session.id, q, {
-        onEvent: (e) => {
-          if (e.event === "token") {
-            try {
-              const { content } = JSON.parse(e.data) as { content?: string };
-              if (content) setAnswer((a) => a + content);
-            } catch {
-              /* ignore malformed frame */
-            }
-          } else if (e.event === "error") {
-            setAnswer("Sorry — the assistant couldn't answer that.");
-          }
-        },
-      });
-    } catch {
-      setAnswer("Sorry — the assistant couldn't answer that.");
-    } finally {
-      setAsking(false);
-    }
-  }
-
-  async function addAnswerToContext(): Promise<void> {
-    const note = answer.trim();
-    if (!note) return;
-    try {
-      const updated = await api.addMeetingContextNote(session.id, note);
-      onUpdated(updated);
-      setNoteAdded(true);
-      setTimeout(() => setNoteAdded(false), 2000);
-    } catch {
-      /* non-fatal */
-    }
-  }
-
   const speakerNames = session.speaker_names ?? {};
   const displayName = (raw: string | null): string | null =>
     raw ? (speakerNames[raw] ?? stripRun(raw)) : null;
@@ -705,78 +654,6 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
           </div>
         )}
       </div>
-      <div className="border-t border-border p-2">
-        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-          Ask assistant
-        </div>
-        {(askedQuestion || asking || answer) && (
-          <div className="mb-2 max-h-56 space-y-1.5 overflow-y-auto rounded bg-surface px-2 py-2">
-            {askedQuestion && (
-              <div className="flex justify-end">
-                <div className="max-w-[85%] rounded-lg bg-accent/15 px-2.5 py-1.5 text-[13px] text-text">
-                  {askedQuestion}
-                </div>
-              </div>
-            )}
-            {asking && !answer ? (
-              <div className="flex items-center gap-2 text-[12px] text-muted">
-                <Loader2 size={13} className="animate-spin" /> Thinking…
-              </div>
-            ) : answer ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
-                <Markdown>{answer}</Markdown>
-              </div>
-            ) : null}
-            {answer && !asking && (
-              <div className="flex items-center gap-2 pt-0.5">
-                <button
-                  type="button"
-                  onClick={() => void addAnswerToContext()}
-                  disabled={noteAdded}
-                  data-tooltip="Pin this answer so it grounds future insights, Q&A and the summary"
-                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-bg disabled:opacity-60"
-                >
-                  {noteAdded ? <Check size={12} /> : <BookmarkPlus size={12} />}
-                  {noteAdded ? "Added to context" : "Add to context"}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        <div className="relative flex items-end gap-1.5">
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            onMouseDown={onAskResize}
-            title="Drag to resize"
-            className="group absolute -top-2 left-0 right-0 z-10 h-2 cursor-row-resize"
-          >
-            <div className="mx-auto mt-1 h-px w-12 bg-border transition-colors group-hover:bg-accent/60" />
-          </div>
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void ask();
-              }
-            }}
-            style={{ height: askHeight }}
-            placeholder="Ask about anything discussed…"
-            className="min-w-0 flex-1 resize-none rounded border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
-          />
-          <button
-            type="button"
-            onClick={() => void ask()}
-            disabled={asking || !question.trim()}
-            aria-label="Ask"
-            className="rounded bg-accent p-2 text-white disabled:opacity-50"
-          >
-            <Send size={15} />
-          </button>
-        </div>
-      </div>
     </div>
   );
 
@@ -805,6 +682,17 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     />
   );
 
+  const assistantNode = (
+    <LiveChatSection
+      session={session}
+      chat={chat}
+      onChat={(c) => {
+        setChat(c);
+        if (c && session.chat_id !== c.id) onUpdated({ ...session, chat_id: c.id });
+      }}
+    />
+  );
+
   const contextNode = (
     <ContextSection
       session={session}
@@ -822,6 +710,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
     { id: "insights", label: "Live insights", badge: insights.length },
+    { id: "assistant", label: "Assistant" },
     { id: "notes", label: notes.trim() ? "Notes ●" : "Notes" },
     ...(isEnded ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }] : []),
     { id: "context", label: "Context" },
@@ -833,6 +722,8 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         return transcriptNode;
       case "insights":
         return insightsNode;
+      case "assistant":
+        return assistantNode;
       case "notes":
         return notesNode;
       case "summary":

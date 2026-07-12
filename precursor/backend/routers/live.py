@@ -24,6 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 from precursor.backend.db import get_session
 from precursor.backend.models import (
     Attachment,
+    Chat,
     MeetingAttachment,
     MeetingInsight,
     MeetingSegment,
@@ -36,6 +37,7 @@ from precursor.backend.schemas import (
     AgendaEvent,
     AgendaResponse,
     AttendeesUpdate,
+    ChatRead,
     ContextNoteAdd,
     ContextNotesUpdate,
     LinkMeetingRequest,
@@ -75,6 +77,7 @@ from precursor.backend.services.meeting_summary import (
     generate_summary,
     summarize_topic_conversation,
 )
+from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +392,32 @@ async def get_meeting_attachment(
     return FileResponse(
         path, media_type=att.mime, headers={"Cache-Control": "private, max-age=3600"}
     )
+
+
+@router.post("/{session_id}/chat", response_model=ChatRead)
+async def ensure_chat(session_id: int, session: AsyncSession = Depends(get_session)) -> Chat:
+    """Get (or spawn on first ask) the chat attached to this live session.
+
+    The chat is a standard chat — tools, attachments, history, roles — but its
+    system context is augmented with the live meeting grounding (see
+    ``live_chat_grounding``) on every turn.
+    """
+    ms = await _get_session_or_404(session_id, session)
+    if ms.chat_id is not None:
+        existing = await session.get(Chat, ms.chat_id)
+        if existing is not None:
+            return existing
+
+    slug = await allocate_unique_slug(session, slugify(ms.title) or "live-chat", Chat)
+    chat = Chat(title=f"{ms.title} — Live chat", slug=slug)
+    session.add(chat)
+    await session.commit()
+    await session.refresh(chat)
+
+    ms.chat_id = chat.id
+    await session.commit()
+    await publish_meeting_changed(ms.id)
+    return chat
 
 
 # --------------------------------------------------------------------------

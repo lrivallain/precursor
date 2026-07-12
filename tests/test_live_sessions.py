@@ -640,3 +640,43 @@ def test_agenda_parser_unwraps_workiq_envelope() -> None:
 
     # Non-200 results are skipped.
     assert _events_from({"results": [{"data": {}, "statusCode": 400, "error": "denied"}]}) == []
+
+
+def test_ensure_chat_creates_and_reuses() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Chatty"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["chat_id"] is None
+        r1 = client.post(f"/api/live/{sid}/chat")
+        assert r1.status_code == 200
+        cid = r1.json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["chat_id"] == cid
+        # Idempotent: a second call returns the same chat.
+        assert client.post(f"/api/live/{sid}/chat").json()["id"] == cid
+
+
+def test_live_chat_grounding_includes_context() -> None:
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.meeting_analysis import live_chat_grounding
+
+    async def grounding_for(chat_id: int) -> str:
+        async with SessionLocal() as s:
+            return await live_chat_grounding(s, chat_id)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "G"}).json()["id"]
+        chat = client.post(f"/api/live/{sid}/chat").json()
+        client.post(
+            f"/api/live/{sid}/segments",
+            json={"text": "Discuss the budget", "speaker_label": "1:Guest-1"},
+        )
+        client.patch(f"/api/live/{sid}", json={"notes": "Remember the deadline"})
+
+        text = asyncio.run(grounding_for(chat["id"]))
+        assert "Discuss the budget" in text
+        assert "Remember the deadline" in text
+        # An unrelated chat id yields no grounding.
+        assert asyncio.run(grounding_for(999999)) == ""

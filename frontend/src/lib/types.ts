@@ -833,6 +833,8 @@ export interface MeetingSession {
   status: MeetingStatus;
   language: string | null;
   topic_id: number | null;
+  // Chat spawned for the "Ask assistant" tab (created on first ask), or null.
+  chat_id: number | null;
   // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
   speaker_names: Record<string, string>;
   // Attendee display names used in the summary (editable).
