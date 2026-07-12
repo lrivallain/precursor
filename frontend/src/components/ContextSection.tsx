@@ -18,7 +18,15 @@ function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (sameDay) return time;
+  const day = d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return `${day} ${time}`;
 }
 
 /**
@@ -49,7 +57,7 @@ export function ContextSection({
       const res = await api.getAgenda();
       setEvents(res.events);
       if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
-      else if (res.events.length === 0) setAgendaDetail("No meetings on your calendar today.");
+      else if (res.events.length === 0) setAgendaDetail("No upcoming meetings found.");
     } catch (e) {
       setAgendaDetail(e instanceof Error ? e.message : "Couldn't load the agenda.");
       setEvents([]);
@@ -122,7 +130,7 @@ export function ContextSection({
       <section className="p-4">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            <CalendarClock size={12} /> Today&apos;s meetings
+            <CalendarClock size={12} /> Upcoming meetings
           </div>
           <button
             type="button"

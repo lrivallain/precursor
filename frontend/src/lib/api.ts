@@ -642,11 +642,11 @@ export const api = {
       method: "POST",
     }),
   getAgenda: () => {
-    // Compute the user's *local* day window so the agenda matches their
-    // calendar day, then convert to UTC ISO for the backend/Graph.
+    // A short rolling window (local today → +7 days), converted to UTC ISO, so
+    // the user reliably sees meetings to link regardless of timezone/day edges.
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
     const qs = `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
       end.toISOString(),
     )}`;
