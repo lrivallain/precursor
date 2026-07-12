@@ -15,13 +15,15 @@ import unicodedata
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import get_session
 from precursor.backend.models import (
+    MeetingAttachment,
     MeetingInsight,
     MeetingSegment,
     MeetingSession,
@@ -37,6 +39,7 @@ from precursor.backend.schemas import (
     ContextNotesUpdate,
     LinkMeetingRequest,
     MeetingAskRequest,
+    MeetingAttachmentRead,
     MeetingInsightRead,
     MeetingSegmentCreate,
     MeetingSegmentRead,
@@ -53,7 +56,9 @@ from precursor.backend.services.app_settings import (
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
 )
+from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
+from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
 from precursor.backend.services.meeting_agenda import fetch_agenda
@@ -331,6 +336,58 @@ async def set_context_notes(
     await session.refresh(ms)
     await publish_meeting_changed(ms.id)
     return ms
+
+
+def _attachment_read(att: MeetingAttachment) -> MeetingAttachmentRead:
+    return MeetingAttachmentRead(
+        id=att.id,
+        mime=att.mime,
+        original_filename=att.original_filename,
+        url=f"/api/live/attachments/{att.id}",
+        is_image=att.mime.startswith("image/"),
+    )
+
+
+@router.post(
+    "/{session_id}/attachments",
+    response_model=MeetingAttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_meeting_attachment(
+    session_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> MeetingAttachmentRead:
+    """Store a file pasted/dropped into the live notes and return its serve URL."""
+    ms = await _get_session_or_404(session_id, session)
+    mime, data = await read_validated_attachment(file)
+    att = MeetingAttachment(
+        session_id=ms.id,
+        mime=mime,
+        size=len(data),
+        original_filename=(file.filename or "")[:255],
+        sha256=write_blob(data),
+    )
+    session.add(att)
+    await session.commit()
+    await session.refresh(att)
+    return _attachment_read(att)
+
+
+# Static two-segment path so it doesn't collide with the dynamic /{session_id}.
+@router.get("/attachments/{attachment_id}")
+async def get_meeting_attachment(
+    attachment_id: int, session: AsyncSession = Depends(get_session)
+) -> FileResponse:
+    att = await session.get(MeetingAttachment, attachment_id)
+    if att is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    path = blob_path(att.sha256)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment content missing")
+    return FileResponse(
+        path, media_type=att.mime, headers={"Cache-Control": "private, max-age=3600"}
+    )
 
 
 # --------------------------------------------------------------------------

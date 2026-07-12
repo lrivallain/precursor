@@ -121,6 +121,8 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
     if ms.attendees:
         user_parts.append("Attendees: " + ", ".join(ms.attendees))
     user_parts.append(f"\nTranscript:\n{_format_transcript(segments, ms.speaker_names)}")
+    if ms.notes.strip():
+        user_parts.append(f"\nThe user's live notes:\n{ms.notes.strip()[:8000]}")
     insight_block = _format_insights(insights)
     if insight_block:
         user_parts.append(f"\nDerived insights:\n{insight_block}")

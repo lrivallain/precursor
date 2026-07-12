@@ -73,6 +73,14 @@ class ContextNotesUpdate(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class MeetingAttachmentRead(BaseModel):
+    id: int
+    mime: str
+    original_filename: str
+    url: str
+    is_image: bool
+
+
 class MeetingSegmentCreate(BaseModel):
     text: str = Field(min_length=1)
     # Diarization label from Azure ConversationTranscriber (e.g. "Guest-1").

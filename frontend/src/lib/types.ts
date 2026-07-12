@@ -864,6 +864,14 @@ export interface MeetingSessionUpdate {
   notes?: string | null;
 }
 
+export interface MeetingAttachment {
+  id: number;
+  mime: string;
+  original_filename: string;
+  url: string;
+  is_image: boolean;
+}
+
 export interface MeetingSegment {
   id: number;
   session_id: number;

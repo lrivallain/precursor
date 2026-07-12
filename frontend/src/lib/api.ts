@@ -39,6 +39,7 @@ import type {
   MemoryUpdate,
   AgendaEvent,
   AgendaResponse,
+  MeetingAttachment,
   MeetingInsight,
   MeetingSegment,
   MeetingSegmentCreate,
@@ -634,6 +635,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ notes }),
     }),
+  uploadMeetingAttachment: async (id: number, file: File): Promise<MeetingAttachment> => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`/api/live/${id}/attachments`, {
+      method: "POST",
+      headers: { "X-Client-Id": CLIENT_ID },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return (await res.json()) as MeetingAttachment;
+  },
   listMeetingInsights: (id: number) =>
     request<MeetingInsight[]>(`/api/live/${id}/insights`),
   analyzeMeeting: (id: number) =>

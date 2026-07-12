@@ -796,7 +796,13 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   );
 
   const notesNode = (
-    <NotesSection text={notes} setText={setNotes} saving={notesSaving} saved={notesSaved} />
+    <NotesSection
+      text={notes}
+      setText={setNotes}
+      saving={notesSaving}
+      saved={notesSaved}
+      onUpload={(file) => api.uploadMeetingAttachment(session.id, file)}
+    />
   );
 
   const contextNode = (

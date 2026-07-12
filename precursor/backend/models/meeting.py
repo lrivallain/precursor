@@ -174,3 +174,21 @@ class MeetingInsight(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     session: Mapped[MeetingSession] = relationship("MeetingSession", back_populates="insights")
+
+
+class MeetingAttachment(Base, TimestampMixin):
+    """A file pasted/dropped into the live notes. Bytes live on disk (blob
+    store); only metadata is in the DB. Referenced from the notes Markdown by
+    its serve URL."""
+
+    __tablename__ = "meeting_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("meeting_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mime: Mapped[str] = mapped_column(String(127), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # SHA-256 hex digest; the bytes live under settings.blobs_dir.
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
