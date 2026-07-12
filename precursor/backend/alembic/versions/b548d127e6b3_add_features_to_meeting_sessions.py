@@ -19,14 +19,25 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _has_column(table: str, column: str) -> bool:
+    bind = op.get_bind()
+    return column in {c["name"] for c in sa.inspect(bind).get_columns(table)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "meeting_sessions",
-        sa.Column(
-            "features_json", sa.Text(), server_default='["insights", "notes"]', nullable=False
-        ),
-    )
+    # Idempotent: SQLite treats DDL as non-transactional, so a crash between the
+    # ADD COLUMN and the version stamp (e.g. two dev servers racing on one DB)
+    # can leave the column present but the revision unstamped. Guard so a re-run
+    # doesn't die on "duplicate column".
+    if not _has_column("meeting_sessions", "features_json"):
+        op.add_column(
+            "meeting_sessions",
+            sa.Column(
+                "features_json", sa.Text(), server_default='["insights", "notes"]', nullable=False
+            ),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("meeting_sessions", "features_json")
+    if _has_column("meeting_sessions", "features_json"):
+        op.drop_column("meeting_sessions", "features_json")
