@@ -12,7 +12,7 @@ from precursor.backend.models import Attachment, NoteDraft, NoteDraftAttachment
 NoteContainerKind = Literal["topic", "chat"]
 
 
-def _container_kwargs(kind: NoteContainerKind, container_id: int) -> dict[str, int]:
+def container_kwargs(kind: NoteContainerKind, container_id: int) -> dict[str, int]:
     if kind == "topic":
         return {"topic_id": container_id}
     return {"chat_id": container_id}
@@ -42,7 +42,7 @@ async def get_or_create_note_draft(
     draft = await get_note_draft(session, kind=kind, container_id=container_id)
     if draft is not None:
         return draft
-    draft = NoteDraft(text="", **_container_kwargs(kind, container_id))
+    draft = NoteDraft(text="", **container_kwargs(kind, container_id))
     session.add(draft)
     await session.flush()
     return draft
@@ -94,7 +94,7 @@ async def consume_note_draft_attachments_to_message(
             size=src.size,
             original_filename=src.original_filename,
             sha256=src.sha256,
-            **_container_kwargs(kind, container_id),
+            **container_kwargs(kind, container_id),
         )
         session.add(att)
         bound.append(att)

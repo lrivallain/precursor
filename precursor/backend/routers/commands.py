@@ -24,31 +24,37 @@ from precursor.backend.models import (
     IssueContextCache,
     Message,
     MessageRole,
-    NoteDraft,
     NoteDraftAttachment,
     Topic,
 )
+from precursor.backend.routers.deps import get_topic_or_404
 from precursor.backend.routers.summary import refresh_issue_context
-from precursor.backend.schemas import MessageRead, NoteDraftAttachmentRead
+from precursor.backend.schemas import (
+    MessageRead,
+    NoteDraftAttachmentRead,
+    NotesAppendRequest,
+    NotesAppendResponse,
+    NotesDraftResponse,
+    NotesDraftSaveRequest,
+    NotesRephraseRequest,
+    NotesRephraseResponse,
+)
+from precursor.backend.services import notes as notes_service
 from precursor.backend.services.app_settings import (
     resolve_global_github_repo,
     resolve_issue_associations_enabled,
     resolve_llm_model,
 )
-from precursor.backend.services.blob_store import write_blob
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_topic_changed,
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
-from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.note_drafts import (
     consume_note_draft_attachments_to_message,
-    get_note_draft,
-    get_or_create_note_draft,
     load_note_draft_attachments,
 )
 from precursor.backend.services.usage_stats import record_usage
@@ -658,59 +664,28 @@ async def gh_close_post(
 # ---------------------------------------------------------------------------
 
 
-class NotesRephraseRequest(BaseModel):
-    text: str = Field(min_length=1)
-    instruction: str | None = None
-
-
-class NotesRephraseResponse(BaseModel):
-    text: str
-
-
-class NotesAppendRequest(BaseModel):
-    text: str = ""
-    attachment_ids: list[int] = Field(default_factory=list)
-
-
-class NotesAppendResponse(BaseModel):
-    message: MessageRead
-
-
-class NotesDraftSaveRequest(BaseModel):
-    text: str = ""
-
-
-class NotesDraftResponse(BaseModel):
-    text: str | None
-    updated_at: str | None
-    attachments: list[NoteDraftAttachmentRead] = Field(default_factory=list)
-
-
 @router.post("/notes/rephrase", response_model=NotesRephraseResponse)
 async def notes_rephrase(
     topic_id: int,
     payload: NotesRephraseRequest,
     session: AsyncSession = Depends(get_session),
 ) -> NotesRephraseResponse:
+    """Clean up rough notes via the LLM (no persistence)."""
     topic = await session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-
-    instruction = (payload.instruction or "").strip()
-    system = (
-        "You clean up rough meeting / working notes. Preserve every fact and "
-        "decision verbatim; do not invent content. Reorganise into short, "
-        "scannable bullet points grouped by theme when useful, fix typos and "
-        "obvious shorthand, and keep neutral phrasing. Output ONLY the cleaned "
-        "notes in GitHub-Flavored Markdown — no preamble, no signature."
-    )
-    user_prompt = (
-        f"Topic: {topic.title}\n\n"
-        f"Extra instruction: {instruction or '(none — default cleanup)'}\n\n"
-        f"Raw notes:\n{payload.text}"
+    user_prompt = notes_service.build_rephrase_user_prompt(
+        container_label="Topic",
+        title=topic.title,
+        instruction=(payload.instruction or "").strip(),
+        text=payload.text,
     )
     rebuilt = await _stream_llm(
-        session, system, user_prompt, label="/notes rephrase", topic_id=topic_id
+        session,
+        notes_service.REPHRASE_SYSTEM,
+        user_prompt,
+        label="/notes rephrase",
+        topic_id=topic_id,
     )
     return NotesRephraseResponse(text=rebuilt or payload.text)
 
@@ -721,53 +696,27 @@ async def notes_append(
     payload: NotesAppendRequest,
     session: AsyncSession = Depends(get_session),
 ) -> NotesAppendResponse:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
+    """Persist freeform notes verbatim as a user message in the topic."""
+    if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    trimmed = payload.text.strip()
-    if not trimmed and not payload.attachment_ids:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or attachments are required")
-
-    body = "**Notes**" if not trimmed else f"**Notes**\n\n{trimmed}"
-    async with SessionLocal() as write_session:
-        msg = Message(
-            topic_id=topic_id,
-            role=MessageRole.USER,
-            content=body,
-        )
-        write_session.add(msg)
-        await write_session.flush()
-        await consume_note_draft_attachments_to_message(
-            write_session,
-            kind="topic",
-            container_id=topic_id,
-            message_id=msg.id,
-            attachment_ids=payload.attachment_ids,
-        )
-        await write_session.commit()
-        await write_session.refresh(msg, attribute_names=["attachments"])
-        message_read = MessageRead.model_validate(msg, from_attributes=True)
-    await publish_message_changed(topic_id)
-    return NotesAppendResponse(message=message_read)
+    return await notes_service.append_notes(
+        kind="topic",
+        container_id=topic_id,
+        text=payload.text,
+        attachment_ids=payload.attachment_ids,
+    )
 
 
-@router.get("/notes/draft", response_model=NotesDraftResponse)
+@router.get(
+    "/notes/draft",
+    response_model=NotesDraftResponse,
+    dependencies=[Depends(get_topic_or_404)],
+)
 async def notes_draft_get(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> NotesDraftResponse:
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        return NotesDraftResponse(text=None, updated_at=None, attachments=[])
-    await session.refresh(draft, attribute_names=["attachments"])
-    return NotesDraftResponse(
-        text=draft.text,
-        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
-        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
-    )
+    return await notes_service.get_notes_draft(session, kind="topic", container_id=topic_id)
 
 
 @router.put("/notes/draft", response_model=NotesDraftResponse)
@@ -778,49 +727,35 @@ async def notes_draft_save(
 ) -> NotesDraftResponse:
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        draft = NoteDraft(topic_id=topic_id, text=payload.text)
-        session.add(draft)
-    else:
-        draft.text = payload.text
-    await session.commit()
-    await session.refresh(draft, attribute_names=["attachments"])
-    return NotesDraftResponse(
-        text=draft.text,
-        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
-        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
+    return await notes_service.save_notes_draft(
+        session, kind="topic", container_id=topic_id, text=payload.text
     )
 
 
-@router.delete("/notes/draft", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/notes/draft",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(get_topic_or_404)],
+)
 async def notes_draft_delete(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    result = await session.execute(select(NoteDraft).where(NoteDraft.topic_id == topic_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        return
-    await session.delete(draft)
-    await session.commit()
+    await notes_service.delete_notes_draft(session, kind="topic", container_id=topic_id)
 
 
-@router.get("/notes/attachments", response_model=list[NoteDraftAttachmentRead])
+@router.get(
+    "/notes/attachments",
+    response_model=list[NoteDraftAttachmentRead],
+    dependencies=[Depends(get_topic_or_404)],
+)
 async def notes_attachments_list(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[NoteDraftAttachment]:
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    draft = await get_note_draft(session, kind="topic", container_id=topic_id)
-    if draft is None:
-        return []
-    await session.refresh(draft, attribute_names=["attachments"])
-    return list(draft.attachments)
+    return await notes_service.list_notes_attachments(
+        session, kind="topic", container_id=topic_id
+    )
 
 
 @router.post(
@@ -835,34 +770,21 @@ async def notes_attachments_upload(
 ) -> NoteDraftAttachment:
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    mime, data = await read_validated_attachment(file)
-    draft = await get_or_create_note_draft(session, kind="topic", container_id=topic_id)
-    att = NoteDraftAttachment(
-        note_draft_id=draft.id,
-        mime=mime,
-        size=len(data),
-        original_filename=(file.filename or "")[:255],
-        sha256=write_blob(data),
+    return await notes_service.upload_notes_attachment(
+        session, kind="topic", container_id=topic_id, file=file
     )
-    session.add(att)
-    await session.commit()
-    await session.refresh(att)
-    return att
 
 
-@router.delete("/notes/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/notes/attachments/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(get_topic_or_404)],
+)
 async def notes_attachments_delete(
     topic_id: int,
     attachment_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    draft = await get_note_draft(session, kind="topic", container_id=topic_id)
-    if draft is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
-    att = await session.get(NoteDraftAttachment, attachment_id)
-    if att is None or att.note_draft_id != draft.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
-    await session.delete(att)
-    await session.commit()
+    await notes_service.delete_notes_attachment(
+        session, kind="topic", container_id=topic_id, attachment_id=attachment_id
+    )
