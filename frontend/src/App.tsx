@@ -757,9 +757,14 @@ export default function App() {
   // Each home card reveals a start surface in place; on successful creation the
   // handlers below leave home and route to the freshly-created item.
 
-  // The "New topic" card opens the create wizard (a modal) over the launcher.
-  function openTopicCreateFromHome(): void {
-    setCreateParentId(null);
+  // A topic was created (from the home launcher, the Topics empty state, or the
+  // "+ child" modal): close the modal if open, leave home, and reveal the topic.
+  async function handleTopicCreated(topic: Topic): Promise<void> {
+    setCreateParentId(undefined);
+    setAtHome(false);
+    setSidebarMode("topics");
+    await refreshTree();
+    setActiveTopic(topic);
   }
 
   // The "New chat" card's inline composer: create + stream, then reveal the chat.
@@ -1597,7 +1602,7 @@ export default function App() {
             <HomePage
               liveEnabled={liveEnabled}
               topicSurface={
-                <TopicStartHero onNewTopic={openTopicCreateFromHome} />
+                <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
               }
               chatSurface={<ChatStartHero onStart={startChatFromHome} />}
               liveSurface={
@@ -1658,7 +1663,7 @@ export default function App() {
                 onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
-              <TopicStartHero onNewTopic={() => handleCreate(null)} />
+              <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
             )
           ) : sidebarMode === "chats" ? (
             activeChat ? (
@@ -1868,14 +1873,7 @@ export default function App() {
           initialParentId={createParentId}
           tree={tree}
           onClose={() => setCreateParentId(undefined)}
-          onCreated={async (topic) => {
-            setCreateParentId(undefined);
-            // Creating from the home launcher: leave it and reveal the topic.
-            setAtHome(false);
-            setSidebarMode("topics");
-            await refreshTree();
-            setActiveTopic(topic);
-          }}
+          onCreated={handleTopicCreated}
         />
       )}
     </div>

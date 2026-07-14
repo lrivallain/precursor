@@ -1,17 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquarePlus, MessagesSquare, Plus } from "lucide-react";
+import { MessageSquarePlus, MessagesSquare } from "lucide-react";
 import type { SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
+import { TopicCreateForm } from "./TopicCreateForm";
+import type { Topic, TopicNode } from "../lib/types";
 
 /**
- * Landing surface shown in the Topics pane when nothing is selected. Mirrors the
- * agent tab's "Start an agent task" hero so creating a topic is one click away.
+ * Landing surface shown in the Topics pane (and the home launcher) when no topic
+ * is selected. Renders the topic create form inline — the same form the modal
+ * uses — so creating a topic matches the chat/live/agent start experiences.
  */
-export function TopicStartHero({ onNewTopic }: { onNewTopic: () => void }) {
+export function TopicStartHero({
+  tree,
+  onCreated,
+}: {
+  tree: TopicNode[];
+  onCreated: (topic: Topic) => void;
+}) {
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-3 p-8">
       <div className="flex items-center gap-2">
@@ -20,17 +29,9 @@ export function TopicStartHero({ onNewTopic }: { onNewTopic: () => void }) {
       </div>
       <p className="text-[12px] text-muted">
         Topics are long-lived threads that keep their own history, context, and
-        optional linked issue. Create one to start a focused conversation.
+        optional linked issue. Fill in a title to start a focused conversation.
       </p>
-      <div>
-        <button
-          type="button"
-          onClick={onNewTopic}
-          className="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm text-white"
-        >
-          <Plus size={14} /> New topic
-        </button>
-      </div>
+      <TopicCreateForm tree={tree} onCreated={onCreated} />
     </div>
   );
 }
