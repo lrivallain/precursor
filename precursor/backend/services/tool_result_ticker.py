@@ -9,51 +9,21 @@ sweep is a cheap no-op, so the ticker can keep running regardless.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import logging
-
-from precursor.backend.config import Settings, get_settings
+from precursor.backend.services.background_poll import BackgroundPoll
 from precursor.backend.services.tool_result_retention import prune_expired_tool_results
 
-logger = logging.getLogger(__name__)
 
+class ToolResultTicker(BackgroundPoll):
+    task_name = "tool-result-ticker"
+    label = "Tool-result retention ticker"
+    poll_floor = 60
 
-class ToolResultTicker:
-    def __init__(self, settings: Settings | None = None) -> None:
-        self._settings = settings or get_settings()
-        self._task: asyncio.Task[None] | None = None
-        self._running = False
+    @property
+    def poll_seconds(self) -> int:
+        return self._settings.tool_result_retention_poll_seconds
 
-    async def start(self) -> None:
-        if self._running or not self._settings.scheduler_enabled:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._ticker(), name="tool-result-ticker")
-        logger.info(
-            "Tool-result retention ticker started (poll=%ss).",
-            self._settings.tool_result_retention_poll_seconds,
-        )
-
-    async def stop(self) -> None:
-        self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _ticker(self) -> None:
-        poll = max(60, self._settings.tool_result_retention_poll_seconds)
-        while self._running:
-            try:
-                await prune_expired_tool_results()
-            except Exception:
-                logger.exception("Tool-result retention ticker iteration failed")
-            try:
-                await asyncio.sleep(poll)
-            except asyncio.CancelledError:
-                break
+    async def run_once(self) -> None:
+        await prune_expired_tool_results()
 
 
 _ticker: ToolResultTicker | None = None
