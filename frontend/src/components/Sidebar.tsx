@@ -5,8 +5,8 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  ChevronsRight,
   Clock,
   FolderGit2,
   MessageSquare,
@@ -603,8 +603,10 @@ const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
   { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
 ];
 
-// Responsive mode switcher: shows as many labelled mode buttons as fit, and
-// collapses the rest behind a ">>" popover when the sidebar is too narrow.
+// Horizontal mode switcher: all modes live in a single scrollable row so the
+// active mode is never hidden behind an overflow menu. Left/right chevrons
+// appear only when the row overflows, and the active tab is auto-scrolled into
+// view whenever it changes, keeping the current activity visible.
 function ModeSwitcher({
   mode,
   onModeChange,
@@ -620,115 +622,112 @@ function ModeSwitcher({
     () => MODES.filter((m) => m.mode !== "live" || liveEnabled),
     [liveEnabled],
   );
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState(modes.length);
-  const [overflowOpen, setOverflowOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+
+  // Recompute which arrows are actionable based on the current scroll offset.
+  const updateArrows = useCallback((): void => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setCanLeft(el.scrollLeft > 1);
+    setCanRight(el.scrollLeft < max - 1);
+  }, []);
+
+  // Scroll the active tab fully into view (with a small margin) whenever it is
+  // clipped by either edge. Uses viewport rects so it's correct regardless of
+  // the surrounding arrow buttons, and keeps a gap so the tab never tucks under
+  // an arrow.
+  const scrollActiveIntoView = useCallback((): void => {
+    const el = scrollRef.current;
+    const btn = activeRef.current;
+    if (!el || !btn) return;
+    const PAD = 8;
+    const cRect = el.getBoundingClientRect();
+    const bRect = btn.getBoundingClientRect();
+    let delta = 0;
+    if (bRect.left < cRect.left + PAD) {
+      delta = bRect.left - (cRect.left + PAD);
+    } else if (bRect.right > cRect.right - PAD) {
+      delta = bRect.right - (cRect.right - PAD);
+    }
+    if (delta !== 0) el.scrollBy({ left: delta, behavior: "smooth" });
+  }, []);
 
   useLayoutEffect(() => {
-    const el = rowRef.current;
+    const el = scrollRef.current;
     if (!el) return;
-    const MIN_BTN = 78; // px for a labelled mode button
-    const OVERFLOW_BTN = 36;
-    const compute = (): void => {
-      const w = el.clientWidth;
-      if (w <= 0) return;
-      if (Math.floor(w / MIN_BTN) >= modes.length) {
-        setVisibleCount(modes.length);
-        return;
-      }
-      const fit = Math.max(1, Math.floor((w - OVERFLOW_BTN) / MIN_BTN));
-      setVisibleCount(Math.min(modes.length - 1, fit));
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
+    updateArrows();
+    const ro = new ResizeObserver(() => {
+      updateArrows();
+      scrollActiveIntoView();
+    });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [modes.length]);
+  }, [updateArrows, scrollActiveIntoView, modes.length]);
 
-  // Close the overflow popover on outside click / Escape.
+  // Keep the selected mode fully visible as it changes — and re-run when the
+  // arrows toggle, since their appearance narrows the row and can re-clip the
+  // active tab. Always prefer showing the current activity in its entirety.
   useEffect(() => {
-    if (!overflowOpen) return;
-    const onDown = (e: MouseEvent): void => {
-      if (rowRef.current && !rowRef.current.contains(e.target as Node)) {
-        setOverflowOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setOverflowOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [overflowOpen]);
+    scrollActiveIntoView();
+    updateArrows();
+  }, [mode, modes.length, canLeft, canRight, scrollActiveIntoView, updateArrows]);
 
-  const visible = modes.slice(0, visibleCount);
-  const overflow = modes.slice(visibleCount);
-  const activeHidden = overflow.some((m) => m.mode === mode);
-  const overflowUnread = overflow.reduce((n, m) => n + (unreadByMode?.[m.mode] ?? 0), 0);
+  const scrollBy = useCallback((dir: 1 | -1): void => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(el.clientWidth * 0.6, 96), behavior: "smooth" });
+  }, []);
 
   return (
-    <div ref={rowRef} className="relative flex gap-1 px-2 py-2 border-b border-border">
-      {visible.map((m) => {
-        const unread = unreadByMode?.[m.mode] ?? 0;
-        return (
-          <button
-            key={m.mode}
-            className={`flex flex-1 min-w-0 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-sm ${
-              mode === m.mode ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
-            }`}
-            onClick={() => onModeChange(m.mode)}
-          >
-            {m.icon} <span className="truncate">{m.label}</span>
-            {unread > 0 && mode !== m.mode && <UnreadBadge count={unread} />}
-          </button>
-        );
-      })}
-      {overflow.length > 0 && (
-        <>
-          <button
-            className={`relative flex shrink-0 items-center justify-center rounded px-2 py-1.5 ${
-              activeHidden ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
-            }`}
-            aria-label="More modes"
-            data-tooltip="More modes"
-            aria-haspopup="menu"
-            aria-expanded={overflowOpen}
-            onClick={() => setOverflowOpen((v) => !v)}
-          >
-            <ChevronsRight size={16} />
-            <ModeUnreadDot count={overflowUnread} />
-          </button>
-          {overflowOpen && (
-            <div
-              role="menu"
-              className="absolute right-2 top-full z-40 mt-1 w-40 rounded-md border border-border bg-bg py-1 shadow-lg"
+    <div className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border">
+      {canLeft && (
+        <button
+          type="button"
+          className="flex shrink-0 items-center justify-center rounded px-1 text-muted hover:bg-surface hover:text-text"
+          aria-label="Scroll modes left"
+          data-tooltip="Scroll left"
+          onClick={() => scrollBy(-1)}
+        >
+          <ChevronLeft size={16} />
+        </button>
+      )}
+      <div
+        ref={scrollRef}
+        className="no-scrollbar flex flex-1 gap-1 overflow-x-auto scroll-smooth"
+        onScroll={updateArrows}
+      >
+        {modes.map((m) => {
+          const unread = unreadByMode?.[m.mode] ?? 0;
+          const isActive = mode === m.mode;
+          return (
+            <button
+              key={m.mode}
+              ref={isActive ? activeRef : undefined}
+              className={`flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
+                isActive ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+              }`}
+              onClick={() => onModeChange(m.mode)}
             >
-              {overflow.map((m) => {
-                const unread = unreadByMode?.[m.mode] ?? 0;
-                return (
-                  <button
-                    key={m.mode}
-                    role="menuitem"
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
-                      mode === m.mode ? "text-accent" : "hover:bg-surface"
-                    }`}
-                    onClick={() => {
-                      setOverflowOpen(false);
-                      onModeChange(m.mode);
-                    }}
-                  >
-                    {m.icon}
-                    <span className="flex-1 truncate">{m.label}</span>
-                    {unread > 0 && mode !== m.mode && <UnreadBadge count={unread} />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </>
+              {m.icon} <span className="whitespace-nowrap">{m.label}</span>
+              {unread > 0 && !isActive && <UnreadBadge count={unread} />}
+            </button>
+          );
+        })}
+      </div>
+      {canRight && (
+        <button
+          type="button"
+          className="flex shrink-0 items-center justify-center rounded px-1 text-muted hover:bg-surface hover:text-text"
+          aria-label="Scroll modes right"
+          data-tooltip="Scroll right"
+          onClick={() => scrollBy(1)}
+        >
+          <ChevronRight size={16} />
+        </button>
       )}
     </div>
   );
