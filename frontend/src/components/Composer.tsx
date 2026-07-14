@@ -41,6 +41,8 @@ interface Props {
   placeholder?: string;
   /** Bump to focus the textarea (e.g. after an external prefill). */
   focusToken?: number;
+  /** Focus the textarea once on mount (used by the "start" surfaces). */
+  autoFocus?: boolean;
   /** Disable text entry (e.g. while an agent turn is in flight). The
    *  send/stop button is unaffected so a Stop control stays clickable. */
   disabled?: boolean;
@@ -73,6 +75,7 @@ export function Composer({
   attachments,
   placeholder,
   focusToken,
+  autoFocus = false,
   disabled = false,
   toolbarStart,
 }: Props) {
@@ -96,6 +99,19 @@ export function Composer({
     const end = el.value.length;
     el.setSelectionRange(end, end);
   }, [focusToken]);
+
+  // Focus once on mount for "start" surfaces. preventScroll keeps the home
+  // launcher from jumping to the composer when it mounts below the cards.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+    // Mount-only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const hasPending = (attachments?.pending.length ?? 0) > 0;
   const sendDisabled = disabled || (!value.trim() && !hasPending);

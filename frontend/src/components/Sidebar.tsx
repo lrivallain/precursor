@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   FolderGit2,
+  Home,
   MessageSquare,
   MessagesSquare,
   PanelLeftClose,
@@ -50,6 +51,10 @@ interface Props {
   collapsed: boolean;
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
+  /** Whether the root home launcher is active (no mode selected). */
+  atHome?: boolean;
+  /** Navigate to the root home launcher. */
+  onGoHome?: () => void;
   /** Rendered in the body when mode === "chats" (the chat list). */
   chatSlot?: ReactNode;
   /** Rendered in the body when mode === "live" (the meeting session list). */
@@ -87,6 +92,8 @@ export function Sidebar({
   collapsed,
   mode,
   onModeChange,
+  atHome = false,
+  onGoHome,
   chatSlot,
   liveSlot,
   workspaceSlot,
@@ -142,8 +149,18 @@ export function Sidebar({
           <PanelLeftOpen size={18} />
         </button>
         <div className="my-1 h-px w-6 bg-border" />
+        {onGoHome && (
+          <button
+            className={`relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+            aria-label="Home"
+            data-tooltip="Home"
+            onClick={onGoHome}
+          >
+            <Home size={18} />
+          </button>
+        )}
         <button
-          className={`relative p-2 rounded ${mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${!atHome && mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Topics"
           data-tooltip="Topics"
           onClick={() => onModeChange("topics")}
@@ -152,7 +169,7 @@ export function Sidebar({
           <ModeUnreadDot count={unreadByMode?.topics ?? 0} />
         </button>
         <button
-          className={`relative p-2 rounded ${mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${!atHome && mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Chats"
           data-tooltip="Chats"
           onClick={() => onModeChange("chats")}
@@ -162,7 +179,7 @@ export function Sidebar({
         </button>
         {liveEnabled && (
           <button
-            className={`relative p-2 rounded ${mode === "live" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+            className={`relative p-2 rounded ${!atHome && mode === "live" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
             aria-label="Live"
             data-tooltip="Live"
             onClick={() => onModeChange("live")}
@@ -171,7 +188,7 @@ export function Sidebar({
           </button>
         )}
         <button
-          className={`p-2 rounded ${mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`p-2 rounded ${!atHome && mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Workspaces"
           data-tooltip="Workspaces"
           onClick={() => onModeChange("workspaces")}
@@ -179,7 +196,7 @@ export function Sidebar({
           <FolderGit2 size={18} />
         </button>
         <button
-          className={`relative p-2 rounded ${mode === "agents" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${!atHome && mode === "agents" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Agents"
           data-tooltip="Agents"
           onClick={() => onModeChange("agents")}
@@ -209,15 +226,25 @@ export function Sidebar({
     >
       <ResizeHandle onMouseDown={onResizeStart} />
       <div className="flex items-center gap-2 px-3 h-12 border-b border-border">
-        <img
-          src="/logo.svg"
-          alt=""
-          aria-hidden="true"
-          width={22}
-          height={22}
-          className="rounded-md shrink-0"
-        />
-        <div className="flex-1 font-semibold tracking-tight">Precursor</div>
+        <button
+          type="button"
+          className={`flex flex-1 items-center gap-2 min-w-0 rounded px-1 py-1 text-left ${
+            atHome ? "text-accent" : "hover:bg-surface"
+          }`}
+          aria-label="Home"
+          data-tooltip="Home"
+          onClick={onGoHome}
+        >
+          <img
+            src="/logo.svg"
+            alt=""
+            aria-hidden="true"
+            width={22}
+            height={22}
+            className="rounded-md shrink-0"
+          />
+          <span className="flex-1 truncate font-semibold tracking-tight">Precursor</span>
+        </button>
         <button
           className="p-1.5 rounded hover:bg-surface"
           aria-label={newActionLabel(mode)}
@@ -242,6 +269,7 @@ export function Sidebar({
       <ModeSwitcher
         mode={mode}
         onModeChange={onModeChange}
+        atHome={atHome}
         unreadByMode={unreadByMode}
         liveEnabled={liveEnabled}
       />
@@ -610,11 +638,13 @@ const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
 function ModeSwitcher({
   mode,
   onModeChange,
+  atHome = false,
   unreadByMode,
   liveEnabled = true,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
+  atHome?: boolean;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
 }) {
@@ -702,7 +732,7 @@ function ModeSwitcher({
       >
         {modes.map((m) => {
           const unread = unreadByMode?.[m.mode] ?? 0;
-          const isActive = mode === m.mode;
+          const isActive = !atHome && mode === m.mode;
           return (
             <button
               key={m.mode}

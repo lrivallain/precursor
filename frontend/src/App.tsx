@@ -16,9 +16,9 @@ import { ChatSessionPanel } from "./components/ChatSessionPanel";
 import { ChatSettingsPanel } from "./components/ChatSettingsPanel";
 import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { TopicCreateModal } from "./components/TopicCreateModal";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
 import { ChatStartHero, TopicStartHero } from "./components/StartHero";
+import { HomePage } from "./components/HomePage";
 import { ArchivePanel } from "./components/ArchivePanel";
 import { IssueStatusBadge } from "./components/IssueStatusBadge";
 import { IssueLabelChip, IssueStateBadge } from "./components/IssueTags";
@@ -126,6 +126,11 @@ function parseAppRoute(): AppRoute {
     return { mode: "topics", topicSlug: last, chatSlug: null, liveSlug: null, agentRef: null };
   }
   return { mode: "topics", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
+}
+
+/** The home launcher lives at the root path `/` (no path segments). */
+function isHomePath(): boolean {
+  return window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).length === 0;
 }
 
 /** Ancestor → self slug chain for a topic, using the loaded tree. */
@@ -258,6 +263,8 @@ export default function App() {
   // The active sidebar mode. The URL path owns the mode + selection, so a deep
   // link (or reload onto /topics, /chats, /ws) starts the app in that mode.
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => parseAppRoute().mode);
+  // The root path `/` shows the home launcher instead of any mode's content.
+  const [atHome, setAtHome] = useState<boolean>(() => isHomePath());
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
@@ -296,7 +303,12 @@ export default function App() {
     "settings",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [createParentId, setCreateParentId] = useState<number | null | undefined>(undefined);
+  // The parent topic preselected in the inline "new topic" form (set by the
+  // sidebar "+" and the tree's per-node "+ child"). `null` means top level.
+  const [topicDraftParentId, setTopicDraftParentId] = useState<number | null>(null);
+  // Bumped on every create action so the inline form remounts (and re-focuses
+  // its title) even when the preselected parent is unchanged.
+  const [topicDraftNonce, setTopicDraftNonce] = useState(0);
   const [chatReloadKey, setChatReloadKey] = useState(0);
   // Total unread across chats, lifted from ChatList so the mode switcher can
   // badge the Chats tab even when that list isn't mounted.
@@ -541,6 +553,12 @@ export default function App() {
   // when the active item changes. Equality checks break the feedback loop.
   useEffect(() => {
     const syncFromUrl = (): void => {
+      if (isHomePath()) {
+        setAtHome(true);
+        setWsRoute({ open: false, slug: null, path: null });
+        return;
+      }
+      setAtHome(false);
       const r = parseAppRoute();
       setSidebarMode(r.mode);
       if (r.mode === "workspaces") {
@@ -629,6 +647,7 @@ export default function App() {
   // (e.g. once the tree loads and the ancestor chain is known). Never strips
   // ancestors, so a deep link like /topics/a/b/c survives the initial load.
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "topics" || !activeTopic) return;
     const target = topicUrl(tree, activeTopic);
     if (window.location.pathname === target) return;
@@ -644,27 +663,30 @@ export default function App() {
     } else {
       history.pushState(null, "", target);
     }
-  }, [activeTopic, sidebarMode, tree]);
+  }, [activeTopic, sidebarMode, tree, atHome]);
 
   // activeChat -> /chats/<slug>.
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "chats" || !activeChat) return;
     const target = chatUrl(activeChat);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeChat, sidebarMode]);
+  }, [activeChat, sidebarMode, atHome]);
 
   // activeSession -> /live/<slug> (or /live when nothing is selected).
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "live") return;
     const active = meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
     const target = liveUrl(active);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeSessionId, meetingSessions, sidebarMode]);
+  }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
 
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
   // rewritten from a transient integer fallback once the list resolves.
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "agents") return;
     // Don't clobber a deep-link URL whose agent we haven't resolved yet (the
     // list may still be loading). Overwriting it with "/agents" here would also
@@ -672,7 +694,7 @@ export default function App() {
     if (activeAgentId == null && pendingAgentRef.current) return;
     const target = agentUrl(activeAgentId, agents);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeAgentId, sidebarMode, agents]);
+  }, [activeAgentId, sidebarMode, agents, atHome]);
 
   // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
   // back to its Agents-mode session.
@@ -693,7 +715,10 @@ export default function App() {
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
   function changeMode(next: SidebarMode): void {
-    if (next === sidebarMode) return;
+    // Clicking the active mode's tab while on the home launcher still needs to
+    // leave home, so only short-circuit when we're already showing that mode.
+    if (next === sidebarMode && !atHome) return;
+    setAtHome(false);
     let target = "/topics";
     if (next === "topics") {
       target = activeTopicRef.current
@@ -715,6 +740,83 @@ export default function App() {
     history.pushState(null, "", target);
     setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
+  }
+
+  // Navigate to the root home launcher.
+  function goHome(): void {
+    if (window.location.pathname !== "/") history.pushState(null, "", "/");
+    setWsRoute({ open: false, slug: null, path: null });
+    setAtHome(true);
+  }
+
+  // The sidebar "+" (mode-aware) leaves the home launcher and drops into a
+  // mode's start surface. The home cards themselves stay on `/` and reveal the
+  // start surface inline (see the home*FromHome handlers below).
+  function startNewFromHome(mode: SidebarMode): void {
+    setAtHome(false);
+    setWsRoute({ open: false, slug: null, path: null });
+    if (mode === "topics") {
+      setActiveTopic(null);
+      setTopicDraftParentId(null);
+      setTopicDraftNonce((n) => n + 1);
+      history.pushState(null, "", "/topics");
+      setSidebarMode("topics");
+    } else if (mode === "chats") {
+      setActiveChat(null);
+      history.pushState(null, "", "/chats");
+      setSidebarMode("chats");
+    } else if (mode === "live") {
+      setActiveSessionId(null);
+      history.pushState(null, "", "/live");
+      setSidebarMode("live");
+    } else if (mode === "agents") {
+      setActiveAgentId(null);
+      history.pushState(null, "", "/agents");
+      setSidebarMode("agents");
+    } else {
+      history.pushState(null, "", "/ws");
+      setSidebarMode("workspaces");
+      setWsRoute(parseWsRoute());
+      setCreateWorkspaceOpen(true);
+    }
+  }
+
+  // ---- Home launcher inline surfaces -----------------------------------
+  // Each home card reveals a start surface in place; on successful creation the
+  // handlers below leave home and route to the freshly-created item.
+
+  // A topic was created (from the home launcher or the Topics create form):
+  // leave home, clear the draft parent, and reveal the new topic.
+  async function handleTopicCreated(topic: Topic): Promise<void> {
+    setTopicDraftParentId(null);
+    setAtHome(false);
+    setSidebarMode("topics");
+    await refreshTree();
+    setActiveTopic(topic);
+  }
+
+  // The "New chat" card's inline composer: create + stream, then reveal the chat.
+  async function startChatFromHome(prompt: string): Promise<void> {
+    setAtHome(false);
+    setSidebarMode("chats");
+    await handleStartChat(prompt);
+  }
+
+  // The "New live session" card's inline form: create, then reveal the session.
+  async function createLiveFromHome(session: MeetingSession): Promise<void> {
+    setAtHome(false);
+    setSidebarMode("live");
+    await loadMeetingSessions();
+    setActiveSessionId(session.id);
+    history.pushState(null, "", liveUrl(session));
+  }
+
+  // The "New agent" card's inline start form calls this once the agent exists.
+  function selectAgentFromHome(id: number | null): void {
+    if (id == null) return;
+    setAtHome(false);
+    setSidebarMode("agents");
+    setActiveAgentId(id);
   }
 
   // If the Live section gets disabled while it's open (or a deep link lands on
@@ -1072,6 +1174,12 @@ export default function App() {
   // Chats and agents drop the selection to reveal their "start" landing surface;
   // topics open the create dialog directly.
   function handleNew(): void {
+    // The "+" always lands on a mode's create surface, so leave the home
+    // launcher (routing to the current mode's start surface) if we're on it.
+    if (atHome) {
+      startNewFromHome(sidebarMode);
+      return;
+    }
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
@@ -1232,11 +1340,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentsEnabled]);
 
+  // Reveal the inline "new topic" form in the main pane (the Topics empty
+  // state). Top-level "+ create" passes null; if a topic is selected the new one
+  // nests under it. Per-node "+ child" buttons pass their own id explicitly.
   function handleCreate(parentId: number | null): void {
-    // Top-level "+ create" passes null; in that case, if a topic is currently
-    // selected, nest the new one under it. Per-node "+ child" buttons pass
-    // their own id explicitly and are left alone.
-    setCreateParentId(parentId ?? activeTopic?.id ?? null);
+    const parent = parentId ?? activeTopic?.id ?? null;
+    setAtHome(false);
+    setSidebarMode("topics");
+    setTopicDraftParentId(parent);
+    setTopicDraftNonce((n) => n + 1);
+    setActiveTopic(null);
+    if (window.location.pathname !== "/topics") {
+      history.pushState(null, "", "/topics");
+    }
   }
 
   function openTopicSettings(tab: "settings" | "context" = "settings"): void {
@@ -1264,6 +1380,8 @@ export default function App() {
         collapsed={sidebarCollapsed}
         mode={sidebarMode}
         onModeChange={changeMode}
+        atHome={atHome}
+        onGoHome={goHome}
         chatSlot={
           <ChatList
             activeId={activeChat?.id ?? null}
@@ -1324,7 +1442,9 @@ export default function App() {
         {/* One shared header across every mode: active item title on the left,
             mode-specific actions on the right. */}
         <header className="flex items-center justify-between px-4 h-12 border-b border-border gap-3">
-          {sidebarMode === "topics" ? (
+          {atHome ? (
+            <span className="truncate font-medium min-w-0 flex-1">Home</span>
+          ) : sidebarMode === "topics" ? (
             <>
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {activeTopic ? (
@@ -1517,7 +1637,7 @@ export default function App() {
               )}
             </>
           )}
-          {hasActiveDiscussion && (
+          {!atHome && hasActiveDiscussion && (
             <RoleSelector
               value={activeRoleId}
               onChange={(roleId) => void setRoleForActive(roleId)}
@@ -1530,7 +1650,31 @@ export default function App() {
         <McpAuthBanner />
 
         <div className="flex-1 min-h-0">
-          {sidebarMode === "topics" ? (
+          {atHome ? (
+            <HomePage
+              liveEnabled={liveEnabled}
+              topicSurface={
+                <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
+              }
+              chatSurface={<ChatStartHero onStart={startChatFromHome} />}
+              liveSurface={
+                <LiveStartHero topics={tree} onCreated={createLiveFromHome} />
+              }
+              agentSurface={
+                <AgentView
+                  agents={agents ?? []}
+                  agentId={null}
+                  enabled={agentsEnabled}
+                  available={agentsAvailable}
+                  unavailableReason={agentsUnavailableReason}
+                  onReload={() => void loadAgents()}
+                  onSelect={selectAgentFromHome}
+                  onOpenSettings={() => setGlobalSettingsOpen(true)}
+                  draftTopicId={null}
+                />
+              }
+            />
+          ) : sidebarMode === "topics" ? (
             activeTopic ? (
               <ChatPanel
                 key={`${activeTopic.id}:${chatReloadKey}`}
@@ -1571,7 +1715,12 @@ export default function App() {
                 onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
-              <TopicStartHero onNewTopic={() => handleCreate(null)} />
+              <TopicStartHero
+                key={`topic-create-${topicDraftParentId ?? "root"}-${topicDraftNonce}`}
+                tree={tree}
+                initialParentId={topicDraftParentId}
+                onCreated={handleTopicCreated}
+              />
             )
           ) : sidebarMode === "chats" ? (
             activeChat ? (
@@ -1772,19 +1921,6 @@ export default function App() {
           onCleared={() => {
             setChatReloadKey((k) => k + 1);
             setTopicSettingsOpen(false);
-          }}
-        />
-      )}
-
-      {createParentId !== undefined && (
-        <TopicCreateModal
-          initialParentId={createParentId}
-          tree={tree}
-          onClose={() => setCreateParentId(undefined)}
-          onCreated={async (topic) => {
-            setCreateParentId(undefined);
-            await refreshTree();
-            setActiveTopic(topic);
           }}
         />
       )}
