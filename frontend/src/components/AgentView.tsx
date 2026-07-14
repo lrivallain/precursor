@@ -1226,6 +1226,7 @@ export function AgentView({
           interimText={interimText}
           height={composerHeight}
           onResizeStart={onComposerResize}
+          autoFocus
           placeholder="e.g. Investigate the flaky CI test and propose a fix…"
           toolbarStart={<ComposerModelControls variant="agents" />}
         />

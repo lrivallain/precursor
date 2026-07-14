@@ -16,9 +16,11 @@ import type { Topic, TopicNode } from "../lib/types";
  */
 export function TopicStartHero({
   tree,
+  initialParentId = null,
   onCreated,
 }: {
   tree: TopicNode[];
+  initialParentId?: number | null;
   onCreated: (topic: Topic) => void;
 }) {
   return (
@@ -31,7 +33,11 @@ export function TopicStartHero({
         Topics are long-lived threads that keep their own history, context, and
         optional linked issue. Fill in a title to start a focused conversation.
       </p>
-      <TopicCreateForm tree={tree} onCreated={onCreated} />
+      <TopicCreateForm
+        tree={tree}
+        initialParentId={initialParentId}
+        onCreated={onCreated}
+      />
     </div>
   );
 }
@@ -110,6 +116,7 @@ export function ChatStartHero({
         height={composerHeight}
         onResizeStart={onComposerResize}
         disabled={busy}
+        autoFocus
         placeholder="e.g. Summarize the tradeoffs between REST and GraphQL…"
         toolbarStart={<ComposerModelControls />}
       />

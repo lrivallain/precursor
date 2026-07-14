@@ -305,6 +305,7 @@ export function LiveStartHero({
         <label className="flex flex-col gap-1 text-[12px] text-muted">
           Title <span className="opacity-70">(optional)</span>
           <input
+            autoFocus
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}

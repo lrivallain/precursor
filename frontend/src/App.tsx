@@ -15,7 +15,6 @@ import { ChatSessionPanel } from "./components/ChatSessionPanel";
 import { ChatSettingsPanel } from "./components/ChatSettingsPanel";
 import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { TopicCreateModal } from "./components/TopicCreateModal";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
 import { ChatStartHero, TopicStartHero } from "./components/StartHero";
 import { HomePage } from "./components/HomePage";
@@ -281,7 +280,12 @@ export default function App() {
     "settings",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [createParentId, setCreateParentId] = useState<number | null | undefined>(undefined);
+  // The parent topic preselected in the inline "new topic" form (set by the
+  // sidebar "+" and the tree's per-node "+ child"). `null` means top level.
+  const [topicDraftParentId, setTopicDraftParentId] = useState<number | null>(null);
+  // Bumped on every create action so the inline form remounts (and re-focuses
+  // its title) even when the preselected parent is unchanged.
+  const [topicDraftNonce, setTopicDraftNonce] = useState(0);
   const [chatReloadKey, setChatReloadKey] = useState(0);
   // Total unread across chats, lifted from ChatList so the mode switcher can
   // badge the Chats tab even when that list isn't mounted.
@@ -730,9 +734,10 @@ export default function App() {
     setWsRoute({ open: false, slug: null, path: null });
     if (mode === "topics") {
       setActiveTopic(null);
+      setTopicDraftParentId(null);
+      setTopicDraftNonce((n) => n + 1);
       history.pushState(null, "", "/topics");
       setSidebarMode("topics");
-      setCreateParentId(null);
     } else if (mode === "chats") {
       setActiveChat(null);
       history.pushState(null, "", "/chats");
@@ -757,10 +762,10 @@ export default function App() {
   // Each home card reveals a start surface in place; on successful creation the
   // handlers below leave home and route to the freshly-created item.
 
-  // A topic was created (from the home launcher, the Topics empty state, or the
-  // "+ child" modal): close the modal if open, leave home, and reveal the topic.
+  // A topic was created (from the home launcher or the Topics create form):
+  // leave home, clear the draft parent, and reveal the new topic.
   async function handleTopicCreated(topic: Topic): Promise<void> {
-    setCreateParentId(undefined);
+    setTopicDraftParentId(null);
     setAtHome(false);
     setSidebarMode("topics");
     await refreshTree();
@@ -1312,11 +1317,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentsEnabled]);
 
+  // Reveal the inline "new topic" form in the main pane (the Topics empty
+  // state). Top-level "+ create" passes null; if a topic is selected the new one
+  // nests under it. Per-node "+ child" buttons pass their own id explicitly.
   function handleCreate(parentId: number | null): void {
-    // Top-level "+ create" passes null; in that case, if a topic is currently
-    // selected, nest the new one under it. Per-node "+ child" buttons pass
-    // their own id explicitly and are left alone.
-    setCreateParentId(parentId ?? activeTopic?.id ?? null);
+    const parent = parentId ?? activeTopic?.id ?? null;
+    setAtHome(false);
+    setSidebarMode("topics");
+    setTopicDraftParentId(parent);
+    setTopicDraftNonce((n) => n + 1);
+    setActiveTopic(null);
+    if (window.location.pathname !== "/topics") {
+      history.pushState(null, "", "/topics");
+    }
   }
 
   function openTopicSettings(tab: "settings" | "context" = "settings"): void {
@@ -1663,7 +1676,12 @@ export default function App() {
                 onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
-              <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
+              <TopicStartHero
+                key={`topic-create-${topicDraftParentId ?? "root"}-${topicDraftNonce}`}
+                tree={tree}
+                initialParentId={topicDraftParentId}
+                onCreated={handleTopicCreated}
+              />
             )
           ) : sidebarMode === "chats" ? (
             activeChat ? (
@@ -1865,15 +1883,6 @@ export default function App() {
             setChatReloadKey((k) => k + 1);
             setTopicSettingsOpen(false);
           }}
-        />
-      )}
-
-      {createParentId !== undefined && (
-        <TopicCreateModal
-          initialParentId={createParentId}
-          tree={tree}
-          onClose={() => setCreateParentId(undefined)}
-          onCreated={handleTopicCreated}
         />
       )}
     </div>
