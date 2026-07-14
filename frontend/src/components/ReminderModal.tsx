@@ -128,7 +128,7 @@ export function ReminderModal({
     setSubmitting(true);
     setError(null);
     try {
-      const saved = await api.setReminder(container, containerId, {
+      const saved = await api.reminders.set(container, containerId, {
         remind_at: at.toISOString(),
         note: note.trim() || null,
       });
@@ -145,7 +145,7 @@ export function ReminderModal({
     setSubmitting(true);
     setError(null);
     try {
-      await api.clearReminder(container, containerId);
+      await api.reminders.clear(container, containerId);
       onSaved(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

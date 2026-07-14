@@ -37,7 +37,7 @@ export function ChatList({
 
   async function refresh(): Promise<void> {
     try {
-      const list = await api.listChats();
+      const list = await api.chats.list();
       setChats(list);
       onUnreadChange?.(list.reduce((n, c) => n + (c.unread_count ?? 0), 0));
     } catch {
@@ -60,7 +60,7 @@ export function ChatList({
   const rest = useMemo(() => filtered.filter((c) => !c.pinned), [filtered]);
 
   async function renameChat(id: number, title: string): Promise<void> {
-    await api.updateChat(id, { title });
+    await api.chats.update(id, { title });
     await refresh();
     onChatsChanged?.();
   }

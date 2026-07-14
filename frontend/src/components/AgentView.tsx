@@ -1395,7 +1395,7 @@ export function AgentView({
 
   const loadEvents = useCallback(async (id: number): Promise<void> => {
     try {
-      setEvents(await api.getAgentEvents(id));
+      setEvents(await api.agents.getEvents(id));
     } catch {
       setEvents([]);
     }
@@ -1403,8 +1403,8 @@ export function AgentView({
 
   useEffect(() => {
     if (!enabled) return;
-    void api.listTopics().then(setTopics).catch(() => setTopics([]));
-    void api.getMe().then(setMe).catch(() => setMe(null));
+    void api.topics.list().then(setTopics).catch(() => setTopics([]));
+    void api.me.get().then(setMe).catch(() => setMe(null));
   }, [enabled]);
 
   // The user's GitHub persona (name + avatar) for the user-prompt node, with a
@@ -1516,7 +1516,7 @@ export function AgentView({
     setBusy(true);
     setError(null);
     try {
-      const created = await api.createAgent({
+      const created = await api.agents.create({
         task: message,
         topic_id: newTopicId,
       });
@@ -1553,7 +1553,7 @@ export function AgentView({
     if (explicit === undefined) setFollowUp("");
     setPending({ agentId: selected.id, text: message });
     try {
-      await api.sendToAgent(selected.id, message);
+      await api.agents.send(selected.id, message);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1570,7 +1570,7 @@ export function AgentView({
     setBusy(true);
     setError(null);
     try {
-      await api.cancelAgent(selected.id);
+      await api.agents.cancel(selected.id);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1584,7 +1584,7 @@ export function AgentView({
     setBusy(true);
     setError(null);
     try {
-      await api.resumeAgent(selected.id);
+      await api.agents.resume(selected.id);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1600,7 +1600,7 @@ export function AgentView({
     if (!selected) return;
     setBusy(true);
     try {
-      await api.resolveAgentPermission(selected.id, requestId, decision);
+      await api.agents.resolvePermission(selected.id, requestId, decision);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

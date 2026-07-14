@@ -400,13 +400,13 @@ function AttachmentChip({
     <div className="flex items-center gap-2 pl-1 pr-2 py-1 rounded border border-border bg-surface text-xs max-w-[14rem]">
       {isImage ? (
         <img
-          src={api.attachmentUrl(attachment.id)}
+          src={api.attachments.url(attachment.id)}
           alt=""
           className="w-8 h-8 rounded object-cover border border-border shrink-0"
         />
       ) : (
         <a
-          href={api.attachmentUrl(attachment.id)}
+          href={api.attachments.url(attachment.id)}
           target="_blank"
           rel="noreferrer"
           className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"

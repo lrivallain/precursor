@@ -25,13 +25,13 @@ export function DetachedCommandController({ session, onDone }: Props) {
     setError(null);
     try {
       if (session.kind === "gh-update") {
-        await api.postGhUpdate(id, payload.body);
+        await api.github.postUpdate(id, payload.body);
       } else if (session.kind === "gh-create") {
         const title = (payload.title ?? "").trim();
         if (!title) throw new Error("Title is required.");
-        await api.postGhCreate(id, title, payload.body);
+        await api.github.postCreate(id, title, payload.body);
       } else {
-        await api.postGhClose(id, payload.body, "completed");
+        await api.github.postClose(id, payload.body, "completed");
       }
       onDone();
     } catch (err) {

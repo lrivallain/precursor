@@ -114,7 +114,7 @@ function LlmModelControls() {
   }): Promise<void> {
     setSaving(true);
     try {
-      const updated = await api.updateSettings(patch);
+      const updated = await api.settings.update(patch);
       modelsStore.applySettings(updated);
       settingsStore.set(updated);
     } catch (err) {
@@ -216,8 +216,7 @@ function AgentModelControls() {
 
   useEffect(() => {
     let alive = true;
-    api
-      .listAgentModels()
+    api.agents.listModels()
       .then((m) => {
         if (alive) setModels(m);
       })
@@ -241,7 +240,7 @@ function AgentModelControls() {
   }): Promise<void> {
     setSaving(true);
     try {
-      const updated = await api.updateSettings(patch);
+      const updated = await api.settings.update(patch);
       settingsStore.set(updated);
     } catch (err) {
       console.warn("Failed to update agent settings", err);

@@ -91,7 +91,7 @@ export function useAzureSpeech({ onFinalChunk, onInterim, enabled, lang }: Optio
     setError(null);
     void (async () => {
       try {
-        const { token, endpoint, language } = await api.getSttToken();
+        const { token, endpoint, language } = await api.stt.getToken();
         // Lazy-loaded so the ~450KB SDK only ships when dictation is actually
         // used (and only for users with Azure STT configured).
         const sdk = await import("microsoft-cognitiveservices-speech-sdk");

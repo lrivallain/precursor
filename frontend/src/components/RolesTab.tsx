@@ -28,7 +28,7 @@ export function RolesTab() {
     setBusyId(role.id);
     setError(null);
     try {
-      await api.deleteRole(role.id);
+      await api.roles.remove(role.id);
       await rolesStore.load();
     } catch (err) {
       setError((err as Error).message);
@@ -143,12 +143,12 @@ function RoleEditor({ role, onClose, onSaved }: EditorProps) {
     setError(null);
     try {
       if (role) {
-        await api.updateRole(role.id, {
+        await api.roles.update(role.id, {
           ...(isDefault ? {} : { name: name.trim() }),
           system_prompt: systemPrompt,
         });
       } else {
-        await api.createRole({
+        await api.roles.create({
           name: name.trim(),
           system_prompt: systemPrompt,
         });

@@ -51,12 +51,12 @@ export function SkillsTab() {
       }))
     )
       return;
-    await run(skill.name, () => api.deleteSkill(skill.name));
+    await run(skill.name, () => api.skills.remove(skill.name));
   }
 
   async function handleToggle(skill: Skill): Promise<void> {
     await run(skill.name, () =>
-      api.updateSkill(skill.name, { enabled: !skill.enabled }),
+      api.skills.update(skill.name, { enabled: !skill.enabled }),
     );
   }
 
@@ -68,7 +68,7 @@ export function SkillsTab() {
       }))
     )
       return;
-    await run(skill.name, () => api.migrateSkill(skill.name));
+    await run(skill.name, () => api.skills.migrate(skill.name));
   }
 
   return (
@@ -159,7 +159,7 @@ export function SkillsTab() {
                 </button>
               )}
               <a
-                href={api.skillExportUrl(s.name)}
+                href={api.skills.exportUrl(s.name)}
                 data-tooltip="Export as .SKILL.md"
                 aria-label="Export as .SKILL.md"
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
@@ -222,13 +222,13 @@ function SkillEditor({ skill, onClose, onSaved }: EditorProps) {
     setError(null);
     try {
       if (skill) {
-        await api.updateSkill(skill.name, {
+        await api.skills.update(skill.name, {
           name: name.trim(),
           description: description.trim() || null,
           instructions,
         });
       } else {
-        await api.createSkill({
+        await api.skills.create({
           name: name.trim(),
           description: description.trim() || null,
           instructions,

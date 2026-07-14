@@ -122,7 +122,7 @@ export function LiveStartHero({
     setAgendaLoading(true);
     setAgendaDetail(null);
     try {
-      const res = await api.getAgenda();
+      const res = await api.meetings.getAgenda();
       setEvents(res.events);
       if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
     } catch (e) {
@@ -149,7 +149,7 @@ export function LiveStartHero({
       language: language || null,
     };
     try {
-      const session = await api.createMeetingSession(payload);
+      const session = await api.meetings.createSession(payload);
       await onCreated(session);
       setTitle("");
       setTopicId(null);
@@ -169,14 +169,14 @@ export function LiveStartHero({
     setStartingFrom(key);
     setError(null);
     try {
-      const session = await api.createMeetingSession({
+      const session = await api.meetings.createSession({
         title: event.subject.trim() || null,
         topic_id: topicId,
         language: language || null,
       });
       let linked = session;
       try {
-        linked = await api.linkMeeting(session.id, event);
+        linked = await api.meetings.link(session.id, event);
       } catch {
         /* linking is best-effort; keep the created session either way */
       }

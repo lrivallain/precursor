@@ -55,7 +55,7 @@ class ModelsStore {
     if (this.loading) return this.loading;
     this.loading = (async () => {
       try {
-        const list = await api.listModels();
+        const list = await api.llm.listModels();
         this.models = list;
         this.byId = new Map(list.map((m) => [m.id, m]));
         this.loaded = true;

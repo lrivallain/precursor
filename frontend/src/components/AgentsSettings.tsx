@@ -52,8 +52,7 @@ export function AgentsSettings() {
       setGrants([]);
       return;
     }
-    void api
-      .listAgentPermissions()
+    void api.agents.listPermissions()
       .then(setGrants)
       .catch(() => setGrants([]));
   }, [enabled]);
@@ -65,8 +64,7 @@ export function AgentsSettings() {
       setModels([]);
       return;
     }
-    void api
-      .listAgentModels()
+    void api.agents.listModels()
       .then(setModels)
       .catch(() => setModels([]));
   }, [enabled, available]);
@@ -87,7 +85,7 @@ export function AgentsSettings() {
     setBusy(true);
     setError(null);
     try {
-      await api.resetAgentPermissions();
+      await api.agents.resetPermissions();
       loadGrants();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -106,7 +104,7 @@ export function AgentsSettings() {
     setBusy(true);
     setError(null);
     try {
-      settingsStore.set(await api.updateSettings(update));
+      settingsStore.set(await api.settings.update(update));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

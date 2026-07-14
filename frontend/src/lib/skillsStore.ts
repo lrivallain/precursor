@@ -34,7 +34,7 @@ class SkillsStore {
 
   async load(): Promise<void> {
     try {
-      this.skills = await api.listSkills();
+      this.skills = await api.skills.list();
       this.loaded = true;
       this.notify();
     } catch (err) {

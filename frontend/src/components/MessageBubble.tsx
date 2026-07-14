@@ -289,14 +289,14 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
                 {imageAttachments.map((a) => (
                   <a
                     key={a.id}
-                    href={api.attachmentUrl(a.id)}
+                    href={api.attachments.url(a.id)}
                     target="_blank"
                     rel="noreferrer"
                     title={a.original_filename || `image-${a.id}`}
                     className="block"
                   >
                     <img
-                      src={api.attachmentUrl(a.id)}
+                      src={api.attachments.url(a.id)}
                       alt={a.original_filename || ""}
                       className="max-w-[18rem] max-h-64 rounded border border-border object-contain bg-bg"
                     />
@@ -309,7 +309,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
                 {fileAttachments.map((a) => (
                   <a
                     key={a.id}
-                    href={api.attachmentUrl(a.id)}
+                    href={api.attachments.url(a.id)}
                     target="_blank"
                     rel="noreferrer"
                     title={a.original_filename || `attachment-${a.id}`}

@@ -143,7 +143,7 @@ export function WorkspaceView({
   });
 
   const refreshFiles = useCallback(async () => {
-    setFiles(await api.listWorkspaceFiles(area.id));
+    setFiles(await api.workspaces.listFiles(area.id));
   }, [area.id]);
 
   const refreshStatus = useCallback(async () => {
@@ -152,7 +152,7 @@ export function WorkspaceView({
       return;
     }
     try {
-      setStatus(await api.workspaceGitStatus(area.id));
+      setStatus(await api.workspaces.gitStatus(area.id));
     } catch {
       setStatus(null);
     }
@@ -187,7 +187,7 @@ export function WorkspaceView({
     setLoadingFile(true);
     setError(null);
     try {
-      const f = await api.readWorkspaceFile(area.id, path);
+      const f = await api.workspaces.readFile(area.id, path);
       setActivePath(path);
       onPathChange(path);
       setContent(f.content);
@@ -205,7 +205,7 @@ export function WorkspaceView({
     setSaving(true);
     setError(null);
     try {
-      await api.writeWorkspaceFile(area.id, activePath, content);
+      await api.workspaces.writeFile(area.id, activePath, content);
       setSavedContent(content);
       await refreshStatus();
     } catch (e) {
@@ -219,7 +219,7 @@ export function WorkspaceView({
     if (!newPath || newPath === oldPath) return;
     setError(null);
     try {
-      await api.renameWorkspaceEntry(area.id, oldPath, newPath);
+      await api.workspaces.renameEntry(area.id, oldPath, newPath);
       await refreshFiles();
       await refreshStatus();
       // Keep the editor pointed at the moved/renamed file (or a file inside a
@@ -264,11 +264,11 @@ export function WorkspaceView({
     setError(null);
     try {
       if (pendingCreate.kind === "file") {
-        await api.createWorkspaceFile(area.id, full, "");
+        await api.workspaces.createFile(area.id, full, "");
         await refreshFiles();
         await openFile(full);
       } else {
-        await api.createWorkspaceFolder(area.id, full);
+        await api.workspaces.createFolder(area.id, full);
         await refreshFiles();
       }
       setPendingCreate(null);
@@ -281,7 +281,7 @@ export function WorkspaceView({
   async function copyFilePath(path: string): Promise<void> {
     setError(null);
     try {
-      const { path: root } = await api.workspaceLocalPath(area.id);
+      const { path: root } = await api.workspaces.localPath(area.id);
       const full = `${root.replace(/\/+$/, "")}/${path}`;
       await navigator.clipboard.writeText(full);
       setCopiedPath(true);
@@ -302,7 +302,7 @@ export function WorkspaceView({
       return;
     setError(null);
     try {
-      await api.deleteWorkspaceFile(area.id, path);
+      await api.workspaces.deleteFile(area.id, path);
       if (activePath === path) {
         setActivePath(null);
         onPathChange(null);
@@ -330,7 +330,7 @@ export function WorkspaceView({
             // Reload the open file in case it changed during a pull.
             if (activePath) {
               try {
-                const f = await api.readWorkspaceFile(area.id, activePath);
+                const f = await api.workspaces.readFile(area.id, activePath);
                 setContent(f.content);
                 setSavedContent(f.content);
               } catch {
@@ -543,7 +543,7 @@ function LocalWorkspaceBar({
   async function copyLocalPath(): Promise<void> {
     onError(null);
     try {
-      const { path } = await api.workspaceLocalPath(area.id);
+      const { path } = await api.workspaces.localPath(area.id);
       await navigator.clipboard.writeText(path);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
@@ -562,7 +562,7 @@ function LocalWorkspaceBar({
     )
       return;
     try {
-      await api.deleteWorkspace(area.id);
+      await api.workspaces.remove(area.id);
       onDeleted();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -634,7 +634,7 @@ function GitBar({
   async function copyLocalPath(): Promise<void> {
     onError(null);
     try {
-      const { path } = await api.workspaceLocalPath(area.id);
+      const { path } = await api.workspaces.localPath(area.id);
       await navigator.clipboard.writeText(path);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
@@ -648,7 +648,7 @@ function GitBar({
     onError(null);
     setConflict(null);
     try {
-      const res = await api.workspaceGitPull(area.id);
+      const res = await api.workspaces.gitPull(area.id);
       if (!res.ok && res.needs_manual_merge) {
         setConflict({ detail: res.detail, path: res.local_path ?? "" });
       }
@@ -666,7 +666,7 @@ function GitBar({
   ): Promise<GitActionResult> {
     onError(null);
     setConflict(null);
-    const res = await api.workspaceGitCommitPush(area.id, message, paths);
+    const res = await api.workspaces.gitCommitPush(area.id, message, paths);
     if (!res.ok) {
       if (res.needs_manual_merge) {
         setConflict({ detail: res.detail, path: res.local_path ?? "" });
@@ -681,7 +681,7 @@ function GitBar({
   async function discardPath(path: string): Promise<void> {
     onError(null);
     try {
-      await api.workspaceGitDiscard(area.id, path);
+      await api.workspaces.gitDiscard(area.id, path);
       await onAfterSync();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -699,7 +699,7 @@ function GitBar({
     )
       return;
     try {
-      await api.deleteWorkspace(area.id);
+      await api.workspaces.remove(area.id);
       onDeleted();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -850,7 +850,7 @@ function ChangesModal({
       setActive(path);
       setLoadingDiff(true);
       try {
-        setDiff(await api.workspaceGitDiff(area.id, path));
+        setDiff(await api.workspaces.gitDiff(area.id, path));
       } catch {
         setDiff({ path, diff: "(failed to load diff)", binary: false });
       } finally {
@@ -1886,7 +1886,7 @@ export function CreateWorkspaceModal({
     setBusy(true);
     setError(null);
     try {
-      const workspace = await api.createWorkspace(
+      const workspace = await api.workspaces.create(
         isGit
           ? {
               name: name.trim(),

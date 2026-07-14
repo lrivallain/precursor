@@ -32,7 +32,7 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
   useEffect(() => {
     void (async () => {
       try {
-        const s = await api.getSettings();
+        const s = await api.settings.get();
         setDefaultRepo(s.github_repo);
       } catch {
         /* settings optional */
@@ -46,7 +46,7 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
     setSubmitting(true);
     setError(null);
     try {
-      const created = await api.createTopic({
+      const created = await api.topics.create({
         title: trimmed,
         description: description.trim() || null,
         parent_id: parentId === "" ? null : parentId,

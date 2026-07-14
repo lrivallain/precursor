@@ -146,7 +146,7 @@ export function useConversationTranscriber({
     setError(null);
     void (async () => {
       try {
-        const { token, endpoint, language } = await api.getSttToken();
+        const { token, endpoint, language } = await api.stt.getToken();
         // Lazy-loaded so the ~450KB SDK only ships when capture is used.
         const sdk = await import("microsoft-cognitiveservices-speech-sdk");
         const speechConfig = sdk.SpeechConfig.fromEndpoint(new URL(endpoint));

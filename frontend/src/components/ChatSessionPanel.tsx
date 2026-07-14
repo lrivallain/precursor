@@ -96,7 +96,7 @@ export function ChatSessionPanel({
 }: ChatSessionPanelProps) {
   const confirmAction = useConfirm();
   const fetchPage = useCallback(
-    (opts: { limit: number; beforeId?: number }) => api.listChatMessages(chat.id, opts),
+    (opts: { limit: number; beforeId?: number }) => api.chats.listMessages(chat.id, opts),
     [chat.id],
   );
   const win = useWindowedMessages({ fetchPage });
@@ -164,13 +164,13 @@ export function ChatSessionPanel({
 
   const notesApi = useMemo(
     () => ({
-      getDraft: () => api.getChatNotesDraft(chat.id),
-      saveDraft: (text: string) => api.saveChatNotesDraft(chat.id, text),
-      clearDraft: () => api.clearChatNotesDraft(chat.id),
-      append: (text: string, ids: number[]) => api.appendChatNotes(chat.id, text, ids),
-      rephrase: (text: string) => api.rephraseChatNotes(chat.id, text),
-      uploadAttachment: (file: File) => api.uploadChatNoteAttachment(chat.id, file),
-      deleteAttachment: (attId: number) => api.deleteChatNoteAttachment(chat.id, attId),
+      getDraft: () => api.chats.getNotesDraft(chat.id),
+      saveDraft: (text: string) => api.chats.saveNotesDraft(chat.id, text),
+      clearDraft: () => api.chats.clearNotesDraft(chat.id),
+      append: (text: string, ids: number[]) => api.chats.appendNotes(chat.id, text, ids),
+      rephrase: (text: string) => api.chats.rephraseNotes(chat.id, text),
+      uploadAttachment: (file: File) => api.chats.uploadNoteAttachment(chat.id, file),
+      deleteAttachment: (attId: number) => api.chats.deleteNoteAttachment(chat.id, attId),
     }),
     [chat.id],
   );
@@ -318,7 +318,7 @@ export function ChatSessionPanel({
       pendingDeletesRef.current = [];
       for (const p of queued) {
         window.clearTimeout(p.timer);
-        void api.deleteChatMessage(cid, p.message.id).catch(() => {});
+        void api.chats.deleteMessage(cid, p.message.id).catch(() => {});
       }
     };
   }, [chat.id]);
@@ -337,7 +337,7 @@ export function ChatSessionPanel({
       setPendingAttachments([]);
       setAttachmentError(null);
       for (const a of orphans) {
-        void api.deleteAttachment(a.id).catch(() => {});
+        void api.attachments.remove(a.id).catch(() => {});
       }
     };
   }, [chat.id]);
@@ -353,7 +353,7 @@ export function ChatSessionPanel({
     try {
       for (const file of supported) {
         try {
-          const att = await api.uploadChatAttachment(chat.id, file);
+          const att = await api.attachments.uploadForChat(chat.id, file);
           setPendingAttachments((prev) => [...prev, att]);
         } catch (err) {
           setAttachmentError((err as Error).message || "Upload failed");
@@ -367,7 +367,7 @@ export function ChatSessionPanel({
   async function removeAttachment(id: number): Promise<void> {
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
     try {
-      await api.deleteAttachment(id);
+      await api.attachments.remove(id);
     } catch {
       // Already gone server-side, or bound to a sent message — nothing to do.
     }
@@ -409,7 +409,7 @@ export function ChatSessionPanel({
   function commitDelete(messageId: number): void {
     setPendingDeletes((prev) => prev.filter((p) => p.message.id !== messageId));
     setPersisted((prev) => prev.filter((m) => m.id !== messageId));
-    void api.deleteChatMessage(chat.id, messageId).catch(() => {});
+    void api.chats.deleteMessage(chat.id, messageId).catch(() => {});
   }
   function requestDeleteMessage(message: Message): void {
     if (pendingDeletesRef.current.some((p) => p.message.id === message.id)) return;
@@ -433,7 +433,7 @@ export function ChatSessionPanel({
       const title = argument.trim();
       if (!title) return systemNote("Usage: `/rename <new title>`");
       try {
-        await api.updateChat(chat.id, { title });
+        await api.chats.update(chat.id, { title });
         onChatUpdated();
       } catch (err) {
         systemNote(`Rename failed: ${(err as Error).message}`);
@@ -444,7 +444,7 @@ export function ChatSessionPanel({
       const pinned = name === "pin";
       if (chat.pinned === pinned) return systemNote(pinned ? "Already pinned." : "Not pinned.");
       try {
-        await api.updateChat(chat.id, { pinned });
+        await api.chats.update(chat.id, { pinned });
         onChatUpdated();
       } catch (err) {
         systemNote(`${pinned ? "Pin" : "Unpin"} failed: ${(err as Error).message}`);
@@ -461,7 +461,7 @@ export function ChatSessionPanel({
       )
         return;
       try {
-        await api.clearChatMessages(chat.id);
+        await api.chats.clearMessages(chat.id);
         setPersisted([]);
         streamStore.clear(streamKey);
         onChatUpdated();
@@ -472,7 +472,7 @@ export function ChatSessionPanel({
     }
     if (name === "archive") {
       try {
-        await api.archiveChat(chat.id);
+        await api.chats.archive(chat.id);
         onArchived();
       } catch (err) {
         systemNote(`Archive failed: ${(err as Error).message}`);
@@ -528,7 +528,7 @@ export function ChatSessionPanel({
     const parsed = parseMemoryStoreArg(argument);
     if (!parsed) return systemNote("Usage: `/memory-store [kind] <content>`");
     try {
-      const mem = await api.createMemory(parsed);
+      const mem = await api.memories.create(parsed);
       systemNote(`Saved memory #${mem.id} [${mem.kind}]. Manage in Settings → Memory.`);
     } catch (err) {
       systemNote(`Couldn't save memory: ${(err as Error).message}`);
@@ -537,7 +537,7 @@ export function ChatSessionPanel({
 
   async function runMemoryList(): Promise<void> {
     try {
-      const memories = await api.listMemories();
+      const memories = await api.memories.list();
       systemNote(formatMemoryList(memories));
     } catch (err) {
       systemNote(`Couldn't list memories: ${(err as Error).message}`);
@@ -549,7 +549,7 @@ export function ChatSessionPanel({
     if (!parsed) return systemNote("Usage: `/memory-update <id> [kind] <content>`");
     const { id, ...patch } = parsed;
     try {
-      const mem = await api.updateMemory(id, patch);
+      const mem = await api.memories.update(id, patch);
       systemNote(`Updated memory #${mem.id} [${mem.kind}].`);
     } catch (err) {
       systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
@@ -607,7 +607,7 @@ export function ChatSessionPanel({
     void (async () => {
       try {
         if (partial) {
-          await api.saveStoppedChatMessage(chat.id, `${partial}\n\n_(stopped)_`);
+          await api.chats.saveStoppedMessage(chat.id, `${partial}\n\n_(stopped)_`);
         }
       } catch {
         // best-effort

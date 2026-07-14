@@ -87,7 +87,7 @@ export function TopicSettingsPanel({
     if (topic.schedule === null) return;
     void (async () => {
       try {
-        const s = await api.getTopicSchedule(topic.id);
+        const s = await api.topics.getSchedule(topic.id);
         setSchedule(s);
         setPrompt(s.prompt);
         setRecurrence(recurrenceFromSchedule(s));
@@ -110,7 +110,7 @@ export function TopicSettingsPanel({
   useEffect(() => {
     void (async () => {
       try {
-        const s = await api.getSettings();
+        const s = await api.settings.get();
         setDefaultRepo(s.github_repo);
       } catch {
         /* settings optional */
@@ -133,7 +133,7 @@ export function TopicSettingsPanel({
       await persistSchedule();
       // Update the topic last so the returned row carries the fresh schedule
       // summary (selectin-loaded), keeping the sidebar badge in sync.
-      const updated = await api.updateTopic(topic.id, {
+      const updated = await api.topics.update(topic.id, {
         title: trimmed,
         slug: slug.trim() && slug.trim() !== topic.slug ? slug.trim() : undefined,
         description: description.trim() ? description.trim() : null,
@@ -161,12 +161,12 @@ export function TopicSettingsPanel({
         enabled: true,
       };
       if (hasSchedule) {
-        await api.updateTopicSchedule(topic.id, payload);
+        await api.topics.updateSchedule(topic.id, payload);
       } else {
-        await api.createTopicSchedule(topic.id, payload);
+        await api.topics.createSchedule(topic.id, payload);
       }
     } else if (hasSchedule) {
-      await api.updateTopicSchedule(topic.id, { enabled: false });
+      await api.topics.updateSchedule(topic.id, { enabled: false });
     }
   }
 
@@ -175,7 +175,7 @@ export function TopicSettingsPanel({
     setRunningNow(true);
     setError(null);
     try {
-      setSchedule(await api.runTopicScheduleNow(topic.id));
+      setSchedule(await api.topics.runScheduleNow(topic.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -195,7 +195,7 @@ export function TopicSettingsPanel({
     setDeleting(true);
     setError(null);
     try {
-      await api.deleteTopic(topic.id);
+      await api.topics.remove(topic.id);
       onDeleted();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -215,7 +215,7 @@ export function TopicSettingsPanel({
     setClearing(true);
     setError(null);
     try {
-      await api.clearMessages(topic.id);
+      await api.messages.clear(topic.id);
       onCleared?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -229,7 +229,7 @@ export function TopicSettingsPanel({
     setArchiving(true);
     setError(null);
     try {
-      await api.archiveTopic(topic.id);
+      await api.topics.archive(topic.id);
       onDeleted();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

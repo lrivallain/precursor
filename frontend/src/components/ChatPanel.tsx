@@ -154,7 +154,7 @@ function parseToolMeta(raw: string | null): ParsedToolMeta | null {
 export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, onOpenRoleSelector }: ChatPanelProps) {
   const confirmAction = useConfirm();
   const fetchPage = useCallback(
-    (opts: { limit: number; beforeId?: number }) => api.listMessages(topic.id, opts),
+    (opts: { limit: number; beforeId?: number }) => api.messages.list(topic.id, opts),
     [topic.id],
   );
   const win = useWindowedMessages({ fetchPage });
@@ -237,13 +237,13 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   const notesApi = useMemo(
     () => ({
-      getDraft: () => api.getNotesDraft(topic.id),
-      saveDraft: (text: string) => api.saveNotesDraft(topic.id, text),
-      clearDraft: () => api.clearNotesDraft(topic.id),
-      append: (text: string, ids: number[]) => api.appendNotes(topic.id, text, ids),
-      rephrase: (text: string) => api.rephraseNotes(topic.id, text),
-      uploadAttachment: (file: File) => api.uploadNoteAttachment(topic.id, file),
-      deleteAttachment: (attId: number) => api.deleteNoteAttachment(topic.id, attId),
+      getDraft: () => api.notes.getDraft(topic.id),
+      saveDraft: (text: string) => api.notes.saveDraft(topic.id, text),
+      clearDraft: () => api.notes.clearDraft(topic.id),
+      append: (text: string, ids: number[]) => api.notes.append(topic.id, text, ids),
+      rephrase: (text: string) => api.notes.rephrase(topic.id, text),
+      uploadAttachment: (file: File) => api.notes.uploadAttachment(topic.id, file),
+      deleteAttachment: (attId: number) => api.notes.deleteAttachment(topic.id, attId),
     }),
     [topic.id],
   );
@@ -273,7 +273,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     startAppendAndAsk: (body, attachmentIds) =>
       void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
     onPostComment: async (text, attachmentIds) => {
-      const res = await api.postGhUpdate(topic.id, text, attachmentIds);
+      const res = await api.github.postUpdate(topic.id, text, attachmentIds);
       return [
         ...(res.local_note_message ? [res.local_note_message] : []),
         res.message,
@@ -369,7 +369,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       setPendingAttachments([]);
       setAttachmentError(null);
       for (const a of orphans) {
-        void api.deleteAttachment(a.id).catch(() => {});
+        void api.attachments.remove(a.id).catch(() => {});
       }
     };
   }, [topic.id]);
@@ -388,7 +388,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       pendingDeletesRef.current = [];
       for (const p of queued) {
         window.clearTimeout(p.timer);
-        void api.deleteMessage(tid, p.message.id).catch(() => {});
+        void api.messages.remove(tid, p.message.id).catch(() => {});
       }
     };
   }, [topic.id]);
@@ -396,7 +396,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   function commitDelete(messageId: number): void {
     setPendingDeletes((prev) => prev.filter((p) => p.message.id !== messageId));
     setPersisted((prev) => prev.filter((m) => m.id !== messageId));
-    void api.deleteMessage(topic.id, messageId).catch(() => {});
+    void api.messages.remove(topic.id, messageId).catch(() => {});
   }
 
   function requestDeleteMessage(message: Message): void {
@@ -426,7 +426,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     try {
       for (const file of supported) {
         try {
-          const att = await api.uploadAttachment(topic.id, file);
+          const att = await api.attachments.uploadForTopic(topic.id, file);
           setPendingAttachments((prev) => [...prev, att]);
         } catch (err) {
           setAttachmentError(
@@ -442,7 +442,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   async function removeAttachment(id: number): Promise<void> {
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
     try {
-      await api.deleteAttachment(id);
+      await api.attachments.remove(id);
     } catch {
       // Already gone server-side, or bound to a sent message — nothing to do.
     }
@@ -556,7 +556,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     void (async () => {
       try {
         if (partial) {
-          await api.saveStoppedMessage(topic.id, `${partial}\n\n_(stopped)_`);
+          await api.messages.saveStopped(topic.id, `${partial}\n\n_(stopped)_`);
         }
       } catch {
         // best-effort — keep going to refresh whatever did persist
@@ -670,7 +670,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     const parsed = parseMemoryStoreArg(argument);
     if (!parsed) return systemNote("Usage: `/memory-store [kind] <content>`");
     try {
-      const mem = await api.createMemory(parsed);
+      const mem = await api.memories.create(parsed);
       systemNote(`Saved memory #${mem.id} [${mem.kind}]. Manage in Settings → Memory.`);
     } catch (err) {
       systemNote(`Couldn't save memory: ${(err as Error).message}`);
@@ -679,7 +679,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   async function runMemoryList(): Promise<void> {
     try {
-      const memories = await api.listMemories();
+      const memories = await api.memories.list();
       systemNote(formatMemoryList(memories));
     } catch (err) {
       systemNote(`Couldn't list memories: ${(err as Error).message}`);
@@ -691,7 +691,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     if (!parsed) return systemNote("Usage: `/memory-update <id> [kind] <content>`");
     const { id, ...patch } = parsed;
     try {
-      const mem = await api.updateMemory(id, patch);
+      const mem = await api.memories.update(id, patch);
       systemNote(`Updated memory #${mem.id} [${mem.kind}].`);
     } catch (err) {
       systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
@@ -747,13 +747,13 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       const prompt = m[2].trim();
       let existing: AgentSession | null = null;
       try {
-        existing = await api.getAgent(ref);
+        existing = await api.agents.get(ref);
       } catch {
         existing = null;
       }
       if (existing) {
         try {
-          if (prompt) await api.sendToAgent(existing.id, prompt);
+          if (prompt) await api.agents.send(existing.id, prompt);
         } catch (err) {
           systemNote(`Couldn't message "${existing.title}": ${(err as Error).message}`);
           return;
@@ -775,7 +775,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     try {
-      const created = await api.createAgent({ task: arg, topic_id: topic.id });
+      const created = await api.agents.create({ task: arg, topic_id: topic.id });
       systemNote(`Started agent "${created.title}".`);
       openAgent(created.id);
     } catch (err) {
@@ -790,7 +790,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     try {
-      await api.updateTopic(topic.id, { title });
+      await api.topics.update(topic.id, { title });
       onTopicUpdated();
     } catch (err) {
       systemNote(`Rename failed: ${(err as Error).message}`);
@@ -804,7 +804,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     try {
-      const created = await api.createTopic({ title, parent_id: topic.id });
+      const created = await api.topics.create({ title, parent_id: topic.id });
       onNavigateTopic?.(created);
     } catch (err) {
       systemNote(`Create failed: ${(err as Error).message}`);
@@ -817,7 +817,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     try {
-      await api.updateTopic(topic.id, { pinned });
+      await api.topics.update(topic.id, { pinned });
       onTopicUpdated();
     } catch (err) {
       systemNote(`${pinned ? "Pin" : "Unpin"} failed: ${(err as Error).message}`);
@@ -834,7 +834,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     )
       return;
     try {
-      await api.clearMessages(topic.id);
+      await api.messages.clear(topic.id);
       setPersisted([]);
       onTopicUpdated();
     } catch (err) {
@@ -844,7 +844,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   async function runArchive(): Promise<void> {
     try {
-      await api.archiveTopic(topic.id);
+      await api.topics.archive(topic.id);
       onArchived?.();
     } catch (err) {
       systemNote(`Archive failed: ${(err as Error).message}`);
@@ -867,7 +867,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       },
     ]);
     try {
-      const res = await api.syncGh(topic.id);
+      const res = await api.github.sync(topic.id);
       setPersisted((prev) =>
         prev.filter((m) => m.id !== placeholderId).concat(res.message),
       );
@@ -898,7 +898,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
     try {
       if (kind === "gh-update") {
-        const res = await api.draftGhUpdate(topic.id, argument || undefined);
+        const res = await api.github.draftUpdate(topic.id, argument || undefined);
         setPendingCommand((prev) =>
           prev?.kind === kind
             ? {
@@ -911,7 +911,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             : prev,
         );
       } else if (kind === "gh-create") {
-        const res = await api.draftGhCreate(topic.id, argument || undefined);
+        const res = await api.github.draftCreate(topic.id, argument || undefined);
         setPendingCommand((prev) =>
           prev?.kind === kind
             ? {
@@ -924,7 +924,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             : prev,
         );
       } else if (kind === "gh-close") {
-        const res = await api.draftGhClose(topic.id, argument || undefined);
+        const res = await api.github.draftClose(topic.id, argument || undefined);
         setPendingCommand((prev) =>
           prev?.kind === kind
             ? {
@@ -955,16 +955,16 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     try {
       let message: Message;
       if (kind === "gh-update") {
-        const res = await api.postGhUpdate(topic.id, payload.body);
+        const res = await api.github.postUpdate(topic.id, payload.body);
         message = res.message;
       } else if (kind === "gh-create") {
         const title = (payload.title ?? "").trim();
         if (!title) throw new Error("Title is required.");
-        const res = await api.postGhCreate(topic.id, title, payload.body);
+        const res = await api.github.postCreate(topic.id, title, payload.body);
         message = res.message;
       } else {
         // gh-close
-        const res = await api.postGhClose(topic.id, payload.body, "completed");
+        const res = await api.github.postClose(topic.id, payload.body, "completed");
         message = res.message;
       }
       setPersisted((prev) => [...prev, message]);

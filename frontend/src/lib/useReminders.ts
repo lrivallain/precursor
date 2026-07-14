@@ -50,7 +50,7 @@ export function useReminders({
   const refreshReminder = useMemo(
     () => async () => {
       try {
-        setReminder(await api.getReminder(container, id));
+        setReminder(await api.reminders.get(container, id));
       } catch {
         setReminder(null); // 404 => no reminder
       }
@@ -78,7 +78,7 @@ export function useReminders({
     }
     setReminderBusy(true);
     try {
-      await api.clearReminder(container, id);
+      await api.reminders.clear(container, id);
       setReminder(null);
       await reload();
       onRemindersChanged?.();
