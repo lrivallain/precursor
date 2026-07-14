@@ -636,21 +636,45 @@ function ModeSwitcher({
     setCanRight(el.scrollLeft < max - 1);
   }, []);
 
+  // Scroll the active tab fully into view (with a small margin) whenever it is
+  // clipped by either edge. Uses viewport rects so it's correct regardless of
+  // the surrounding arrow buttons, and keeps a gap so the tab never tucks under
+  // an arrow.
+  const scrollActiveIntoView = useCallback((): void => {
+    const el = scrollRef.current;
+    const btn = activeRef.current;
+    if (!el || !btn) return;
+    const PAD = 8;
+    const cRect = el.getBoundingClientRect();
+    const bRect = btn.getBoundingClientRect();
+    let delta = 0;
+    if (bRect.left < cRect.left + PAD) {
+      delta = bRect.left - (cRect.left + PAD);
+    } else if (bRect.right > cRect.right - PAD) {
+      delta = bRect.right - (cRect.right - PAD);
+    }
+    if (delta !== 0) el.scrollBy({ left: delta, behavior: "smooth" });
+  }, []);
+
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     updateArrows();
-    const ro = new ResizeObserver(updateArrows);
+    const ro = new ResizeObserver(() => {
+      updateArrows();
+      scrollActiveIntoView();
+    });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [updateArrows, modes.length]);
+  }, [updateArrows, scrollActiveIntoView, modes.length]);
 
-  // Keep the selected mode visible as it changes so the current activity is
-  // always on screen even when the row is scrolled elsewhere.
+  // Keep the selected mode fully visible as it changes — and re-run when the
+  // arrows toggle, since their appearance narrows the row and can re-clip the
+  // active tab. Always prefer showing the current activity in its entirety.
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    scrollActiveIntoView();
     updateArrows();
-  }, [mode, modes.length, updateArrows]);
+  }, [mode, modes.length, canLeft, canRight, scrollActiveIntoView, updateArrows]);
 
   const scrollBy = useCallback((dir: 1 | -1): void => {
     const el = scrollRef.current;
