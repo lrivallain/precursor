@@ -7,6 +7,8 @@ factory defaults used until the user picks something in the UI.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,20 +76,93 @@ async def _get_db_value(session: AsyncSession, key: str) -> Any | None:
         return None
 
 
+# -- Declarative setting resolution ----------------------------------------
+#
+# Most ``resolve_*`` helpers share the same get→validate→default shape. A
+# ``SettingSpec`` captures the DB key, a validator that returns the accepted
+# value (or ``None`` to fall back), and a default (a constant or a factory for
+# env-derived defaults). ``resolve`` wires them together so each public helper
+# stays a thin, named wrapper.
+
+
+@dataclass(frozen=True)
+class SettingSpec[T]:
+    key: str
+    validate: Callable[[Any], T | None]
+    default: T | None = None
+    default_factory: Callable[[], T] | None = None
+
+
+async def resolve[T](session: AsyncSession, spec: SettingSpec[T]) -> T:
+    """Resolve one setting: validated DB override, else the spec's default."""
+    validated = spec.validate(await _get_db_value(session, spec.key))
+    if validated is not None:
+        return validated
+    if spec.default_factory is not None:
+        return spec.default_factory()
+    # ``default`` is the declared fallback; specs always provide one of the two.
+    return spec.default  # type: ignore[return-value]
+
+
+def _nonempty_str(*, strip: bool = True) -> Callable[[Any], str | None]:
+    """Accept a non-blank string, returning it stripped (or raw when ``strip``)."""
+
+    def validate(raw: Any) -> str | None:
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip() if strip else raw
+        return None
+
+    return validate
+
+
+def _any_str(raw: Any) -> str | None:
+    """Accept any string, including empty."""
+    return raw if isinstance(raw, str) else None
+
+
+def _str_in(choices: tuple[str, ...]) -> Callable[[Any], str | None]:
+    def validate(raw: Any) -> str | None:
+        return raw if isinstance(raw, str) and raw in choices else None
+
+    return validate
+
+
+def _boolean(raw: Any) -> bool | None:
+    return raw if isinstance(raw, bool) else None
+
+
+def _clamped_int(
+    lo: int, hi: int, *, require: Callable[[float], bool] | None = None
+) -> Callable[[Any], int | None]:
+    """Accept an int/float (never bool) and clamp it to ``[lo, hi]``.
+
+    ``require`` optionally gates validity (values failing it fall back to the
+    default rather than being clamped), matching resolvers that treat e.g.
+    ``<= 0`` as "unset".
+    """
+
+    def validate(raw: Any) -> int | None:
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+        if require is not None and not require(raw):
+            return None
+        return max(lo, min(int(raw), hi))
+
+    return validate
+
+
 async def resolve_global_github_repo(session: AsyncSession) -> str:
     """Return the effective global `owner/name` repo, or `""` if unset."""
-    db_value = await _get_db_value(session, "github_repo")
-    if isinstance(db_value, str) and db_value.strip():
-        return db_value.strip()
-    return DEFAULT_GITHUB_REPO
+    return await resolve(
+        session, SettingSpec("github_repo", _nonempty_str(), default=DEFAULT_GITHUB_REPO)
+    )
 
 
 async def resolve_llm_model(session: AsyncSession) -> str:
     """Return the user-selected LLM model id, or the factory default."""
-    db_value = await _get_db_value(session, "llm_model")
-    if isinstance(db_value, str) and db_value.strip():
-        return db_value.strip()
-    return DEFAULT_LLM_MODEL
+    return await resolve(
+        session, SettingSpec("llm_model", _nonempty_str(), default=DEFAULT_LLM_MODEL)
+    )
 
 
 async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:
@@ -97,18 +172,19 @@ async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:
     the safe default for models that don't support it. Any value outside the
     known set is treated as auto/off.
     """
-    db_value = await _get_db_value(session, "llm_reasoning_effort")
-    if isinstance(db_value, str) and db_value in LLM_REASONING_EFFORTS:
-        return db_value
-    return DEFAULT_LLM_REASONING_EFFORT
+    return await resolve(
+        session,
+        SettingSpec(
+            "llm_reasoning_effort",
+            _str_in(LLM_REASONING_EFFORTS),
+            default=DEFAULT_LLM_REASONING_EFFORT,
+        ),
+    )
 
 
 async def resolve_live_enabled(session: AsyncSession) -> bool:
     """Whether the Live meeting assistant section is enabled (default on)."""
-    db_value = await _get_db_value(session, "live_enabled")
-    if isinstance(db_value, bool):
-        return db_value
-    return True
+    return await resolve(session, SettingSpec("live_enabled", _boolean, default=True))
 
 
 async def resolve_live_fast_model(session: AsyncSession) -> str:
@@ -129,10 +205,14 @@ async def resolve_live_reasoning_effort(session: AsyncSession) -> str:
     Live analysis prioritises latency over depth, so this defaults to ``""``
     (omit the param). Any value outside the known set is treated as auto/off.
     """
-    db_value = await _get_db_value(session, "live_reasoning_effort")
-    if isinstance(db_value, str) and db_value in LLM_REASONING_EFFORTS:
-        return db_value
-    return DEFAULT_LLM_REASONING_EFFORT
+    return await resolve(
+        session,
+        SettingSpec(
+            "live_reasoning_effort",
+            _str_in(LLM_REASONING_EFFORTS),
+            default=DEFAULT_LLM_REASONING_EFFORT,
+        ),
+    )
 
 
 async def resolve_llm_provider(session: AsyncSession) -> str:
@@ -190,26 +270,38 @@ def redact_llm_providers(
 
 async def resolve_issue_context_ttl_minutes(session: AsyncSession) -> int:
     """Return the configured issue-context TTL, clamped to a sane range."""
-    db_value = await _get_db_value(session, "issue_context_ttl_minutes")
-    if isinstance(db_value, (int, float)) and db_value > 0:
-        return max(1, min(int(db_value), 60 * 24 * 7))
-    return DEFAULT_ISSUE_CONTEXT_TTL_MINUTES
+    return await resolve(
+        session,
+        SettingSpec(
+            "issue_context_ttl_minutes",
+            _clamped_int(1, 60 * 24 * 7, require=lambda v: v > 0),
+            default=DEFAULT_ISSUE_CONTEXT_TTL_MINUTES,
+        ),
+    )
 
 
 async def resolve_max_tool_rounds(session: AsyncSession) -> int:
     """Return the configured tool-call round cap, clamped to a sane range."""
-    db_value = await _get_db_value(session, "max_tool_rounds")
-    if isinstance(db_value, (int, float)) and db_value >= 1:
-        return max(1, min(int(db_value), MAX_TOOL_ROUNDS_CEILING))
-    return DEFAULT_MAX_TOOL_ROUNDS
+    return await resolve(
+        session,
+        SettingSpec(
+            "max_tool_rounds",
+            _clamped_int(1, MAX_TOOL_ROUNDS_CEILING, require=lambda v: v >= 1),
+            default=DEFAULT_MAX_TOOL_ROUNDS,
+        ),
+    )
 
 
 async def resolve_issue_associations_enabled(session: AsyncSession) -> bool:
     """Return whether the GitHub-issue association feature is enabled."""
-    db_value = await _get_db_value(session, "issue_associations_enabled")
-    if isinstance(db_value, bool):
-        return db_value
-    return DEFAULT_ISSUE_ASSOCIATIONS_ENABLED
+    return await resolve(
+        session,
+        SettingSpec(
+            "issue_associations_enabled",
+            _boolean,
+            default=DEFAULT_ISSUE_ASSOCIATIONS_ENABLED,
+        ),
+    )
 
 
 async def resolve_azure_speech_key(session: AsyncSession) -> str:
@@ -224,18 +316,16 @@ async def resolve_azure_speech_key(session: AsyncSession) -> str:
 
 async def resolve_azure_speech_endpoint(session: AsyncSession) -> str:
     """Effective Azure Speech endpoint URL from the DB (Settings panel)."""
-    db_value = await _get_db_value(session, "azure_speech_endpoint")
-    if isinstance(db_value, str) and db_value.strip():
-        return db_value.strip()
-    return ""
+    return await resolve(
+        session, SettingSpec("azure_speech_endpoint", _nonempty_str(), default="")
+    )
 
 
 async def resolve_azure_speech_language(session: AsyncSession) -> str:
     """Effective dictation language (BCP-47, e.g. ``en-US``); ``""`` => auto."""
-    db_value = await _get_db_value(session, "azure_speech_language")
-    if isinstance(db_value, str) and db_value.strip():
-        return db_value.strip()
-    return ""
+    return await resolve(
+        session, SettingSpec("azure_speech_language", _nonempty_str(), default="")
+    )
 
 
 async def azure_stt_ready(session: AsyncSession) -> bool:
@@ -272,28 +362,48 @@ def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
 
 
 async def resolve_llm_max_input_tokens(session: AsyncSession) -> int:
-    default = get_settings().llm_max_input_tokens
-    db_value = await _get_db_value(session, "llm_max_input_tokens")
-    return _clamp_int(db_value, default, _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS)
+    return await resolve(
+        session,
+        SettingSpec(
+            "llm_max_input_tokens",
+            _clamped_int(_MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS),
+            default_factory=lambda: get_settings().llm_max_input_tokens,
+        ),
+    )
 
 
 async def resolve_llm_max_tool_result_tokens(session: AsyncSession) -> int:
-    default = get_settings().llm_max_tool_result_tokens
-    db_value = await _get_db_value(session, "llm_max_tool_result_tokens")
-    return _clamp_int(db_value, default, _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS)
+    return await resolve(
+        session,
+        SettingSpec(
+            "llm_max_tool_result_tokens",
+            _clamped_int(_MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS),
+            default_factory=lambda: get_settings().llm_max_tool_result_tokens,
+        ),
+    )
 
 
 async def resolve_scheduled_run_timeout_seconds(session: AsyncSession) -> int:
-    default = get_settings().scheduled_run_timeout_seconds
-    db_value = await _get_db_value(session, "scheduled_run_timeout_seconds")
-    return _clamp_int(db_value, default, _MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT)
+    return await resolve(
+        session,
+        SettingSpec(
+            "scheduled_run_timeout_seconds",
+            _clamped_int(_MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT),
+            default_factory=lambda: get_settings().scheduled_run_timeout_seconds,
+        ),
+    )
 
 
 async def resolve_tool_result_retention_days(session: AsyncSession) -> int:
     """Return the configured TOOL-result retention window in days (0 = disabled)."""
-    default = get_settings().tool_result_retention_days
-    db_value = await _get_db_value(session, "tool_result_retention_days")
-    return _clamp_int(db_value, default, _MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS)
+    return await resolve(
+        session,
+        SettingSpec(
+            "tool_result_retention_days",
+            _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
+            default_factory=lambda: get_settings().tool_result_retention_days,
+        ),
+    )
 
 
 async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
@@ -373,10 +483,9 @@ async def resolve_mcp_expose(session: AsyncSession) -> dict[str, bool]:
 
 async def resolve_mcp_http_enabled(session: AsyncSession) -> bool:
     """Whether the built-in 'precursor' MCP server is served over HTTP too."""
-    db_value = await _get_db_value(session, "mcp_http_enabled")
-    if isinstance(db_value, bool):
-        return db_value
-    return DEFAULT_MCP_HTTP_ENABLED
+    return await resolve(
+        session, SettingSpec("mcp_http_enabled", _boolean, default=DEFAULT_MCP_HTTP_ENABLED)
+    )
 
 
 async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:
@@ -399,18 +508,26 @@ async def resolve_agents_enabled(session: AsyncSession) -> bool:
     *preference*; whether the runtime is actually usable is a separate capability
     probe (``services.agents.runtime.agents_available``).
     """
-    db_value = await _get_db_value(session, "agents_enabled")
-    if isinstance(db_value, bool):
-        return db_value
-    return get_settings().agents_enabled
+    return await resolve(
+        session,
+        SettingSpec(
+            "agents_enabled",
+            _boolean,
+            default_factory=lambda: get_settings().agents_enabled,
+        ),
+    )
 
 
 async def resolve_agents_default_model(session: AsyncSession) -> str:
     """Default model for new agent sessions (DB override on env default)."""
-    db_value = await _get_db_value(session, "agents_default_model")
-    if isinstance(db_value, str) and db_value.strip():
-        return db_value
-    return get_settings().agents_default_model
+    return await resolve(
+        session,
+        SettingSpec(
+            "agents_default_model",
+            _nonempty_str(strip=False),
+            default_factory=lambda: get_settings().agents_default_model,
+        ),
+    )
 
 
 # Reasoning-effort values the agents SDK accepts (ModelInfo advertises the
@@ -426,18 +543,26 @@ AGENTS_CONTEXT_TIERS: tuple[str, ...] = ("default", "long_context")
 
 async def resolve_agents_reasoning_effort(session: AsyncSession) -> str:
     """Reasoning effort applied to new agent sessions, or "" (SDK default)."""
-    db_value = await _get_db_value(session, "agents_reasoning_effort")
-    if isinstance(db_value, str) and db_value in AGENTS_REASONING_EFFORTS:
-        return db_value
-    return DEFAULT_AGENTS_REASONING_EFFORT
+    return await resolve(
+        session,
+        SettingSpec(
+            "agents_reasoning_effort",
+            _str_in(AGENTS_REASONING_EFFORTS),
+            default=DEFAULT_AGENTS_REASONING_EFFORT,
+        ),
+    )
 
 
 async def resolve_agents_context_tier(session: AsyncSession) -> str:
     """Context-window tier for new agent sessions: ``default`` or ``long_context``."""
-    db_value = await _get_db_value(session, "agents_context_tier")
-    if isinstance(db_value, str) and db_value in AGENTS_CONTEXT_TIERS:
-        return db_value
-    return DEFAULT_AGENTS_CONTEXT_TIER
+    return await resolve(
+        session,
+        SettingSpec(
+            "agents_context_tier",
+            _str_in(AGENTS_CONTEXT_TIERS),
+            default=DEFAULT_AGENTS_CONTEXT_TIER,
+        ),
+    )
 
 
 AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
@@ -449,11 +574,19 @@ async def resolve_agents_approval_policy(session: AsyncSession) -> str:
     See ``Settings.agents_approval_policy``: ``manual`` asks for everything,
     ``balanced`` auto-approves read-only actions, ``autonomous`` approves all.
     """
-    db_value = await _get_db_value(session, "agents_approval_policy")
-    if isinstance(db_value, str) and db_value in AGENTS_APPROVAL_POLICIES:
-        return db_value
-    default = get_settings().agents_approval_policy
-    return default if default in AGENTS_APPROVAL_POLICIES else "balanced"
+
+    def _env_default() -> str:
+        default = get_settings().agents_approval_policy
+        return default if default in AGENTS_APPROVAL_POLICIES else "balanced"
+
+    return await resolve(
+        session,
+        SettingSpec(
+            "agents_approval_policy",
+            _str_in(AGENTS_APPROVAL_POLICIES),
+            default_factory=_env_default,
+        ),
+    )
 
 
 async def resolve_agents_system_prompt(session: AsyncSession) -> str:
@@ -462,10 +595,14 @@ async def resolve_agents_system_prompt(session: AsyncSession) -> str:
     DB override on top of the ``agents_system_prompt`` env default. The SDK base
     prompt isn't ours to set, so this is appended (alongside any topic binding).
     """
-    db_value = await _get_db_value(session, "agents_system_prompt")
-    if isinstance(db_value, str):
-        return db_value
-    return get_settings().agents_system_prompt
+    return await resolve(
+        session,
+        SettingSpec(
+            "agents_system_prompt",
+            _any_str,
+            default_factory=lambda: get_settings().agents_system_prompt,
+        ),
+    )
 
 
 async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
