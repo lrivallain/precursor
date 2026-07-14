@@ -18,6 +18,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { TopicCreateModal } from "./components/TopicCreateModal";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
 import { ChatStartHero, TopicStartHero } from "./components/StartHero";
+import { HomePage } from "./components/HomePage";
 import { ArchivePanel } from "./components/ArchivePanel";
 import { IssueStatusBadge } from "./components/IssueStatusBadge";
 import { IssueLabelChip, IssueStateBadge } from "./components/IssueTags";
@@ -125,6 +126,11 @@ function parseAppRoute(): AppRoute {
     return { mode: "topics", topicSlug: last, chatSlug: null, liveSlug: null, agentRef: null };
   }
   return { mode: "topics", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
+}
+
+/** The home launcher lives at the root path `/` (no path segments). */
+function isHomePath(): boolean {
+  return window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).length === 0;
 }
 
 /** Ancestor → self slug chain for a topic, using the loaded tree. */
@@ -235,6 +241,8 @@ export default function App() {
   // The active sidebar mode. The URL path owns the mode + selection, so a deep
   // link (or reload onto /topics, /chats, /ws) starts the app in that mode.
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => parseAppRoute().mode);
+  // The root path `/` shows the home launcher instead of any mode's content.
+  const [atHome, setAtHome] = useState<boolean>(() => isHomePath());
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
@@ -518,6 +526,12 @@ export default function App() {
   // when the active item changes. Equality checks break the feedback loop.
   useEffect(() => {
     const syncFromUrl = (): void => {
+      if (isHomePath()) {
+        setAtHome(true);
+        setWsRoute({ open: false, slug: null, path: null });
+        return;
+      }
+      setAtHome(false);
       const r = parseAppRoute();
       setSidebarMode(r.mode);
       if (r.mode === "workspaces") {
@@ -606,6 +620,7 @@ export default function App() {
   // (e.g. once the tree loads and the ancestor chain is known). Never strips
   // ancestors, so a deep link like /topics/a/b/c survives the initial load.
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "topics" || !activeTopic) return;
     const target = topicUrl(tree, activeTopic);
     if (window.location.pathname === target) return;
@@ -621,27 +636,30 @@ export default function App() {
     } else {
       history.pushState(null, "", target);
     }
-  }, [activeTopic, sidebarMode, tree]);
+  }, [activeTopic, sidebarMode, tree, atHome]);
 
   // activeChat -> /chats/<slug>.
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "chats" || !activeChat) return;
     const target = chatUrl(activeChat);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeChat, sidebarMode]);
+  }, [activeChat, sidebarMode, atHome]);
 
   // activeSession -> /live/<slug> (or /live when nothing is selected).
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "live") return;
     const active = meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
     const target = liveUrl(active);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeSessionId, meetingSessions, sidebarMode]);
+  }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
 
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
   // rewritten from a transient integer fallback once the list resolves.
   useEffect(() => {
+    if (atHome) return;
     if (sidebarMode !== "agents") return;
     // Don't clobber a deep-link URL whose agent we haven't resolved yet (the
     // list may still be loading). Overwriting it with "/agents" here would also
@@ -649,7 +667,7 @@ export default function App() {
     if (activeAgentId == null && pendingAgentRef.current) return;
     const target = agentUrl(activeAgentId, agents);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeAgentId, sidebarMode, agents]);
+  }, [activeAgentId, sidebarMode, agents, atHome]);
 
   // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
   // back to its Agents-mode session.
@@ -670,7 +688,10 @@ export default function App() {
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
   function changeMode(next: SidebarMode): void {
-    if (next === sidebarMode) return;
+    // Clicking the active mode's tab while on the home launcher still needs to
+    // leave home, so only short-circuit when we're already showing that mode.
+    if (next === sidebarMode && !atHome) return;
+    setAtHome(false);
     let target = "/topics";
     if (next === "topics") {
       target = activeTopicRef.current
@@ -692,6 +713,44 @@ export default function App() {
     history.pushState(null, "", target);
     setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
+  }
+
+  // Navigate to the root home launcher.
+  function goHome(): void {
+    if (window.location.pathname !== "/") history.pushState(null, "", "/");
+    setWsRoute({ open: false, slug: null, path: null });
+    setAtHome(true);
+  }
+
+  // The home launcher cards each drop into a mode on its "start" surface: a
+  // fresh topic opens the create dialog, while chat/live/agent clear their
+  // selection to reveal the mode's start hero.
+  function startNewFromHome(mode: SidebarMode): void {
+    setAtHome(false);
+    setWsRoute({ open: false, slug: null, path: null });
+    if (mode === "topics") {
+      setActiveTopic(null);
+      history.pushState(null, "", "/topics");
+      setSidebarMode("topics");
+      setCreateParentId(null);
+    } else if (mode === "chats") {
+      setActiveChat(null);
+      history.pushState(null, "", "/chats");
+      setSidebarMode("chats");
+    } else if (mode === "live") {
+      setActiveSessionId(null);
+      history.pushState(null, "", "/live");
+      setSidebarMode("live");
+    } else if (mode === "agents") {
+      setActiveAgentId(null);
+      history.pushState(null, "", "/agents");
+      setSidebarMode("agents");
+    } else {
+      history.pushState(null, "", "/ws");
+      setSidebarMode("workspaces");
+      setWsRoute(parseWsRoute());
+      setCreateWorkspaceOpen(true);
+    }
   }
 
   // If the Live section gets disabled while it's open (or a deep link lands on
@@ -1049,6 +1108,12 @@ export default function App() {
   // Chats and agents drop the selection to reveal their "start" landing surface;
   // topics open the create dialog directly.
   function handleNew(): void {
+    // The "+" always lands on a mode's create surface, so leave the home
+    // launcher (routing to the current mode's start surface) if we're on it.
+    if (atHome) {
+      startNewFromHome(sidebarMode);
+      return;
+    }
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
@@ -1241,6 +1306,8 @@ export default function App() {
         collapsed={sidebarCollapsed}
         mode={sidebarMode}
         onModeChange={changeMode}
+        atHome={atHome}
+        onGoHome={goHome}
         chatSlot={
           <ChatList
             activeId={activeChat?.id ?? null}
@@ -1301,7 +1368,9 @@ export default function App() {
         {/* One shared header across every mode: active item title on the left,
             mode-specific actions on the right. */}
         <header className="flex items-center justify-between px-4 h-12 border-b border-border gap-3">
-          {sidebarMode === "topics" ? (
+          {atHome ? (
+            <span className="truncate font-medium min-w-0 flex-1">Home</span>
+          ) : sidebarMode === "topics" ? (
             <>
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {activeTopic ? (
@@ -1478,7 +1547,7 @@ export default function App() {
               )}
             </>
           )}
-          {hasActiveDiscussion && (
+          {!atHome && hasActiveDiscussion && (
             <RoleSelector
               value={activeRoleId}
               onChange={(roleId) => void setRoleForActive(roleId)}
@@ -1491,7 +1560,15 @@ export default function App() {
         <McpAuthBanner />
 
         <div className="flex-1 min-h-0">
-          {sidebarMode === "topics" ? (
+          {atHome ? (
+            <HomePage
+              onNewTopic={() => startNewFromHome("topics")}
+              onNewChat={() => startNewFromHome("chats")}
+              onNewLive={() => startNewFromHome("live")}
+              onNewAgent={() => startNewFromHome("agents")}
+              liveEnabled={liveEnabled}
+            />
+          ) : sidebarMode === "topics" ? (
             activeTopic ? (
               <ChatPanel
                 key={`${activeTopic.id}:${chatReloadKey}`}
