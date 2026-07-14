@@ -722,9 +722,9 @@ export default function App() {
     setAtHome(true);
   }
 
-  // The home launcher cards each drop into a mode on its "start" surface: a
-  // fresh topic opens the create dialog, while chat/live/agent clear their
-  // selection to reveal the mode's start hero.
+  // The sidebar "+" (mode-aware) leaves the home launcher and drops into a
+  // mode's start surface. The home cards themselves stay on `/` and reveal the
+  // start surface inline (see the home*FromHome handlers below).
   function startNewFromHome(mode: SidebarMode): void {
     setAtHome(false);
     setWsRoute({ open: false, slug: null, path: null });
@@ -751,6 +751,39 @@ export default function App() {
       setWsRoute(parseWsRoute());
       setCreateWorkspaceOpen(true);
     }
+  }
+
+  // ---- Home launcher inline surfaces -----------------------------------
+  // Each home card reveals a start surface in place; on successful creation the
+  // handlers below leave home and route to the freshly-created item.
+
+  // The "New topic" card opens the create wizard (a modal) over the launcher.
+  function openTopicCreateFromHome(): void {
+    setCreateParentId(null);
+  }
+
+  // The "New chat" card's inline composer: create + stream, then reveal the chat.
+  async function startChatFromHome(prompt: string): Promise<void> {
+    setAtHome(false);
+    setSidebarMode("chats");
+    await handleStartChat(prompt);
+  }
+
+  // The "New live session" card's inline form: create, then reveal the session.
+  async function createLiveFromHome(session: MeetingSession): Promise<void> {
+    setAtHome(false);
+    setSidebarMode("live");
+    await loadMeetingSessions();
+    setActiveSessionId(session.id);
+    history.pushState(null, "", liveUrl(session));
+  }
+
+  // The "New agent" card's inline start form calls this once the agent exists.
+  function selectAgentFromHome(id: number | null): void {
+    if (id == null) return;
+    setAtHome(false);
+    setSidebarMode("agents");
+    setActiveAgentId(id);
   }
 
   // If the Live section gets disabled while it's open (or a deep link lands on
@@ -1562,11 +1595,27 @@ export default function App() {
         <div className="flex-1 min-h-0">
           {atHome ? (
             <HomePage
-              onNewTopic={() => startNewFromHome("topics")}
-              onNewChat={() => startNewFromHome("chats")}
-              onNewLive={() => startNewFromHome("live")}
-              onNewAgent={() => startNewFromHome("agents")}
               liveEnabled={liveEnabled}
+              topicSurface={
+                <TopicStartHero onNewTopic={openTopicCreateFromHome} />
+              }
+              chatSurface={<ChatStartHero onStart={startChatFromHome} />}
+              liveSurface={
+                <LiveStartHero topics={tree} onCreated={createLiveFromHome} />
+              }
+              agentSurface={
+                <AgentView
+                  agents={agents ?? []}
+                  agentId={null}
+                  enabled={agentsEnabled}
+                  available={agentsAvailable}
+                  unavailableReason={agentsUnavailableReason}
+                  onReload={() => void loadAgents()}
+                  onSelect={selectAgentFromHome}
+                  onOpenSettings={() => setGlobalSettingsOpen(true)}
+                  draftTopicId={null}
+                />
+              }
             />
           ) : sidebarMode === "topics" ? (
             activeTopic ? (
@@ -1821,6 +1870,9 @@ export default function App() {
           onClose={() => setCreateParentId(undefined)}
           onCreated={async (topic) => {
             setCreateParentId(undefined);
+            // Creating from the home launcher: leave it and reveal the topic.
+            setAtHome(false);
+            setSidebarMode("topics");
             await refreshTree();
             setActiveTopic(topic);
           }}
