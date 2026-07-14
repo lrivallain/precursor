@@ -47,7 +47,8 @@ import type {
   Message,
   Topic,
 } from "../lib/types";
-import { TIMING } from "../lib/constants";
+import { TIMING, Z_INDEX } from "../lib/constants";
+import { Modal } from "./Modal";
 
 interface ChatPanelProps {
   topic: Topic;
@@ -1284,25 +1285,28 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         />
       )}
       {notesConfirm && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-2xl">
-            <div className="text-sm">{notesConfirm.message}</div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                className="rounded border border-border px-3 py-1.5 text-xs hover:bg-bg"
-                onClick={() => resolveNotesConfirm(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded bg-accent px-3 py-1.5 text-xs text-white"
-                onClick={() => resolveNotesConfirm(true)}
-              >
-                Confirm
-              </button>
-            </div>
+        <Modal
+          zIndex={Z_INDEX.MODAL_NESTED}
+          padded
+          closeOnBackdrop={false}
+          panelClassName="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-2xl"
+        >
+          <div className="text-sm">{notesConfirm.message}</div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              className="rounded border border-border px-3 py-1.5 text-xs hover:bg-bg"
+              onClick={() => resolveNotesConfirm(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="rounded bg-accent px-3 py-1.5 text-xs text-white"
+              onClick={() => resolveNotesConfirm(true)}
+            >
+              Confirm
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

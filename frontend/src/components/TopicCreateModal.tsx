@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../lib/api";
 import { Select } from "./Select";
+import { Modal } from "./Modal";
+import { Z_INDEX } from "../lib/constants";
 import { useSettings } from "../lib/settingsStore";
 import type { Topic, TopicNode } from "../lib/types";
 
@@ -65,23 +67,20 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      zIndex={Z_INDEX.MODAL}
+      panelClassName="w-[min(520px,100%)] bg-bg border border-border rounded-lg shadow-lg flex flex-col"
     >
-      <div
-        className="w-[min(520px,100%)] bg-bg border border-border rounded-lg shadow-lg flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex items-center justify-between px-4 h-12 border-b border-border">
-          <h2 className="font-semibold">New topic</h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-surface"
-            aria-label="Close"
-            data-tooltip="Close"
-          >
-            <X size={18} />
+      <header className="flex items-center justify-between px-4 h-12 border-b border-border">
+        <h2 className="font-semibold">New topic</h2>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded hover:bg-surface"
+          aria-label="Close"
+          data-tooltip="Close"
+        >
+          <X size={18} />
           </button>
         </header>
 
@@ -202,8 +201,7 @@ export function TopicCreateModal({ initialParentId, tree, onClose, onCreated }: 
             {submitting ? "Creating…" : "Create"}
           </button>
         </footer>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
+import { Modal } from "./Modal";
+import { Z_INDEX } from "../lib/constants";
 import type { Reminder, ReminderContainer } from "../lib/types";
 
 interface Props {
@@ -153,23 +155,20 @@ export function ReminderModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      zIndex={Z_INDEX.MODAL}
+      panelClassName="w-[min(460px,100%)] bg-bg border border-border rounded-lg shadow-lg flex flex-col"
     >
-      <div
-        className="w-[min(460px,100%)] bg-bg border border-border rounded-lg shadow-lg flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex items-center justify-between px-4 h-12 border-b border-border">
-          <h2 className="font-semibold">
-            {existing ? "Edit reminder" : "Set a reminder"}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-surface"
-            aria-label="Close"
-            data-tooltip="Close"
+      <header className="flex items-center justify-between px-4 h-12 border-b border-border">
+        <h2 className="font-semibold">
+          {existing ? "Edit reminder" : "Set a reminder"}
+        </h2>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded hover:bg-surface"
+          aria-label="Close"
+          data-tooltip="Close"
           >
             <X size={18} />
           </button>
@@ -283,7 +282,6 @@ export function ReminderModal({
             </button>
           </div>
         </footer>
-      </div>
-    </div>
+    </Modal>
   );
 }
