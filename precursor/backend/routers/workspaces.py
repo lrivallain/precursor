@@ -11,9 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import shutil
-import unicodedata
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,6 +64,7 @@ from precursor.backend.services.mcp.client import (
     get_mcp_client_manager,
 )
 from precursor.backend.services.roles import resolve_role_prompt
+from precursor.backend.services.slugs import slugify
 from precursor.backend.services.suggestions import (
     SUGGESTIONS_INSTRUCTION,
     split_suggestions,
@@ -74,14 +73,6 @@ from precursor.backend.services.suggestions import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
-
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _slugify(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
-    ascii_only = decomposed.encode("ascii", "ignore").decode("ascii")
-    return _SLUG_RE.sub("-", ascii_only.lower()).strip("-")[:80]
 
 
 def workspace_root(ws: Workspace) -> Path:
@@ -165,7 +156,7 @@ async def create_workspace(
             "git is not installed on the server — install it to use git workspaces.",
         )
 
-    slug = _slugify(payload.slug or payload.name)
+    slug = slugify(payload.slug or payload.name)
     slug = await _allocate_slug(session, slug)
 
     ws = Workspace(
@@ -503,12 +494,12 @@ async def chat_stream(
     payload: WorkspaceChatRequest,
     session: AsyncSession = Depends(get_session),
 ) -> EventSourceResponse:
-    # Reuse the proven tool-loop helpers from the main chat router. Imported
-    # lazily to keep the module import graph flat (chat.py imports nothing here).
-    from precursor.backend.routers.chat import (
-        _format_tool_result,
-        _load_enabled_mcp_servers,
-        _mcp_tools_to_provider,
+    # Reuse the proven tool-loop helpers from the shared turn engine. Imported
+    # lazily to keep the module import graph flat.
+    from precursor.backend.services.turn_engine import (
+        format_tool_result,
+        load_enabled_mcp_servers,
+        mcp_tools_to_provider,
     )
 
     ws = await _get_workspace(workspace_id, session)
@@ -533,7 +524,7 @@ async def chat_stream(
     model = payload.model or await resolve_llm_model(session)
     reasoning_effort = await resolve_llm_reasoning_effort(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
-    enabled_servers = await _load_enabled_mcp_servers(session)
+    enabled_servers = await load_enabled_mcp_servers(session)
     provider = await get_llm_provider(session)
     github_token = await resolve_github_token(session)
     manager = get_mcp_client_manager()
@@ -618,7 +609,7 @@ async def chat_stream(
                     ),
                 }
 
-            provider_tools = _mcp_tools_to_provider(active.tools)
+            provider_tools = mcp_tools_to_provider(active.tools)
             messages = list(base_messages)
 
             # No tools enabled → simple text stream (matches the old behaviour).
@@ -734,7 +725,7 @@ async def chat_stream(
                             if args is not None:
                                 try:
                                     result = await active.call_tool(server_name, raw_name, args)
-                                    result_text = _format_tool_result(result)
+                                    result_text = format_tool_result(result)
                                     is_error = bool(getattr(result, "isError", False))
                                 except Exception as exc:
                                     logger.warning(

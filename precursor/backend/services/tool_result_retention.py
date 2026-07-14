@@ -4,7 +4,7 @@ Large tool outputs persisted in ``messages.content`` accumulate over time (one
 prod DB held ~8 MB of TOOL rows). When a retention window is configured, this
 sweep replaces the ``content`` of TOOL rows older than the cutoff with a short
 placeholder — **in place**. The row and its ``tool_calls`` JSON metadata are
-kept intact so ``_hydrate_history()`` (routers/chat.py) still pairs each
+kept intact so ``hydrate_history()`` (services/turn_engine.py) still pairs each
 assistant tool-call turn with its TOOL rows by ``tool_call_id`` and never drops
 a whole turn. Default retention is 0 (disabled / keep forever).
 """

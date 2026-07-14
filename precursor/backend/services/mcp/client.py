@@ -122,6 +122,97 @@ class MCPServerEntry:
     tools: list[MCPToolDef] = field(default_factory=list)
 
 
+def _github_headers(token: str) -> dict[str, str] | None:
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-MCP-Toolsets": get_settings().github_mcp_toolsets,
+    }
+
+
+@dataclass(frozen=True)
+class _BuiltinSpec:
+    """Declarative description of a built-in MCP server.
+
+    ``_register_builtins`` turns each spec into an ``MCPServerEntry``. Adding a
+    built-in is a one-line catalog entry rather than another inline block.
+    """
+
+    name: str
+    transport: Literal["streamable_http", "stdio"]
+    url: str | None = None
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    headers_provider: HeadersProvider | None = None
+    # Forward the app's environment (PRECURSOR_*, GITHUB_TOKEN, …) to the stdio
+    # subprocess so in-tree servers can reach the DB/config.
+    forward_env: bool = False
+
+
+# The npx launcher for the built-in WorkIQ server in its default (local stdio)
+# mode. Shared so ``configure_workiq_preview`` can revert to it from preview.
+_WORKIQ_STDIO_COMMAND = "npx"
+_WORKIQ_STDIO_ARGS: tuple[str, ...] = ("-y", "@microsoft/workiq@latest", "mcp")
+
+# Built-in MCP servers registered on every manager. The chat/topics surface and
+# the agents surface both attach these by name when their ``mcp_enabled`` toggle
+# is on, so keep names/transports stable when editing.
+BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
+    # GitHub MCP — remote streamable-http. Auth header is resolved lazily so
+    # adding a token after startup works without a restart.
+    _BuiltinSpec(
+        "github",
+        "streamable_http",
+        url="https://api.githubcopilot.com/mcp/",
+        headers_provider=_github_headers,
+    ),
+    # WorkIQ MCP — local stdio launcher. The npm package handles its own
+    # interactive auth on first run.
+    _BuiltinSpec("workiq", "stdio", command=_WORKIQ_STDIO_COMMAND, args=_WORKIQ_STDIO_ARGS),
+    # Fetch MCP — in-tree stdio subprocess exposing curl-like HTTP tools
+    # (http_get / http_request). Uses the same interpreter that runs the backend
+    # so the package is always importable.
+    _BuiltinSpec(
+        "fetch",
+        "stdio",
+        command=sys.executable,
+        args=("-m", "precursor.backend.services.mcp.fetch_server"),
+    ),
+    # Workspace filesystem MCP — in-tree stdio subprocess exposing sandboxed
+    # read/write tools over Workspace working trees. Needs the app's DB + config
+    # to resolve a workspace to its on-disk path, so forward the environment.
+    _BuiltinSpec(
+        "workspace-fs",
+        "stdio",
+        command=sys.executable,
+        args=("-m", "precursor.backend.services.mcp.workspace_fs_server"),
+        forward_env=True,
+    ),
+    # Command runner MCP — in-tree stdio subprocess that runs bash/python/node
+    # either inside a Docker "jail" (default) or directly on the host. Enable-time
+    # Docker availability is checked in the connect router.
+    _BuiltinSpec(
+        "cmd-runner",
+        "stdio",
+        command=sys.executable,
+        args=("-m", "precursor.backend.services.mcp.cmd_runner_server"),
+        forward_env=True,
+    ),
+    # Precursor MCP — in-tree stdio subprocess exposing Precursor's *own*
+    # capabilities (topics, messages, search, skills, memory, post_message,
+    # schedules) outbound. Every tool is gated by a per-section mcp_expose toggle
+    # read from the DB at call time, so nothing is served until the user opts in.
+    _BuiltinSpec(
+        "precursor",
+        "stdio",
+        command=sys.executable,
+        args=("-m", "precursor.backend.services.mcp.precursor_server"),
+        forward_env=True,
+    ),
+)
+
+
 class MCPClientManager:
     """Registry of configured MCP servers + per-turn session opener."""
 
@@ -146,74 +237,17 @@ class MCPClientManager:
         self._register_builtins()
 
     def _register_builtins(self) -> None:
-        # GitHub MCP — remote streamable-http. Auth header is resolved lazily
-        # so adding a token after startup works without a restart.
-        self._servers["github"] = MCPServerEntry(
-            name="github",
-            transport="streamable_http",
-            url="https://api.githubcopilot.com/mcp/",
-            headers_provider=_github_headers,
-            builtin=True,
-        )
-        # WorkIQ MCP — local stdio launcher. The npm package handles its own
-        # interactive auth on first run.
-        self._servers["workiq"] = MCPServerEntry(
-            name="workiq",
-            transport="stdio",
-            command="npx",
-            args=["-y", "@microsoft/workiq@latest", "mcp"],
-            builtin=True,
-        )
-        # Fetch MCP — in-tree stdio subprocess that exposes curl-like HTTP
-        # tools (http_get / http_request). Uses the same Python interpreter
-        # that runs the backend so the package is always importable.
-        self._servers["fetch"] = MCPServerEntry(
-            name="fetch",
-            transport="stdio",
-            command=sys.executable,
-            args=["-m", "precursor.backend.services.mcp.fetch_server"],
-            builtin=True,
-        )
-        # Workspace filesystem MCP — in-tree stdio subprocess exposing
-        # sandboxed read/write tools over Workspace working trees. It needs the
-        # app's DB + config to resolve a workspace to its on-disk path, so we
-        # forward the current environment (PRECURSOR_*, GITHUB_TOKEN, …) and
-        # rely on the inherited CWD for .env / relative paths.
-        self._servers["workspace-fs"] = MCPServerEntry(
-            name="workspace-fs",
-            transport="stdio",
-            command=sys.executable,
-            args=["-m", "precursor.backend.services.mcp.workspace_fs_server"],
-            env=dict(os.environ),
-            builtin=True,
-        )
-        # Command runner MCP — in-tree stdio subprocess that runs bash/python/
-        # node either inside a Docker "jail" (default) or directly on the host.
-        # It forwards the env (DB/config). Enable-time Docker availability is
-        # checked in the connect router (it needs a DB session to read the
-        # effective jail setting).
-        self._servers["cmd-runner"] = MCPServerEntry(
-            name="cmd-runner",
-            transport="stdio",
-            command=sys.executable,
-            args=["-m", "precursor.backend.services.mcp.cmd_runner_server"],
-            env=dict(os.environ),
-            builtin=True,
-        )
-        # Precursor MCP — in-tree stdio subprocess exposing Precursor's *own*
-        # capabilities (topics, messages, search, skills, memory, post_message,
-        # schedules) outbound. The same entrypoint serves the in-app agent and
-        # external MCP hosts. Every tool is gated by a per-section toggle
-        # (mcp_expose) read from the DB at call time, so nothing is served until
-        # the user opts in. Forwards the env so the subprocess reaches the DB.
-        self._servers["precursor"] = MCPServerEntry(
-            name="precursor",
-            transport="stdio",
-            command=sys.executable,
-            args=["-m", "precursor.backend.services.mcp.precursor_server"],
-            env=dict(os.environ),
-            builtin=True,
-        )
+        for spec in BUILTIN_CATALOG:
+            self._servers[spec.name] = MCPServerEntry(
+                name=spec.name,
+                transport=spec.transport,
+                url=spec.url,
+                command=spec.command,
+                args=list(spec.args),
+                env=dict(os.environ) if spec.forward_env else None,
+                headers_provider=spec.headers_provider,
+                builtin=True,
+            )
 
     def get(self, name: str) -> MCPServerEntry | None:
         return self._servers.get(name)
@@ -318,8 +352,8 @@ class MCPClientManager:
         else:
             entry.transport = "stdio"
             entry.url = None
-            entry.command = "npx"
-            entry.args = ["-y", "@microsoft/workiq@latest", "mcp"]
+            entry.command = _WORKIQ_STDIO_COMMAND
+            entry.args = list(_WORKIQ_STDIO_ARGS)
             entry.auth_provider = None
         entry.state = "disconnected"
         entry.error = None
@@ -548,15 +582,6 @@ class MCPClientManager:
             # the UI only renders the extra checkbox for that server.
             "preview": self._workiq_preview if entry.name == "workiq" else None,
         }
-
-
-def _github_headers(token: str) -> dict[str, str] | None:
-    if not token:
-        return None
-    return {
-        "Authorization": f"Bearer {token}",
-        "X-MCP-Toolsets": get_settings().github_mcp_toolsets,
-    }
 
 
 @dataclass(slots=True)

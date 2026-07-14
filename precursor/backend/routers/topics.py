@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -30,6 +30,7 @@ from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.topic_issue import (
     create_linked_issue as create_topic_linked_issue,
 )
+from precursor.backend.services.unread import message_unread_counts
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
 
@@ -89,15 +90,7 @@ async def topic_tree(session: AsyncSession = Depends(get_session)) -> list[Topic
 
     # One query for all unread counts: non-user messages newer than the topic's
     # last_read_at. Topics with last_read_at IS NULL are treated as fully read.
-    unread_rows = await session.execute(
-        select(Topic.id, func.count(Message.id))
-        .join(Message, Message.topic_id == Topic.id)
-        .where(Topic.last_read_at.is_not(None))
-        .where(Message.role != MessageRole.USER)
-        .where(Message.created_at > Topic.last_read_at)
-        .group_by(Topic.id)
-    )
-    unread_map: dict[int, int] = {row[0]: row[1] for row in unread_rows.all()}
+    unread_map = await message_unread_counts(session, Topic, Message.topic_id)
 
     # Schedule summaries for scheduled topics, keyed by topic id.
     schedule_rows = await session.execute(select(TopicSchedule))

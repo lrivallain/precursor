@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import unicodedata
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -91,14 +90,6 @@ router = APIRouter(prefix="/api/live", tags=["live"])
 # Optional Live features a session can enable (gates tabs + background work).
 VALID_FEATURES = frozenset({"insights", "notes", "assistant", "proactive", "translation"})
 
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _slugify(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
-    ascii_only = decomposed.encode("ascii", "ignore").decode("ascii")
-    return _SLUG_RE.sub("-", ascii_only.lower()).strip("-")[:80]
-
 
 async def _allocate_slug(session: AsyncSession, base: str) -> str:
     base = base or "session"
@@ -146,7 +137,7 @@ async def create_session_endpoint(
     await _validate_topic(payload.topic_id, session)
 
     title = (payload.title or "").strip() or (f"Live session — {datetime.now(UTC):%Y-%m-%d %H:%M}")
-    slug = await _allocate_slug(session, _slugify(payload.slug or title))
+    slug = await _allocate_slug(session, slugify(payload.slug or title))
 
     ms = MeetingSession(
         title=title,

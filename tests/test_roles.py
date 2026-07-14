@@ -111,7 +111,7 @@ def test_role_prompt_injected_into_topic_system_context() -> None:
 
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import Topic
-    from precursor.backend.routers.chat import _build_system_context
+    from precursor.backend.services.turn_engine import build_system_context
 
     app = create_app()
     with TestClient(app) as client:
@@ -126,7 +126,7 @@ def test_role_prompt_injected_into_topic_system_context() -> None:
             async with SessionLocal() as session:
                 t = await session.get(Topic, topic["id"])
                 assert t is not None
-                return await _build_system_context(session, t)
+                return await build_system_context(session, t)
 
         prompt = anyio.run(_check)
         assert "Always answer like a pirate." in prompt

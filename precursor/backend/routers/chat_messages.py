@@ -2,7 +2,7 @@
 
 Mirrors the topic chat router but targets ``Chat`` containers (no GitHub issue
 context). The heavy streaming logic is shared via
-``_run_message_stream`` in :mod:`precursor.backend.routers.chat`.
+``run_message_stream`` in :mod:`precursor.backend.services.turn_engine`.
 """
 
 from __future__ import annotations
@@ -15,33 +15,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
-from precursor.backend.db import SessionLocal, get_session
+from precursor.backend.db import get_session
 from precursor.backend.models import (
     Attachment,
     Chat,
     Message,
     MessageRole,
-    NoteDraft,
     NoteDraftAttachment,
 )
-from precursor.backend.routers.chat import (
-    _apply_chat_system_prompt,
-    _build_chat_system_context,
-    _hydrate_history,
-    _lifecycle_stream,
-    _load_enabled_mcp_servers,
-    _run_message_stream,
-)
-from precursor.backend.routers.commands import (
+from precursor.backend.routers.commands import _stream_llm
+from precursor.backend.routers.deps import get_chat_or_404
+from precursor.backend.schemas import (
+    ChatRequest,
+    MessageRead,
+    NoteDraftAttachmentRead,
     NotesAppendRequest,
     NotesAppendResponse,
     NotesDraftResponse,
     NotesDraftSaveRequest,
     NotesRephraseRequest,
     NotesRephraseResponse,
-    _stream_llm,
+    StoppedTurn,
 )
-from precursor.backend.schemas import ChatRequest, MessageRead, NoteDraftAttachmentRead, StoppedTurn
+from precursor.backend.services import notes as notes_service
 from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
@@ -49,26 +45,29 @@ from precursor.backend.services.app_settings import (
     resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
-from precursor.backend.services.blob_store import write_blob
 from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.note_drafts import (
     consume_note_draft_attachments_to_message,
-    get_note_draft,
-    get_or_create_note_draft,
+)
+from precursor.backend.services.turn_engine import (
+    apply_chat_system_prompt,
+    build_chat_system_context,
+    hydrate_history,
+    lifecycle_stream,
+    load_enabled_mcp_servers,
+    run_message_stream,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chats/{chat_id}/messages", tags=["chat"])
-# Upper bound on a single windowed page (mirrors the topic message router).
-_MESSAGE_PAGE_MAX = 500
 
 
-@router.get("", response_model=list[MessageRead])
+@router.get("", response_model=list[MessageRead], dependencies=[Depends(get_chat_or_404)])
 async def list_messages(
     chat_id: int,
     limit: int | None = None,
@@ -82,31 +81,17 @@ async def list_messages(
     ``limit`` rows; ``before_id`` pages further back. Slices come back oldest
     first.
     """
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    base = (
-        select(Message).where(Message.chat_id == chat_id).options(selectinload(Message.attachments))
+    return await list_message_window(
+        session, Message.chat_id, chat_id, limit=limit, before_id=before_id
     )
-    if limit is None and before_id is None:
-        result = await session.execute(base.order_by(Message.created_at, Message.id))
-        return list(result.scalars().all())
-    if before_id is not None:
-        base = base.where(Message.id < before_id)
-    page = max(1, min(limit or _MESSAGE_PAGE_MAX, _MESSAGE_PAGE_MAX))
-    result = await session.execute(base.order_by(Message.id.desc()).limit(page))
-    rows = list(result.scalars().all())
-    rows.reverse()
-    return rows
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_chat_or_404)])
 async def clear_messages(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Wipe the transcript for a chat. The chat row itself is kept."""
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
     await session.execute(delete(Message).where(Message.chat_id == chat_id))
     await session.commit()
     await publish_message_changed_chat(chat_id)
@@ -202,14 +187,14 @@ async def stream_chat(
             bound_attachments.extend(note_bound)
 
     # Snapshot history + system context now, before the session closes.
-    system_prompt = await _build_chat_system_context(session, chat)
+    system_prompt = await build_chat_system_context(session, chat)
     history_result = await session.execute(
         select(Message)
         .where(Message.chat_id == chat_id)
         .options(selectinload(Message.attachments))
         .order_by(Message.created_at)
     )
-    history = _hydrate_history(list(history_result.scalars().all()))
+    history = hydrate_history(list(history_result.scalars().all()))
 
     # For skill invocations: the persisted user message stays the literal
     # slash command, but the LLM should see the expanded prompt this turn.
@@ -225,9 +210,9 @@ async def stream_chat(
 
     # When the chat opts into system-prompt mode, reassert the description as a
     # mandatory instruction on every user turn (no-op otherwise).
-    history = _apply_chat_system_prompt(chat, history)
+    history = apply_chat_system_prompt(chat, history)
 
-    enabled_servers = await _load_enabled_mcp_servers(session)
+    enabled_servers = await load_enabled_mcp_servers(session)
     model = payload.model or await resolve_llm_model(session)
     reasoning_effort = await resolve_llm_reasoning_effort(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
@@ -253,7 +238,7 @@ async def stream_chat(
         ],
     }
 
-    inner = _run_message_stream(
+    inner = run_message_stream(
         kind="chat",
         container_id=chat_id,
         system_prompt=system_prompt,
@@ -268,7 +253,7 @@ async def stream_chat(
         github_token=github_token,
         enabled_servers=enabled_servers,
     )
-    return EventSourceResponse(_lifecycle_stream("chat", chat_id, inner))
+    return EventSourceResponse(lifecycle_stream("chat", chat_id, inner))
 
 
 @router.post("/notes/rephrase", response_model=NotesRephraseResponse)
@@ -281,21 +266,15 @@ async def notes_rephrase(
     chat = await session.get(Chat, chat_id)
     if chat is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-
-    instruction = (payload.instruction or "").strip()
-    system = (
-        "You clean up rough meeting / working notes. Preserve every fact and "
-        "decision verbatim; do not invent content. Reorganise into short, "
-        "scannable bullet points grouped by theme when useful, fix typos and "
-        "obvious shorthand, and keep neutral phrasing. Output ONLY the cleaned "
-        "notes in GitHub-Flavored Markdown — no preamble, no signature."
+    user_prompt = notes_service.build_rephrase_user_prompt(
+        container_label="Chat",
+        title=chat.title,
+        instruction=(payload.instruction or "").strip(),
+        text=payload.text,
     )
-    user_prompt = (
-        f"Chat: {chat.title}\n\n"
-        f"Extra instruction: {instruction or '(none — default cleanup)'}\n\n"
-        f"Raw notes:\n{payload.text}"
+    rebuilt = await _stream_llm(
+        session, notes_service.REPHRASE_SYSTEM, user_prompt, label="/notes rephrase"
     )
-    rebuilt = await _stream_llm(session, system, user_prompt, label="/notes rephrase")
     return NotesRephraseResponse(text=rebuilt or payload.text)
 
 
@@ -308,46 +287,24 @@ async def notes_append(
     """Persist freeform notes verbatim as a user message in the chat."""
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    trimmed = payload.text.strip()
-    if not trimmed and not payload.attachment_ids:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Notes text or attachments are required")
-
-    body = "**Notes**" if not trimmed else f"**Notes**\n\n{trimmed}"
-    async with SessionLocal() as write_session:
-        msg = Message(chat_id=chat_id, role=MessageRole.USER, content=body)
-        write_session.add(msg)
-        await write_session.flush()
-        await consume_note_draft_attachments_to_message(
-            write_session,
-            kind="chat",
-            container_id=chat_id,
-            message_id=msg.id,
-            attachment_ids=payload.attachment_ids,
-        )
-        await write_session.commit()
-        await write_session.refresh(msg, attribute_names=["attachments"])
-        message_read = MessageRead.model_validate(msg, from_attributes=True)
-    await publish_message_changed_chat(chat_id)
-    return NotesAppendResponse(message=message_read)
+    return await notes_service.append_notes(
+        kind="chat",
+        container_id=chat_id,
+        text=payload.text,
+        attachment_ids=payload.attachment_ids,
+    )
 
 
-@router.get("/notes/draft", response_model=NotesDraftResponse)
+@router.get(
+    "/notes/draft",
+    response_model=NotesDraftResponse,
+    dependencies=[Depends(get_chat_or_404)],
+)
 async def notes_draft_get(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> NotesDraftResponse:
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        return NotesDraftResponse(text=None, updated_at=None, attachments=[])
-    await session.refresh(draft, attribute_names=["attachments"])
-    return NotesDraftResponse(
-        text=draft.text,
-        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
-        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
-    )
+    return await notes_service.get_notes_draft(session, kind="chat", container_id=chat_id)
 
 
 @router.put("/notes/draft", response_model=NotesDraftResponse)
@@ -358,49 +315,33 @@ async def notes_draft_save(
 ) -> NotesDraftResponse:
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        draft = NoteDraft(chat_id=chat_id, text=payload.text)
-        session.add(draft)
-    else:
-        draft.text = payload.text
-    await session.commit()
-    await session.refresh(draft, attribute_names=["attachments"])
-    return NotesDraftResponse(
-        text=draft.text,
-        updated_at=draft.updated_at.isoformat() if draft.updated_at else None,
-        attachments=[NoteDraftAttachmentRead.model_validate(a) for a in draft.attachments],
+    return await notes_service.save_notes_draft(
+        session, kind="chat", container_id=chat_id, text=payload.text
     )
 
 
-@router.delete("/notes/draft", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/notes/draft",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(get_chat_or_404)],
+)
 async def notes_draft_delete(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    result = await session.execute(select(NoteDraft).where(NoteDraft.chat_id == chat_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        return
-    await session.delete(draft)
-    await session.commit()
+    await notes_service.delete_notes_draft(session, kind="chat", container_id=chat_id)
 
 
-@router.get("/notes/attachments", response_model=list[NoteDraftAttachmentRead])
+@router.get(
+    "/notes/attachments",
+    response_model=list[NoteDraftAttachmentRead],
+    dependencies=[Depends(get_chat_or_404)],
+)
 async def notes_attachments_list(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[NoteDraftAttachment]:
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    draft = await get_note_draft(session, kind="chat", container_id=chat_id)
-    if draft is None:
-        return []
-    await session.refresh(draft, attribute_names=["attachments"])
-    return list(draft.attachments)
+    return await notes_service.list_notes_attachments(session, kind="chat", container_id=chat_id)
 
 
 @router.post(
@@ -415,34 +356,21 @@ async def notes_attachments_upload(
 ) -> NoteDraftAttachment:
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    mime, data = await read_validated_attachment(file)
-    draft = await get_or_create_note_draft(session, kind="chat", container_id=chat_id)
-    att = NoteDraftAttachment(
-        note_draft_id=draft.id,
-        mime=mime,
-        size=len(data),
-        original_filename=(file.filename or "")[:255],
-        sha256=write_blob(data),
+    return await notes_service.upload_notes_attachment(
+        session, kind="chat", container_id=chat_id, file=file
     )
-    session.add(att)
-    await session.commit()
-    await session.refresh(att)
-    return att
 
 
-@router.delete("/notes/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/notes/attachments/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(get_chat_or_404)],
+)
 async def notes_attachments_delete(
     chat_id: int,
     attachment_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    draft = await get_note_draft(session, kind="chat", container_id=chat_id)
-    if draft is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
-    att = await session.get(NoteDraftAttachment, attachment_id)
-    if att is None or att.note_draft_id != draft.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
-    await session.delete(att)
-    await session.commit()
+    await notes_service.delete_notes_attachment(
+        session, kind="chat", container_id=chat_id, attachment_id=attachment_id
+    )

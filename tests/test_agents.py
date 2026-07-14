@@ -634,7 +634,7 @@ def test_agent_command_registry_is_source_of_truth() -> None:
 def test_normalise_usage_event_captures_token_counts() -> None:
     """`AssistantUsageData` rounds surface their tokens so the side panel can
     aggregate per-agent usage from the timeline."""
-    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.agents.event_normalizer import normalize_event
 
     class AssistantUsageData:
         def __init__(self) -> None:
@@ -643,7 +643,7 @@ def test_normalise_usage_event_captures_token_counts() -> None:
             self.output_tokens = 340
             self.reasoning_tokens = 50
 
-    event = AgentManager()._normalise(AssistantUsageData())
+    event = normalize_event(AssistantUsageData())
 
     assert event.kind == "usage"
     assert event.data is not None
@@ -659,7 +659,7 @@ def test_normalise_usage_event_captures_token_counts() -> None:
 def test_normalise_context_usage_event_captures_window() -> None:
     """`SessionUsageInfoData` maps to a ``context_usage`` step carrying the live
     context-window occupancy for the side-panel progress bar."""
-    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.agents.event_normalizer import normalize_event
 
     class SessionUsageInfoData:
         def __init__(self) -> None:
@@ -667,7 +667,7 @@ def test_normalise_context_usage_event_captures_window() -> None:
             self.token_limit = 128000
             self.conversation_tokens = 7500
 
-    event = AgentManager()._normalise(SessionUsageInfoData())
+    event = normalize_event(SessionUsageInfoData())
 
     assert event.kind == "context_usage"
     assert event.data is not None
@@ -684,7 +684,7 @@ def test_normalise_tool_completion_failure_captures_error() -> None:
     normaliser has to pull those out — otherwise the timeline loses the reason
     the agent hit a wall (the exact bug that made an agent claim it was "blocked").
     """
-    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.agents.event_normalizer import normalize_event
 
     class _Err:
         message = "connect timeout after 30s"
@@ -698,7 +698,7 @@ def test_normalise_tool_completion_failure_captures_error() -> None:
             self.result = None
             self.sandboxed = True
 
-    event = AgentManager()._normalise(ToolExecutionCompleteData())
+    event = normalize_event(ToolExecutionCompleteData())
 
     assert event.tool_status == "error"
     assert event.request_id == "call-1"
@@ -713,7 +713,7 @@ def test_normalise_tool_completion_failure_captures_error() -> None:
 
 def test_normalise_tool_completion_success_captures_result() -> None:
     """A successful tool archives its (capped) output and a ``done`` status."""
-    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.agents.event_normalizer import normalize_event
 
     class _Result:
         content = "x" * 10000
@@ -730,7 +730,7 @@ def test_normalise_tool_completion_success_captures_result() -> None:
             self.result = _Result()
             self.tool_description = _Desc()
 
-    event = AgentManager()._normalise(ToolExecutionCompleteData())
+    event = normalize_event(ToolExecutionCompleteData())
 
     assert event.tool_status == "done"
     assert event.data is not None

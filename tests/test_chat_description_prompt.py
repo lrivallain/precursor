@@ -16,13 +16,13 @@ from precursor.backend.main import create_app
 def _build_context(chat_id: int) -> str:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import Chat
-    from precursor.backend.routers.chat import _build_chat_system_context
+    from precursor.backend.services.turn_engine import build_chat_system_context
 
     async def _check() -> str:
         async with SessionLocal() as session:
             chat = await session.get(Chat, chat_id)
             assert chat is not None
-            return await _build_chat_system_context(session, chat)
+            return await build_chat_system_context(session, chat)
 
     return anyio.run(_check)
 
@@ -30,15 +30,15 @@ def _build_context(chat_id: int) -> str:
 def _apply_prompt(chat_id: int, user_contents: list[str]) -> list[str]:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import Chat
-    from precursor.backend.routers.chat import _apply_chat_system_prompt
     from precursor.backend.services.llm.base import ChatMessage
+    from precursor.backend.services.turn_engine import apply_chat_system_prompt
 
     async def _check() -> list[str]:
         async with SessionLocal() as session:
             chat = await session.get(Chat, chat_id)
             assert chat is not None
             history = [ChatMessage(role="user", content=c) for c in user_contents]
-            out = _apply_chat_system_prompt(chat, history)
+            out = apply_chat_system_prompt(chat, history)
             return [m.content for m in out]
 
     return anyio.run(_check)

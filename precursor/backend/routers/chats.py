@@ -6,15 +6,16 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Chat, Message, MessageRole, Topic
+from precursor.backend.models import Chat, Message, Topic
 from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
 from precursor.backend.schemas.topic import TopicRead
 from precursor.backend.services.events import publish_read_changed, publish_topic_changed
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
+from precursor.backend.services.unread import message_unread_counts
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
 
@@ -44,16 +45,9 @@ async def list_chats(
     chat_ids = [c.id for c in chats]
     unread_by_id: dict[int, int] = {}
     if chat_ids:
-        unread_result = await session.execute(
-            select(Chat.id, func.count(Message.id).label("unread_count"))
-            .join(Message, Message.chat_id == Chat.id)
-            .where(Chat.last_read_at.is_not(None))
-            .where(Message.role != MessageRole.USER)
-            .where(Message.created_at > Chat.last_read_at)
-            .where(Chat.id.in_(chat_ids))
-            .group_by(Chat.id)
+        unread_by_id = await message_unread_counts(
+            session, Chat, Message.chat_id, container_ids=chat_ids
         )
-        unread_by_id = {row[0]: row[1] for row in unread_result.all()}
 
     chat_reads: list[ChatRead] = []
     for chat in chats:

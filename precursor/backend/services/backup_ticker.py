@@ -12,68 +12,36 @@ A ``nudge`` lets a just-enabled backup run without waiting for the next poll.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 
-from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal
+from precursor.backend.services.background_poll import BackgroundPoll
 from precursor.backend.services.backup import backup_due, run_backup
 
 logger = logging.getLogger(__name__)
 
 
-class BackupTicker:
-    def __init__(self, settings: Settings | None = None) -> None:
-        self._settings = settings or get_settings()
-        self._task: asyncio.Task[None] | None = None
-        self._running = False
+class BackupTicker(BackgroundPoll):
+    task_name = "backup-ticker"
+    label = "Backup ticker"
+    poll_floor = 60
 
-    async def start(self) -> None:
-        if self._running or not self._settings.scheduler_enabled:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._ticker(), name="backup-ticker")
+    @property
+    def poll_seconds(self) -> int:
+        return self._settings.backup_poll_seconds
+
+    def _on_start(self) -> None:
         logger.info(
             "Backup ticker started (poll=%ss, interval=%ss).",
             self._settings.backup_poll_seconds,
             self._settings.backup_interval_seconds,
         )
 
-    async def stop(self) -> None:
-        self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _ticker(self) -> None:
-        poll = max(60, self._settings.backup_poll_seconds)
-        while self._running:
-            try:
-                await self._run_if_due()
-            except Exception:
-                logger.exception("Backup ticker iteration failed")
-            try:
-                await asyncio.sleep(poll)
-            except asyncio.CancelledError:
-                break
-
-    async def _run_if_due(self) -> None:
+    async def run_once(self) -> None:
         async with SessionLocal() as session:
             due = await backup_due(session, self._settings.backup_interval_seconds)
         if due:
             await run_backup()
-
-    async def nudge(self) -> None:
-        """Run a backup now if one is due (e.g. just after enabling it)."""
-        if not self._running:
-            return
-        try:
-            await self._run_if_due()
-        except Exception:
-            logger.exception("Backup ticker nudge failed")
 
 
 _ticker: BackupTicker | None = None

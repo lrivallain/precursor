@@ -19,11 +19,11 @@ from fastapi.testclient import TestClient
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import AppSetting, Message, MessageRole, Topic
-from precursor.backend.routers.chat import _hydrate_history
 from precursor.backend.services.tool_result_retention import (
     PRUNED_PLACEHOLDER,
     prune_expired_tool_results,
 )
+from precursor.backend.services.turn_engine import hydrate_history
 
 
 def _init_db() -> None:
@@ -170,7 +170,7 @@ def test_pruned_row_still_hydrates_pairing() -> None:
                 .scalars()
                 .all()
             )
-            return _hydrate_history(rows)
+            return hydrate_history(rows)
 
     hydrated = asyncio.run(_run())
     roles = [m.role for m in hydrated]  # type: ignore[attr-defined]

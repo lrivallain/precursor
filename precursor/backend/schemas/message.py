@@ -111,3 +111,31 @@ class ChatRequest(BaseModel):
     attachment_ids: list[int] = Field(default_factory=list)
     # IDs of note-draft attachments selected in /notes "add & ask AI".
     note_attachment_ids: list[int] = Field(default_factory=list)
+
+
+class NotesRephraseRequest(BaseModel):
+    text: str = Field(min_length=1)
+    instruction: str | None = None
+
+
+class NotesRephraseResponse(BaseModel):
+    text: str
+
+
+class NotesAppendRequest(BaseModel):
+    text: str = ""
+    attachment_ids: list[int] = Field(default_factory=list)
+
+
+class NotesAppendResponse(BaseModel):
+    message: MessageRead
+
+
+class NotesDraftSaveRequest(BaseModel):
+    text: str = ""
+
+
+class NotesDraftResponse(BaseModel):
+    text: str | None
+    updated_at: str | None
+    attachments: list[NoteDraftAttachmentRead] = Field(default_factory=list)
