@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
-import { NotesPanel, type NotesAction } from "./NotesPanel";
+import { NotesPanel } from "./NotesPanel";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
@@ -26,12 +26,15 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
-import { detachedDraftStore, subscribeNoteDraftChanges } from "../lib/detachedDraftStore";
+import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useChatScroll } from "../lib/useChatScroll";
+import { useWindowedMessages } from "../lib/useWindowedMessages";
+import { useReminders } from "../lib/useReminders";
+import { useNotesDraft } from "../lib/useNotesDraft";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
@@ -40,12 +43,8 @@ import type {
   Attachment,
   Chat,
   Message,
-  NoteDraftAttachment,
-  Reminder,
 } from "../lib/types";
-import { PAGINATION, TIMING } from "../lib/constants";
-
-const MESSAGE_PAGE_SIZE = PAGINATION.MESSAGE_PAGE_SIZE;
+import { TIMING } from "../lib/constants";
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -86,24 +85,6 @@ function parseToolMeta(raw: string | null): ParsedToolMeta | null {
   }
 }
 
-interface PendingNotes {
-  initialText: string;
-  attachments: NoteDraftAttachment[];
-  uploadingAttachments: number;
-  attachmentsError: string | null;
-  loadingDraft: boolean;
-  savingDraft: boolean;
-  rephrasing: boolean;
-  acting: boolean;
-  error: string | null;
-  rephrasedText?: string;
-}
-
-interface NotesConfirmState {
-  message: string;
-  resolve: (ok: boolean) => void;
-}
-
 export function ChatSessionPanel({
   chat,
   onChatUpdated,
@@ -113,18 +94,13 @@ export function ChatSessionPanel({
   onOpenRoleSelector,
 }: ChatSessionPanelProps) {
   const confirmAction = useConfirm();
-  const [persisted, setPersisted] = useState<Message[]>([]);
+  const fetchPage = useCallback(
+    (opts: { limit: number; beforeId?: number }) => api.listChatMessages(chat.id, opts),
+    [chat.id],
+  );
+  const win = useWindowedMessages({ fetchPage });
+  const { persisted, setPersisted, loadingOlder } = win;
   const [draft, setDraft] = useState("");
-  const [pendingNotes, setPendingNotes] = useState<PendingNotes | null>(null);
-  const [savedNotesDraft, setSavedNotesDraft] = useState<{
-    text: string;
-    attachmentCount: number;
-  } | null>(null);
-  const [notesConfirm, setNotesConfirm] = useState<NotesConfirmState | null>(null);
-  // One-shot reminder state for this chat (null = none set).
-  const [reminder, setReminder] = useState<Reminder | null>(null);
-  const [reminderModal, setReminderModal] = useState<{ note: string } | null>(null);
-  const [reminderBusy, setReminderBusy] = useState(false);
   const [pendingDeletes, setPendingDeletes] = useState<
     { message: Message; timer: number }[]
   >([]);
@@ -136,18 +112,6 @@ export function ChatSessionPanel({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const pendingAttachmentsRef = useRef<Attachment[]>([]);
   const stoppingRef = useRef(false);
-  // Windowed transcript loading (see ChatPanel for the full rationale).
-  const persistedRef = useRef<Message[]>([]);
-  const [hasMoreOlder, setHasMoreOlder] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const hasMoreOlderRef = useRef(false);
-  const loadingOlderRef = useRef(false);
-  useEffect(() => {
-    persistedRef.current = persisted;
-  }, [persisted]);
-  useEffect(() => {
-    hasMoreOlderRef.current = hasMoreOlder;
-  }, [hasMoreOlder]);
 
   useStreamVersion();
   const settings = useSettings();
@@ -171,58 +135,71 @@ export function ChatSessionPanel({
     [messages, hiddenIds],
   );
 
-  // Reverse-infinite-scroll loaders (mirror ChatPanel).
-  const loadOlderRef = useRef<() => void>(() => {});
-  const onReachTop = useCallback(() => loadOlderRef.current(), []);
+  // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
+  // helpers back into the hook once useChatScroll has produced them.
   const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
     [messages, pendingContent],
-    onReachTop,
+    win.onReachTop,
   );
-
-  const loadOlder = useCallback(async (): Promise<void> => {
-    if (loadingOlderRef.current || !hasMoreOlderRef.current) return;
-    const oldest = persistedRef.current[0];
-    if (!oldest || oldest.id <= 0) return;
-    loadingOlderRef.current = true;
-    setLoadingOlder(true);
-    try {
-      const older = await api.listChatMessages(chat.id, {
-        limit: MESSAGE_PAGE_SIZE,
-        beforeId: oldest.id,
-      });
-      if (older.length === 0) {
-        setHasMoreOlder(false);
-        return;
-      }
-      captureTopAnchor();
-      setPersisted((prev) => {
-        const seen = new Set(prev.map((m) => m.id));
-        const fresh = older.filter((m) => !seen.has(m.id));
-        return fresh.length ? [...fresh, ...prev] : prev;
-      });
-      setHasMoreOlder(older.length >= MESSAGE_PAGE_SIZE);
-    } catch {
-      // Keep what we have on a transient failure.
-    } finally {
-      loadingOlderRef.current = false;
-      setLoadingOlder(false);
-    }
-  }, [chat.id, captureTopAnchor]);
+  const { bindScroll, reloadMessages } = win;
   useEffect(() => {
-    loadOlderRef.current = () => void loadOlder();
-  }, [loadOlder]);
+    bindScroll({ captureTopAnchor, pinToBottom });
+  }, [bindScroll, captureTopAnchor, pinToBottom]);
 
-  const reloadMessages = useCallback(async (): Promise<Message[] | null> => {
-    const want = Math.max(MESSAGE_PAGE_SIZE, persistedRef.current.length + 10);
-    try {
-      const msgs = await api.listChatMessages(chat.id, { limit: want });
-      setPersisted(msgs);
-      setHasMoreOlder(msgs.length >= want);
-      return msgs;
-    } catch {
-      return null;
-    }
-  }, [chat.id]);
+  const {
+    reminder,
+    reminderModal,
+    setReminderModal,
+    reminderBusy,
+    handleReminderSaved,
+    runReminderClear,
+  } = useReminders({
+    container: "chat",
+    id: chat.id,
+    reload: reloadMessages,
+    onRemindersChanged,
+    systemNote,
+  });
+
+  const notesApi = useMemo(
+    () => ({
+      getDraft: () => api.getChatNotesDraft(chat.id),
+      saveDraft: (text: string) => api.saveChatNotesDraft(chat.id, text),
+      clearDraft: () => api.clearChatNotesDraft(chat.id),
+      append: (text: string, ids: number[]) => api.appendChatNotes(chat.id, text, ids),
+      rephrase: (text: string) => api.rephraseChatNotes(chat.id, text),
+      uploadAttachment: (file: File) => api.uploadChatNoteAttachment(chat.id, file),
+      deleteAttachment: (attId: number) => api.deleteChatNoteAttachment(chat.id, attId),
+    }),
+    [chat.id],
+  );
+  const {
+    pendingNotes,
+    savedNotesDraft,
+    notesConfirm,
+    resolveNotesConfirm,
+    openNotesPad,
+    resumeSavedNotesDraft,
+    discardSavedNotesDraft,
+    uploadNoteAttachments,
+    removeNoteAttachment,
+    rephraseNotes,
+    saveNotesDraft,
+    runNotesAction,
+    closeNotesPad,
+    dismissPad,
+  } = useNotesDraft({
+    container: "chat",
+    id: chat.id,
+    notesApi,
+    appendMessages: (msgs) => {
+      setPersisted((prev) => [...prev, ...msgs]);
+      onChatUpdated();
+    },
+    startAppendAndAsk: (body, attachmentIds) =>
+      void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
+    systemNote,
+  });
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -286,13 +263,9 @@ export function ChatSessionPanel({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const msgs = await api
-        .listChatMessages(chat.id, { limit: MESSAGE_PAGE_SIZE })
-        .catch(() => []);
+      const msgs = await win.fetchFirstPage();
       if (cancelled) return;
-      pinToBottom();
-      setPersisted(msgs);
-      setHasMoreOlder(msgs.length >= MESSAGE_PAGE_SIZE);
+      win.applyFirstPage(msgs);
       if (
         streamStore.hasSession(streamKey) &&
         !streamStore.isStreaming(streamKey)
@@ -306,61 +279,6 @@ export function ChatSessionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.id]);
 
-  const reloadSavedNotesDraft = useMemo(
-    () => async () => {
-      const res = await api.getChatNotesDraft(chat.id).catch(() => null);
-      const text = (res?.text ?? "").trim();
-      setSavedNotesDraft(
-        text || (res?.attachments.length ?? 0)
-          ? { text, attachmentCount: res?.attachments.length ?? 0 }
-          : null,
-      );
-    },
-    [chat.id],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const res = await api.getChatNotesDraft(chat.id).catch(() => null);
-      if (cancelled) return;
-      const text = (res?.text ?? "").trim();
-      setSavedNotesDraft(
-        text || (res?.attachments.length ?? 0)
-          ? { text, attachmentCount: res?.attachments.length ?? 0 }
-          : null,
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [chat.id]);
-
-  // Keep the saved-draft banner live when a popped-out notes window persists a
-  // draft for this chat (otherwise it stays stale until a manual refresh).
-  useEffect(() => {
-    return subscribeNoteDraftChanges((container, containerId) => {
-      if (container === "chat" && containerId === chat.id) {
-        void reloadSavedNotesDraft();
-      }
-    });
-  }, [chat.id, reloadSavedNotesDraft]);
-
-  // Load this chat's reminder (if any) so we can show the fired banner and
-  // prefill the edit modal. Re-runs when the panel remounts after a fire.
-  const refreshReminder = useMemo(
-    () => async () => {
-      try {
-        setReminder(await api.getReminder("chat", chat.id));
-      } catch {
-        setReminder(null); // 404 => no reminder
-      }
-    },
-    [chat.id],
-  );
-  useEffect(() => {
-    void refreshReminder();
-  }, [refreshReminder]);
   const prevStreamingRef = useRef(streaming);
   useEffect(() => {
     prevStreamingRef.current = streamStore.isStreaming(streamKey);
@@ -507,46 +425,7 @@ export function ChatSessionPanel({
 
   async function dispatchCommand(name: string, argument: string): Promise<void> {
     if (name === "notes") {
-      setPendingNotes({
-        initialText: "",
-        attachments: [],
-        uploadingAttachments: 0,
-        attachmentsError: null,
-        loadingDraft: true,
-        savingDraft: false,
-        rephrasing: false,
-        acting: false,
-        error: null,
-      });
-      try {
-        const draftRes = await api.getChatNotesDraft(chat.id);
-        const loaded = (draftRes.text ?? "").trim();
-        setSavedNotesDraft(
-          loaded || draftRes.attachments.length
-            ? { text: loaded, attachmentCount: draftRes.attachments.length }
-            : null,
-        );
-        setPendingNotes((p) =>
-          p
-            ? {
-                ...p,
-                initialText: draftRes.text ?? "",
-                attachments: draftRes.attachments,
-                loadingDraft: false,
-              }
-            : p,
-        );
-      } catch (err) {
-        setPendingNotes((p) =>
-          p
-            ? {
-                ...p,
-                loadingDraft: false,
-                error: (err as Error).message,
-              }
-            : p,
-        );
-      }
+      await openNotesPad();
       return;
     }
     if (name === "rename") {
@@ -674,223 +553,6 @@ export function ChatSessionPanel({
     } catch (err) {
       systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
     }
-  }
-
-  // Re-fetch the persisted transcript (the backend records reminder set/clear
-  // confirmations as system messages, and our own SSE echo is suppressed).
-  async function reloadPersisted(): Promise<void> {
-    await reloadMessages();
-  }
-
-  // Apply a modal save: update local state and pull in the confirmation the
-  // backend just appended to the transcript.
-  function handleReminderSaved(saved: Reminder | null): void {
-    setReminder(saved);
-    void reloadPersisted();
-    onRemindersChanged?.();
-  }
-
-  // Shared by /reminder-cancel (any reminder) and /done (a fired one). The
-  // backend DELETE is the same operation; the messages differ.
-  async function runReminderClear(requireFired: boolean): Promise<void> {
-    if (!reminder) {
-      systemNote(requireFired ? "No active reminder to mark done." : "No reminder set.");
-      return;
-    }
-    if (requireFired && reminder.status !== "fired") {
-      systemNote("This reminder hasn't fired yet. Use `/reminder-cancel` to remove it.");
-      return;
-    }
-    setReminderBusy(true);
-    try {
-      await api.clearReminder("chat", chat.id);
-      setReminder(null);
-      await reloadPersisted();
-      onRemindersChanged?.();
-    } catch (err) {
-      systemNote(`Reminder update failed: ${(err as Error).message}`);
-    } finally {
-      setReminderBusy(false);
-    }
-  }
-
-  async function uploadNoteAttachments(files: Iterable<File>): Promise<void> {
-    if (!pendingNotes) return;
-    const { supported, unsupported } = splitSupportedAttachmentFiles(files);
-    if (supported.length === 0) {
-      if (unsupported.length > 0) {
-        setPendingNotes((p) =>
-          p ? { ...p, attachmentsError: unsupportedAttachmentMessage(unsupported) } : p,
-        );
-      }
-      return;
-    }
-    setPendingNotes((p) =>
-      p
-        ? {
-            ...p,
-            attachmentsError:
-              unsupported.length > 0 ? unsupportedAttachmentMessage(unsupported) : null,
-            uploadingAttachments: p.uploadingAttachments + supported.length,
-          }
-        : p,
-    );
-    try {
-      for (const file of supported) {
-        try {
-          const att = await api.uploadChatNoteAttachment(chat.id, file);
-          setPendingNotes((p) => (p ? { ...p, attachments: [...p.attachments, att] } : p));
-        } catch (err) {
-          setPendingNotes((p) =>
-            p ? { ...p, attachmentsError: (err as Error).message || "Upload failed" } : p,
-          );
-        }
-      }
-    } finally {
-      setPendingNotes((p) =>
-        p
-          ? {
-              ...p,
-              uploadingAttachments: Math.max(0, p.uploadingAttachments - supported.length),
-            }
-          : p,
-      );
-    }
-  }
-
-  async function removeNoteAttachment(id: number): Promise<void> {
-    if (!pendingNotes) return;
-    setPendingNotes((p) =>
-      p ? { ...p, attachments: p.attachments.filter((a) => a.id !== id) } : p,
-    );
-    try {
-      await api.deleteChatNoteAttachment(chat.id, id);
-    } catch {
-      // ignore stale/deleted ids
-    }
-  }
-
-  async function rephraseNotes(text: string): Promise<void> {
-    if (!pendingNotes || !text.trim()) return;
-    setPendingNotes((p) => (p ? { ...p, rephrasing: true, error: null } : p));
-    try {
-      const res = await api.rephraseChatNotes(chat.id, text);
-      setPendingNotes((p) => (p ? { ...p, rephrasing: false, rephrasedText: res.text } : p));
-    } catch (err) {
-      setPendingNotes((p) =>
-        p ? { ...p, rephrasing: false, error: (err as Error).message } : p,
-      );
-    }
-  }
-
-  async function runNotesAction(action: NotesAction, text: string): Promise<void> {
-    if (!pendingNotes) return;
-    const trimmed = text.trim();
-    const attachmentIds = pendingNotes.attachments.map((a) => a.id);
-    if (!trimmed && attachmentIds.length === 0) return;
-    setPendingNotes((p) => (p ? { ...p, acting: true, error: null } : p));
-    try {
-      if (action === "append") {
-        const res = await api.appendChatNotes(chat.id, trimmed, attachmentIds);
-        await api.clearChatNotesDraft(chat.id).catch(() => {});
-        setSavedNotesDraft(null);
-        setPersisted((prev) => [...prev, res.message]);
-        onChatUpdated();
-        setPendingNotes(null);
-      } else if (action === "append-and-ask") {
-        setSavedNotesDraft(null);
-        setPendingNotes(null);
-        const body = trimmed ? `**Notes**\n\n${trimmed}` : "**Notes**";
-        void streamStore.start(streamKey, body, undefined, undefined, attachmentIds);
-      }
-      // "post-comment" is GitHub-only and never offered for chats.
-    } catch (err) {
-      setPendingNotes((p) =>
-        p ? { ...p, acting: false, error: (err as Error).message } : p,
-      );
-    }
-  }
-
-  async function saveNotesDraft(text: string): Promise<void> {
-    if (!pendingNotes) return;
-    if (!text.trim() && pendingNotes.attachments.length === 0) return;
-    if (!(await askNotesConfirm("Save notes as draft and close the pad?"))) return;
-    setPendingNotes((p) => (p ? { ...p, savingDraft: true, error: null } : p));
-    try {
-      const res = await api.saveChatNotesDraft(chat.id, text.trim());
-      const saved = (res.text ?? "").trim();
-      setSavedNotesDraft(
-        saved || res.attachments.length
-          ? { text: saved, attachmentCount: res.attachments.length }
-          : null,
-      );
-      setPendingNotes(null);
-    } catch (err) {
-      setPendingNotes((p) =>
-        p ? { ...p, savingDraft: false, error: (err as Error).message } : p,
-      );
-    }
-  }
-
-  async function discardSavedNotesDraft(): Promise<void> {
-    if (!(await askNotesConfirm("Discard the saved notes draft?"))) return;
-    try {
-      await api.clearChatNotesDraft(chat.id);
-      setSavedNotesDraft(null);
-    } catch (err) {
-      systemNote(`Draft discard failed: ${(err as Error).message}`);
-    }
-  }
-
-  async function resumeSavedNotesDraft(): Promise<void> {
-    setPendingNotes({
-      initialText: "",
-      attachments: [],
-      uploadingAttachments: 0,
-      attachmentsError: null,
-      loadingDraft: true,
-      savingDraft: false,
-      rephrasing: false,
-      acting: false,
-      error: null,
-    });
-    try {
-      const draftRes = await api.getChatNotesDraft(chat.id);
-      setPendingNotes((p) =>
-        p
-          ? {
-              ...p,
-              initialText: draftRes.text ?? "",
-              attachments: draftRes.attachments,
-              loadingDraft: false,
-            }
-          : p,
-      );
-    } catch (err) {
-      setPendingNotes((p) =>
-        p ? { ...p, loadingDraft: false, error: (err as Error).message } : p,
-      );
-    }
-  }
-
-  async function askNotesConfirm(message: string): Promise<boolean> {
-    return await new Promise<boolean>((resolve) => {
-      setNotesConfirm({ message, resolve });
-    });
-  }
-
-  async function closeNotesPad(text: string): Promise<void> {
-    if (
-      pendingNotes &&
-      (text.trim() || pendingNotes.attachments.length > 0) &&
-      !(await askNotesConfirm("Discard current notes in the pad?"))
-    )
-      return;
-    if (pendingNotes && (text.trim() || pendingNotes.attachments.length > 0)) {
-      await api.clearChatNotesDraft(chat.id).catch(() => {});
-      setSavedNotesDraft(null);
-    }
-    setPendingNotes(null);
   }
 
   async function send(): Promise<void> {
@@ -1118,7 +780,7 @@ export function ChatSessionPanel({
                           initialText: text,
                           initialAttachments: pendingNotes.attachments,
                         });
-                        setPendingNotes(null);
+                        dismissPad();
                       }
                 }
               />
@@ -1169,19 +831,13 @@ export function ChatSessionPanel({
             <div className="mt-4 flex justify-end gap-2">
               <button
                 className="rounded border border-border px-3 py-1.5 text-xs hover:bg-bg"
-                onClick={() => {
-                  notesConfirm.resolve(false);
-                  setNotesConfirm(null);
-                }}
+                onClick={() => resolveNotesConfirm(false)}
               >
                 Cancel
               </button>
               <button
                 className="rounded bg-accent px-3 py-1.5 text-xs text-white"
-                onClick={() => {
-                  notesConfirm.resolve(true);
-                  setNotesConfirm(null);
-                }}
+                onClick={() => resolveNotesConfirm(true)}
               >
                 Confirm
               </button>
