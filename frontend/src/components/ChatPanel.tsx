@@ -10,10 +10,6 @@ import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { api } from "../lib/api";
 import {
-  splitSupportedAttachmentFiles,
-  unsupportedAttachmentMessage,
-} from "../lib/attachments";
-import {
   commandsForSurface,
   GITHUB_SLASH_COMMANDS,
   formatMemoryList,
@@ -41,9 +37,11 @@ import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import { useReminders } from "../lib/useReminders";
 import { useNotesDraft } from "../lib/useNotesDraft";
+import { usePendingAttachments } from "../lib/usePendingAttachments";
+import { useMessageDeletion } from "../lib/useMessageDeletion";
+import { parseToolMeta } from "../lib/toolMeta";
 import type {
   AgentSession,
-  Attachment,
   Message,
   Topic,
 } from "../lib/types";
@@ -133,24 +131,6 @@ function cardConfirmHint(kind: PendingKind): string | undefined {
   return undefined;
 }
 
-interface ParsedToolMeta {
-  tool_call_id?: string;
-  name?: string;
-  arguments?: string;
-  is_error?: boolean;
-  pending?: boolean;
-}
-
-function parseToolMeta(raw: string | null): ParsedToolMeta | null {
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw) as ParsedToolMeta;
-    return typeof v === "object" && v !== null ? v : null;
-  } catch {
-    return null;
-  }
-}
-
 export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, onOpenRoleSelector }: ChatPanelProps) {
   const confirmAction = useConfirm();
   const fetchPage = useCallback(
@@ -159,22 +139,25 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   );
   const win = useWindowedMessages({ fetchPage });
   const { persisted, setPersisted, loadingOlder } = win;
+  const {
+    pendingAttachments,
+    setPendingAttachments,
+    uploadingCount,
+    attachmentError,
+    uploadFiles,
+    removeAttachment,
+  } = usePendingAttachments({
+    resetKey: topic.id,
+    upload: (file) => api.attachments.uploadForTopic(topic.id, file),
+  });
+  const { pendingDeletes, hiddenIds, requestDeleteMessage, undoDelete } = useMessageDeletion({
+    resetKey: topic.id,
+    deleteMessage: (mid) => api.messages.remove(topic.id, mid),
+    setPersisted,
+  });
   const [draft, setDraft] = useState("");
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
-  // Attachments uploaded by the user but not yet bound to a sent message.
-  // They live as orphan rows server-side until either /messages/stream binds
-  // them, or the user removes them / leaves the topic (in which case we DELETE
-  // them so they don't accumulate as garbage).
-  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const [uploadingCount, setUploadingCount] = useState(0);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  // Messages the user removed but can still undo until the grace timer fires.
-  // Each entry pairs the soft-deleted Message snapshot with a setTimeout id.
-  const [pendingDeletes, setPendingDeletes] = useState<
-    { message: Message; timer: number }[]
-  >([]);
-  const pendingAttachmentsRef = useRef<Attachment[]>([]);
   // Set while we handle a user-initiated Stop so the streaming→done effect
   // skips its own reload and lets stop() own the (post-persist) refresh.
   const stoppingRef = useRef(false);
@@ -199,10 +182,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const messages = useMemo<Message[]>(
     () => (hasSession ? [...persisted, ...buffered] : persisted),
     [persisted, buffered, hasSession],
-  );
-  const hiddenIds = useMemo(
-    () => new Set(pendingDeletes.map((p) => p.message.id)),
-    [pendingDeletes],
   );
   const visibleMessages = useMemo<Message[]>(
     () => messages.filter((m) => !hiddenIds.has(m.id)),
@@ -353,100 +332,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     historyIndexRef.current = null;
     originalDraftRef.current = "";
   }, [topic.id]);
-
-  // Keep a ref so cleanup effects can read the latest list without
-  // re-subscribing every time it changes.
-  useEffect(() => {
-    pendingAttachmentsRef.current = pendingAttachments;
-  }, [pendingAttachments]);
-
-  // When the topic changes, drop unsent attachments + delete them server-side
-  // so they don't accumulate as orphan rows.
-  useEffect(() => {
-    return () => {
-      const orphans = pendingAttachmentsRef.current;
-      pendingAttachmentsRef.current = [];
-      setPendingAttachments([]);
-      setAttachmentError(null);
-      for (const a of orphans) {
-        void api.attachments.remove(a.id).catch(() => {});
-      }
-    };
-  }, [topic.id]);
-
-  // Flush any in-flight message deletions when the topic changes or the
-  // panel unmounts: cancel the grace timer and commit the delete server-side
-  // immediately so the next visit shows a consistent transcript.
-  const pendingDeletesRef = useRef<typeof pendingDeletes>([]);
-  useEffect(() => {
-    pendingDeletesRef.current = pendingDeletes;
-  }, [pendingDeletes]);
-  useEffect(() => {
-    const tid = topic.id;
-    return () => {
-      const queued = pendingDeletesRef.current;
-      pendingDeletesRef.current = [];
-      for (const p of queued) {
-        window.clearTimeout(p.timer);
-        void api.messages.remove(tid, p.message.id).catch(() => {});
-      }
-    };
-  }, [topic.id]);
-
-  function commitDelete(messageId: number): void {
-    setPendingDeletes((prev) => prev.filter((p) => p.message.id !== messageId));
-    setPersisted((prev) => prev.filter((m) => m.id !== messageId));
-    void api.messages.remove(topic.id, messageId).catch(() => {});
-  }
-
-  function requestDeleteMessage(message: Message): void {
-    // Don't queue the same message twice.
-    if (pendingDeletesRef.current.some((p) => p.message.id === message.id))
-      return;
-    const timer = window.setTimeout(() => commitDelete(message.id), TIMING.UNDO_DELETE_MS);
-    setPendingDeletes((prev) => [...prev, { message, timer }]);
-  }
-
-  function undoDelete(messageId: number): void {
-    setPendingDeletes((prev) => {
-      const hit = prev.find((p) => p.message.id === messageId);
-      if (hit) window.clearTimeout(hit.timer);
-      return prev.filter((p) => p.message.id !== messageId);
-    });
-  }
-
-  async function uploadFiles(files: Iterable<File>): Promise<void> {
-    const { supported, unsupported } = splitSupportedAttachmentFiles(files);
-    if (unsupported.length > 0) {
-      setAttachmentError(unsupportedAttachmentMessage(unsupported));
-    }
-    if (supported.length === 0) return;
-    if (unsupported.length === 0) setAttachmentError(null);
-    setUploadingCount((n) => n + supported.length);
-    try {
-      for (const file of supported) {
-        try {
-          const att = await api.attachments.uploadForTopic(topic.id, file);
-          setPendingAttachments((prev) => [...prev, att]);
-        } catch (err) {
-          setAttachmentError(
-            (err as Error).message || "Upload failed",
-          );
-        }
-      }
-    } finally {
-      setUploadingCount((n) => Math.max(0, n - supported.length));
-    }
-  }
-
-  async function removeAttachment(id: number): Promise<void> {
-    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
-    try {
-      await api.attachments.remove(id);
-    } catch {
-      // Already gone server-side, or bound to a sent message — nothing to do.
-    }
-  }
 
   useEffect(() => {
     let cancelled = false;

@@ -9,10 +9,6 @@ import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { api } from "../lib/api";
 import {
-  splitSupportedAttachmentFiles,
-  unsupportedAttachmentMessage,
-} from "../lib/attachments";
-import {
   commandsForSurface,
   formatMemoryList,
   matchSlashCommands,
@@ -35,16 +31,18 @@ import { useChatScroll } from "../lib/useChatScroll";
 import { useWindowedMessages } from "../lib/useWindowedMessages";
 import { useReminders } from "../lib/useReminders";
 import { useNotesDraft } from "../lib/useNotesDraft";
+import { usePendingAttachments } from "../lib/usePendingAttachments";
+import { useMessageDeletion } from "../lib/useMessageDeletion";
+import { parseToolMeta } from "../lib/toolMeta";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type {
-  Attachment,
   Chat,
   Message,
 } from "../lib/types";
-import { TIMING, Z_INDEX } from "../lib/constants";
+import { Z_INDEX } from "../lib/constants";
 import { Modal } from "./Modal";
 
 interface ChatSessionPanelProps {
@@ -68,24 +66,6 @@ interface ChatSessionPanelProps {
 const CHAT_EXCLUDED_COMMANDS: ReadonlySet<string> = surfaceExcludes("chat");
 const HANDLED_COMMANDS = commandsForSurface("chat");
 
-interface ParsedToolMeta {
-  tool_call_id?: string;
-  name?: string;
-  arguments?: string;
-  is_error?: boolean;
-  pending?: boolean;
-}
-
-function parseToolMeta(raw: string | null): ParsedToolMeta | null {
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw) as ParsedToolMeta;
-    return typeof v === "object" && v !== null ? v : null;
-  } catch {
-    return null;
-  }
-}
-
 export function ChatSessionPanel({
   chat,
   onChatUpdated,
@@ -101,17 +81,23 @@ export function ChatSessionPanel({
   );
   const win = useWindowedMessages({ fetchPage });
   const { persisted, setPersisted, loadingOlder } = win;
+  const {
+    pendingAttachments,
+    setPendingAttachments,
+    uploadingCount,
+    attachmentError,
+    uploadFiles,
+    removeAttachment,
+  } = usePendingAttachments({
+    resetKey: chat.id,
+    upload: (file) => api.attachments.uploadForChat(chat.id, file),
+  });
+  const { pendingDeletes, hiddenIds, requestDeleteMessage, undoDelete } = useMessageDeletion({
+    resetKey: chat.id,
+    deleteMessage: (mid) => api.chats.deleteMessage(chat.id, mid),
+    setPersisted,
+  });
   const [draft, setDraft] = useState("");
-  const [pendingDeletes, setPendingDeletes] = useState<
-    { message: Message; timer: number }[]
-  >([]);
-  // Images uploaded but not yet bound to a sent message. They live as orphan
-  // rows server-side until /messages/stream binds them, or the user removes
-  // them / leaves the chat (in which case we DELETE them).
-  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const [uploadingCount, setUploadingCount] = useState(0);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const pendingAttachmentsRef = useRef<Attachment[]>([]);
   const stoppingRef = useRef(false);
 
   useStreamVersion();
@@ -126,10 +112,6 @@ export function ChatSessionPanel({
   const messages = useMemo<Message[]>(
     () => (hasSession ? [...persisted, ...buffered] : persisted),
     [persisted, buffered, hasSession],
-  );
-  const hiddenIds = useMemo(
-    () => new Set(pendingDeletes.map((p) => p.message.id)),
-    [pendingDeletes],
   );
   const visibleMessages = useMemo<Message[]>(
     () => messages.filter((m) => !hiddenIds.has(m.id)),
@@ -306,73 +288,6 @@ export function ChatSessionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming, chat.id]);
 
-  // Flush queued message deletions on unmount / chat switch.
-  const pendingDeletesRef = useRef<typeof pendingDeletes>([]);
-  useEffect(() => {
-    pendingDeletesRef.current = pendingDeletes;
-  }, [pendingDeletes]);
-  useEffect(() => {
-    const cid = chat.id;
-    return () => {
-      const queued = pendingDeletesRef.current;
-      pendingDeletesRef.current = [];
-      for (const p of queued) {
-        window.clearTimeout(p.timer);
-        void api.chats.deleteMessage(cid, p.message.id).catch(() => {});
-      }
-    };
-  }, [chat.id]);
-
-  // Keep a ref so the unmount/switch cleanup reads the latest list.
-  useEffect(() => {
-    pendingAttachmentsRef.current = pendingAttachments;
-  }, [pendingAttachments]);
-
-  // When the chat changes, drop unsent attachments + delete them server-side
-  // so they don't accumulate as orphan rows.
-  useEffect(() => {
-    return () => {
-      const orphans = pendingAttachmentsRef.current;
-      pendingAttachmentsRef.current = [];
-      setPendingAttachments([]);
-      setAttachmentError(null);
-      for (const a of orphans) {
-        void api.attachments.remove(a.id).catch(() => {});
-      }
-    };
-  }, [chat.id]);
-
-  async function uploadFiles(files: Iterable<File>): Promise<void> {
-    const { supported, unsupported } = splitSupportedAttachmentFiles(files);
-    if (unsupported.length > 0) {
-      setAttachmentError(unsupportedAttachmentMessage(unsupported));
-    }
-    if (supported.length === 0) return;
-    if (unsupported.length === 0) setAttachmentError(null);
-    setUploadingCount((n) => n + supported.length);
-    try {
-      for (const file of supported) {
-        try {
-          const att = await api.attachments.uploadForChat(chat.id, file);
-          setPendingAttachments((prev) => [...prev, att]);
-        } catch (err) {
-          setAttachmentError((err as Error).message || "Upload failed");
-        }
-      }
-    } finally {
-      setUploadingCount((n) => Math.max(0, n - supported.length));
-    }
-  }
-
-  async function removeAttachment(id: number): Promise<void> {
-    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
-    try {
-      await api.attachments.remove(id);
-    } catch {
-      // Already gone server-side, or bound to a sent message — nothing to do.
-    }
-  }
-
   function systemNote(content: string): void {
     setPersisted((prev) => [
       ...prev,
@@ -404,24 +319,6 @@ export function ChatSessionPanel({
         created_at: new Date().toISOString(),
       },
     ]);
-  }
-
-  function commitDelete(messageId: number): void {
-    setPendingDeletes((prev) => prev.filter((p) => p.message.id !== messageId));
-    setPersisted((prev) => prev.filter((m) => m.id !== messageId));
-    void api.chats.deleteMessage(chat.id, messageId).catch(() => {});
-  }
-  function requestDeleteMessage(message: Message): void {
-    if (pendingDeletesRef.current.some((p) => p.message.id === message.id)) return;
-    const timer = window.setTimeout(() => commitDelete(message.id), TIMING.UNDO_DELETE_MS);
-    setPendingDeletes((prev) => [...prev, { message, timer }]);
-  }
-  function undoDelete(messageId: number): void {
-    setPendingDeletes((prev) => {
-      const hit = prev.find((p) => p.message.id === messageId);
-      if (hit) window.clearTimeout(hit.timer);
-      return prev.filter((p) => p.message.id !== messageId);
-    });
   }
 
   async function dispatchCommand(name: string, argument: string): Promise<void> {
