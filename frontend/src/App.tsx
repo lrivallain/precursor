@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  ChevronRight,
   MessagesSquare,
   Pin,
   PinOff,
@@ -155,6 +156,28 @@ function topicUrl(tree: TopicNode[], topic: Topic): string {
   const segs = topicSlugPath(tree, topic.id);
   const chain = segs.length ? segs : [topic.slug];
   return "/topics/" + chain.map(encodeURIComponent).join("/");
+}
+
+/** Ancestor chain (root → immediate parent, excluding self) for a topic. */
+function topicAncestors(tree: TopicNode[], topicId: number): TopicNode[] {
+  const byId = new Map<number, TopicNode>();
+  const walk = (nodes: TopicNode[]): void => {
+    for (const n of nodes) {
+      byId.set(n.id, n);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(tree);
+  const chain: TopicNode[] = [];
+  let cur = byId.get(topicId);
+  let parentId = cur?.parent_id ?? null;
+  while (parentId != null) {
+    cur = byId.get(parentId);
+    if (!cur) break;
+    chain.unshift(cur);
+    parentId = cur.parent_id ?? null;
+  }
+  return chain;
 }
 
 function chatUrl(chat: Chat): string {
@@ -1425,12 +1448,28 @@ export default function App() {
             <>
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {activeTopic ? (
-                  <InlineTitle
-                    title={activeTopic.title}
-                    onRename={(t) => handleRenameTopic(activeTopic.id, t)}
-                    className="truncate font-medium"
-                    inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
-                  />
+                  <>
+                    {topicAncestors(tree, activeTopic.id).map((anc) => (
+                      <div key={anc.id} className="flex items-center gap-2 min-w-0 shrink">
+                        <button
+                          type="button"
+                          onClick={() => void handleSelect(anc.id)}
+                          className="max-w-[10rem] truncate text-sm text-muted hover:text-fg hover:underline"
+                          title={anc.title}
+                          data-tooltip={`Go to ${anc.title}`}
+                        >
+                          {anc.title}
+                        </button>
+                        <ChevronRight size={14} className="shrink-0 text-muted" />
+                      </div>
+                    ))}
+                    <InlineTitle
+                      title={activeTopic.title}
+                      onRename={(t) => handleRenameTopic(activeTopic.id, t)}
+                      className="truncate font-medium"
+                      inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+                    />
+                  </>
                 ) : (
                   <span className="truncate font-medium">Select or create a topic</span>
                 )}
