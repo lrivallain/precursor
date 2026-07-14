@@ -23,6 +23,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import Attachment, Chat, Message, MessageRole, Topic
+from precursor.backend.routers.deps import get_topic_or_404
 from precursor.backend.schemas import ChatRequest, MessageRead, StoppedTurn
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services.app_settings import (
@@ -61,6 +62,7 @@ from precursor.backend.services.mcp.client import (
     get_mcp_client_manager,
 )
 from precursor.backend.services.meeting_analysis import live_chat_grounding
+from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import (
@@ -73,12 +75,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/topics/{topic_id}/messages", tags=["chat"])
 _MAX_ATTACHMENT_CONTEXT_CHARS = 4_000
-# Upper bound on a single windowed page, so a hostile/buggy client can't ask the
-# server to materialise an unbounded slice at once.
-_MESSAGE_PAGE_MAX = 500
 
 
-@router.get("", response_model=list[MessageRead])
+@router.get("", response_model=list[MessageRead], dependencies=[Depends(get_topic_or_404)])
 async def list_messages(
     topic_id: int,
     limit: int | None = None,
@@ -93,33 +92,19 @@ async def list_messages(
     ``before_id`` to page further back. Either way the slice comes back oldest
     first so the client can append it in render order.
     """
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    base = (
-        select(Message)
-        .where(Message.topic_id == topic_id)
-        .options(selectinload(Message.attachments))
+    return await list_message_window(
+        session, Message.topic_id, topic_id, limit=limit, before_id=before_id
     )
-    if limit is None and before_id is None:
-        result = await session.execute(base.order_by(Message.created_at, Message.id))
-        return list(result.scalars().all())
-    if before_id is not None:
-        base = base.where(Message.id < before_id)
-    page = max(1, min(limit or _MESSAGE_PAGE_MAX, _MESSAGE_PAGE_MAX))
-    result = await session.execute(base.order_by(Message.id.desc()).limit(page))
-    rows = list(result.scalars().all())
-    rows.reverse()
-    return rows
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_topic_or_404)]
+)
 async def clear_messages(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Wipe the chat transcript for a topic. Topic + GitHub link are kept."""
-    if await session.get(Topic, topic_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     await session.execute(delete(Message).where(Message.topic_id == topic_id))
     await session.commit()
     await publish_message_changed(topic_id)

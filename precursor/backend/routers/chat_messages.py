@@ -41,6 +41,7 @@ from precursor.backend.routers.commands import (
     NotesRephraseResponse,
     _stream_llm,
 )
+from precursor.backend.routers.deps import get_chat_or_404
 from precursor.backend.schemas import ChatRequest, MessageRead, NoteDraftAttachmentRead, StoppedTurn
 from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
@@ -55,6 +56,7 @@ from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.note_drafts import (
     consume_note_draft_attachments_to_message,
     get_note_draft,
@@ -64,11 +66,9 @@ from precursor.backend.services.note_drafts import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chats/{chat_id}/messages", tags=["chat"])
-# Upper bound on a single windowed page (mirrors the topic message router).
-_MESSAGE_PAGE_MAX = 500
 
 
-@router.get("", response_model=list[MessageRead])
+@router.get("", response_model=list[MessageRead], dependencies=[Depends(get_chat_or_404)])
 async def list_messages(
     chat_id: int,
     limit: int | None = None,
@@ -82,31 +82,19 @@ async def list_messages(
     ``limit`` rows; ``before_id`` pages further back. Slices come back oldest
     first.
     """
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    base = (
-        select(Message).where(Message.chat_id == chat_id).options(selectinload(Message.attachments))
+    return await list_message_window(
+        session, Message.chat_id, chat_id, limit=limit, before_id=before_id
     )
-    if limit is None and before_id is None:
-        result = await session.execute(base.order_by(Message.created_at, Message.id))
-        return list(result.scalars().all())
-    if before_id is not None:
-        base = base.where(Message.id < before_id)
-    page = max(1, min(limit or _MESSAGE_PAGE_MAX, _MESSAGE_PAGE_MAX))
-    result = await session.execute(base.order_by(Message.id.desc()).limit(page))
-    rows = list(result.scalars().all())
-    rows.reverse()
-    return rows
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_chat_or_404)]
+)
 async def clear_messages(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Wipe the transcript for a chat. The chat row itself is kept."""
-    if await session.get(Chat, chat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
     await session.execute(delete(Message).where(Message.chat_id == chat_id))
     await session.commit()
     await publish_message_changed_chat(chat_id)

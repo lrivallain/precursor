@@ -11,9 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import shutil
-import unicodedata
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,6 +64,7 @@ from precursor.backend.services.mcp.client import (
     get_mcp_client_manager,
 )
 from precursor.backend.services.roles import resolve_role_prompt
+from precursor.backend.services.slugs import slugify
 from precursor.backend.services.suggestions import (
     SUGGESTIONS_INSTRUCTION,
     split_suggestions,
@@ -74,14 +73,6 @@ from precursor.backend.services.suggestions import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
-
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _slugify(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
-    ascii_only = decomposed.encode("ascii", "ignore").decode("ascii")
-    return _SLUG_RE.sub("-", ascii_only.lower()).strip("-")[:80]
 
 
 def workspace_root(ws: Workspace) -> Path:
@@ -165,7 +156,7 @@ async def create_workspace(
             "git is not installed on the server — install it to use git workspaces.",
         )
 
-    slug = _slugify(payload.slug or payload.name)
+    slug = slugify(payload.slug or payload.name)
     slug = await _allocate_slug(session, slug)
 
     ws = Workspace(
