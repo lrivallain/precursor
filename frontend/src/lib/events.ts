@@ -9,6 +9,7 @@
 
 import { CLIENT_ID } from "./clientId";
 import { mcpAuthStore } from "./mcpAuth";
+import { emitWorkiqAuthUrl } from "./workiqSignIn";
 
 export type BusEvent =
   | { type: "topic.changed"; topic_id: number | null; chat_id?: number | null }
@@ -107,6 +108,17 @@ function connect(): void {
         payload.server ?? "workiq",
         payload.message ?? "Sign-in required.",
       );
+    } catch {
+      // Ignore malformed payloads.
+    }
+  });
+  // The interactive WorkIQ sign-in surfaces its OAuth authorization URL here so
+  // the window that started it can steer its script-opened popup to it. Not
+  // client-id filtered: the requesting window is the one that needs it.
+  source.addEventListener("mcp.auth_url", (e) => {
+    try {
+      const payload = JSON.parse((e as MessageEvent).data) as { url?: string };
+      if (payload.url) emitWorkiqAuthUrl(payload.url);
     } catch {
       // Ignore malformed payloads.
     }

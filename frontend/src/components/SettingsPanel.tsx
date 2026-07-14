@@ -25,6 +25,7 @@ import {
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
 import { mcpAuthStore } from "../lib/mcpAuth";
+import { signInWorkiq } from "../lib/workiqSignIn";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { modelsStore } from "../lib/modelsStore";
 import { settingsStore } from "../lib/settingsStore";
@@ -511,14 +512,14 @@ export function SettingsPanel({ onClose }: Props) {
   }
 
   async function reauthenticateWorkiq(name: string): Promise<void> {
-    // Drives the interactive browser sign-in; blocks until the user finishes.
+    // Opens a script-openable sign-in popup and blocks until the user finishes.
     setMcp((prev) =>
       prev.map((s) =>
         s.name === name ? { ...s, state: "connecting", error: null } : s,
       ),
     );
     try {
-      const next = await api.reauthenticateWorkiq();
+      const next = await signInWorkiq();
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
       mcpAuthStore.clear();
     } catch (err) {

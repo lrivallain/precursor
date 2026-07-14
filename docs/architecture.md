@@ -192,7 +192,13 @@ are refreshed silently when possible; background connects (catalog probes,
 warm-pool workers, chat turns) use a *non-interactive* provider that never pops
 a browser — when a full sign-in is required they fail fast with a `needs_auth`
 state. The user restarts the browser flow on demand from Settings
-(`POST /api/mcp/servers/workiq/reauthenticate`, single-flight guarded). The same
+(`POST /api/mcp/servers/workiq/reauthenticate`, single-flight guarded). The SPA
+opens the sign-in in a **script-opened popup** (synchronously on click, so it
+survives popup blockers) and navigates it to the authorization URL the backend
+surfaces over the `/api/events` bus (`mcp.auth_url`); that popup's loopback
+callback page can then close itself once auth completes. The backend only falls
+back to opening the OS browser (`webbrowser.open`, leaving a tab the callback
+can't close) when the SPA reports it had no popup (`use_popup` unset). The same
 sign-in is surfaced *inline* in the main app (no Settings detour) by the global
 `McpAuthBanner`: chat/topic/workspace turns hold and stream an `mcp_auth_required`
 event from their pause-and-resume gate, and the Agents runtime emits the same

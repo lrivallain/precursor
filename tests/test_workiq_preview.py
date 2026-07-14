@@ -62,16 +62,44 @@ async def test_background_redirect_handler_refuses_browser(monkeypatch) -> None:
     from precursor.backend.services.mcp import workiq_preview as wp
 
     opened: list[str] = []
+    published: list[tuple[str, str]] = []
     monkeypatch.setattr(wp.webbrowser, "open", lambda url: opened.append(url))
+
+    async def _fake_publish(server: str, url: str) -> None:
+        published.append((server, url))
+
+    monkeypatch.setattr(wp, "publish_mcp_auth_url", _fake_publish)
 
     background = wp._make_redirect_handler(interactive=False)
     with pytest.raises(wp.WorkIQAuthRequiredError):
         await background("https://login.example/authorize?x=1")
     assert opened == []  # browser stayed shut
+    assert published == []  # and no URL leaked to the UI
 
     interactive = wp._make_redirect_handler(interactive=True)
     await interactive("https://login.example/authorize?x=1")
+    # Default surfaces the URL to the UI *and* opens the OS browser as a fallback.
     assert opened == ["https://login.example/authorize?x=1"]
+    assert published == [("workiq", "https://login.example/authorize?x=1")]
+
+
+async def test_interactive_handler_skips_browser_when_popup_drives(monkeypatch) -> None:
+    """When the SPA drives a popup we surface the URL but skip the OS browser."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    opened: list[str] = []
+    published: list[tuple[str, str]] = []
+    monkeypatch.setattr(wp.webbrowser, "open", lambda url: opened.append(url))
+
+    async def _fake_publish(server: str, url: str) -> None:
+        published.append((server, url))
+
+    monkeypatch.setattr(wp, "publish_mcp_auth_url", _fake_publish)
+
+    handler = wp._make_redirect_handler(interactive=True, open_system_browser=False)
+    await handler("https://login.example/authorize?x=1")
+    assert opened == []  # no stray OS-browser tab
+    assert published == [("workiq", "https://login.example/authorize?x=1")]
 
 
 async def test_reauthenticate_single_flight() -> None:
@@ -164,10 +192,10 @@ def test_reauthenticate_requires_preview_enabled() -> None:
 def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    ran: list[bool] = []
+    calls: list[bool] = []
 
-    async def _fake_flow() -> None:
-        ran.append(True)
+    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+        calls.append(open_system_browser)
 
     monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
 
@@ -179,4 +207,10 @@ def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:
         body = resp.json()
         assert body["preview"] is True
         assert body["transport"] == "streamable_http"
-        assert ran == [True]
+        # No popup flag → the server opens the OS browser as the fallback.
+        assert calls == [True]
+
+        # With a SPA-driven popup, the server skips the OS browser fallback.
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 200
+        assert calls == [True, False]

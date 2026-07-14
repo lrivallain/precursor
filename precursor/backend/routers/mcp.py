@@ -280,6 +280,7 @@ async def set_workiq_preview_mode(
 
 @router.post("/servers/workiq/reauthenticate")
 async def reauthenticate_workiq_server(
+    use_popup: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Restart the WorkIQ OAuth sign-in on an explicit user action.
@@ -288,6 +289,10 @@ async def reauthenticate_workiq_server(
     endpoint runs the interactive authorization-code grant, persists the fresh
     tokens, then rebuilds the background provider and re-probes so the next chat
     turn reuses the new session. Blocks until the browser flow completes.
+
+    ``use_popup`` is set by the SPA when it has already opened a script-openable
+    popup for the sign-in: we then skip the OS-browser fallback and only surface
+    the authorization URL over SSE for that popup to navigate to.
     """
     from precursor.backend.services.mcp.workiq_preview import (
         WorkIQAuthInProgressError,
@@ -306,7 +311,7 @@ async def reauthenticate_workiq_server(
         )
 
     try:
-        await reauthenticate_workiq()
+        await reauthenticate_workiq(open_system_browser=not use_popup)
     except WorkIQAuthInProgressError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except Exception as exc:

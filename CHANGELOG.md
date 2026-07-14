@@ -184,7 +184,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
-- **Attachment bytes now live on disk, not in the database.** Uploaded
+- **WorkIQ sign-in now opens in a self-closing popup.** The interactive WorkIQ
+  OAuth flow used to open in a browser tab via the backend's `webbrowser.open`;
+  that tab could never auto-close (browsers only let a script close a window a
+  script opened), so it lingered after sign-in. The SPA now opens the sign-in in
+  a script-opened popup (synchronously on click, so popup blockers don't catch
+  it) and navigates it to the authorization URL the backend surfaces over the
+  `/api/events` bus (`mcp.auth_url`); the loopback callback page then closes the
+  popup itself once auth completes. The OS-browser path remains as a fallback for
+  when no popup could be opened (`use_popup` unset on the reauth request).
+
+
   attachments (images, PDF, DOCX, PPTX) used to be stored as `LargeBinary`
   BLOBs in SQLite, which bloated the database file and made every backup/copy
   pay for the payload. They are now written as content-addressed files under
