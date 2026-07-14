@@ -31,9 +31,9 @@ interface Props {
 
 /**
  * Landing surface shown at `/`. A greeting and the launcher cards (topic, chat,
- * live session, agent), vertically centered until one is picked. Picking a card
- * reveals that section's start surface right below on the same page — no
- * redirect. Picking it again returns to the centered launcher.
+ * live session, agent), pinned to the top. Picking a card reveals that section's
+ * start surface right below on the same page — no redirect, and the cards stay
+ * put. Picking it again hides the surface.
  */
 export function HomePage({
   topicSurface,
@@ -106,11 +106,7 @@ export function HomePage({
 
   return (
     <div className="flex h-full flex-col">
-      <div
-        className={`flex w-full flex-col ${
-          selected ? "shrink-0" : "flex-1 justify-center"
-        }`}
-      >
+      <div className="flex w-full shrink-0 flex-col">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-8">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-accent">
