@@ -60,9 +60,7 @@ async def list_messages(
     )
 
 
-@router.delete(
-    "", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_topic_or_404)]
-)
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_topic_or_404)])
 async def clear_messages(
     topic_id: int,
     session: AsyncSession = Depends(get_session),

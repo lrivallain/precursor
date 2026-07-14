@@ -185,7 +185,9 @@ async def _run(
                             content=ev.text,
                             tool_calls=json.dumps(ev.openai_tool_calls),
                             prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens if round_usage else None,
+                            completion_tokens=round_usage.completion_tokens
+                            if round_usage
+                            else None,
                         )
                     )
                     await ws.commit()

@@ -316,16 +316,12 @@ async def resolve_azure_speech_key(session: AsyncSession) -> str:
 
 async def resolve_azure_speech_endpoint(session: AsyncSession) -> str:
     """Effective Azure Speech endpoint URL from the DB (Settings panel)."""
-    return await resolve(
-        session, SettingSpec("azure_speech_endpoint", _nonempty_str(), default="")
-    )
+    return await resolve(session, SettingSpec("azure_speech_endpoint", _nonempty_str(), default=""))
 
 
 async def resolve_azure_speech_language(session: AsyncSession) -> str:
     """Effective dictation language (BCP-47, e.g. ``en-US``); ``""`` => auto."""
-    return await resolve(
-        session, SettingSpec("azure_speech_language", _nonempty_str(), default="")
-    )
+    return await resolve(session, SettingSpec("azure_speech_language", _nonempty_str(), default=""))
 
 
 async def azure_stt_ready(session: AsyncSession) -> bool:

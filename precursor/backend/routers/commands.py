@@ -753,9 +753,7 @@ async def notes_attachments_list(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[NoteDraftAttachment]:
-    return await notes_service.list_notes_attachments(
-        session, kind="topic", container_id=topic_id
-    )
+    return await notes_service.list_notes_attachments(session, kind="topic", container_id=topic_id)
 
 
 @router.post(

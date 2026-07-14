@@ -33,9 +33,7 @@ async def list_message_window(
     (``Message.topic_id`` or ``Message.chat_id``).
     """
     base = (
-        select(Message)
-        .where(fk_column == container_id)
-        .options(selectinload(Message.attachments))
+        select(Message).where(fk_column == container_id).options(selectinload(Message.attachments))
     )
     if limit is None and before_id is None:
         result = await session.execute(base.order_by(Message.created_at, Message.id))

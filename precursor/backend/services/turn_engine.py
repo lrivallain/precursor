@@ -714,7 +714,9 @@ async def run_message_stream(
                             content=ev.text,
                             tool_calls=json.dumps(ev.openai_tool_calls),
                             prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens if round_usage else None,
+                            completion_tokens=round_usage.completion_tokens
+                            if round_usage
+                            else None,
                             **container_message_kwargs(kind, container_id),
                         )
                         ws.add(assistant)
