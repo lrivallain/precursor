@@ -45,7 +45,7 @@ class RolesStore {
 
   async load(): Promise<void> {
     try {
-      this.roles = await api.listRoles();
+      this.roles = await api.roles.list();
       this.loaded = true;
       this.notify();
     } catch (err) {

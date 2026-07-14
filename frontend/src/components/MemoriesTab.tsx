@@ -16,7 +16,7 @@ export function MemoriesTab() {
 
   async function load(): Promise<void> {
     try {
-      setMemories(await api.listMemories());
+      setMemories(await api.memories.list());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -40,7 +40,7 @@ export function MemoriesTab() {
     setBusyId(memory.id);
     setError(null);
     try {
-      await api.deleteMemory(memory.id);
+      await api.memories.remove(memory.id);
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -149,9 +149,9 @@ function MemoryEditor({ memory, onClose, onSaved }: EditorProps) {
     try {
       const payload = { kind: kind.trim().toLowerCase(), content: content.trim() };
       if (memory) {
-        await api.updateMemory(memory.id, payload);
+        await api.memories.update(memory.id, payload);
       } else {
-        await api.createMemory(payload);
+        await api.memories.create(payload);
       }
       await onSaved();
     } catch (err) {

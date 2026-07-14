@@ -98,8 +98,7 @@ export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
   useEffect(() => {
     void modelsStore.ensureLoaded();
     let cancelled = false;
-    api
-      .getSettings()
+    api.settings.get()
       .then((s) => {
         if (!cancelled) modelsStore.applySettings(s);
       })

@@ -22,22 +22,22 @@ function notesApi(session: DetachedSession) {
   const id = session.containerId;
   if (session.container === "topic") {
     return {
-      rephrase: (t: string) => api.rephraseNotes(id, t),
-      append: (t: string, ids: number[]) => api.appendNotes(id, t, ids),
-      save: (t: string) => api.saveNotesDraft(id, t),
-      clear: () => api.clearNotesDraft(id),
-      upload: (f: File) => api.uploadNoteAttachment(id, f),
-      remove: (aid: number) => api.deleteNoteAttachment(id, aid),
-      postComment: (t: string, ids: number[]) => api.postGhUpdate(id, t, ids),
+      rephrase: (t: string) => api.notes.rephrase(id, t),
+      append: (t: string, ids: number[]) => api.notes.append(id, t, ids),
+      save: (t: string) => api.notes.saveDraft(id, t),
+      clear: () => api.notes.clearDraft(id),
+      upload: (f: File) => api.notes.uploadAttachment(id, f),
+      remove: (aid: number) => api.notes.deleteAttachment(id, aid),
+      postComment: (t: string, ids: number[]) => api.github.postUpdate(id, t, ids),
     };
   }
   return {
-    rephrase: (t: string) => api.rephraseChatNotes(id, t),
-    append: (t: string, ids: number[]) => api.appendChatNotes(id, t, ids),
-    save: (t: string) => api.saveChatNotesDraft(id, t),
-    clear: () => api.clearChatNotesDraft(id),
-    upload: (f: File) => api.uploadChatNoteAttachment(id, f),
-    remove: (aid: number) => api.deleteChatNoteAttachment(id, aid),
+    rephrase: (t: string) => api.chats.rephraseNotes(id, t),
+    append: (t: string, ids: number[]) => api.chats.appendNotes(id, t, ids),
+    save: (t: string) => api.chats.saveNotesDraft(id, t),
+    clear: () => api.chats.clearNotesDraft(id),
+    upload: (f: File) => api.chats.uploadNoteAttachment(id, f),
+    remove: (aid: number) => api.chats.deleteNoteAttachment(id, aid),
     postComment: undefined as undefined | ((t: string, ids: number[]) => Promise<unknown>),
   };
 }

@@ -339,8 +339,8 @@ export function StatsTab() {
     void (async () => {
       try {
         const [usage, sys] = await Promise.all([
-          api.getUsageStats(),
-          api.getSystemStats(),
+          api.system.getUsageStats(),
+          api.system.getSystemStats(),
         ]);
         if (!cancelled) {
           setStats(usage);

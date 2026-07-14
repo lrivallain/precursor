@@ -39,7 +39,7 @@ class SettingsStore {
     if (this.loading) return this.loading;
     this.loading = (async () => {
       try {
-        this.settings = await api.getSettings();
+        this.settings = await api.settings.get();
         this.loaded = true;
         this.notify();
       } catch (err) {

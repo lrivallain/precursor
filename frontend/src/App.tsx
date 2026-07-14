@@ -414,7 +414,7 @@ export default function App() {
   }, [agents]);
 
   async function refreshTree(): Promise<void> {
-    setTree(await api.topicTree());
+    setTree(await api.topics.tree());
   }
 
   // Total chat unread, kept current in App (not just in ChatList) so the mode
@@ -422,7 +422,7 @@ export default function App() {
   // own total via onUnreadChange for instant updates while it's mounted.
   async function refreshChatsUnread(): Promise<void> {
     try {
-      const list = await api.listChats();
+      const list = await api.chats.list();
       setChatsUnread(list.reduce((n, c) => n + (c.unread_count ?? 0), 0));
     } catch {
       // transient — keep the previous total
@@ -434,7 +434,7 @@ export default function App() {
   async function loadReminders(): Promise<void> {
     let items: ReminderItem[];
     try {
-      items = await api.listReminders();
+      items = await api.reminders.list();
     } catch {
       return; // transient — keep the previous list
     }
@@ -564,10 +564,10 @@ export default function App() {
         if (!slug || activeTopicRef.current?.slug === slug) return;
         void (async () => {
           try {
-            const t = await api.getTopicBySlug(slug);
+            const t = await api.topics.getBySlug(slug);
             setActiveTopic(t);
             try {
-              await api.markTopicRead(t.id);
+              await api.topics.markRead(t.id);
               await refreshTree();
             } catch {
               // non-fatal
@@ -583,10 +583,10 @@ export default function App() {
       if (!slug || activeChatRef.current?.slug === slug) return;
       void (async () => {
         try {
-          const c = await api.getChatBySlug(slug);
+          const c = await api.chats.getBySlug(slug);
           setActiveChat(c);
           try {
-            await api.markChatRead(c.id);
+            await api.chats.markRead(c.id);
             setChatListReloadKey((k) => k + 1);
           } catch {
             // non-fatal
@@ -729,7 +729,7 @@ export default function App() {
         if (kind === "chat") {
           if (isViewing("chat", id) && windowFocused()) {
             try {
-              await api.markChatRead(id);
+              await api.chats.markRead(id);
             } catch {
               // non-fatal
             }
@@ -740,7 +740,7 @@ export default function App() {
         }
         if (isViewing("topic", id) && windowFocused()) {
           try {
-            await api.markTopicRead(id);
+            await api.topics.markRead(id);
           } catch {
             // non-fatal
           }
@@ -765,7 +765,7 @@ export default function App() {
         if (active && (event.topic_id === null || event.topic_id === active.id)) {
           void (async () => {
             try {
-              const refreshed = await api.getTopic(active.id);
+              const refreshed = await api.topics.get(active.id);
               setActiveTopic(refreshed);
             } catch {
               // topic may have been deleted in another window; ignore
@@ -784,7 +784,7 @@ export default function App() {
           void (async () => {
             if (isActive && windowFocused()) {
               try {
-                await api.markChatRead(chatId);
+                await api.chats.markRead(chatId);
               } catch {
                 // non-fatal
               }
@@ -804,7 +804,7 @@ export default function App() {
         void (async () => {
           if (topicActive && windowFocused()) {
             try {
-              await api.markTopicRead(topicId);
+              await api.topics.markRead(topicId);
             } catch {
               // non-fatal
             }
@@ -869,7 +869,7 @@ export default function App() {
           const active = list.find((a) => a.id === activeId);
           if (active && active.unread_count > 0 && AGENT_SETTLED_STATUSES.has(active.status)) {
             try {
-              await api.markAgentRead(activeId);
+              await api.agents.markRead(activeId);
               await loadAgents();
             } catch {
               // non-fatal
@@ -897,14 +897,14 @@ export default function App() {
       void (async () => {
         try {
           if (v.kind === "chat") {
-            await api.markChatRead(v.id);
+            await api.chats.markRead(v.id);
             setChatListReloadKey((k) => k + 1);
             void refreshChatsUnread();
           } else if (v.kind === "topic") {
-            await api.markTopicRead(v.id);
+            await api.topics.markRead(v.id);
             await refreshTree();
           } else {
-            await api.markAgentRead(v.id);
+            await api.agents.markRead(v.id);
             await loadAgents();
           }
         } catch {
@@ -924,8 +924,8 @@ export default function App() {
   }, []);
 
   async function handleSelect(id: number): Promise<void> {
-    setActiveTopic(await api.getTopic(id));
-    try {      await api.markTopicRead(id);
+    setActiveTopic(await api.topics.get(id));
+    try {      await api.topics.markRead(id);
       await refreshTree();
     } catch {
       // non-fatal
@@ -934,18 +934,18 @@ export default function App() {
 
   // Inline rename from the sidebar tree (double-click a topic's name).
   async function handleRenameTopic(id: number, title: string): Promise<void> {
-    const updated = await api.updateTopic(id, { title });
+    const updated = await api.topics.update(id, { title });
     if (activeTopicRef.current?.id === id) setActiveTopic(updated);
     await refreshTree();
   }
 
   async function handleRenameAgent(id: number, title: string): Promise<void> {
-    await api.renameAgent(id, title);
+    await api.agents.rename(id, title);
     await loadAgents();
   }
 
   async function handleStopAgent(id: number): Promise<void> {
-    await api.cancelAgent(id);
+    await api.agents.cancel(id);
     await loadAgents();
   }
 
@@ -958,7 +958,7 @@ export default function App() {
       }))
     )
       return;
-    await api.deleteAgent(agent.id);
+    await api.agents.remove(agent.id);
     if (activeAgentId === agent.id) setActiveAgentId(null);
     await loadAgents();
   }
@@ -966,7 +966,7 @@ export default function App() {
   async function handleSelectChat(chat: Chat): Promise<void> {
     setActiveChat(chat);
     try {
-      await api.markChatRead(chat.id);
+      await api.chats.markRead(chat.id);
       setChatListReloadKey((k) => k + 1);
     } catch {
       // non-fatal
@@ -981,7 +981,7 @@ export default function App() {
         await handleSelect(item.topic_id);
       } else if (item.container === "chat" && item.chat_id != null) {
         changeMode("chats");
-        await handleSelectChat(await api.getChat(item.chat_id));
+        await handleSelectChat(await api.chats.get(item.chat_id));
       }
     } catch {
       // conversation may have been deleted — refresh the list to drop it
@@ -994,7 +994,7 @@ export default function App() {
     const id = item.container === "topic" ? item.topic_id : item.chat_id;
     if (id == null) return;
     try {
-      await api.clearReminder(item.container, id);
+      await api.reminders.clear(item.container, id);
     } catch {
       // already gone — fall through to reload
     }
@@ -1013,7 +1013,7 @@ export default function App() {
     const active = activeChatRef.current;
     if (!active) return;
     try {
-      setActiveChat(await api.getChat(active.id));
+      setActiveChat(await api.chats.get(active.id));
     } catch {
       // chat may have been deleted elsewhere; ignore
     }
@@ -1021,13 +1021,13 @@ export default function App() {
 
   async function toggleChatPin(): Promise<void> {
     if (!activeChat) return;
-    const updated = await api.updateChat(activeChat.id, { pinned: !activeChat.pinned });
+    const updated = await api.chats.update(activeChat.id, { pinned: !activeChat.pinned });
     setActiveChat(updated);
     setChatListReloadKey((k) => k + 1);
   }
 
   async function handleRenameChat(id: number, title: string): Promise<void> {
-    const updated = await api.updateChat(id, { title });
+    const updated = await api.chats.update(id, { title });
     if (activeChatRef.current?.id === id) setActiveChat(updated);
     setChatListReloadKey((k) => k + 1);
   }
@@ -1038,7 +1038,7 @@ export default function App() {
   async function handleStartChat(prompt: string): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
-    const chat = await api.createChat({ title: "New chat" });
+    const chat = await api.chats.create({ title: "New chat" });
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
     void streamStore.start(convKey("chat", chat.id), text);
@@ -1073,13 +1073,13 @@ export default function App() {
   // server-side). Updates are persisted per-discussion and reflected locally.
   async function setRoleForActive(roleId: number | null): Promise<void> {
     if (sidebarMode === "topics" && activeTopic) {
-      const updated = await api.updateTopic(activeTopic.id, { role_id: roleId });
+      const updated = await api.topics.update(activeTopic.id, { role_id: roleId });
       if (activeTopicRef.current?.id === activeTopic.id) setActiveTopic(updated);
     } else if (sidebarMode === "chats" && activeChat) {
-      const updated = await api.updateChat(activeChat.id, { role_id: roleId });
+      const updated = await api.chats.update(activeChat.id, { role_id: roleId });
       if (activeChatRef.current?.id === activeChat.id) setActiveChat(updated);
     } else if (sidebarMode === "workspaces" && activeWorkspace) {
-      const updated = await api.updateWorkspace(activeWorkspace.id, {
+      const updated = await api.workspaces.update(activeWorkspace.id, {
         role_id: roleId,
       });
       setWorkspaces((prev) =>
@@ -1101,7 +1101,7 @@ export default function App() {
     (sidebarMode === "workspaces" && !!activeWorkspace);
 
   async function loadWorkspaces(): Promise<Workspace[]> {
-    const list = await api.listWorkspaces();
+    const list = await api.workspaces.list();
     setWorkspaces(list);
     return list;
   }
@@ -1127,7 +1127,7 @@ export default function App() {
 
   // ---- Live meeting sessions --------------------------------------------
   async function loadMeetingSessions(): Promise<MeetingSession[]> {
-    const list = await api.listMeetingSessions();
+    const list = await api.meetings.listSessions();
     setMeetingSessions(list);
     return list;
   }
@@ -1153,7 +1153,7 @@ export default function App() {
   }
 
   async function handleRenameSession(session: MeetingSession, title: string): Promise<void> {
-    const updated = await api.updateMeetingSession(session.id, { title });
+    const updated = await api.meetings.updateSession(session.id, { title });
     setMeetingSessions((prev) =>
       prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
     );
@@ -1162,7 +1162,7 @@ export default function App() {
   // ---- Agents -----------------------------------------------------------
   async function loadAgents(): Promise<AgentSession[]> {
     try {
-      const list = await api.listAgents();
+      const list = await api.agents.list();
       // Notify for sessions whose unread grew since the last load — i.e. a
       // background/scheduled agent produced a new reply — skipping the very
       // first load and whichever session is currently open. Mirrors how a
@@ -1194,8 +1194,7 @@ export default function App() {
   // sync in one place. markAgentRead doesn't publish, so this can't loop.
   useEffect(() => {
     if (activeAgentId == null) return;
-    void api
-      .markAgentRead(activeAgentId)
+    void api.agents.markRead(activeAgentId)
       .then(() => loadAgents())
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1224,7 +1223,7 @@ export default function App() {
 
   async function togglePin(): Promise<void> {
     if (!activeTopic) return;
-    const updated = await api.updateTopic(activeTopic.id, {
+    const updated = await api.topics.update(activeTopic.id, {
       pinned: !activeTopic.pinned,
     });
     setActiveTopic(updated);
@@ -1505,12 +1504,12 @@ export default function App() {
                   // (e.g. /gh-create) mutate topic fields like the linked
                   // issue number, and the chat header needs to reflect that.
                   try {
-                    await api.markTopicRead(activeTopic.id);
+                    await api.topics.markRead(activeTopic.id);
                   } catch {
                     // non-fatal
                   }
                   try {
-                    setActiveTopic(await api.getTopic(activeTopic.id));
+                    setActiveTopic(await api.topics.get(activeTopic.id));
                   } catch {
                     // non-fatal
                   }

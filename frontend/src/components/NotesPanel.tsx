@@ -154,13 +154,13 @@ export function NotesPanel({
               >
                 {isImage ? (
                   <img
-                    src={api.noteAttachmentUrl(a.id)}
+                    src={api.notes.attachmentUrl(a.id)}
                     alt=""
                     className="w-8 h-8 rounded object-cover border border-border shrink-0"
                   />
                 ) : (
                   <a
-                    href={api.noteAttachmentUrl(a.id)}
+                    href={api.notes.attachmentUrl(a.id)}
                     target="_blank"
                     rel="noreferrer"
                     className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"
@@ -200,9 +200,9 @@ export function NotesPanel({
             {attachments
               .filter((a) => a.mime.startsWith("image/"))
               .map((a) => (
-                <a key={a.id} href={api.noteAttachmentUrl(a.id)} target="_blank" rel="noreferrer">
+                <a key={a.id} href={api.notes.attachmentUrl(a.id)} target="_blank" rel="noreferrer">
                   <img
-                    src={api.noteAttachmentUrl(a.id)}
+                    src={api.notes.attachmentUrl(a.id)}
                     alt={a.original_filename || ""}
                     className="max-w-[16rem] max-h-56 rounded border border-border object-contain bg-bg"
                   />
@@ -213,7 +213,7 @@ export function NotesPanel({
               .map((a) => (
                 <a
                   key={a.id}
-                  href={api.noteAttachmentUrl(a.id)}
+                  href={api.notes.attachmentUrl(a.id)}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded border border-border bg-surface px-2 py-1 text-xs hover:bg-bg"

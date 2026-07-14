@@ -184,8 +184,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       return;
     }
     let cancelled = false;
-    void api
-      .getChat(session.chat_id)
+    void api.chats.get(session.chat_id)
       .then((c) => {
         if (!cancelled) setChat(c);
       })
@@ -202,7 +201,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     if (chat || startingAssistant) return;
     setStartingAssistant(true);
     try {
-      const c = await api.ensureMeetingChat(session.id);
+      const c = await api.meetings.ensureChat(session.id);
       setChat(c);
       focusTab("assistant");
     } catch {
@@ -216,7 +215,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   // assistant spawns its chat; the others just reveal their tabs/processing.
   async function applyFeatures(next: string[]): Promise<void> {
     try {
-      const updated = await api.setMeetingFeatures(session.id, next);
+      const updated = await api.meetings.setFeatures(session.id, next);
       onUpdated(updated);
       if (next.includes("assistant") && !chat) void startAssistant();
     } catch {
@@ -289,7 +288,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       const scopedLabel = seg.speakerLabel ? `${runRef.current}:${seg.speakerLabel}` : null;
       void (async () => {
         try {
-          const saved = await api.appendMeetingSegment(session.id, {
+          const saved = await api.meetings.appendSegment(session.id, {
             text: seg.text,
             speaker_label: scopedLabel,
             offset_ms: seg.offsetMs,
@@ -347,7 +346,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setAnalyzing(true);
     lastAnalyzedRef.current = segCountRef.current;
     try {
-      const res = await api.analyzeMeeting(session.id);
+      const res = await api.meetings.analyze(session.id);
       setInsights(res.insights);
       // A proactive suggestion rides along on the same pass — surface genuinely
       // new ones as dismissible cards in the Insights tab.
@@ -376,8 +375,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     prevListeningRef.current = false;
     runRef.current = 0;
     lastAnalyzedRef.current = 0;
-    void api
-      .listMeetingSegments(session.id)
+    void api.meetings.listSegments(session.id)
       .then((rows) => {
         if (!cancelled) {
           setSegments(rows);
@@ -388,8 +386,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         }
       })
       .catch(() => {});
-    void api
-      .listMeetingInsights(session.id)
+    void api.meetings.listInsights(session.id)
       .then((rows) => {
         if (!cancelled) setInsights(rows);
       })
@@ -440,7 +437,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
 
   async function applyLanguage(value: string): Promise<void> {
     const language = value || null;
-    const updated = await api.updateMeetingSession(session.id, { language });
+    const updated = await api.meetings.updateSession(session.id, { language });
     onUpdated(updated);
     if (transcriber.listening) {
       restartRef.current = true;
@@ -454,7 +451,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setTopicSummaryLoading(true);
     setTopicSummaryError(null);
     try {
-      const res = await api.topicContextSummary(session.id);
+      const res = await api.meetings.topicContextSummary(session.id);
       setTopicSummary(res.summary);
     } catch (e) {
       setTopicSummaryError(
@@ -483,7 +480,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   }, [session.id, session.topic_id]);
 
   async function applyTopic(topicId: number | null): Promise<void> {
-    const updated = await api.updateMeetingSession(session.id, { topic_id: topicId });
+    const updated = await api.meetings.updateSession(session.id, { topic_id: topicId });
     onUpdated(updated);
   }
 
@@ -494,7 +491,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setSummaryGenerating(true);
     setSummaryError(null);
     try {
-      const res = await api.summarizeMeeting(session.id);
+      const res = await api.meetings.summarize(session.id);
       setSummaryText(res.summary);
     } catch (e) {
       setSummaryError(
@@ -516,7 +513,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
         next === "ended" && notesRef.current !== savedNotesRef.current
           ? { status: next, notes: notesRef.current }
           : { status: next };
-      const updated = await api.updateMeetingSession(session.id, payload);
+      const updated = await api.meetings.updateSession(session.id, payload);
       savedNotesRef.current = notesRef.current;
       onUpdated(updated);
       // Auto-draft a summary when the meeting ends (if anything was recorded).
@@ -532,8 +529,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setNotesSaved(false);
     const t = setTimeout(() => {
       setNotesSaving(true);
-      void api
-        .updateMeetingSession(session.id, { notes })
+      void api.meetings.updateSession(session.id, { notes })
         .then((updated) => {
           savedNotesRef.current = notes;
           onUpdated(updated);
@@ -559,7 +555,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     if (transcriber.listening) transcriber.stop();
     setBusy(true);
     try {
-      await api.deleteMeetingSession(session.id);
+      await api.meetings.deleteSession(session.id);
       await onDeleted();
     } finally {
       setBusy(false);
@@ -578,7 +574,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   async function commitRename(rawLabel: string, value: string): Promise<void> {
     setEditingSegId(null);
     try {
-      const updated = await api.renameMeetingSpeaker(session.id, rawLabel, value.trim());
+      const updated = await api.meetings.renameSpeaker(session.id, rawLabel, value.trim());
       onUpdated(updated);
     } catch {
       // Non-fatal — leave the previous name in place.
@@ -668,7 +664,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setTranslating(true);
     setTranslateError(null);
     try {
-      const res = await api.translateMeeting(
+      const res = await api.meetings.translate(
         session.id,
         translationLang,
         batch.map((b) => b.text),
@@ -883,7 +879,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       setText={setNotes}
       saving={notesSaving}
       saved={notesSaved}
-      onUpload={(file) => api.uploadMeetingAttachment(session.id, file)}
+      onUpload={(file) => api.meetings.uploadAttachment(session.id, file)}
       defaultPreview={isEnded}
     />
   );
@@ -892,8 +888,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     <LiveChatSection
       chat={chat}
       onChatUpdated={() => {
-        void api
-          .getChat(chat.id)
+        void api.chats.get(chat.id)
           .then(setChat)
           .catch(() => {});
       }}

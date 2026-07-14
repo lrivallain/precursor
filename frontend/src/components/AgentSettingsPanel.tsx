@@ -56,8 +56,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
   const taskLocked = ["pending", "running", "needs_approval"].includes(agent.status);
 
   useEffect(() => {
-    void api
-      .listTopics()
+    void api.topics.list()
       .then(setTopics)
       .catch(() => setTopics([]));
   }, []);
@@ -73,15 +72,15 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
       if (trimmedTitle !== agent.title) patch.title = trimmedTitle;
       if (trimmedTask && trimmedTask !== agent.task_prompt) patch.task = trimmedTask;
       if (patch.title !== undefined || patch.task !== undefined) {
-        await api.updateAgent(agent.id, patch);
+        await api.agents.update(agent.id, patch);
       }
       if (topicId !== agent.topic_id) {
-        await api.linkAgent(agent.id, { topic_id: topicId, chat_id: null });
+        await api.agents.link(agent.id, { topic_id: topicId, chat_id: null });
       }
       await persistSchedule();
       // Re-fetch so the returned agent reflects title/task/link *and* the
       // embedded schedule summary (selectin-loaded server-side).
-      const updated = await api.getAgent(agent.id);
+      const updated = await api.agents.get(agent.id);
       onSaved(updated);
       onClose();
     } catch (e) {
@@ -98,13 +97,13 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     if (scheduleOn) {
       const payload = { ...recur, clear_context: clearContext, enabled: true };
       if (hasSchedule) {
-        await api.updateAgentSchedule(agent.id, payload);
+        await api.agents.updateSchedule(agent.id, payload);
       } else {
-        await api.createAgentSchedule(agent.id, payload);
+        await api.agents.createSchedule(agent.id, payload);
       }
     } else if (hasSchedule) {
       // Pause (keep the config) rather than delete it on toggle-off.
-      await api.updateAgentSchedule(agent.id, { enabled: false });
+      await api.agents.updateSchedule(agent.id, { enabled: false });
     }
   }
 
@@ -113,8 +112,8 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     setScheduleBusy(true);
     setError(null);
     try {
-      await api.runAgentScheduleNow(agent.id);
-      const updated = await api.getAgent(agent.id);
+      await api.agents.runScheduleNow(agent.id);
+      const updated = await api.agents.get(agent.id);
       onSaved(updated);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -127,7 +126,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     setArchiving(true);
     setError(null);
     try {
-      await api.archiveAgent(agent.id);
+      await api.agents.archive(agent.id);
       onArchived();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -147,7 +146,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     setDeleting(true);
     setError(null);
     try {
-      await api.deleteAgent(agent.id);
+      await api.agents.remove(agent.id);
       onDeleted();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -45,7 +45,7 @@ export function ChatSettingsPanel({
     setSaving(true);
     setError(null);
     try {
-      const updated = await api.updateChat(chat.id, {
+      const updated = await api.chats.update(chat.id, {
         title: trimmed,
         slug: slug.trim() && slug.trim() !== chat.slug ? slug.trim() : undefined,
         description: description.trim() ? description.trim() : null,
@@ -73,7 +73,7 @@ export function ChatSettingsPanel({
     setPromoting(true);
     setError(null);
     try {
-      onPromoted(await api.promoteChat(chat.id));
+      onPromoted(await api.chats.promote(chat.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPromoting(false);
@@ -92,7 +92,7 @@ export function ChatSettingsPanel({
     setClearing(true);
     setError(null);
     try {
-      await api.clearChatMessages(chat.id);
+      await api.chats.clearMessages(chat.id);
       onCleared();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -105,7 +105,7 @@ export function ChatSettingsPanel({
     setArchiving(true);
     setError(null);
     try {
-      await api.archiveChat(chat.id);
+      await api.chats.archive(chat.id);
       onArchived();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -125,7 +125,7 @@ export function ChatSettingsPanel({
     setDeleting(true);
     setError(null);
     try {
-      await api.deleteChat(chat.id);
+      await api.chats.remove(chat.id);
       onDeleted();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

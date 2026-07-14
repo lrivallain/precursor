@@ -70,7 +70,7 @@ export async function signInWorkiq(): Promise<MCPServerStatus> {
   pendingNavigated = false;
   const usePopup = popup !== null;
   try {
-    return await api.reauthenticateWorkiq({ usePopup });
+    return await api.mcp.reauthenticateWorkiq({ usePopup });
   } catch (err) {
     // The flow failed before we ever navigated the popup — tear down the blank
     // throwaway window rather than strand it. If it was already navigated the

@@ -49,9 +49,9 @@ export function ArchivePanel({
     void (async () => {
       try {
         const [t, c, a] = await Promise.all([
-          api.listArchivedTopics(),
-          api.listArchivedChats(),
-          api.listArchivedAgents(),
+          api.topics.listArchived(),
+          api.chats.listArchived(),
+          api.agents.listArchived(),
         ]);
         setTopics(t);
         setChats(c);
@@ -69,7 +69,7 @@ export function ArchivePanel({
     setBusy(`t${t.id}`);
     setError(null);
     try {
-      const updated = await api.unarchiveTopic(t.id);
+      const updated = await api.topics.unarchive(t.id);
       setTopics((prev) => prev?.filter((x) => x.id !== t.id) ?? []);
       onTopicRestored(updated);
     } catch (e) {
@@ -91,7 +91,7 @@ export function ArchivePanel({
     setBusy(`t${t.id}`);
     setError(null);
     try {
-      await api.deleteTopic(t.id);
+      await api.topics.remove(t.id);
       setTopics((prev) => prev?.filter((x) => x.id !== t.id) ?? []);
       onTopicDeleted(t.id);
     } catch (e) {
@@ -105,7 +105,7 @@ export function ArchivePanel({
     setBusy(`c${c.id}`);
     setError(null);
     try {
-      const updated = await api.unarchiveChat(c.id);
+      const updated = await api.chats.unarchive(c.id);
       setChats((prev) => prev?.filter((x) => x.id !== c.id) ?? []);
       onChatRestored(updated);
     } catch (e) {
@@ -127,7 +127,7 @@ export function ArchivePanel({
     setBusy(`c${c.id}`);
     setError(null);
     try {
-      await api.deleteChat(c.id);
+      await api.chats.remove(c.id);
       setChats((prev) => prev?.filter((x) => x.id !== c.id) ?? []);
       onChatDeleted(c.id);
     } catch (e) {
@@ -141,7 +141,7 @@ export function ArchivePanel({
     setBusy(`a${a.id}`);
     setError(null);
     try {
-      const updated = await api.unarchiveAgent(a.id);
+      const updated = await api.agents.unarchive(a.id);
       setAgents((prev) => prev?.filter((x) => x.id !== a.id) ?? []);
       onAgentRestored(updated);
     } catch (e) {
@@ -163,7 +163,7 @@ export function ArchivePanel({
     setBusy(`a${a.id}`);
     setError(null);
     try {
-      await api.deleteAgent(a.id);
+      await api.agents.remove(a.id);
       setAgents((prev) => prev?.filter((x) => x.id !== a.id) ?? []);
       onAgentDeleted(a.id);
     } catch (e) {

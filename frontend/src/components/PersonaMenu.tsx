@@ -16,8 +16,7 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .getMe()
+    api.me.get()
       .then((m) => {
         if (!cancelled) setMe(m);
       })

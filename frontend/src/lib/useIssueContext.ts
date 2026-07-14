@@ -46,7 +46,7 @@ export function useIssueContext(
   useEffect(() => {
     void (async () => {
       try {
-        const s = await api.getSettings();
+        const s = await api.settings.get();
         setGlobalRepo(s.github_repo);
       } catch {
         /* optional */
@@ -63,7 +63,7 @@ export function useIssueContext(
       setStatus("loading");
       setError(null);
       try {
-        setSummary(await api.summarizeIssue(topic.id, opts));
+        setSummary(await api.github.summarizeIssue(topic.id, opts));
         setStatus("ready");
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -103,12 +103,12 @@ export function useIssueContext(
     setError(null);
     try {
       const repo = topic.github_repo || undefined;
-      const issue = await api.createIssue({
+      const issue = await api.github.createIssue({
         repo,
         title: topic.title,
         body: topic.description ?? `Tracking topic created from Precursor: ${topic.title}`,
       });
-      const updated = await api.updateTopic(topic.id, {
+      const updated = await api.topics.update(topic.id, {
         github_issue_number: issue.number,
         github_repo: repo ?? null,
       });
@@ -128,7 +128,7 @@ export function useIssueContext(
     setPushing(true);
     setError(null);
     try {
-      await api.pushIssue(topic.id);
+      await api.github.pushIssue(topic.id);
       // Body on GitHub changed — force a refresh so the summary is regenerated.
       await refresh({ force: true });
     } catch (e) {

@@ -73,7 +73,7 @@ export function ContextSection({
     setAgendaLoading(true);
     setAgendaDetail(null);
     try {
-      const res = await api.getAgenda();
+      const res = await api.meetings.getAgenda();
       setEvents(res.events);
       if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
       else if (res.events.length === 0) setAgendaDetail("No meetings on your calendar today.");
@@ -94,7 +94,7 @@ export function ContextSection({
   async function link(event: AgendaEvent): Promise<void> {
     setLinking(event.id ?? event.subject);
     try {
-      const updated = await api.linkMeeting(session.id, event);
+      const updated = await api.meetings.link(session.id, event);
       onUpdated(updated);
     } catch {
       /* non-fatal */
@@ -106,7 +106,7 @@ export function ContextSection({
   async function unlink(): Promise<void> {
     setUnlinking(true);
     try {
-      const updated = await api.unlinkMeeting(session.id);
+      const updated = await api.meetings.unlink(session.id);
       onUpdated(updated);
     } catch {
       /* non-fatal */
@@ -120,7 +120,7 @@ export function ContextSection({
     setPostingMeeting(true);
     setPostMeetingError(null);
     try {
-      await api.postMeetingToTopic(session.id);
+      await api.meetings.postToTopic(session.id);
       setPostedMeeting(true);
       setTimeout(() => setPostedMeeting(false), 2000);
     } catch (e) {
@@ -133,7 +133,7 @@ export function ContextSection({
   async function removeNote(index: number): Promise<void> {
     const next = (session.context_notes ?? []).filter((_, i) => i !== index);
     try {
-      const updated = await api.setMeetingContextNotes(session.id, next);
+      const updated = await api.meetings.setContextNotes(session.id, next);
       onUpdated(updated);
     } catch {
       /* non-fatal */

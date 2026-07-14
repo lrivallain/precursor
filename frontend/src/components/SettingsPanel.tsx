@@ -45,6 +45,7 @@ import type {
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
+import { SidebarTabs } from "./SidebarTabs";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
@@ -199,7 +200,7 @@ export function SettingsPanel({ onClose }: Props) {
     try {
       // Load the list fast, without waiting on per-server status probes so the
       // cards render immediately instead of blocking on a slow server.
-      servers = await api.listMcpServers(false);
+      servers = await api.mcp.list(false);
       setMcp(servers);
     } catch {
       setMcp([]);
@@ -213,7 +214,7 @@ export function SettingsPanel({ onClose }: Props) {
     await Promise.all(
       pending.map(async (s) => {
         try {
-          const next = await api.probeMcpServer(s.name);
+          const next = await api.mcp.probe(s.name);
           setMcp((prev) => prev.map((x) => (x.name === s.name ? next : x)));
         } catch (err) {
           setMcp((prev) =>
@@ -232,7 +233,7 @@ export function SettingsPanel({ onClose }: Props) {
     setModelsLoading(true);
     setModelsError(null);
     try {
-      const list = await api.listModels(providerOverride);
+      const list = await api.llm.listModels(providerOverride);
       setModels(list);
       return list;
     } catch (e) {
@@ -254,7 +255,7 @@ export function SettingsPanel({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const s = await api.getSettings();
+      const s = await api.settings.get();
       setSettings(s);
       setProvider(s.llm_provider);
       setProviderConfig(s.llm_providers ?? {});
@@ -279,18 +280,18 @@ export function SettingsPanel({ onClose }: Props) {
       settingsStore.set(s);
       await refreshMcp();
       try {
-        setProviders(await api.listProviders());
+        setProviders(await api.llm.listProviders());
       } catch {
         setProviders([]);
       }
       await loadModels();
       try {
-        setMe(await api.getMe());
+        setMe(await api.me.get());
       } catch {
         setMe({ github: null, github_token_source: "none" });
       }
       try {
-        setAppVersion((await api.getVersion()).version);
+        setAppVersion((await api.system.getVersion()).version);
       } catch {
         setAppVersion(null);
       }
@@ -326,7 +327,7 @@ export function SettingsPanel({ onClose }: Props) {
   async function applyProviderSettings(): Promise<void> {
     setModelsLoading(true);
     try {
-      const updated = await api.updateSettings({
+      const updated = await api.settings.update({
         llm_provider: provider,
         llm_providers: buildLlmProvidersPayload(),
       });
@@ -335,7 +336,7 @@ export function SettingsPanel({ onClose }: Props) {
       settingsStore.set(updated);
       const list = await loadModels(provider);
       if (list.length > 0 && !list.some((m) => m.id === updated.llm_model)) {
-        const snapped = await api.updateSettings({ llm_model: list[0].id });
+        const snapped = await api.settings.update({ llm_model: list[0].id });
         setSettings(snapped);
         settingsStore.set(snapped);
         modelsStore.applySettings(snapped);
@@ -351,7 +352,7 @@ export function SettingsPanel({ onClose }: Props) {
   async function save(): Promise<void> {
     setSaving(true);
     try {
-      const payload: Parameters<typeof api.updateSettings>[0] = {
+      const payload: Parameters<typeof api.settings.update>[0] = {
         theme,
         llm_provider: provider,
         github_repo: repo,
@@ -382,7 +383,7 @@ export function SettingsPanel({ onClose }: Props) {
       if (Object.keys(apiKeys).length > 0) {
         payload.api_keys = apiKeys;
       }
-      const updated = await api.updateSettings(payload);
+      const updated = await api.settings.update(payload);
       setSettings(updated);
       modelsStore.applySettings(updated);
       settingsStore.set(updated);
@@ -402,17 +403,17 @@ export function SettingsPanel({ onClose }: Props) {
     setBackupRunning(true);
     setBackupRunResult(null);
     try {
-      const updated = await api.updateSettings({
+      const updated = await api.settings.update({
         backup_enabled: backupEnabled,
         backup_dir: backupDir,
         backup_retention: backupRetention,
       });
       setSettings(updated);
       settingsStore.set(updated);
-      const result = await api.runBackupNow();
+      const result = await api.settings.runBackupNow();
       setBackupRunResult(result);
       // Pull the fresh last-run status into the snapshot the tab reads.
-      const refreshed = await api.getSettings();
+      const refreshed = await api.settings.get();
       setSettings(refreshed);
       settingsStore.set(refreshed);
     } catch (e) {
@@ -432,7 +433,7 @@ export function SettingsPanel({ onClose }: Props) {
   async function testStt(): Promise<void> {
     setSttTest({ state: "testing" });
     try {
-      const res = await api.testSttConnection(azureEndpoint, azureKey);
+      const res = await api.stt.testConnection(azureEndpoint, azureKey);
       setSttTest({
         state: res.ok ? "ok" : "error",
         detail: res.detail ?? undefined,
@@ -456,8 +457,8 @@ export function SettingsPanel({ onClose }: Props) {
     );
     try {
       const next = enabled
-        ? await api.disconnectMcpServer(name)
-        : await api.connectMcpServer(name);
+        ? await api.mcp.disconnect(name)
+        : await api.mcp.connect(name);
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
     } catch (err) {
       setMcp((prev) =>
@@ -477,7 +478,7 @@ export function SettingsPanel({ onClose }: Props) {
       prev.map((s) => (s.name === name ? { ...s, preview: nextValue } : s)),
     );
     try {
-      const next = await api.setWorkiqPreview(nextValue);
+      const next = await api.mcp.setWorkiqPreview(nextValue);
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
     } catch (err) {
       setMcp((prev) =>
@@ -498,7 +499,7 @@ export function SettingsPanel({ onClose }: Props) {
       ),
     );
     try {
-      const next = await api.refreshMcpServer(name);
+      const next = await api.mcp.refresh(name);
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
     } catch (err) {
       setMcp((prev) =>
@@ -567,35 +568,12 @@ export function SettingsPanel({ onClose }: Props) {
         </header>
 
         <div className="flex flex-1 min-h-0">
-          <nav className="w-52 shrink-0 border-r border-border overflow-y-auto py-2">
-            {(["App", "Integrations", "Extensions", "Advanced"] as const).map((group) => (
-              <div key={group} className="mb-2">
-                <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted">
-                  {group}
-                </div>
-                {CATEGORIES.filter((c) => c.group === group).map(
-                  ({ id, label, icon: Icon }) => {
-                    const active = category === id;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setCategory(id)}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left border-l-2 ${
-                          active
-                            ? "border-accent bg-surface text-text"
-                            : "border-transparent text-text/80 hover:bg-surface"
-                        }`}
-                      >
-                        <Icon size={14} className={active ? "text-accent" : "text-muted"} />
-                        <span className="truncate">{label}</span>
-                      </button>
-                    );
-                  },
-                )}
-              </div>
-            ))}
-          </nav>
+          <SidebarTabs
+            groups={["App", "Integrations", "Extensions", "Advanced"] as const}
+            tabs={CATEGORIES}
+            active={category}
+            onSelect={setCategory}
+          />
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6 min-w-0">
             {category === "appearance" && (
@@ -1157,7 +1135,7 @@ export function SettingsPanel({ onClose }: Props) {
                             }))
                           )
                             return;
-                          await api.deleteMcpServer(s.id);
+                          await api.mcp.remove(s.id);
                           await refreshMcp();
                         }}
                       />
@@ -2006,7 +1984,7 @@ function McpServerEditor({
             ? { url: url.trim(), headers: headerMap }
             : { command: command.trim(), args: cleanArgs }),
         };
-        await api.createMcpServer(payload);
+        await api.mcp.create(payload);
       } else if (server?.id != null) {
         const payload: MCPServerUpdate = {
           name: name.trim(),
@@ -2015,7 +1993,7 @@ function McpServerEditor({
             ? { url: url.trim(), headers: headerMap }
             : { command: command.trim(), args: cleanArgs }),
         };
-        await api.updateMcpServer(server.id, payload);
+        await api.mcp.update(server.id, payload);
       }
       await onSaved();
     } catch (e) {

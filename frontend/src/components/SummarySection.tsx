@@ -47,7 +47,7 @@ export function SummarySection({
 
   async function saveAttendees(next: string[]): Promise<void> {
     try {
-      const updated = await api.setMeetingAttendees(session.id, next);
+      const updated = await api.meetings.setAttendees(session.id, next);
       onUpdated(updated);
     } catch {
       /* non-fatal */
@@ -80,7 +80,7 @@ export function SummarySection({
     setPosting(true);
     setPostError(null);
     try {
-      await api.postMeetingSummary(session.id, text);
+      await api.meetings.postSummary(session.id, text);
       setPosted(true);
       setTimeout(() => setPosted(false), 2000);
     } catch (e) {
