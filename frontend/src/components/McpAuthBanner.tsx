@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { LogIn, ShieldAlert, X } from "lucide-react";
-import { api } from "../lib/api";
 import { mcpAuthStore, useMcpAuthNotice } from "../lib/mcpAuth";
+import { signInWorkiq } from "../lib/workiqSignIn";
 
 /**
  * App-global banner shown when a background MCP connect needs an interactive
@@ -21,9 +21,10 @@ export function McpAuthBanner() {
     setBusy(true);
     setError(null);
     try {
-      // Blocks until the browser sign-in completes; on success the stale
-      // notice is gone and the next turn reuses the fresh session.
-      await api.reauthenticateWorkiq();
+      // Opens a script-openable popup synchronously, then blocks until the
+      // browser sign-in completes; on success the stale notice is gone and the
+      // next turn reuses the fresh session.
+      await signInWorkiq();
       mcpAuthStore.clear();
     } catch (err) {
       setError((err as Error).message);

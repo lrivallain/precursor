@@ -422,10 +422,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
-  reauthenticateWorkiq: () =>
-    request<MCPServerStatus>(`/api/mcp/servers/workiq/reauthenticate`, {
-      method: "POST",
-    }),
+  reauthenticateWorkiq: (opts?: { usePopup?: boolean }) =>
+    request<MCPServerStatus>(
+      `/api/mcp/servers/workiq/reauthenticate${opts?.usePopup ? "?use_popup=true" : ""}`,
+      { method: "POST" },
+    ),
   createMcpServer: (data: MCPServerCreate) =>
     request<MCPServerStatus>(`/api/mcp/servers/user`, {
       method: "POST",

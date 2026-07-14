@@ -30,6 +30,9 @@ class Event(TypedDict, total=False):
     # interactive sign-in and the human-readable reason to show.
     server: str | None
     message: str | None
+    # Carried only by ``mcp.auth_url`` — the interactive OAuth authorization URL
+    # the window that started the sign-in should open in a script-opened popup.
+    url: str | None
     client_id: str | None
 
 
@@ -69,6 +72,7 @@ class EventBus:
             "meeting_session_id": event.get("meeting_session_id"),
             "server": event.get("server"),
             "message": event.get("message"),
+            "url": event.get("url"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         # Snapshot to avoid mutation during iteration.
@@ -112,6 +116,20 @@ async def publish_mcp_auth_required(
             "topic_id": topic_id,
         }
     )
+
+
+async def publish_mcp_auth_url(server: str, url: str) -> None:
+    """Hand the frontend the interactive OAuth authorization URL to open.
+
+    The interactive sign-in emits this so the window that started it can steer a
+    *script-opened* popup at ``url``. That matters because only a window a script
+    opened can later be closed by script — the loopback callback page then closes
+    itself once auth completes, instead of stranding a browser tab that the
+    backend's ``webbrowser.open`` fallback would leave behind. Broadcast to every
+    window; only the one with a pending popup acts on it. The URL carries a
+    single-use PKCE ``state``, not a bearer secret, and this is a localhost app.
+    """
+    await _bus.publish({"type": "mcp.auth_url", "server": server, "url": url})
 
 
 async def publish_message_changed_chat(chat_id: int) -> None:

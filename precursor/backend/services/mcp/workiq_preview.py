@@ -31,6 +31,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AppSetting
+from precursor.backend.services.events import publish_mcp_auth_url
 
 logger = logging.getLogger(__name__)
 
@@ -223,28 +224,43 @@ async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
     return issued + timedelta(seconds=token.expires_in)
 
 
-async def _redirect_handler(authorization_url: str) -> None:
-    """Open the user's browser at the WorkIQ authorization URL."""
-    logger.info("WorkIQ preview: opening browser for sign-in: %s", authorization_url)
+async def _redirect_handler(authorization_url: str, *, open_system_browser: bool) -> None:
+    """Surface the WorkIQ authorization URL for sign-in.
+
+    Always publishes the URL over the event bus so the window that started the
+    sign-in can navigate a script-opened popup to it (that popup's loopback
+    callback can then close itself — a tab opened out-of-band can't).
+    ``open_system_browser`` *additionally* opens the OS default browser as a
+    fallback, used when the SPA couldn't open a popup (blocked / no live window).
+    """
+    logger.info("WorkIQ preview: authorization URL ready; surfacing sign-in")
+    with contextlib.suppress(Exception):
+        await publish_mcp_auth_url("workiq", authorization_url)
+    if not open_system_browser:
+        return
     try:
         webbrowser.open(authorization_url)
     except Exception as exc:  # pragma: no cover - platform dependent
         logger.warning("WorkIQ preview: could not open a browser automatically: %s", exc)
 
 
-def _make_redirect_handler(interactive: bool) -> Callable[[str], Awaitable[None]]:
+def _make_redirect_handler(
+    interactive: bool, *, open_system_browser: bool = True
+) -> Callable[[str], Awaitable[None]]:
     """Build the SDK ``redirect_handler`` for an interactive or background provider.
 
     The SDK only reaches the redirect handler on a *full* authorization-code
     grant (a 401 the silent refresh couldn't resolve). For background providers
     we refuse to open a browser there and raise :class:`WorkIQAuthRequiredError`
     so the connect fails fast instead of blocking on a sign-in nobody is driving.
+    ``open_system_browser`` (interactive only) toggles the OS-browser fallback:
+    the SPA sets it off once it has opened its own script-openable popup.
     """
 
     async def _handler(authorization_url: str) -> None:
         if not interactive:
             raise WorkIQAuthRequiredError("WorkIQ needs you to sign in again to continue.")
-        await _redirect_handler(authorization_url)
+        await _redirect_handler(authorization_url, open_system_browser=open_system_browser)
 
     return _handler
 
@@ -447,14 +463,18 @@ async def _callback_handler() -> tuple[str, str | None]:
         raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
 
 
-def build_oauth_provider(*, interactive: bool = False) -> OAuthClientProvider:
+def build_oauth_provider(
+    *, interactive: bool = False, open_system_browser: bool = True
+) -> OAuthClientProvider:
     """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
 
     ``interactive=False`` (the default, used for the warm pool / catalog probes /
     chat turns) silently refreshes tokens when possible but refuses to launch a
     browser sign-in, surfacing :class:`WorkIQAuthRequiredError` instead. The
     interactive variant — used only by :func:`reauthenticate_workiq` on an
-    explicit user action — opens the browser and waits for the loopback callback.
+    explicit user action — surfaces the authorization URL and waits for the
+    loopback callback. ``open_system_browser`` (interactive only) toggles the
+    OS-browser fallback; the SPA turns it off when it drives its own popup.
     """
     client_metadata = OAuthClientMetadata(
         redirect_uris=[WORKIQ_OAUTH_REDIRECT_URI],
@@ -467,7 +487,9 @@ def build_oauth_provider(*, interactive: bool = False) -> OAuthClientProvider:
         server_url=WORKIQ_PREVIEW_URL,
         client_metadata=client_metadata,
         storage=DbTokenStorage(),
-        redirect_handler=_make_redirect_handler(interactive),
+        redirect_handler=_make_redirect_handler(
+            interactive, open_system_browser=open_system_browser
+        ),
         callback_handler=_callback_handler,
     )
 
@@ -518,7 +540,7 @@ async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
     return tokens.access_token, await _stored_token_expiry(tokens)
 
 
-async def reauthenticate_workiq() -> None:
+async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
     """Run the interactive browser OAuth flow and persist fresh WorkIQ tokens.
 
     Forgets any stored tokens, then opens a throwaway hosted session with an
@@ -526,6 +548,10 @@ async def reauthenticate_workiq() -> None:
     issued tokens land in ``AppSetting``, so the next background WorkIQ connect
     picks them up. Serialized via :data:`_reauth_lock` so two triggers can't open
     competing browser flows on the same redirect port.
+
+    ``open_system_browser`` toggles the OS-browser fallback: the SPA passes it
+    off once it has opened its own script-openable popup (so we don't double up
+    with a stray tab), on when it couldn't (popup blocked / no live window).
 
     Raises :class:`WorkIQAuthInProgressError` if a sign-in is already running.
     """
@@ -535,7 +561,7 @@ async def reauthenticate_workiq() -> None:
         # Drop stale tokens so the flow always re-prompts (also lets the user
         # switch accounts) rather than silently reusing a still-valid session.
         await clear_workiq_oauth_tokens()
-        provider = build_oauth_provider(interactive=True)
+        provider = build_oauth_provider(interactive=True, open_system_browser=open_system_browser)
         async with (
             streamablehttp_client(WORKIQ_PREVIEW_URL, auth=provider) as (read, write, _),
             ClientSession(read, write) as session,
