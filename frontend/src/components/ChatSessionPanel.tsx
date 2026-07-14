@@ -43,9 +43,9 @@ import type {
   NoteDraftAttachment,
   Reminder,
 } from "../lib/types";
+import { PAGINATION, TIMING } from "../lib/constants";
 
-// Page size for windowed transcript loading (mirrors ChatPanel for topics).
-const MESSAGE_PAGE_SIZE = 50;
+const MESSAGE_PAGE_SIZE = PAGINATION.MESSAGE_PAGE_SIZE;
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -494,7 +494,7 @@ export function ChatSessionPanel({
   }
   function requestDeleteMessage(message: Message): void {
     if (pendingDeletesRef.current.some((p) => p.message.id === message.id)) return;
-    const timer = window.setTimeout(() => commitDelete(message.id), 5000);
+    const timer = window.setTimeout(() => commitDelete(message.id), TIMING.UNDO_DELETE_MS);
     setPendingDeletes((prev) => [...prev, { message, timer }]);
   }
   function undoDelete(messageId: number): void {

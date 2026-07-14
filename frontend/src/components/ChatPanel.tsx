@@ -46,10 +46,9 @@ import type {
   Reminder,
   Topic,
 } from "../lib/types";
+import { PAGINATION, TIMING } from "../lib/constants";
 
-// How many messages to load per page when windowing the transcript. The first
-// load fetches the most recent page; scrolling toward the top pulls older ones.
-const MESSAGE_PAGE_SIZE = 50;
+const MESSAGE_PAGE_SIZE = PAGINATION.MESSAGE_PAGE_SIZE;
 
 interface ChatPanelProps {
   topic: Topic;
@@ -426,7 +425,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     // Don't queue the same message twice.
     if (pendingDeletesRef.current.some((p) => p.message.id === message.id))
       return;
-    const timer = window.setTimeout(() => commitDelete(message.id), 5000);
+    const timer = window.setTimeout(() => commitDelete(message.id), TIMING.UNDO_DELETE_MS);
     setPendingDeletes((prev) => [...prev, { message, timer }]);
   }
 
@@ -1662,7 +1661,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   );
 }
 
-const UNDO_DELETE_MS = 5000;
+const UNDO_DELETE_MS = TIMING.UNDO_DELETE_MS;
 
 function UndoDeleteToast({
   message,
@@ -1671,7 +1670,7 @@ function UndoDeleteToast({
   message: Message;
   onUndo: () => void;
 }) {
-  const [remaining, setRemaining] = useState(UNDO_DELETE_MS);
+  const [remaining, setRemaining] = useState<number>(UNDO_DELETE_MS);
   useEffect(() => {
     const start = Date.now();
     const handle = window.setInterval(() => {
