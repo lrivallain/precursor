@@ -54,6 +54,12 @@ from precursor.backend.models import (
 )
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import runtime
+from precursor.backend.services.agents.event_normalizer import normalize_event
+from precursor.backend.services.agents.permissions import (
+    describe_permission,
+    permission_signature,
+    should_auto_approve,
+)
 from precursor.backend.services.app_settings import (
     resolve_agents_approval_policy,
     resolve_agents_context_tier,
@@ -119,8 +125,6 @@ _OAUTH_FALLBACK_TTL = timedelta(minutes=30)
 # Cap the tool result/error text we archive per event. Tool output (e.g. a
 # fetched page) can be huge; the timeline only needs enough to show "what was
 # done / why it failed", and the model already got the full payload live.
-_TOOL_RESULT_CAP = 4000
-
 
 # Broken-pipe family raised when a JSON-RPC write races the CLI child's stdin
 # closing during shutdown. The SDK spawns the Copilot CLI in *our* process group
@@ -937,7 +941,7 @@ class AgentManager:
             # Remember the action for the rest of the session (enforced locally by
             # the permission handler) and record the grant for the Settings recap.
             info = live.pending_info.get(request_id, {})
-            live.session_approvals.add(self._signature(info))
+            live.session_approvals.add(permission_signature(info))
             live.grants.append(
                 {
                     "type": info.get("type", "tool"),
@@ -994,7 +998,7 @@ class AgentManager:
             except Exception:
                 logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
                 raw = []
-            events = [self._normalise(ev) for ev in raw or []]
+            events = [normalize_event(ev) for ev in raw or []]
         # Append any unresolved permission requests as inline workflow steps so
         # the approval card renders in-place (with details of what's requested)
         # rather than floating detached from the timeline.
@@ -1331,12 +1335,12 @@ class AgentManager:
                 if policy == "autonomous":
                     logger.info("agent %s: %s auto-approved (autonomous)", agent_id, req_name)
                     return self._approve_once()
-                if policy != "manual" and self._should_auto_approve(request):
+                if policy != "manual" and should_auto_approve(request):
                     logger.info("agent %s: %s auto-approved (read-only)", agent_id, req_name)
                     return self._approve_once()
-                info = self._describe_permission(request)
+                info = describe_permission(request)
                 # Honour a prior "approve for session" for the same action.
-                if live is not None and self._signature(info) in live.session_approvals:
+                if live is not None and permission_signature(info) in live.session_approvals:
                     logger.info("agent %s: %s auto-approved (session grant)", agent_id, req_name)
                     return self._approve_once()
                 logger.info(
@@ -1378,74 +1382,6 @@ class AgentManager:
             )
             return fallback
 
-    @staticmethod
-    def _signature(info: dict[str, Any]) -> tuple[str, str | None]:
-        """A stable key for "approve for session": the action and its target."""
-        target = (
-            info.get("command")
-            or info.get("path")
-            or info.get("url")
-            or info.get("tool")
-            or info.get("server")
-        )
-        return (str(info.get("type", "tool")), str(target) if target else None)
-
-    @staticmethod
-    def _should_auto_approve(request: Any) -> bool:
-        name = type(request).__name__
-        if name in ("PermissionRequestRead", "PermissionRequestUrl"):
-            return True
-        if name == "PermissionRequestMcp":
-            server = str(getattr(request, "server_name", "") or "")
-            return server == "precursor" or bool(getattr(request, "read_only", False))
-        return False
-
-    @staticmethod
-    def _describe_permission(request: Any) -> dict[str, Any]:
-        """Normalise a permission request into a UI-friendly description."""
-
-        def g(attr: str) -> Any:
-            value = getattr(request, attr, None)
-            return value if value not in ("",) else None
-
-        name = type(request).__name__.replace("PermissionRequest", "") or "Tool"
-        info: dict[str, Any] = {"type": name.lower(), "title": f"{name} permission"}
-        if name == "Shell":
-            info.update(
-                title="Run a shell command",
-                command=g("full_command_text"),
-                intention=g("intention"),
-                warning=g("warning"),
-            )
-        elif name == "Write":
-            info.update(
-                title="Write to a file",
-                path=g("file_name"),
-                intention=g("intention"),
-                diff=(str(g("diff"))[:4000] if g("diff") else None),
-            )
-        elif name == "Read":
-            info.update(title="Read a file", path=g("path"), intention=g("intention"))
-        elif name == "Mcp":
-            tool = g("tool_title") or g("tool_name")
-            info.update(
-                title=f"Use MCP tool: {tool}" if tool else "Use an MCP tool",
-                server=g("server_name"),
-                tool=g("tool_name"),
-            )
-        elif name == "Url":
-            info.update(title="Fetch a URL", url=g("url"), intention=g("intention"))
-        elif name == "Memory":
-            info.update(title="Update memory", fact=g("fact"), reason=g("reason"))
-        elif name == "CustomTool":
-            tool = g("tool_name")
-            info.update(
-                title=f"Use tool: {tool}" if tool else "Use a tool",
-                tool=tool,
-                detail=g("tool_description"),
-            )
-        return {k: v for k, v in info.items() if v is not None}
-
     async def _park_permission(
         self, agent_id: int, request: Any, info: dict[str, Any] | None = None
     ) -> Any:
@@ -1461,7 +1397,7 @@ class AgentManager:
         live.pending[request_id] = fut
         live.pending_info[request_id] = {
             "request_id": request_id,
-            **(info if info is not None else self._describe_permission(request)),
+            **(info if info is not None else describe_permission(request)),
         }
         await self._patch(agent_id, status="needs_approval")
         agent = await self._load(agent_id)
@@ -1556,7 +1492,7 @@ class AgentManager:
         # (e.g. on topic link) and process restart, where the SDK would otherwise
         # drop it (``get_events`` only replays ``SessionStartData`` on resume).
         await self._ensure_loaded(agent_id)
-        normalised = self._normalise(event)
+        normalised = normalize_event(event)
         normalised.at = datetime.now(UTC)
         self._events.setdefault(agent_id, []).append(normalised)
         await self._archive_event(agent_id, normalised)
@@ -1724,129 +1660,6 @@ class AgentManager:
         elif agent.chat_id is not None:
             await publish_message_changed_chat(agent.chat_id)
 
-    def _normalise(self, event: Any) -> AgentEvent:
-        """Map a raw SDK event onto the workflow-timeline shape."""
-        data = getattr(event, "data", event)
-        name = type(data).__name__
-        # ``message`` covers error events (SessionErrorData/ErrorData) whose detail
-        # lives there rather than in ``content``/``text`` — otherwise their
-        # timeline node renders blank.
-        text = (
-            getattr(data, "content", None)
-            or getattr(data, "text", None)
-            or getattr(data, "message", None)
-        )
-        tool_name = getattr(data, "tool_name", None) or getattr(data, "name", None)
-        kind = _EVENT_KINDS.get(name, name)
-        tool_status: str | None = None
-        if "ToolRequest" in name or kind == "tool_call":
-            tool_status = "running"
-        elif "ToolResult" in name or kind == "tool_result":
-            tool_status = "error" if getattr(data, "is_error", False) else "done"
-        # Capture tool I/O (and error diagnostics) so the UI can show "what was
-        # done" / "why it failed" on demand.
-        extra: dict[str, Any] = {}
-        for attr in (
-            "arguments",
-            "input",
-            "result",
-            "output",
-            "server_name",
-            "error_type",
-            "error_code",
-            "status_code",
-        ):
-            val = getattr(data, attr, None)
-            if val is None:
-                continue
-            if attr in ("result", "output"):
-                val = self._unwrap_result(val)
-            if isinstance(val, str):
-                extra[attr] = val[:_TOOL_RESULT_CAP]
-            else:
-                extra[attr] = self._jsonify(val)
-        # ``ToolExecutionCompleteData`` reports success + result/error as nested
-        # objects rather than the flat ``is_error``/``result`` string attrs the
-        # loop above looks for, so a *failed* tool would otherwise archive as
-        # ``data: null`` with no status — losing the reason the agent hit a wall
-        # (e.g. a sandbox "permission denied" or a fetch error). Pull them out
-        # explicitly so the timeline shows why a tool call failed.
-        if name == "ToolExecutionCompleteData":
-            success = getattr(data, "success", None)
-            if success is not None:
-                tool_status = "done" if success else "error"
-                extra["success"] = bool(success)
-            sandboxed = getattr(data, "sandboxed", None)
-            if sandboxed is not None:
-                # Surfaces that a command ran in the ephemeral cmd-runner jail —
-                # key context when file writes silently don't persist.
-                extra["sandboxed"] = bool(sandboxed)
-            err = getattr(data, "error", None)
-            if err is not None:
-                message = getattr(err, "message", None) or str(err)
-                extra["error"] = str(message)[:_TOOL_RESULT_CAP]
-                code = getattr(err, "code", None)
-                if code:
-                    extra["error_code"] = str(code)
-            if "result" not in extra:
-                content = self._unwrap_result(getattr(data, "result", None))
-                if isinstance(content, str) and content.strip():
-                    extra["result"] = content[:_TOOL_RESULT_CAP]
-            if not tool_name:
-                desc = getattr(data, "tool_description", None)
-                tool_name = getattr(desc, "name", None) or getattr(desc, "tool_name", None)
-        # Usage events carry token counts, not tool I/O. Capture them verbatim
-        # (as raw ints, not JSON-stringified) so the workflow timeline can drive
-        # the per-agent usage stats in the side panel: ``AssistantUsageData``
-        # meters each LLM round, ``SessionUsageInfoData`` reports the live
-        # context-window occupancy.
-        if name == "AssistantUsageData":
-            for attr in ("input_tokens", "output_tokens", "reasoning_tokens"):
-                val = getattr(data, attr, None)
-                if val is not None:
-                    extra[attr] = int(val)
-            # The resolved model for this LLM round (a required SDK field). Lets
-            # the UI show the concrete model per turn — useful for default-model
-            # agents whose session.model is null.
-            model = getattr(data, "model", None)
-            if model:
-                extra["model"] = str(model)
-        elif name == "SessionUsageInfoData":
-            for attr in ("current_tokens", "token_limit", "conversation_tokens"):
-                val = getattr(data, attr, None)
-                if val is not None:
-                    extra[attr] = int(val)
-        return AgentEvent(
-            kind=kind,
-            text=str(text) if text is not None else None,
-            tool_name=str(tool_name) if tool_name else None,
-            tool_status=tool_status,
-            request_id=getattr(data, "tool_call_id", None),
-            data=extra or None,
-        )
-
-    @staticmethod
-    def _unwrap_result(value: Any) -> Any:
-        """Pull readable text out of SDK result wrappers.
-
-        Tool results arrive as ``ToolExecutionCompleteResult`` objects whose
-        repr would otherwise leak into the UI; surface their content instead.
-        """
-        if isinstance(value, str):
-            return value
-        for attr in ("content", "detailed_content"):
-            inner = getattr(value, attr, None)
-            if isinstance(inner, str) and inner.strip():
-                return inner
-        return value
-
-    @staticmethod
-    def _jsonify(value: Any) -> str:
-        try:
-            return json.dumps(value, ensure_ascii=False, default=str, indent=2)
-        except (TypeError, ValueError):
-            return str(value)
-
     # ------------------------------------------------------------------ DB utils
 
     async def _load(self, agent_id: int) -> AgentSession | None:
@@ -1866,19 +1679,6 @@ class AgentManager:
 
 
 # Map SDK event class names → coarse workflow step kinds for the UI.
-_EVENT_KINDS: dict[str, str] = {
-    "AssistantMessageData": "assistant_message",
-    "AssistantMessageDeltaData": "assistant_delta",
-    "AssistantReasoningData": "reasoning",
-    "AssistantReasoningDeltaData": "reasoning_delta",
-    "AssistantTurnStartData": "turn_start",
-    "AssistantTurnEndData": "turn_end",
-    "AssistantUsageData": "usage",
-    "SessionUsageInfoData": "context_usage",
-    "SessionIdleData": "idle",
-    "AbortData": "aborted",
-}
-
 _manager: AgentManager | None = None
 
 
