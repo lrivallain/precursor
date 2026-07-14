@@ -45,6 +45,7 @@ import type {
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
+import { SidebarTabs } from "./SidebarTabs";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
 import { MemoriesTab } from "./MemoriesTab";
@@ -567,35 +568,12 @@ export function SettingsPanel({ onClose }: Props) {
         </header>
 
         <div className="flex flex-1 min-h-0">
-          <nav className="w-52 shrink-0 border-r border-border overflow-y-auto py-2">
-            {(["App", "Integrations", "Extensions", "Advanced"] as const).map((group) => (
-              <div key={group} className="mb-2">
-                <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted">
-                  {group}
-                </div>
-                {CATEGORIES.filter((c) => c.group === group).map(
-                  ({ id, label, icon: Icon }) => {
-                    const active = category === id;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setCategory(id)}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left border-l-2 ${
-                          active
-                            ? "border-accent bg-surface text-text"
-                            : "border-transparent text-text/80 hover:bg-surface"
-                        }`}
-                      >
-                        <Icon size={14} className={active ? "text-accent" : "text-muted"} />
-                        <span className="truncate">{label}</span>
-                      </button>
-                    );
-                  },
-                )}
-              </div>
-            ))}
-          </nav>
+          <SidebarTabs
+            groups={["App", "Integrations", "Extensions", "Advanced"] as const}
+            tabs={CATEGORIES}
+            active={category}
+            onSelect={setCategory}
+          />
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6 min-w-0">
             {category === "appearance" && (
