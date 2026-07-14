@@ -4,9 +4,11 @@ The chat router streams turns to the browser over SSE. Scheduled topics need
 the *same* generation logic (system context, history hydration, MCP tool loop,
 message persistence) but driven by the background scheduler instead of a request.
 
-Rather than duplicate that logic, we reuse the pure helpers from the chat
-router and replay the tool loop here, persisting messages and emitting the same
-``stream.started`` / ``stream.ended`` / ``message.changed`` events so the UI
+Rather than duplicate that logic, this reuses the shared engine in
+:mod:`precursor.backend.services.turn_engine`: :func:`run_tool_loop` drives the
+provider + MCP tool loop and yields semantic events, and this module applies the
+scheduler's own (plain, non-streaming) persistence policy on top, emitting the
+same ``stream.started`` / ``stream.ended`` / ``message.changed`` events so the UI
 lights up exactly as it does for a manual chat.
 """
 
@@ -14,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 import anyio
 from sqlalchemy import delete, select
@@ -22,13 +23,6 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
-from precursor.backend.routers.chat import (
-    _build_system_context,
-    _format_tool_result,
-    _hydrate_history,
-    _load_enabled_mcp_servers,
-    _mcp_tools_to_provider,
-)
 from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
@@ -36,7 +30,6 @@ from precursor.backend.services.app_settings import (
     resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
-from precursor.backend.services.context_budget import trim_messages
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_stream_ended,
@@ -44,14 +37,19 @@ from precursor.backend.services.events import (
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.base import (
-    ChatMessage,
-    TextDeltaEvent,
-    ToolCallsEvent,
-    TurnDoneEvent,
-    UsageEvent,
-)
+from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.mcp.client import get_mcp_client_manager
+from precursor.backend.services.turn_engine import (
+    AssistantFinalTurn,
+    AssistantTextDelta,
+    AssistantToolCallsTurn,
+    RoundCapReached,
+    ToolResultTurn,
+    build_system_context,
+    hydrate_history,
+    load_enabled_mcp_servers,
+    run_tool_loop,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,14 +106,14 @@ async def _run(
         await session.commit()
         await publish_message_changed(topic_id)
 
-        system_prompt = await _build_system_context(session, topic)
+        system_prompt = await build_system_context(session, topic)
         history_result = await session.execute(
             select(Message)
             .where(Message.topic_id == topic_id)
             .options(selectinload(Message.attachments))
             .order_by(Message.created_at)
         )
-        history = _hydrate_history(list(history_result.scalars().all()))
+        history = hydrate_history(list(history_result.scalars().all()))
         # For skill invocations the persisted user turn stays the literal slash
         # command, but the LLM should see the expanded prompt for this turn only.
         if llm_prompt is not None:
@@ -127,7 +125,7 @@ async def _run(
                         image_urls=history[idx].image_urls,
                     )
                     break
-        enabled_servers = await _load_enabled_mcp_servers(session)
+        enabled_servers = await load_enabled_mcp_servers(session)
         # Never let a programmatically-driven turn (scheduler / MCP post_message)
         # re-expose Precursor's own MCP server to itself — that would let a
         # post_message-triggered turn recursively call post_message.
@@ -141,49 +139,32 @@ async def _run(
         github_token = await resolve_github_token(session)
 
     async with manager.acquired(enabled_servers, github_token=github_token) as active:
-        tool_to_server = active.tool_to_server
         for server_name, err in active.unavailable:
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
-        provider_tools = _mcp_tools_to_provider(active.tools)
-        messages: list[ChatMessage] = [
-            ChatMessage(role="system", content=system_prompt),
-            *history,
-        ]
+        async for ev in run_tool_loop(
+            active=active,
+            provider=provider,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            system_prompt=system_prompt,
+            history=history,
+            max_tool_rounds=max_tool_rounds,
+            max_input_tokens=max_input_tokens,
+            max_tool_result_tokens=max_tool_result_tokens,
+        ):
+            if isinstance(ev, AssistantTextDelta):
+                # The scheduler doesn't stream deltas; it persists whole turns.
+                continue
 
-        for _round in range(max_tool_rounds):
-            text_chunks: list[str] = []
-            tool_calls: list[Any] = []
-            round_usage: UsageEvent | None = None
-
-            async for event in provider.stream_chat_with_tools(
-                model=model,
-                messages=trim_messages(
-                    messages,
-                    max_input_tokens=max_input_tokens,
-                    per_message_max_tokens=max_tool_result_tokens,
-                ),
-                tools=provider_tools,
-                reasoning_effort=reasoning_effort,
-            ):
-                if isinstance(event, TextDeltaEvent):
-                    text_chunks.append(event.content)
-                elif isinstance(event, ToolCallsEvent):
-                    tool_calls = event.calls
-                elif isinstance(event, UsageEvent):
-                    round_usage = event
-                elif isinstance(event, TurnDoneEvent):
-                    pass
-
-            assistant_text = "".join(text_chunks)
-
-            if not tool_calls:
+            if isinstance(ev, AssistantFinalTurn):
+                round_usage = ev.usage
                 async with SessionLocal() as ws:
                     ws.add(
                         Message(
                             topic_id=topic_id,
                             role=MessageRole.ASSISTANT,
-                            content=assistant_text,
+                            content=ev.text,
                             prompt_tokens=round_usage.prompt_tokens if round_usage else None,
                             completion_tokens=round_usage.completion_tokens
                             if round_usage
@@ -194,76 +175,36 @@ async def _run(
                 await publish_message_changed(topic_id)
                 return
 
-            openai_tool_calls = [
-                {
-                    "id": c.id,
-                    "type": "function",
-                    "function": {"name": c.name, "arguments": c.arguments},
-                }
-                for c in tool_calls
-            ]
-            async with SessionLocal() as ws:
-                ws.add(
-                    Message(
-                        topic_id=topic_id,
-                        role=MessageRole.ASSISTANT,
-                        content=assistant_text,
-                        tool_calls=json.dumps(openai_tool_calls),
-                        prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                        completion_tokens=round_usage.completion_tokens if round_usage else None,
+            if isinstance(ev, AssistantToolCallsTurn):
+                round_usage = ev.usage
+                async with SessionLocal() as ws:
+                    ws.add(
+                        Message(
+                            topic_id=topic_id,
+                            role=MessageRole.ASSISTANT,
+                            content=ev.text,
+                            tool_calls=json.dumps(ev.openai_tool_calls),
+                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
+                            completion_tokens=round_usage.completion_tokens if round_usage else None,
+                        )
                     )
-                )
-                await ws.commit()
-            await publish_message_changed(topic_id)
+                    await ws.commit()
+                await publish_message_changed(topic_id)
 
-            messages.append(
-                ChatMessage(
-                    role="assistant",
-                    content=assistant_text,
-                    tool_calls=openai_tool_calls,
-                )
-            )
-
-            for call in tool_calls:
-                server_lookup = tool_to_server.get(call.name)
-                is_error = False
-                if server_lookup is None:
-                    result_text = f"Unknown tool '{call.name}'. No MCP server exposes it."
-                    is_error = True
-                else:
-                    server_name, raw_name = server_lookup
-                    try:
-                        args = json.loads(call.arguments or "{}")
-                    except json.JSONDecodeError as exc:
-                        args = None
-                        result_text = f"Invalid JSON arguments: {exc}"
-                        is_error = True
-                    if args is not None:
-                        try:
-                            result = await active.call_tool(server_name, raw_name, args)
-                            result_text = _format_tool_result(result)
-                            is_error = bool(getattr(result, "isError", False))
-                        except Exception as exc:
-                            logger.warning(
-                                "Scheduled run: MCP call %s failed: %s",
-                                call.name,
-                                exc,
-                            )
-                            result_text = f"Tool call failed: {exc}"
-                            is_error = True
-
+            elif isinstance(ev, ToolResultTurn):
+                call = ev.call
                 async with SessionLocal() as ws:
                     ws.add(
                         Message(
                             topic_id=topic_id,
                             role=MessageRole.TOOL,
-                            content=result_text,
+                            content=ev.result_text,
                             tool_calls=json.dumps(
                                 {
                                     "tool_call_id": call.id,
                                     "name": call.name,
                                     "arguments": call.arguments,
-                                    "is_error": is_error,
+                                    "is_error": ev.is_error,
                                 }
                             ),
                         )
@@ -271,26 +212,18 @@ async def _run(
                     await ws.commit()
                 await publish_message_changed(topic_id)
 
-                messages.append(
-                    ChatMessage(
-                        role="tool",
-                        content=result_text,
-                        tool_call_id=call.id,
-                        name=call.name,
+            elif isinstance(ev, RoundCapReached):
+                # Exhausted the tool-round budget without a final answer.
+                async with SessionLocal() as ws:
+                    ws.add(
+                        Message(
+                            topic_id=topic_id,
+                            role=MessageRole.ASSISTANT,
+                            content=f"(Stopped after {ev.max_tool_rounds} tool rounds.)",
+                        )
                     )
-                )
-
-        # Exhausted the tool-round budget without a final answer.
-        async with SessionLocal() as ws:
-            ws.add(
-                Message(
-                    topic_id=topic_id,
-                    role=MessageRole.ASSISTANT,
-                    content=f"(Stopped after {max_tool_rounds} tool rounds.)",
-                )
-            )
-            await ws.commit()
-        await publish_message_changed(topic_id)
+                    await ws.commit()
+                await publish_message_changed(topic_id)
 
 
 # Re-exported for the scheduler's timeout wrapper.

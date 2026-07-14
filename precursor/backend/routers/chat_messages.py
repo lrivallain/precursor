@@ -2,7 +2,7 @@
 
 Mirrors the topic chat router but targets ``Chat`` containers (no GitHub issue
 context). The heavy streaming logic is shared via
-``_run_message_stream`` in :mod:`precursor.backend.routers.chat`.
+``run_message_stream`` in :mod:`precursor.backend.services.turn_engine`.
 """
 
 from __future__ import annotations
@@ -22,14 +22,6 @@ from precursor.backend.models import (
     Message,
     MessageRole,
     NoteDraftAttachment,
-)
-from precursor.backend.routers.chat import (
-    _apply_chat_system_prompt,
-    _build_chat_system_context,
-    _hydrate_history,
-    _lifecycle_stream,
-    _load_enabled_mcp_servers,
-    _run_message_stream,
 )
 from precursor.backend.routers.commands import _stream_llm
 from precursor.backend.routers.deps import get_chat_or_404
@@ -60,6 +52,14 @@ from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.note_drafts import (
     consume_note_draft_attachments_to_message,
+)
+from precursor.backend.services.turn_engine import (
+    apply_chat_system_prompt,
+    build_chat_system_context,
+    hydrate_history,
+    lifecycle_stream,
+    load_enabled_mcp_servers,
+    run_message_stream,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,14 +189,14 @@ async def stream_chat(
             bound_attachments.extend(note_bound)
 
     # Snapshot history + system context now, before the session closes.
-    system_prompt = await _build_chat_system_context(session, chat)
+    system_prompt = await build_chat_system_context(session, chat)
     history_result = await session.execute(
         select(Message)
         .where(Message.chat_id == chat_id)
         .options(selectinload(Message.attachments))
         .order_by(Message.created_at)
     )
-    history = _hydrate_history(list(history_result.scalars().all()))
+    history = hydrate_history(list(history_result.scalars().all()))
 
     # For skill invocations: the persisted user message stays the literal
     # slash command, but the LLM should see the expanded prompt this turn.
@@ -212,9 +212,9 @@ async def stream_chat(
 
     # When the chat opts into system-prompt mode, reassert the description as a
     # mandatory instruction on every user turn (no-op otherwise).
-    history = _apply_chat_system_prompt(chat, history)
+    history = apply_chat_system_prompt(chat, history)
 
-    enabled_servers = await _load_enabled_mcp_servers(session)
+    enabled_servers = await load_enabled_mcp_servers(session)
     model = payload.model or await resolve_llm_model(session)
     reasoning_effort = await resolve_llm_reasoning_effort(session)
     max_tool_rounds = await resolve_max_tool_rounds(session)
@@ -240,7 +240,7 @@ async def stream_chat(
         ],
     }
 
-    inner = _run_message_stream(
+    inner = run_message_stream(
         kind="chat",
         container_id=chat_id,
         system_prompt=system_prompt,
@@ -255,7 +255,7 @@ async def stream_chat(
         github_token=github_token,
         enabled_servers=enabled_servers,
     )
-    return EventSourceResponse(_lifecycle_stream("chat", chat_id, inner))
+    return EventSourceResponse(lifecycle_stream("chat", chat_id, inner))
 
 
 @router.post("/notes/rephrase", response_model=NotesRephraseResponse)

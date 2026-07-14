@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
 from precursor.backend.routers import chat as chat_router
+from precursor.backend.services import turn_engine as turn_engine_mod
 from precursor.backend.services.llm.base import TextDeltaEvent, TurnDoneEvent, UsageEvent
 
 
@@ -416,7 +417,7 @@ def test_topic_stream_passes_non_image_attachment_context_to_llm(monkeypatch) ->
         return None
 
     monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
-    monkeypatch.setattr(chat_router, "record_usage", _fake_record_usage)
+    monkeypatch.setattr(turn_engine_mod, "record_usage", _fake_record_usage)
 
     app = create_app()
     with TestClient(app) as client:
@@ -472,7 +473,7 @@ def test_topic_stream_extracts_ooxml_header_and_notes_text(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
-    monkeypatch.setattr(chat_router, "record_usage", _fake_record_usage)
+    monkeypatch.setattr(turn_engine_mod, "record_usage", _fake_record_usage)
 
     app = create_app()
     with TestClient(app) as client:
