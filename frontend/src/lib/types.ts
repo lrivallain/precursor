@@ -458,6 +458,31 @@ export interface GitHubIssue {
   updated_at: string;
 }
 
+export interface GitHubProject {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+}
+
+export interface KanbanColumnOption {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface KanbanIssue extends GitHubIssue {
+  item_id: string;
+  column_id: string | null;
+}
+
+export interface KanbanBoard {
+  project_id: string;
+  field_id: string | null;
+  columns: KanbanColumnOption[];
+  issues: KanbanIssue[];
+}
+
 export interface MCPTool {
   name: string;
   description: string;

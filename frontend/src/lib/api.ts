@@ -24,9 +24,11 @@ import type {
   FileDiff,
   GitActionResult,
   GitHubIssue,
+  GitHubProject,
   GitStatus,
   IssuePushResult,
   IssueSummary,
+  KanbanBoard,
   LLMModel,
   LLMProviderSpec,
   LocalPath,
@@ -451,6 +453,27 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ body, state_reason: stateReason }),
       }),
+
+    // Projects v2 / Kanban
+    listProjects: (repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<GitHubProject[]>(`/api/github/projects${qs}`);
+    },
+    getProjectBoard: (projectId: string) =>
+      request<KanbanBoard>(`/api/github/projects/${encodeURIComponent(projectId)}/board`),
+    moveProjectItem: (
+      projectId: string,
+      itemId: string,
+      fieldId: string,
+      optionId: string,
+    ) =>
+      request<{ status: string }>(
+        `/api/github/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(itemId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ field_id: fieldId, option_id: optionId }),
+        },
+      ),
   },
 
   mcp: {

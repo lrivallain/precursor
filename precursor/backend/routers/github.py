@@ -27,6 +27,11 @@ class IssueCreatePayload(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
+class MoveItemPayload(BaseModel):
+    field_id: str = Field(min_length=1)
+    option_id: str = Field(min_length=1)
+
+
 async def _resolve_repo(repo: str | None, session: AsyncSession) -> str:
     if not await resolve_issue_associations_enabled(session):
         raise HTTPException(
@@ -97,5 +102,57 @@ async def list_labels(
     client = GitHubClient(token=token)
     try:
         return await client.list_labels(target)
+    finally:
+        await client.aclose()
+
+
+@router.get("/projects")
+async def list_projects(
+    repo: str | None = None,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    target = await _resolve_repo(repo, session)
+    token = await _require_token(session)
+    client = GitHubClient(token=token)
+    try:
+        return await client.list_projects(target)
+    finally:
+        await client.aclose()
+
+
+@router.get("/projects/{project_id}/board")
+async def get_project_board(
+    project_id: str,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    # Validate the repo/feature flag is set — the project node id is opaque, so
+    # we only need the token, but we still enforce the feature guard.
+    await _resolve_repo(None, session)
+    token = await _require_token(session)
+    client = GitHubClient(token=token)
+    try:
+        return await client.get_project_board(project_id)
+    finally:
+        await client.aclose()
+
+
+@router.patch("/projects/{project_id}/items/{item_id}", status_code=status.HTTP_200_OK)
+async def move_project_item(
+    project_id: str,
+    item_id: str,
+    payload: MoveItemPayload,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    await _resolve_repo(None, session)
+    token = await _require_token(session)
+    client = GitHubClient(token=token)
+    try:
+        await client.move_project_item(
+            project_id, item_id, payload.field_id, payload.option_id
+        )
+        return {"status": "ok"}
     finally:
         await client.aclose()

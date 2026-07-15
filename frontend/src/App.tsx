@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   ChevronRight,
+  KanbanSquare,
   MessagesSquare,
   Pin,
   PinOff,
@@ -34,6 +35,7 @@ import { AgentList } from "./components/AgentList";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
+import { KanbanBoard } from "./components/KanbanBoard";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -120,6 +122,9 @@ function parseAppRoute(): AppRoute {
       liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
       agentRef: null,
     };
+  }
+  if (segs[0] === "kanban") {
+    return { mode: "kanban", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
   }
   if (segs[0] === "topics") {
     const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
@@ -344,6 +349,7 @@ export default function App() {
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
   const agentsEnabled = settings?.agents_enabled ?? false;
   const liveEnabled = settings?.live_enabled ?? true;
+  const kanbanEnabled = !!(settings?.github_repo && settings?.issue_associations_enabled);
   const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
@@ -734,6 +740,8 @@ export default function App() {
       target = "/live";
     } else if (next === "agents") {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
+    } else if (next === "kanban") {
+      target = "/kanban";
     } else {
       target = "/ws";
     }
@@ -773,6 +781,9 @@ export default function App() {
       setActiveAgentId(null);
       history.pushState(null, "", "/agents");
       setSidebarMode("agents");
+    } else if (mode === "kanban") {
+      history.pushState(null, "", "/kanban");
+      setSidebarMode("kanban");
     } else {
       history.pushState(null, "", "/ws");
       setSidebarMode("workspaces");
@@ -827,6 +838,13 @@ export default function App() {
       setSidebarMode("topics");
     }
   }, [liveEnabled, sidebarMode]);
+
+  useEffect(() => {
+    if (!kanbanEnabled && sidebarMode === "kanban") {
+      history.pushState(null, "", "/topics");
+      setSidebarMode("topics");
+    }
+  }, [kanbanEnabled, sidebarMode]);
 
   // Reflect the active workspace + open file in the URL so a reload returns to
   // the same place. replaceState keeps it as a single history entry.
@@ -1450,6 +1468,7 @@ export default function App() {
         onCreate={handleCreate}
         onRename={handleRenameTopic}
         liveEnabled={liveEnabled}
+        kanbanEnabled={kanbanEnabled}
         reminders={reminders}
         reminderTopicIds={reminderTopicIds}
         onReminderSelect={handleReminderSelect}
@@ -1592,6 +1611,11 @@ export default function App() {
             ) : (
               <span className="truncate font-medium min-w-0 flex-1">Live</span>
             )
+          ) : sidebarMode === "kanban" ? (
+            <>
+              <KanbanSquare size={16} className="shrink-0 text-muted" />
+              <span className="truncate font-medium min-w-0 flex-1">Issues Board</span>
+            </>
           ) : (
             <>
               {activeAgent ? (
@@ -1676,6 +1700,7 @@ export default function App() {
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
+              kanbanEnabled={kanbanEnabled}
               onNavigate={changeMode}
               topicSurface={
                 <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
@@ -1818,6 +1843,8 @@ export default function App() {
                 }}
               />
             )
+          ) : sidebarMode === "kanban" ? (
+            <KanbanBoard />
           ) : (
             <AgentView
               agents={agents ?? []}

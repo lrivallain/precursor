@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Bot,
   FolderGit2,
+  KanbanSquare,
   MessageSquare,
   MessageSquarePlus,
   MessagesSquare,
@@ -36,6 +37,8 @@ interface Props {
   liveSurface: ReactNode;
   agentSurface: ReactNode;
   liveEnabled?: boolean;
+  /** Whether to show the Kanban board nav link / jump button. */
+  kanbanEnabled?: boolean;
   /** Jump straight into a section's list/surface (leaves the home launcher). */
   onNavigate?: (mode: SidebarMode) => void;
 }
@@ -55,6 +58,7 @@ export function HomePage({
   liveSurface,
   agentSurface,
   liveEnabled = true,
+  kanbanEnabled = false,
   onNavigate,
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
@@ -127,6 +131,9 @@ export function HomePage({
       : []),
     { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
     { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
+    ...(kanbanEnabled
+      ? [{ mode: "kanban", label: "Board", icon: <KanbanSquare size={14} /> } satisfies NavLink]
+      : []),
   ];
 
   return (
@@ -207,6 +214,31 @@ export function HomePage({
                 </button>
               );
             })}
+
+            {/* Kanban board shortcut — only shown when a GitHub repo is configured. */}
+            {kanbanEnabled && onNavigate && (
+              <button
+                type="button"
+                onClick={() => onNavigate("kanban")}
+                className="group flex flex-col gap-3 rounded-xl border border-border bg-surface/60 p-5 text-left transition-colors hover:border-accent/50 hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                    <KanbanSquare size={20} />
+                  </span>
+                  <ArrowRight
+                    size={18}
+                    className="text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium">Issues Board</span>
+                  <span className="text-[12px] leading-relaxed text-muted">
+                    View and triage GitHub issues as a kanban board, with drag-and-drop status updates.
+                  </span>
+                </div>
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -10,6 +10,7 @@ import {
   Clock,
   FolderGit2,
   Home,
+  KanbanSquare,
   MessageSquare,
   MessagesSquare,
   PanelLeftClose,
@@ -26,7 +27,7 @@ import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
-export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents";
+export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
 
 // Label for the header "New" action, which is mode-aware.
 function newActionLabel(mode: SidebarMode): string {
@@ -83,6 +84,8 @@ interface Props {
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   /** Whether the Live section is enabled (hides its tab when off). */
   liveEnabled?: boolean;
+  /** Whether the Kanban board section is enabled (hides its tab when off). */
+  kanbanEnabled?: boolean;
 }
 
 export function Sidebar({
@@ -111,6 +114,7 @@ export function Sidebar({
   onOpenArchive,
   unreadByMode,
   liveEnabled = true,
+  kanbanEnabled = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
@@ -204,6 +208,16 @@ export function Sidebar({
           <Bot size={18} />
           <ModeUnreadDot count={unreadByMode?.agents ?? 0} />
         </button>
+        {kanbanEnabled && (
+          <button
+            className={`p-2 rounded ${!atHome && mode === "kanban" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+            aria-label="Kanban board"
+            data-tooltip="Kanban board"
+            onClick={() => onModeChange("kanban")}
+          >
+            <KanbanSquare size={18} />
+          </button>
+        )}
         <div className="my-1 h-px w-6 bg-border" />
         <button
           className="p-2 rounded hover:bg-surface"
@@ -272,6 +286,7 @@ export function Sidebar({
         atHome={atHome}
         unreadByMode={unreadByMode}
         liveEnabled={liveEnabled}
+        kanbanEnabled={kanbanEnabled}
       />
 
       {/* Fired reminders surface here across every mode until acknowledged. */}
@@ -306,6 +321,10 @@ export function Sidebar({
         workspaceSlot
       ) : mode === "agents" ? (
         agentSlot
+      ) : mode === "kanban" ? (
+        <div className="flex flex-1 items-center justify-center p-4 text-xs text-muted">
+          Board view is shown in the main panel.
+        </div>
       ) : (
         <>
           <div className="px-3 py-2 border-b border-border">
@@ -629,6 +648,7 @@ const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
   { mode: "live", label: "Live", icon: <Radio size={14} /> },
   { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
   { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
+  { mode: "kanban", label: "Board", icon: <KanbanSquare size={14} /> },
 ];
 
 // Horizontal mode switcher: all modes live in a single scrollable row so the
@@ -641,16 +661,23 @@ function ModeSwitcher({
   atHome = false,
   unreadByMode,
   liveEnabled = true,
+  kanbanEnabled = false,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
   atHome?: boolean;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
+  kanbanEnabled?: boolean;
 }) {
   const modes = useMemo(
-    () => MODES.filter((m) => m.mode !== "live" || liveEnabled),
-    [liveEnabled],
+    () =>
+      MODES.filter(
+        (m) =>
+          (m.mode !== "live" || liveEnabled) &&
+          (m.mode !== "kanban" || kanbanEnabled),
+      ),
+    [liveEnabled, kanbanEnabled],
   );
   const wrapperRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
