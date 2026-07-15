@@ -698,13 +698,17 @@ function ModeSwitcher({
     return () => ro.disconnect();
   }, [updateArrows, scrollActiveIntoView, modes.length]);
 
-  // Keep the selected mode fully visible as it changes — and re-run when the
-  // arrows toggle, since their appearance narrows the row and can re-clip the
-  // active tab. Always prefer showing the current activity in its entirety.
+  // Keep the selected mode fully visible when it *changes*. Deliberately does
+  // not depend on canLeft/canRight: those toggle on every manual scroll (via
+  // onScroll -> updateArrows), and re-running scrollActiveIntoView here would
+  // snap the row back to the active tab, making other tabs unreachable. Arrow
+  // appearance narrowing the row is instead handled by the ResizeObserver on
+  // the scroll container, which re-clips the active tab without fighting the
+  // user's scroll.
   useEffect(() => {
     scrollActiveIntoView();
     updateArrows();
-  }, [mode, modes.length, canLeft, canRight, scrollActiveIntoView, updateArrows]);
+  }, [mode, modes.length, scrollActiveIntoView, updateArrows]);
 
   const scrollBy = useCallback((dir: 1 | -1): void => {
     const el = scrollRef.current;
