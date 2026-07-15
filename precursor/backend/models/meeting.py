@@ -152,6 +152,12 @@ class MeetingSession(Base, TimestampMixin):
             return None
         return data if isinstance(data, dict) else None
 
+    # Cached AI summary of the attached topic's conversation, shown in the
+    # Context tab. Generated once (on link / first open) and persisted so we
+    # don't re-summarize — and re-spend tokens — on every display; the user can
+    # refresh it on demand. Cleared when the attached topic changes.
+    topic_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     segments: Mapped[list[MeetingSegment]] = relationship(
         "MeetingSegment",
         back_populates="session",

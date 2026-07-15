@@ -377,6 +377,17 @@ def test_topic_context_summary(monkeypatch) -> None:  # type: ignore[no-untyped-
         assert res.status_code == 200
         assert "Context" in res.json()["summary"]
 
+        # The summary is cached on the session so later opens reuse it instead
+        # of re-summarizing.
+        cached = client.get(f"/api/live/{sid}").json()["topic_summary"]
+        assert "Context" in cached
+
+        # Changing the attached topic invalidates the cache.
+        tid2 = client.post("/api/topics", json={"title": "Other"}).json()["id"]
+        upd = client.patch(f"/api/live/{sid}", json={"topic_id": tid2})
+        assert upd.status_code == 200
+        assert upd.json()["topic_summary"] is None
+
         # No topic → 400.
         sid2 = client.post("/api/live", json={"title": "NoTopic"}).json()["id"]
         assert client.post(f"/api/live/{sid2}/topic-summary").status_code == 400
@@ -392,6 +403,8 @@ def test_topic_summary_empty_conversation_returns_empty_not_error() -> None:
         res = client.post(f"/api/live/{sid}/topic-summary")
         assert res.status_code == 200
         assert res.json()["summary"] == ""
+        # Nothing to cache → the session's summary stays null.
+        assert client.get(f"/api/live/{sid}").json()["topic_summary"] is None
 
 
 def test_agenda_endpoint(monkeypatch) -> None:  # type: ignore[no-untyped-def]

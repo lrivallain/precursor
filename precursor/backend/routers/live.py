@@ -171,6 +171,10 @@ async def update_session_endpoint(
 
     if "topic_id" in data:
         await _validate_topic(data["topic_id"], session)
+        # Attaching a different topic invalidates the cached context summary so
+        # the Context tab regenerates it for the new topic.
+        if data["topic_id"] != ms.topic_id:
+            ms.topic_summary = None
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip() or ms.title
     if "language" in data:
@@ -696,6 +700,11 @@ async def topic_summary(
         text, model = await summarize_topic_conversation(session, ms.topic_id, language=ms.language)
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
+    # Persist the summary so we serve it from cache on later opens instead of
+    # re-summarizing (and re-spending tokens) on every display.
+    ms.topic_summary = text or None
+    await session.commit()
+    await publish_meeting_changed(ms.id)
     # An empty topic (no messages yet) is a normal state, not an error: return an
     # empty summary so the UI shows its "nothing to summarize yet" empty state.
     return TopicSummaryResult(summary=text, model=model)
