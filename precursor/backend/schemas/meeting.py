@@ -51,6 +51,7 @@ class MeetingSessionRead(BaseModel):
     notes: str = ""
     features: list[str] = Field(default_factory=list)
     external_meeting: dict[str, Any] | None = None
+    topic_summary: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime

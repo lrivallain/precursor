@@ -888,6 +888,9 @@ export interface MeetingSession {
   features: string[];
   // A linked M365 calendar meeting (subject/times/attendees), or null.
   external_meeting: ExternalMeeting | null;
+  // Cached AI summary of the attached topic (Context tab). Generated once and
+  // persisted; regenerated only on explicit refresh or when the topic changes.
+  topic_summary: string | null;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;

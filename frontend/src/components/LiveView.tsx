@@ -223,8 +223,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     }
   }
 
-  // Topic-context summary (Context tab). Auto-generated when a topic is linked.
-  const [topicSummary, setTopicSummary] = useState("");
+  // Topic-context summary (Context tab). Generated once when a topic is linked,
+  // then persisted on the session — seeded from that cache on later opens so we
+  // don't re-summarize on every display. Refreshed only on demand.
+  const [topicSummary, setTopicSummary] = useState(session.topic_summary ?? "");
   const [topicSummaryLoading, setTopicSummaryLoading] = useState(false);
   const [topicSummaryError, setTopicSummaryError] = useState<string | null>(null);
   const topicGenRef = useRef(false);
@@ -453,6 +455,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     try {
       const res = await api.meetings.topicContextSummary(session.id);
       setTopicSummary(res.summary);
+      // The backend persisted the summary; mirror it onto the session so the
+      // cache stays in sync and we don't regenerate on the next open.
+      onUpdated({ ...session, topic_summary: res.summary || null });
     } catch (e) {
       setTopicSummaryError(
         e instanceof Error ? e.message : "Couldn't summarize the topic.",
@@ -463,8 +468,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     }
   }
 
-  // Always (re)summarize the attached topic when it changes — on link, or when
-  // opening a session that already has a topic.
+  // Seed the Context tab from the persisted summary when a topic is attached;
+  // only generate one when none is cached yet (on first link). The user can
+  // refresh on demand — we don't re-summarize on every open to save tokens.
   useEffect(() => {
     if (session.topic_id == null) {
       summarizedTopicRef.current = null;
@@ -474,6 +480,11 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     }
     if (summarizedTopicRef.current === session.topic_id) return;
     summarizedTopicRef.current = session.topic_id;
+    const cached = session.topic_summary ?? "";
+    if (cached) {
+      setTopicSummary(cached);
+      return;
+    }
     setTopicSummary("");
     void generateTopicSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
