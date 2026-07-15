@@ -263,14 +263,28 @@ def test_meeting_summary_generate_and_post() -> None:
         assert gen.status_code == 200
         assert isinstance(gen.json()["summary"], str) and gen.json()["summary"]
 
+        # The recap is persisted on the session so a reopen shows it without
+        # regenerating; it isn't posted yet.
+        reopened = client.get(f"/api/live/{sid}").json()
+        assert reopened["summary"] == gen.json()["summary"]
+        assert reopened["summary_posted_at"] is None
+        assert reopened["summary_posted_topic_id"] is None
+
         # Post the summary into the linked topic → a new assistant message.
         posted = client.post(
             f"/api/live/{sid}/summary/post", json={"summary": "## Summary\nAll good."}
         )
         assert posted.status_code == 201
         assert posted.json()["topic_id"] == tid
+        assert posted.json()["posted_at"]
         msgs = client.get(f"/api/topics/{tid}/messages").json()
         assert any("Meeting summary" in m["content"] for m in msgs)
+
+        # Posting stamps when/where the recap landed and stores the posted text.
+        after = client.get(f"/api/live/{sid}").json()
+        assert after["summary_posted_at"] is not None
+        assert after["summary_posted_topic_id"] == tid
+        assert after["summary"] == "## Summary\nAll good."
 
 
 def test_meeting_summary_post_requires_topic() -> None:

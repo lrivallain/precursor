@@ -158,6 +158,20 @@ class MeetingSession(Base, TimestampMixin):
     # refresh it on demand. Cleared when the attached topic changes.
     topic_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # The generated meeting recap (Summary tab), persisted so a reopened session
+    # shows it without regenerating. Drafted on demand / when the meeting ends
+    # only while absent; the user's explicit Regenerate is the sole path that
+    # replaces it. Updated to the posted text when posted to a topic.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # When the summary was last posted to a topic, and which topic it landed in.
+    # Both null until the first successful post. Surfaced in the UI so the user
+    # sees the recap already reached the topic.
+    summary_posted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    summary_posted_topic_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     segments: Mapped[list[MeetingSegment]] = relationship(
         "MeetingSegment",
         back_populates="session",

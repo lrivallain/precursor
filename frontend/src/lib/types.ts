@@ -891,6 +891,13 @@ export interface MeetingSession {
   // Cached AI summary of the attached topic (Context tab). Generated once and
   // persisted; regenerated only on explicit refresh or when the topic changes.
   topic_summary: string | null;
+  // The generated meeting recap (Summary tab), persisted so a reopened session
+  // shows it without regenerating. Replaced only on explicit Regenerate.
+  summary: string | null;
+  // When the recap was last posted to a topic, and which topic it landed in.
+  // Null until the first successful post.
+  summary_posted_at: string | null;
+  summary_posted_topic_id: number | null;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;

@@ -668,10 +668,13 @@ export const api = {
         method: "POST",
       }),
     postSummary: (id: number, summary: string) =>
-      request<{ topic_id: number; message_id: number }>(`/api/live/${id}/summary/post`, {
-        method: "POST",
-        body: JSON.stringify({ summary }),
-      }),
+      request<{ topic_id: number; message_id: number; posted_at: string }>(
+        `/api/live/${id}/summary/post`,
+        {
+          method: "POST",
+          body: JSON.stringify({ summary }),
+        },
+      ),
     topicContextSummary: (id: number) =>
       request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
         method: "POST",
