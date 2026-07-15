@@ -59,6 +59,10 @@ class MeetingSession(Base, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # When non-null, the session is archived: hidden from the main Live list but
+    # kept intact (transcript, insights, notes) so it can be restored later.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # JSON-encoded dict[str, str] mapping a raw diarization label to a
     # user-chosen display name. Labels are namespaced per recording run as
     # "<run>:<label>" (e.g. "2:Guest-1") because Azure re-numbers speakers on

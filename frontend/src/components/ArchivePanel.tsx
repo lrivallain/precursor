@@ -5,12 +5,13 @@ import {
   ExternalLink,
   MessageSquare,
   MessagesSquare,
+  Radio,
   RotateCcw,
   Trash2,
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { AgentSession, Chat, Topic } from "../lib/types";
+import type { AgentSession, Chat, MeetingSession, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
@@ -21,13 +22,15 @@ interface Props {
   onChatDeleted: (chatId: number) => void;
   onAgentRestored: (agent: AgentSession) => void;
   onAgentDeleted: (agentId: number) => void;
+  onSessionRestored: (session: MeetingSession) => void;
+  onSessionDeleted: (sessionId: number) => void;
 }
 
-type Tab = "topics" | "chats" | "agents";
+type Tab = "topics" | "chats" | "agents" | "live";
 
-// Archive is shared across modes: topics, chats and agent sessions are all
-// archivable, and each restores into its own section. The view lists all three
-// regardless of which mode the user is currently in.
+// Archive is shared across modes: topics, chats, agent sessions and live
+// sessions are all archivable, and each restores into its own section. The view
+// lists all four regardless of which mode the user is currently in.
 export function ArchivePanel({
   onClose,
   onTopicRestored,
@@ -36,31 +39,37 @@ export function ArchivePanel({
   onChatDeleted,
   onAgentRestored,
   onAgentDeleted,
+  onSessionRestored,
+  onSessionDeleted,
 }: Props) {
   const confirmAction = useConfirm();
   const [tab, setTab] = useState<Tab>("topics");
   const [topics, setTopics] = useState<Topic[] | null>(null);
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
+  const [sessions, setSessions] = useState<MeetingSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       try {
-        const [t, c, a] = await Promise.all([
+        const [t, c, a, s] = await Promise.all([
           api.topics.listArchived(),
           api.chats.listArchived(),
           api.agents.listArchived(),
+          api.meetings.listArchivedSessions(),
         ]);
         setTopics(t);
         setChats(c);
         setAgents(a);
+        setSessions(s);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setTopics([]);
         setChats([]);
         setAgents([]);
+        setSessions([]);
       }
     })();
   }, []);
@@ -173,9 +182,46 @@ export function ArchivePanel({
     }
   }
 
+  async function restoreSession(s: MeetingSession): Promise<void> {
+    setBusy(`s${s.id}`);
+    setError(null);
+    try {
+      const updated = await api.meetings.unarchiveSession(s.id);
+      setSessions((prev) => prev?.filter((x) => x.id !== s.id) ?? []);
+      onSessionRestored(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteSession(s: MeetingSession): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Permanently delete "${s.title}" and its transcript?`,
+        confirmLabel: "Delete session",
+        variant: "danger",
+      }))
+    )
+      return;
+    setBusy(`s${s.id}`);
+    setError(null);
+    try {
+      await api.meetings.deleteSession(s.id);
+      setSessions((prev) => prev?.filter((x) => x.id !== s.id) ?? []);
+      onSessionDeleted(s.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const topicCount = topics?.length ?? 0;
   const chatCount = chats?.length ?? 0;
   const agentCount = agents?.length ?? 0;
+  const sessionCount = sessions?.length ?? 0;
 
   return (
     <div
@@ -233,6 +279,17 @@ export function ArchivePanel({
           >
             <Bot size={14} /> Agents
             {agentCount > 0 && <span className="text-xs opacity-70">({agentCount})</span>}
+          </button>
+          <button
+            className={`flex items-center gap-1.5 px-4 py-2 ${
+              tab === "live"
+                ? "border-b-2 border-accent text-accent"
+                : "text-muted hover:text-text"
+            }`}
+            onClick={() => setTab("live")}
+          >
+            <Radio size={14} /> Live
+            {sessionCount > 0 && <span className="text-xs opacity-70">({sessionCount})</span>}
           </button>
         </nav>
 
@@ -306,28 +363,58 @@ export function ArchivePanel({
                 ))}
               </ul>
             )
-          ) : agents === null ? (
+          ) : tab === "agents" ? (
+            agents === null ? (
+              <p className="text-xs text-muted px-1">Loading…</p>
+            ) : agents.length === 0 ? (
+              <p className="text-xs text-muted px-1">No archived agents.</p>
+            ) : (
+              <ul className="space-y-2">
+                {agents.map((a) => (
+                  <li
+                    key={a.id}
+                    className="flex items-start gap-3 rounded border border-border bg-surface px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{a.title}</div>
+                      <div className="text-[11px] text-muted truncate">
+                        {a.status}
+                        {a.archived_at && (
+                          <> · archived {new Date(a.archived_at).toLocaleString()}</>
+                        )}
+                      </div>
+                    </div>
+                    <RestoreDeleteButtons
+                      busy={busy === `a${a.id}`}
+                      onRestore={() => void restoreAgent(a)}
+                      onDelete={() => void deleteAgent(a)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : sessions === null ? (
             <p className="text-xs text-muted px-1">Loading…</p>
-          ) : agents.length === 0 ? (
-            <p className="text-xs text-muted px-1">No archived agents.</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-xs text-muted px-1">No archived sessions.</p>
           ) : (
             <ul className="space-y-2">
-              {agents.map((a) => (
+              {sessions.map((s) => (
                 <li
-                  key={a.id}
+                  key={s.id}
                   className="flex items-start gap-3 rounded border border-border bg-surface px-3 py-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{a.title}</div>
+                    <div className="text-sm font-medium truncate">{s.title}</div>
                     <div className="text-[11px] text-muted truncate">
-                      {a.status}
-                      {a.archived_at && <> · archived {new Date(a.archived_at).toLocaleString()}</>}
+                      {s.status}
+                      {s.archived_at && <> · archived {new Date(s.archived_at).toLocaleString()}</>}
                     </div>
                   </div>
                   <RestoreDeleteButtons
-                    busy={busy === `a${a.id}`}
-                    onRestore={() => void restoreAgent(a)}
-                    onDelete={() => void deleteAgent(a)}
+                    busy={busy === `s${s.id}`}
+                    onRestore={() => void restoreSession(s)}
+                    onDelete={() => void deleteSession(s)}
                   />
                 </li>
               ))}

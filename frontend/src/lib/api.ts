@@ -614,6 +614,11 @@ export const api = {
       }),
     deleteSession: (id: number) =>
       request<void>(`/api/live/${id}`, { method: "DELETE" }),
+    listArchivedSessions: () => request<MeetingSession[]>(`/api/live/archived`),
+    archiveSession: (id: number) =>
+      request<MeetingSession>(`/api/live/${id}/archive`, { method: "POST" }),
+    unarchiveSession: (id: number) =>
+      request<MeetingSession>(`/api/live/${id}/unarchive`, { method: "POST" }),
     listSegments: (id: number) =>
       request<MeetingSegment[]>(`/api/live/${id}/segments`),
     appendSegment: (id: number, data: MeetingSegmentCreate) =>

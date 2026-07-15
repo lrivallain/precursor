@@ -79,6 +79,33 @@ def test_meeting_session_topic_link_and_validation() -> None:
         assert detached.json()["topic_id"] is None
 
 
+def test_meeting_session_archive_lifecycle() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Archivable"}).json()["id"]
+
+        # Archive it: gone from the main list, present in the archived list.
+        archived = client.post(f"/api/live/{sid}/archive")
+        assert archived.status_code == 200
+        assert archived.json()["archived_at"] is not None
+        assert all(s["id"] != sid for s in client.get("/api/live").json())
+        assert any(s["id"] == sid for s in client.get("/api/live/archived").json())
+
+        # Archiving again is idempotent.
+        assert client.post(f"/api/live/{sid}/archive").status_code == 200
+
+        # Restore it: back in the main list, gone from the archived list.
+        restored = client.post(f"/api/live/{sid}/unarchive")
+        assert restored.status_code == 200
+        assert restored.json()["archived_at"] is None
+        assert any(s["id"] == sid for s in client.get("/api/live").json())
+        assert all(s["id"] != sid for s in client.get("/api/live/archived").json())
+
+        # Unknown ids 404 on both actions.
+        assert client.post("/api/live/999999/archive").status_code == 404
+        assert client.post("/api/live/999999/unarchive").status_code == 404
+
+
 def test_meeting_session_slugs_are_unique() -> None:
     app = create_app()
     with TestClient(app) as client:

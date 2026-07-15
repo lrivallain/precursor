@@ -125,7 +125,22 @@ async def list_sessions(
     session: AsyncSession = Depends(get_session),
 ) -> list[MeetingSession]:
     result = await session.execute(
-        select(MeetingSession).order_by(MeetingSession.created_at.desc())
+        select(MeetingSession)
+        .where(MeetingSession.archived_at.is_(None))
+        .order_by(MeetingSession.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/archived", response_model=list[MeetingSessionRead])
+async def list_archived_sessions(
+    session: AsyncSession = Depends(get_session),
+) -> list[MeetingSession]:
+    """Flat list of archived sessions, most recently archived first."""
+    result = await session.execute(
+        select(MeetingSession)
+        .where(MeetingSession.archived_at.is_not(None))
+        .order_by(MeetingSession.archived_at.desc())
     )
     return list(result.scalars().all())
 
@@ -206,6 +221,34 @@ async def delete_session_endpoint(
     await session.delete(ms)
     await session.commit()
     await publish_meeting_changed(session_id)
+
+
+@router.post("/{session_id}/archive", response_model=MeetingSessionRead)
+async def archive_session_endpoint(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingSession:
+    """Archive a session: hide it from the Live list, keep it restorable."""
+    ms = await _get_session_or_404(session_id, session)
+    if ms.archived_at is None:
+        ms.archived_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
+@router.post("/{session_id}/unarchive", response_model=MeetingSessionRead)
+async def unarchive_session_endpoint(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingSession:
+    """Restore an archived session back into the Live list."""
+    ms = await _get_session_or_404(session_id, session)
+    if ms.archived_at is not None:
+        ms.archived_at = None
+        await session.commit()
+        await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
 
 
 # --------------------------------------------------------------------------

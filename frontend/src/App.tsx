@@ -1069,6 +1069,12 @@ export default function App() {
     await loadAgents();
   }
 
+  async function handleArchiveAgents(ids: number[]): Promise<void> {
+    await Promise.all(ids.map((id) => api.agents.archive(id)));
+    if (activeAgentId != null && ids.includes(activeAgentId)) setActiveAgentId(null);
+    await loadAgents();
+  }
+
   async function handleStopAgent(id: number): Promise<void> {
     await api.agents.cancel(id);
     await loadAgents();
@@ -1096,6 +1102,12 @@ export default function App() {
     } catch {
       // non-fatal
     }
+  }
+
+  async function handleArchiveChats(ids: number[]): Promise<void> {
+    await Promise.all(ids.map((id) => api.chats.archive(id)));
+    if (activeChat && ids.includes(activeChat.id)) setActiveChat(null);
+    setChatListReloadKey((k) => k + 1);
   }
 
   // Open the conversation behind a fired reminder, switching mode if needed.
@@ -1290,6 +1302,12 @@ export default function App() {
     );
   }
 
+  async function handleArchiveSessions(ids: number[]): Promise<void> {
+    await Promise.all(ids.map((id) => api.meetings.archiveSession(id)));
+    if (activeSessionId != null && ids.includes(activeSessionId)) setActiveSessionId(null);
+    await loadMeetingSessions();
+  }
+
   // ---- Agents -----------------------------------------------------------
   async function loadAgents(): Promise<AgentSession[]> {
     try {
@@ -1396,6 +1414,7 @@ export default function App() {
             }}
             onChatsChanged={() => void refreshActiveChat()}
             onUnreadChange={setChatsUnread}
+            onArchiveMany={handleArchiveChats}
           />
         }
         workspaceSlot={
@@ -1412,6 +1431,7 @@ export default function App() {
             recordingId={liveRecordingId}
             onSelect={handleSelectSession}
             onRename={handleRenameSession}
+            onArchiveMany={handleArchiveSessions}
           />
         }
         agentSlot={
@@ -1421,6 +1441,7 @@ export default function App() {
             enabled={agentsEnabled}
             onSelect={(id) => setActiveAgentId(id)}
             onRename={handleRenameAgent}
+            onArchiveMany={handleArchiveAgents}
           />
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -1780,6 +1801,11 @@ export default function App() {
                   history.pushState(null, "", liveUrl(null));
                   void list;
                 }}
+                onArchived={async () => {
+                  await loadMeetingSessions();
+                  setActiveSessionId(null);
+                  history.pushState(null, "", liveUrl(null));
+                }}
                 onRecordingChange={setLiveRecordingId}
               />
             ) : (
@@ -1900,6 +1926,11 @@ export default function App() {
           onAgentDeleted={(id) => {
             if (activeAgentId === id) setActiveAgentId(null);
             void loadAgents();
+          }}
+          onSessionRestored={() => void loadMeetingSessions()}
+          onSessionDeleted={(id) => {
+            if (activeSessionId === id) setActiveSessionId(null);
+            void loadMeetingSessions();
           }}
         />
       )}
