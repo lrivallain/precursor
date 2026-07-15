@@ -165,14 +165,14 @@ export function SummarySection({
           type="button"
           onClick={onGenerate}
           disabled={generating || !canGenerate}
-          className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-sm text-white disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
         >
           {generating ? (
-            <Loader2 size={14} className="animate-spin" />
+            <Loader2 size={12} className="animate-spin" />
           ) : (
-            <RefreshCw size={14} />
+            <RefreshCw size={12} />
           )}
-          {text ? "Regenerate" : "Generate"}
+          {text ? "Refresh" : "Generate"}
         </button>
         <div className="flex items-center gap-0.5 text-xs">
           <button
