@@ -266,7 +266,7 @@ def _make_redirect_handler(
 
 
 # Seconds the success page waits before trying to close itself.
-_CALLBACK_AUTOCLOSE_SECONDS = 4
+_CALLBACK_AUTOCLOSE_SECONDS = 2
 
 
 def _render_callback_page(*, status: str, title: str, message: str) -> str:
