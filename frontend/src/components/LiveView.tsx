@@ -371,7 +371,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setSegments([]);
     setInterim("");
     setInsights([]);
-    setSummaryText("");
+    // Seed the editable recap from the persisted summary (empty when none).
+    // Must not clear it: this effect re-runs on every open/remount, so blanking
+    // here would drop a stored summary when returning to the session.
+    setSummaryText(session.summary ?? "");
     setSummaryError(null);
     setRecordingBoundaries([]);
     prevListeningRef.current = false;
@@ -396,6 +399,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
 
   // Enumerate input devices once STT is configured (labels need permission).
