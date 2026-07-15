@@ -652,6 +652,7 @@ function ModeSwitcher({
     () => MODES.filter((m) => m.mode !== "live" || liveEnabled),
     [liveEnabled],
   );
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   const [canLeft, setCanLeft] = useState(false);
@@ -686,25 +687,29 @@ function ModeSwitcher({
     if (delta !== 0) el.scrollBy({ left: delta, behavior: "smooth" });
   }, []);
 
+  // Recenter the active tab on genuine layout changes (window / sidebar
+  // resize), observing the OUTER wrapper rather than the inner scroll row.
+  // The arrow buttons are flex siblings of the scroll row, so their appearing
+  // or disappearing mid-scroll would resize the row and — if observed — snap
+  // the view back to the active tab, making other tabs unreachable via the
+  // arrows. The wrapper's width is unaffected by that arrow toggle, so it only
+  // fires on real resizes.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
     updateArrows();
     const ro = new ResizeObserver(() => {
       updateArrows();
       scrollActiveIntoView();
     });
-    ro.observe(el);
+    ro.observe(wrapper);
     return () => ro.disconnect();
   }, [updateArrows, scrollActiveIntoView, modes.length]);
 
   // Keep the selected mode fully visible when it *changes*. Deliberately does
   // not depend on canLeft/canRight: those toggle on every manual scroll (via
   // onScroll -> updateArrows), and re-running scrollActiveIntoView here would
-  // snap the row back to the active tab, making other tabs unreachable. Arrow
-  // appearance narrowing the row is instead handled by the ResizeObserver on
-  // the scroll container, which re-clips the active tab without fighting the
-  // user's scroll.
+  // snap the row back to the active tab, making other tabs unreachable.
   useEffect(() => {
     scrollActiveIntoView();
     updateArrows();
@@ -717,7 +722,10 @@ function ModeSwitcher({
   }, []);
 
   return (
-    <div className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border">
+    <div
+      ref={wrapperRef}
+      className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border"
+    >
       {canLeft && (
         <button
           type="button"
