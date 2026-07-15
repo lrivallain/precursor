@@ -154,7 +154,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
   const [captureMic, setCaptureMic] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  const [summaryText, setSummaryText] = useState("");
+  const [summaryText, setSummaryText] = useState(session.summary ?? "");
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   // Ask the panel to surface a tab (bump the nonce). Used after generating the
@@ -371,7 +371,10 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     setSegments([]);
     setInterim("");
     setInsights([]);
-    setSummaryText("");
+    // Seed the editable recap from the persisted summary (empty when none).
+    // Must not clear it: this effect re-runs on every open/remount, so blanking
+    // here would drop a stored summary when returning to the session.
+    setSummaryText(session.summary ?? "");
     setSummaryError(null);
     setRecordingBoundaries([]);
     prevListeningRef.current = false;
@@ -396,6 +399,7 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
 
   // Enumerate input devices once STT is configured (labels need permission).
@@ -504,6 +508,9 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     try {
       const res = await api.meetings.summarize(session.id);
       setSummaryText(res.summary);
+      // The backend persisted the recap; mirror it onto the session so a later
+      // open (or the "Summary ●" dot) stays in sync without regenerating.
+      onUpdated({ ...session, summary: res.summary || null });
     } catch (e) {
       setSummaryError(
         e instanceof Error ? e.message : "Couldn't generate a summary — record more first.",
@@ -527,8 +534,16 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
       const updated = await api.meetings.updateSession(session.id, payload);
       savedNotesRef.current = notesRef.current;
       onUpdated(updated);
-      // Auto-draft a summary when the meeting ends (if anything was recorded).
-      if (next === "ended" && segCountRef.current > 0) void generateSummary();
+      // Auto-draft a summary when the meeting ends — but only if none exists
+      // yet. Once generated (or drafted), it's never auto-regenerated: the user
+      // drives any refresh from the Summary tab.
+      if (
+        next === "ended" &&
+        segCountRef.current > 0 &&
+        !session.summary &&
+        !summaryText.trim()
+      )
+        void generateSummary();
     } finally {
       setBusy(false);
     }

@@ -52,6 +52,9 @@ class MeetingSessionRead(BaseModel):
     features: list[str] = Field(default_factory=list)
     external_meeting: dict[str, Any] | None = None
     topic_summary: str | None = None
+    summary: str | None = None
+    summary_posted_at: datetime | None = None
+    summary_posted_topic_id: int | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime
@@ -158,9 +161,13 @@ class MeetingSummaryPost(BaseModel):
     summary: str = Field(min_length=1)
 
 
-class MeetingSummaryPostResult(BaseModel):
+class MeetingPostResult(BaseModel):
     topic_id: int
     message_id: int
+
+
+class MeetingSummaryPostResult(MeetingPostResult):
+    posted_at: datetime
 
 
 class AgendaAttendee(BaseModel):

@@ -44,6 +44,7 @@ from precursor.backend.schemas import (
     MeetingAskRequest,
     MeetingAttachmentRead,
     MeetingInsightRead,
+    MeetingPostResult,
     MeetingSegmentCreate,
     MeetingSegmentRead,
     MeetingSessionCreate,
@@ -602,8 +603,12 @@ async def translate(
 async def summarize(
     session_id: int, session: AsyncSession = Depends(get_session)
 ) -> MeetingSummaryResult:
-    """Generate a markdown recap of the session (not persisted)."""
-    await _get_session_or_404(session_id, session)
+    """Generate a markdown recap of the session and persist it on the session.
+
+    Stored so a reopened session shows the recap without regenerating; a new
+    generation only happens on the user's explicit request.
+    """
+    ms = await _get_session_or_404(session_id, session)
     try:
         text, model = await generate_summary(session, session_id)
     except Exception as exc:
@@ -613,6 +618,9 @@ async def summarize(
             status.HTTP_400_BAD_REQUEST,
             "Nothing to summarise yet — record some of the meeting first.",
         )
+    ms.summary = text
+    await session.commit()
+    await publish_meeting_changed(ms.id)
     return MeetingSummaryResult(summary=text, model=model)
 
 
@@ -679,8 +687,18 @@ async def post_summary_to_topic(
     if attachments:
         await session.commit()
 
+    # Persist the posted recap and stamp when/where it landed so a reopened
+    # session shows the recap and that it already reached the topic. Store the
+    # user's full text (not the attachment-stripped body) to match the tab.
+    posted_at = datetime.now(UTC)
+    ms.summary = payload.summary.strip()
+    ms.summary_posted_at = posted_at
+    ms.summary_posted_topic_id = ms.topic_id
+    await session.commit()
+
     await publish_message_changed(ms.topic_id)
-    return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id)
+    await publish_meeting_changed(ms.id)
+    return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id, posted_at=posted_at)
 
 
 # --------------------------------------------------------------------------
@@ -744,12 +762,12 @@ async def link_meeting(
 
 @router.post(
     "/{session_id}/meeting/post",
-    response_model=MeetingSummaryPostResult,
+    response_model=MeetingPostResult,
     status_code=status.HTTP_201_CREATED,
 )
 async def post_meeting_to_topic(
     session_id: int, session: AsyncSession = Depends(get_session)
-) -> MeetingSummaryPostResult:
+) -> MeetingPostResult:
     """Post the linked meeting's details as a message in the attached topic."""
     ms = await _get_session_or_404(session_id, session)
     if ms.topic_id is None:
@@ -767,7 +785,7 @@ async def post_meeting_to_topic(
     await session.commit()
     await session.refresh(msg)
     await publish_message_changed(ms.topic_id)
-    return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id)
+    return MeetingPostResult(topic_id=ms.topic_id, message_id=msg.id)
 
 
 @router.delete("/{session_id}/meeting", response_model=MeetingSessionRead)

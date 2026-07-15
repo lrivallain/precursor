@@ -44,6 +44,13 @@ export function SummarySection({
 
   const attendees = session.attendees ?? [];
   const canPost = session.topic_id != null;
+  const postedAt = session.summary_posted_at;
+  const postedLabel = postedAt
+    ? new Date(postedAt).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : null;
 
   async function saveAttendees(next: string[]): Promise<void> {
     try {
@@ -80,9 +87,17 @@ export function SummarySection({
     setPosting(true);
     setPostError(null);
     try {
-      await api.meetings.postSummary(session.id, text);
+      const res = await api.meetings.postSummary(session.id, text);
       setPosted(true);
       setTimeout(() => setPosted(false), 2000);
+      // Persist that the recap reached the topic so the green marker survives
+      // reloads and tab switches (the backend stamped summary_posted_at).
+      onUpdated({
+        ...session,
+        summary: text,
+        summary_posted_at: res.posted_at,
+        summary_posted_topic_id: res.topic_id,
+      });
     } catch (e) {
       setPostError(e instanceof Error ? e.message : "Couldn't post to the topic.");
     } finally {
@@ -150,14 +165,14 @@ export function SummarySection({
           type="button"
           onClick={onGenerate}
           disabled={generating || !canGenerate}
-          className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-sm text-white disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
         >
           {generating ? (
-            <Loader2 size={14} className="animate-spin" />
+            <Loader2 size={12} className="animate-spin" />
           ) : (
-            <RefreshCw size={14} />
+            <RefreshCw size={12} />
           )}
-          {text ? "Regenerate" : "Generate"}
+          {text ? "Refresh" : "Generate"}
         </button>
         <div className="flex items-center gap-0.5 text-xs">
           <button
@@ -180,6 +195,15 @@ export function SummarySection({
           </button>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {postedAt && (
+            <span
+              className="inline-flex items-center gap-1 text-[12px] text-emerald-600 dark:text-emerald-400"
+              title={postedLabel ? `Posted ${postedLabel}` : undefined}
+            >
+              <Check size={13} />
+              Posted{topicTitle ? ` to ${topicTitle}` : ""}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => void copy()}
@@ -197,7 +221,7 @@ export function SummarySection({
             className="inline-flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
             {posted ? <Check size={14} /> : <Send size={14} />}
-            {posted ? "Posted" : posting ? "Posting…" : "Post to topic"}
+            {posted ? "Posted" : posting ? "Posting…" : postedAt ? "Post again" : "Post to topic"}
           </button>
         </div>
       </div>
