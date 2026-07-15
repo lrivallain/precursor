@@ -2,6 +2,7 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  memo,
   useState,
   type ReactElement,
   type ReactNode,
@@ -147,8 +148,13 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * Single markdown renderer shared across the app so plugin config and styling
  * stay consistent. GFM (tables, task lists, strikethrough, autolinks) plus
  * syntax highlighting. Visual styling lives in the `.markdown` CSS class.
+ *
+ * Memoized on its props so that re-renders of a parent (e.g. the chat panel
+ * re-rendering on every composer keystroke) don't re-parse the markdown and
+ * re-run syntax highlighting for the whole transcript — that synchronous work
+ * caused visible layout thrash / scrollbar flicker on content-heavy topics.
  */
-export function Markdown({ children, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
   return (
     <div className={className ? `markdown ${className}` : "markdown"}>
       <ReactMarkdown
@@ -197,4 +203,4 @@ export function Markdown({ children, className }: MarkdownProps) {
       </ReactMarkdown>
     </div>
   );
-}
+});
