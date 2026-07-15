@@ -384,9 +384,12 @@ async def analyze_session(
     """Re-derive insights for a session and decide on a proactive suggestion —
     in a single LLM pass.
 
-    Insights are *retained* across runs: the existing set is kept and only new,
-    de-duplicated items are appended. Returns (all_rows, suggestion); suggestion
-    is "" when no proactive help is warranted or there's no transcript yet.
+    Insights *replace* the prior snapshot: each run swaps in the freshly-derived
+    set so the panel reflects the current understanding instead of accumulating.
+    The one exception is an empty result — "nothing new to say" keeps the previous
+    snapshot so the panel never blanks out mid-meeting. Returns (rows, suggestion);
+    suggestion is "" when no proactive help is warranted or there's no transcript
+    yet.
     """
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
@@ -443,9 +446,6 @@ async def analyze_session(
 
     insights, _help, suggestion = _parse_insights(text)
 
-    # Retain prior insights across runs: keep the existing set and append only
-    # genuinely new items (de-duplicated on kind + normalised content), so the
-    # panel accumulates the meeting's understanding instead of resetting each run.
     existing = list(
         (
             await session.execute(
@@ -457,15 +457,28 @@ async def analyze_session(
         .scalars()
         .all()
     )
-    seen = {(row.kind, _norm_insight(row.content)) for row in existing}
-    added: list[MeetingInsight] = []
-    for kind, content in insights:
-        key = (kind, _norm_insight(content))
-        if key in seen:
-            continue
-        seen.add(key)
-        added.append(MeetingInsight(session_id=session_id, kind=kind, content=content))
-    session.add_all(added)
+
+    # Replace the whole snapshot with the freshly-derived set so the panel shows
+    # the current understanding rather than every run's accumulation. Only swap
+    # when the model actually produced insights — an empty result means "nothing
+    # new to say", so we keep the prior snapshot and avoid blanking the panel
+    # mid-meeting (e.g. while a later pass is still thinking).
+    if insights:
+        seen: set[tuple[str, str]] = set()
+        rows: list[MeetingInsight] = []
+        for kind, content in insights:
+            key = (kind, _norm_insight(content))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(MeetingInsight(session_id=session_id, kind=kind, content=content))
+        for row in existing:
+            await session.delete(row)
+        session.add_all(rows)
+        result_rows = rows
+    else:
+        result_rows = existing
+
     if usage is not None:
         await record_usage(
             session,
@@ -476,9 +489,10 @@ async def analyze_session(
             model=model,
         )
     await session.commit()
-    for row in added:
-        await session.refresh(row)
-    return existing + added, suggestion
+    if insights:
+        for row in result_rows:
+            await session.refresh(row)
+    return result_rows, suggestion
 
 
 async def translate_transcript(

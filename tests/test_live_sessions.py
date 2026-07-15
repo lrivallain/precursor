@@ -188,21 +188,23 @@ def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore
         # The proactive suggestion rides along on the same pass.
         assert body["suggestion"] == "Consider connection pooling"
 
-        # Insights are retained + de-duplicated: re-analysing the same content
-        # doesn't grow or reset the set.
+        # Insights are replaced + de-duplicated: re-analysing the same content
+        # swaps in a fresh snapshot without growing the set.
         assert len(client.get(f"/api/live/{sid}/insights").json()) == 2
         assert len(client.post(f"/api/live/{sid}/analyze").json()["insights"]) == 2
 
 
-def test_meeting_analyze_retains_across_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_meeting_analyze_replaces_across_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import precursor.backend.services.meeting_analysis as analysis
     from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
 
     payloads = iter(
         [
             '{"insights": [{"kind": "decision", "content": "Use Postgres"}], "help": false, "suggestion": ""}',
-            # A later run surfaces a different insight; the first must be kept.
+            # A later run surfaces a different insight; it replaces the first.
             '{"insights": [{"kind": "risk", "content": "Tight deadline"}], "help": false, "suggestion": ""}',
+            # An empty run must keep the previous snapshot (no blank period).
+            '{"insights": [], "help": false, "suggestion": ""}',
         ]
     )
 
@@ -220,13 +222,16 @@ def test_meeting_analyze_retains_across_runs(monkeypatch) -> None:  # type: igno
 
     app = create_app()
     with TestClient(app) as client:
-        sid = client.post("/api/live", json={"title": "Retain"}).json()["id"]
+        sid = client.post("/api/live", json={"title": "Replace"}).json()["id"]
         client.post(f"/api/live/{sid}/segments", json={"text": "hi"})
         first = client.post(f"/api/live/{sid}/analyze").json()["insights"]
         assert {i["content"] for i in first} == {"Use Postgres"}
         second = client.post(f"/api/live/{sid}/analyze").json()["insights"]
-        # The earlier insight is retained alongside the new one.
-        assert {i["content"] for i in second} == {"Use Postgres", "Tight deadline"}
+        # The new snapshot replaces the earlier one entirely.
+        assert {i["content"] for i in second} == {"Tight deadline"}
+        third = client.post(f"/api/live/{sid}/analyze").json()["insights"]
+        # An empty pass keeps the prior snapshot instead of blanking it.
+        assert {i["content"] for i in third} == {"Tight deadline"}
 
 
 def test_meeting_ask_streams_answer() -> None:
