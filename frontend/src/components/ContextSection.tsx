@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import type { AgendaEvent, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
-import { Markdown } from "./Markdown";
+import { CopyableMarkdown } from "./CopyableMarkdown";
 import { MeetingBody } from "./MeetingBody";
 
 interface Props {
@@ -171,7 +171,7 @@ export function ContextSection({
         ) : topicSummaryError ? (
           <p className="text-[12px] text-red-500">{topicSummaryError}</p>
         ) : topicSummary ? (
-          <Markdown>{topicSummary}</Markdown>
+          <CopyableMarkdown>{topicSummary}</CopyableMarkdown>
         ) : topicSummaryLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted">
             <Loader2 size={14} className="animate-spin" /> Summarizing{" "}
