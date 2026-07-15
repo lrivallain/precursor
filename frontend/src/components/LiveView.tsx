@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Lightbulb, Mic, Radio, RefreshCw, Square, Trash2, X } from "lucide-react";
+import {
+  Archive,
+  CircleHelp,
+  Lightbulb,
+  Mic,
+  Radio,
+  RefreshCw,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
 import type {
   Chat,
   MeetingInsight,
@@ -132,6 +142,8 @@ interface LiveViewProps {
   topics: TopicNode[];
   onUpdated: (session: MeetingSession) => void;
   onDeleted: () => void | Promise<void>;
+  /** Archive the session (hide from the list, keep restorable). */
+  onArchived?: () => void | Promise<void>;
   /** Report the recording session id (or null) so the sidebar can show a dot. */
   onRecordingChange?: (sessionId: number | null) => void;
 }
@@ -141,7 +153,14 @@ interface LiveViewProps {
  * splittable panel with four sections — Transcript, Live Insights (+ Q&A),
  * Summary, and Context — so the user can view two at once side by side.
  */
-export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingChange }: LiveViewProps) {
+export function LiveView({
+  session,
+  topics,
+  onUpdated,
+  onDeleted,
+  onArchived,
+  onRecordingChange,
+}: LiveViewProps) {
   const confirmAction = useConfirm();
   const settings = useSettings();
   const sttReady = settings?.stt_azure_ready ?? false;
@@ -583,6 +602,24 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
     try {
       await api.meetings.deleteSession(session.id);
       await onDeleted();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archive(): Promise<void> {
+    if (!onArchived) return;
+    const ok = await confirmAction({
+      title: "Archive session",
+      message: `Archive “${session.title}”? You can restore it later from the archive.`,
+      confirmLabel: "Archive",
+    });
+    if (!ok) return;
+    if (transcriber.listening) transcriber.stop();
+    setBusy(true);
+    try {
+      await api.meetings.archiveSession(session.id);
+      await onArchived();
     } finally {
       setBusy(false);
     }
@@ -1093,6 +1130,18 @@ export function LiveView({ session, topics, onUpdated, onDeleted, onRecordingCha
               className="rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-60"
             >
               End session
+            </button>
+          )}
+          {onArchived && (
+            <button
+              type="button"
+              onClick={() => void archive()}
+              disabled={busy}
+              aria-label="Archive session"
+              data-tooltip="Archive session"
+              className="rounded border border-border p-1.5 text-muted hover:bg-surface hover:text-text disabled:opacity-60"
+            >
+              <Archive size={15} />
             </button>
           )}
           <button

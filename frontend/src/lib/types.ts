@@ -900,6 +900,8 @@ export interface MeetingSession {
   summary_posted_topic_id: number | null;
   started_at: string | null;
   ended_at: string | null;
+  // When non-null, the session is archived (hidden from the Live list).
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }

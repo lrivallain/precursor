@@ -57,6 +57,7 @@ class MeetingSessionRead(BaseModel):
     summary_posted_topic_id: int | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

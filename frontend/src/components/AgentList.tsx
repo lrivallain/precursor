@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bot, CalendarClock, Search } from "lucide-react";
 import type { AgentSession } from "../lib/types";
 import { AgentStatusBadge, agentRelativeTime } from "./AgentStatusBadge";
 import { InlineTitle } from "./InlineTitle";
+import { useMultiSelect } from "../lib/useMultiSelect";
+import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
 
 interface AgentListProps {
   agents: AgentSession[];
@@ -10,16 +12,45 @@ interface AgentListProps {
   enabled: boolean;
   onSelect: (id: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  /** Bulk-archive the selected agents. Enables multi-select when provided. */
+  onArchiveMany?: (ids: number[]) => void | Promise<void>;
 }
 
-export function AgentList({ agents, activeId, enabled, onSelect, onRename }: AgentListProps) {
+export function AgentList({
+  agents,
+  activeId,
+  enabled,
+  onSelect,
+  onRename,
+  onArchiveMany,
+}: AgentListProps) {
   const [query, setQuery] = useState("");
+  const sel = useMultiSelect();
+  const [busy, setBusy] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return agents;
     return agents.filter((a) => a.title.toLowerCase().includes(q));
   }, [agents, query]);
+
+  const filteredIds = useMemo(() => filtered.map((a) => a.id), [filtered]);
+  useEffect(() => {
+    if (sel.active) sel.prune(filteredIds);
+  }, [filteredIds, sel]);
+
+  const allSelected = filteredIds.length > 0 && filteredIds.every((id) => sel.isSelected(id));
+
+  async function archiveSelected(): Promise<void> {
+    if (!onArchiveMany || sel.count === 0) return;
+    setBusy(true);
+    try {
+      await onArchiveMany([...sel.selected]);
+      sel.exit();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   if (!enabled) {
     return (
@@ -35,17 +66,33 @@ export function AgentList({ agents, activeId, enabled, onSelect, onRename }: Age
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="border-b border-border px-3 py-2">
-        <div className="relative">
-          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-          <input
-            type="search"
-            placeholder="Search agents..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full rounded border border-border bg-surface py-1.5 pl-7 pr-2 text-sm outline-none focus:border-accent"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="search"
+              placeholder="Search agents..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full rounded border border-border bg-surface py-1.5 pl-7 pr-2 text-sm outline-none focus:border-accent"
+            />
+          </div>
+          {onArchiveMany && !sel.active && filtered.length > 0 && (
+            <SelectToggleButton onClick={() => sel.enter()} />
+          )}
         </div>
       </div>
+
+      {sel.active && (
+        <SelectionToolbar
+          count={sel.count}
+          allSelected={allSelected}
+          onToggleAll={() => sel.toggleAll(filteredIds)}
+          onArchive={() => void archiveSelected()}
+          onCancel={() => sel.exit()}
+          busy={busy}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto p-2">
         {filtered.length === 0 ? (
@@ -56,31 +103,45 @@ export function AgentList({ agents, activeId, enabled, onSelect, onRename }: Age
           <ul className="space-y-0.5">
             {filtered.map((a) => {
               const isActive = a.id === activeId;
+              const selected = sel.isSelected(a.id);
               return (
                 <li key={a.id}>
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => onSelect(a.id)}
+                    onClick={() => (sel.active ? sel.toggle(a.id) : onSelect(a.id))}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        onSelect(a.id);
+                        if (sel.active) sel.toggle(a.id);
+                        else onSelect(a.id);
                       }
                     }}
                     className={`group w-full cursor-pointer rounded px-2 py-1.5 text-left ${
-                      isActive ? "bg-accent/15 text-accent" : "hover:bg-surface"
+                      sel.active && selected
+                        ? "bg-accent/15"
+                        : isActive && !sel.active
+                          ? "bg-accent/15 text-accent"
+                          : "hover:bg-surface"
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <Bot size={14} className="shrink-0 opacity-70" />
-                      <InlineTitle
-                        title={a.title}
-                        onRename={(t) => onRename(a.id, t)}
-                        className={`flex-1 truncate text-sm ${
-                          a.unread_count > 0 && !isActive ? "font-semibold" : ""
-                        }`}
-                      />
+                      {sel.active ? (
+                        <SelectionCheckbox checked={selected} />
+                      ) : (
+                        <Bot size={14} className="shrink-0 opacity-70" />
+                      )}
+                      {sel.active ? (
+                        <span className="flex-1 truncate text-sm">{a.title}</span>
+                      ) : (
+                        <InlineTitle
+                          title={a.title}
+                          onRename={(t) => onRename(a.id, t)}
+                          className={`flex-1 truncate text-sm ${
+                            a.unread_count > 0 && !isActive ? "font-semibold" : ""
+                          }`}
+                        />
+                      )}
                       {a.schedule && (
                         <CalendarClock
                           size={12}
