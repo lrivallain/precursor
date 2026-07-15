@@ -652,6 +652,7 @@ function ModeSwitcher({
     () => MODES.filter((m) => m.mode !== "live" || liveEnabled),
     [liveEnabled],
   );
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   const [canLeft, setCanLeft] = useState(false);
@@ -686,25 +687,33 @@ function ModeSwitcher({
     if (delta !== 0) el.scrollBy({ left: delta, behavior: "smooth" });
   }, []);
 
+  // Recenter the active tab on genuine layout changes (window / sidebar
+  // resize), observing the OUTER wrapper rather than the inner scroll row.
+  // The arrow buttons are flex siblings of the scroll row, so their appearing
+  // or disappearing mid-scroll would resize the row and — if observed — snap
+  // the view back to the active tab, making other tabs unreachable via the
+  // arrows. The wrapper's width is unaffected by that arrow toggle, so it only
+  // fires on real resizes.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
     updateArrows();
     const ro = new ResizeObserver(() => {
       updateArrows();
       scrollActiveIntoView();
     });
-    ro.observe(el);
+    ro.observe(wrapper);
     return () => ro.disconnect();
   }, [updateArrows, scrollActiveIntoView, modes.length]);
 
-  // Keep the selected mode fully visible as it changes — and re-run when the
-  // arrows toggle, since their appearance narrows the row and can re-clip the
-  // active tab. Always prefer showing the current activity in its entirety.
+  // Keep the selected mode fully visible when it *changes*. Deliberately does
+  // not depend on canLeft/canRight: those toggle on every manual scroll (via
+  // onScroll -> updateArrows), and re-running scrollActiveIntoView here would
+  // snap the row back to the active tab, making other tabs unreachable.
   useEffect(() => {
     scrollActiveIntoView();
     updateArrows();
-  }, [mode, modes.length, canLeft, canRight, scrollActiveIntoView, updateArrows]);
+  }, [mode, modes.length, scrollActiveIntoView, updateArrows]);
 
   const scrollBy = useCallback((dir: 1 | -1): void => {
     const el = scrollRef.current;
@@ -712,8 +721,31 @@ function ModeSwitcher({
     el.scrollBy({ left: dir * Math.max(el.clientWidth * 0.6, 96), behavior: "smooth" });
   }, []);
 
+  // Let a vertical mouse wheel scroll the horizontal row: a plain wheel has no
+  // deltaX, so without this the row is only reachable via the arrows or a
+  // trackpad. Registered natively with { passive: false } because React's
+  // synthetic onWheel is passive and can't preventDefault. Only hijacks the
+  // wheel when the row actually overflows and the gesture is vertical-dominant,
+  // so trackpad horizontal swipes and non-overflowing rows behave normally.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent): void => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      el.scrollLeft += e.deltaY;
+      e.preventDefault();
+      updateArrows();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [updateArrows]);
+
   return (
-    <div className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border">
+    <div
+      ref={wrapperRef}
+      className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border"
+    >
       {canLeft && (
         <button
           type="button"
