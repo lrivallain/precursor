@@ -1373,6 +1373,7 @@ export default function App() {
     <div className="flex h-full w-full bg-bg text-text">
       <TooltipProvider />
       <DetachedDraftHost />
+      {!atHome && (
       <Sidebar
         tree={tree}
         activeId={activeTopic?.id ?? null}
@@ -1437,6 +1438,7 @@ export default function App() {
         onOpenArchive={() => setArchiveOpen(true)}
         unreadByMode={unreadByMode}
       />
+      )}
 
       <main className="flex-1 flex flex-col min-w-0">
         {/* One shared header across every mode: active item title on the left,
@@ -1653,6 +1655,7 @@ export default function App() {
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
+              onNavigate={changeMode}
               topicSurface={
                 <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
               }

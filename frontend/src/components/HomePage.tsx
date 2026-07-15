@@ -3,12 +3,15 @@ import type { ReactNode } from "react";
 import {
   ArrowRight,
   Bot,
+  FolderGit2,
+  MessageSquare,
   MessageSquarePlus,
   MessagesSquare,
   Radio,
   Sparkles,
 } from "lucide-react";
 import { api } from "../lib/api";
+import type { SidebarMode } from "./Sidebar";
 import type { Me } from "../lib/types";
 
 type HomeKind = "topics" | "chats" | "live" | "agents";
@@ -20,6 +23,12 @@ interface LauncherCard {
   icon: ReactNode;
 }
 
+interface NavLink {
+  mode: SidebarMode;
+  label: string;
+  icon: ReactNode;
+}
+
 interface Props {
   /** Inline start surfaces, shown on the same page under the cards. */
   topicSurface: ReactNode;
@@ -27,6 +36,8 @@ interface Props {
   liveSurface: ReactNode;
   agentSurface: ReactNode;
   liveEnabled?: boolean;
+  /** Jump straight into a section's list/surface (leaves the home launcher). */
+  onNavigate?: (mode: SidebarMode) => void;
 }
 
 /**
@@ -34,6 +45,9 @@ interface Props {
  * live session, agent), pinned to the top. Picking a card reveals that section's
  * start surface right below on the same page — no redirect, and the cards stay
  * put. Picking it again hides the surface.
+ *
+ * The sidebar is hidden at home, so a top nav row lets the user jump directly
+ * into any existing section.
  */
 export function HomePage({
   topicSurface,
@@ -41,6 +55,7 @@ export function HomePage({
   liveSurface,
   agentSurface,
   liveEnabled = true,
+  onNavigate,
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<HomeKind | null>(null);
@@ -104,6 +119,16 @@ export function HomePage({
     agents: agentSurface,
   };
 
+  const navLinks: NavLink[] = [
+    { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
+    { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
+    ...(liveEnabled
+      ? [{ mode: "live", label: "Live", icon: <Radio size={14} /> } satisfies NavLink]
+      : []),
+    { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
+    { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
+  ];
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex w-full shrink-0 flex-col">
@@ -120,6 +145,28 @@ export function HomePage({
             </h1>
             <p className="text-sm text-muted">What would you like to start?</p>
           </div>
+
+          {onNavigate && (
+            <nav
+              aria-label="Sections"
+              className="flex flex-wrap items-center gap-1.5"
+            >
+              <span className="mr-1 text-xs font-medium text-muted">
+                Jump to
+              </span>
+              {navLinks.map((link) => (
+                <button
+                  key={link.mode}
+                  type="button"
+                  onClick={() => onNavigate(link.mode)}
+                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface/60 px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent/50 hover:bg-surface hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  {link.icon}
+                  <span className="whitespace-nowrap">{link.label}</span>
+                </button>
+              ))}
+            </nav>
+          )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {cards.map((card) => {
