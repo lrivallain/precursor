@@ -721,6 +721,26 @@ function ModeSwitcher({
     el.scrollBy({ left: dir * Math.max(el.clientWidth * 0.6, 96), behavior: "smooth" });
   }, []);
 
+  // Let a vertical mouse wheel scroll the horizontal row: a plain wheel has no
+  // deltaX, so without this the row is only reachable via the arrows or a
+  // trackpad. Registered natively with { passive: false } because React's
+  // synthetic onWheel is passive and can't preventDefault. Only hijacks the
+  // wheel when the row actually overflows and the gesture is vertical-dominant,
+  // so trackpad horizontal swipes and non-overflowing rows behave normally.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent): void => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      el.scrollLeft += e.deltaY;
+      e.preventDefault();
+      updateArrows();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [updateArrows]);
+
   return (
     <div
       ref={wrapperRef}
