@@ -13,7 +13,10 @@ Reconciliation rules:
 * A file-backed skill is active only when enabled. The default for a freshly
   discovered file (no row, or a disabled row) is **disabled**.
 * If a tracked file is renamed or deleted, its enablement row is dropped — the
-  enablement status is lost, as designed.
+  enablement status is lost, as designed. The one exception is when discovery
+  turns up *no* files at all: an empty/unreadable skills directory is treated as
+  a transient condition (e.g. the path isn't mounted yet) and enablement rows are
+  preserved rather than silently wiping every skill.
 """
 
 from __future__ import annotations
@@ -176,15 +179,21 @@ async def reconcile_and_list(session: AsyncSession) -> list[ResolvedSkill]:
     files = _discover_files()
     rows = await _rows_by_name(session)
 
-    dropped = False
-    for name, row in list(rows.items()):
-        # A tracked file-backed row whose file vanished loses its enablement.
-        if row.migrated and name not in files:
-            await session.delete(row)
-            del rows[name]
-            dropped = True
-    if dropped:
-        await session.commit()
+    # Only reconcile orphaned enablement rows when discovery actually found
+    # files. An empty mapping means the skills directory is missing, unreadable,
+    # or not yet mounted — a transient condition. Dropping rows here would
+    # silently disable every skill, so we preserve enablement until files
+    # reappear (see module docstring).
+    if files:
+        dropped = False
+        for name, row in list(rows.items()):
+            # A tracked file-backed row whose file vanished loses its enablement.
+            if row.migrated and name not in files:
+                await session.delete(row)
+                del rows[name]
+                dropped = True
+        if dropped:
+            await session.commit()
 
     resolved: dict[str, ResolvedSkill] = {}
 
