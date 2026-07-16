@@ -41,12 +41,20 @@ export function useAzureSpeech({ onFinalChunk, onInterim, enabled, lang }: Optio
   // own) so teardown can stop its tracks and reliably release the OS mic — the
   // SDK's close() alone leaves the microphone indicator on in the browser.
   const streamRef = useRef<MediaStream | null>(null);
+  // Azure auth tokens live ~10 min; a long recording would otherwise be
+  // canceled mid-stream when the token expires. We periodically mint a fresh
+  // token and hand it to the live recognizer to keep the session alive.
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const finalRef = useRef(onFinalChunk);
   const interimRef = useRef(onInterim);
   finalRef.current = onFinalChunk;
   interimRef.current = onInterim;
 
   const releaseStream = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      clearInterval(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
     const stream = streamRef.current;
     streamRef.current = null;
     if (stream) {
@@ -130,6 +138,24 @@ export function useAzureSpeech({ onFinalChunk, onInterim, enabled, lang }: Optio
             setError(typeof err === "string" ? err : "Could not start dictation");
             teardown();
           },
+        );
+
+        // Keep the session alive past the ~10 min token lifetime by minting a
+        // fresh token and swapping it in before the current one expires.
+        refreshTimerRef.current = setInterval(
+          () => {
+            void (async () => {
+              const rec = recognizerRef.current;
+              if (!rec) return;
+              try {
+                const refreshed = await api.stt.getToken();
+                rec.authorizationToken = refreshed.token;
+              } catch {
+                /* Transient failure; the next tick retries before expiry. */
+              }
+            })();
+          },
+          8 * 60 * 1000,
         );
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not reach the speech service");
