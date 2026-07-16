@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, GitPullRequest, RefreshCw } from "lucide-react";
 import type { ProjectBoard, ProjectCard } from "../lib/types";
-import { api } from "../lib/api";
+import { api, apiErrorMessage } from "../lib/api";
 import { IssueLabelChip } from "./IssueTags";
 
 interface KanbanBoardProps {
@@ -43,7 +43,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
       const data = await api.github.projectBoard(projectId);
       setBoard(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load project board");
+      setError(apiErrorMessage(e, "Failed to load project board"));
       setBoard(null);
     } finally {
       setLoading(false);
@@ -113,7 +113,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
         // Roll back to the pre-drop board and surface the failure.
         setBoard(snapshot);
         setActionError(
-          `Couldn't move "${card.title}": ${e instanceof Error ? e.message : "update failed"}`,
+          `Couldn't move "${card.title}": ${apiErrorMessage(e, "update failed")}`,
         );
       }
     },

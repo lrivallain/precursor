@@ -231,17 +231,24 @@ class GitHubClient:
             raise ValueError("GitHub image upload did not return a URL")
         return url
 
-    async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        """POST a GraphQL query and return ``data``, raising on GraphQL errors.
+    async def _graphql(
+        self, query: str, variables: dict[str, Any], *, raise_on_error: bool = True
+    ) -> dict[str, Any]:
+        """POST a GraphQL query and return ``data``.
 
         GitHub returns HTTP 200 even for GraphQL-level errors, so a raw
-        ``raise_for_status`` isn't enough — we surface the first error message.
+        ``raise_for_status`` isn't enough. For *mutations* (``raise_on_error``,
+        the default) we surface the first error message. For read queries pass
+        ``raise_on_error=False``: a NOT_FOUND / no-permission repo comes back as
+        HTTP 200 with ``data.<field> = null`` *and* an ``errors`` array, so the
+        caller inspects the null field and degrades to a friendly message
+        instead of a raw 500 (mirrors ``count_issues_by_state``).
         """
         r = await self._client.post("/graphql", json={"query": query, "variables": variables})
         r.raise_for_status()
         payload = r.json()
         errors = payload.get("errors")
-        if errors:
+        if errors and raise_on_error:
             message = errors[0].get("message") if isinstance(errors[0], dict) else str(errors[0])
             raise RuntimeError(f"GitHub GraphQL error: {message}")
         return payload.get("data") or {}
@@ -256,7 +263,7 @@ class GitHubClient:
             "nodes{id number title url closed shortDescription}"
             "}}}"
         )
-        data = await self._graphql(query, {"o": owner, "n": name})
+        data = await self._graphql(query, {"o": owner, "n": name}, raise_on_error=False)
         repository = data.get("repository")
         if repository is None:
             raise GitHubRepoNotAccessibleError(repo)
@@ -309,7 +316,9 @@ class GitHubClient:
         after: str | None = None
         while True:
             data = await self._graphql(
-                query, {"id": project_id, "field": status_field_name, "after": after}
+                query,
+                {"id": project_id, "field": status_field_name, "after": after},
+                raise_on_error=False,
             )
             node = data.get("node")
             if not node:

@@ -97,6 +97,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// FastAPI errors are thrown by `request` as "<status> <statusText>: <body>",
+// where the body is usually `{"detail": "..."}`. Surface just that detail so
+// UI error states read cleanly instead of echoing the raw HTTP prefix + JSON.
+export function apiErrorMessage(e: unknown, fallback = "Something went wrong"): string {
+  if (!(e instanceof Error)) return fallback;
+  const idx = e.message.indexOf(": ");
+  const body = idx >= 0 ? e.message.slice(idx + 2) : e.message;
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.detail === "string") return parsed.detail;
+  } catch {
+    // Not JSON — fall through to the raw message.
+  }
+  return e.message || fallback;
+}
+
 // Multipart POST for single-file uploads. Shared by every attachment endpoint,
 // which differ only in URL and response shape.
 async function postForm<T>(path: string, file: File): Promise<T> {

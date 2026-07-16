@@ -41,7 +41,7 @@ import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
-import { api } from "./lib/api";
+import { api, apiErrorMessage } from "./lib/api";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
@@ -886,7 +886,7 @@ export default function App() {
       })
       .catch((e) => {
         setProjects([]);
-        setProjectsError(e instanceof Error ? e.message : "Failed to load projects");
+        setProjectsError(apiErrorMessage(e, "Failed to load projects"));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarMode, kanbanEnabled]);

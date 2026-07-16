@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
 from precursor.backend.routers import projects as projects_router
+from precursor.backend.services.github_client import GitHubRepoNotAccessibleError
 
 
 class _FakeClient:
@@ -146,3 +147,19 @@ def test_projects_gated_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     with TestClient(app) as client:
         r = client.get("/api/github/projects")
         assert r.status_code == 403
+
+
+def test_list_projects_inaccessible_repo_returns_404(_mock_github: None) -> None:
+    class _NotFoundClient(_FakeClient):
+        async def list_repo_projects(self, repo: str) -> list[dict[str, Any]]:
+            raise GitHubRepoNotAccessibleError(repo)
+
+    import precursor.backend.routers.projects as pr
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pr, "GitHubClient", _NotFoundClient)
+        app = create_app()
+        with TestClient(app) as client:
+            r = client.get("/api/github/projects")
+            assert r.status_code == 404
+            assert "not found or not accessible" in r.json()["detail"]
