@@ -160,7 +160,7 @@ export function IssuePreviewModal({
         </div>
 
         {labelEditorOpen && card.number != null && (
-          <div className="absolute left-4 right-4 top-full z-20 mt-1">
+          <div className="absolute left-4 top-full z-20 mt-1 w-72 max-w-[calc(100%-2rem)]">
             <LabelEditor
               repo={repo}
               issueNumber={card.number}
