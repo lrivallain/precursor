@@ -731,7 +731,13 @@ export const api = {
         method: "POST",
       }),
     postSummary: (id: number, summary: string) =>
-      request<{ topic_id: number; message_id: number; posted_at: string }>(
+      request<{
+        topic_id: number;
+        message_id: number;
+        posted_at: string;
+        issue_number: number | null;
+        issue_comment_url: string | null;
+      }>(
         `/api/live/${id}/summary/post`,
         {
           method: "POST",

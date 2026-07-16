@@ -7,6 +7,7 @@ summary attachment are exercised in later phases.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
@@ -327,6 +328,65 @@ def test_meeting_summary_post_requires_topic() -> None:
         client.post(f"/api/live/{sid}/segments", json={"text": "hi"})
         resp = client.post(f"/api/live/{sid}/summary/post", json={"summary": "x"})
         assert resp.status_code == 400
+
+
+def test_meeting_summary_post_mirrors_to_linked_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the topic carries a GitHub issue, posting also comments there."""
+    from precursor.backend.routers import live as live_router
+
+    posted_comments: list[tuple[str, int, str]] = []
+
+    class _FakeClient:
+        def __init__(self, *, token: str) -> None:
+            self.token = token
+
+        async def aclose(self) -> None:
+            return None
+
+        async def add_issue_comment(self, repo: str, number: int, body: str) -> dict[str, str]:
+            posted_comments.append((repo, number, body))
+            return {"url": f"https://github.com/{repo}/issues/{number}#c1"}
+
+    async def _enabled(_session: object) -> bool:
+        return True
+
+    async def _repo(_session: object) -> str:
+        return "acme/app"
+
+    async def _token(_session: object) -> str:
+        return "tok"
+
+    monkeypatch.setattr(live_router, "GitHubClient", _FakeClient)
+    monkeypatch.setattr(live_router, "resolve_issue_associations_enabled", _enabled)
+    monkeypatch.setattr(live_router, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(live_router, "resolve_github_token", _token)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Roadmap"}).json()["id"]
+        client.patch(
+            f"/api/topics/{tid}",
+            json={"github_repo": "acme/app", "github_issue_number": 42},
+        )
+        sid = client.post("/api/live", json={"title": "Recap", "topic_id": tid}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "We shipped the API"})
+
+        posted = client.post(
+            f"/api/live/{sid}/summary/post", json={"summary": "## Summary\nAll good."}
+        )
+        assert posted.status_code == 201
+        data = posted.json()
+        assert data["issue_number"] == 42
+        assert data["issue_comment_url"] == "https://github.com/acme/app/issues/42#c1"
+
+        # The comment reached GitHub with the recap body.
+        assert len(posted_comments) == 1
+        repo, number, body = posted_comments[0]
+        assert repo == "acme/app"
+        assert number == 42
+        assert "Meeting summary" in body
 
 
 def test_live_enabled_setting_roundtrips() -> None:
