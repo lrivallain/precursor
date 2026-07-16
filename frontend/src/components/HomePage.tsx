@@ -229,29 +229,17 @@ export function HomePage({
     <div className="flex h-full flex-col">
       <div className="flex w-full shrink-0 flex-col">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-accent">
-                <Sparkles size={18} />
-                <span className="text-xs font-medium uppercase tracking-wide">
-                  Precursor
-                </span>
-              </div>
-              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                {firstName ? `Hey ${firstName}!` : "Hey there!"}
-              </h1>
-              <p className="text-sm text-muted">What would you like to start?</p>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-accent">
+              <Sparkles size={18} />
+              <span className="text-xs font-medium uppercase tracking-wide">
+                Precursor
+              </span>
             </div>
-
-            {(onOpenSettings || onOpenArchive) && (
-              <div className="w-56 max-w-[45%] shrink-0 rounded-lg border border-border bg-surface/60 p-1">
-                <PersonaMenu
-                  menuPlacement="down"
-                  onOpenSettings={onOpenSettings ?? (() => {})}
-                  onOpenArchive={onOpenArchive ?? (() => {})}
-                />
-              </div>
-            )}
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              {firstName ? `Hey ${firstName}!` : "Hey there!"}
+            </h1>
+            <p className="text-sm text-muted">What would you like to start?</p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -332,6 +320,19 @@ export function HomePage({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="[&>*]:!h-auto [&>*]:!justify-start [&>*]:!py-6">
             {surfaces[selected]}
+          </div>
+        </div>
+      )}
+
+      {/* Persona + settings, pinned to the bottom-left to mirror the sidebar
+          footer. `mt-auto` keeps it at the bottom when no surface is open. */}
+      {(onOpenSettings || onOpenArchive) && (
+        <div className="mt-auto shrink-0 border-t border-border px-3 py-2">
+          <div className="w-56 max-w-full">
+            <PersonaMenu
+              onOpenSettings={onOpenSettings ?? (() => {})}
+              onOpenArchive={onOpenArchive ?? (() => {})}
+            />
           </div>
         </div>
       )}
