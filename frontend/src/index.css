@@ -61,10 +61,16 @@ body {
 /* Markdown rendering — re-establishes element styling stripped by Tailwind's
    preflight so react-markdown output renders fully (headings, lists, tables…).
    Theme-aware via CSS variables; used everywhere through the <Markdown> comp. */
-/* Break long unbreakable strings (e.g. bare URLs, hashes) so they stay inside
-   the message bubble instead of forcing horizontal scroll. `anywhere` also lets
-   the container shrink to its parent's width. */
+/* Break long unbreakable strings (bare URLs, hashes, tokens) so they stay
+   inside their container instead of forcing horizontal scroll — matters for
+   width-constrained surfaces like message bubbles and the kanban issue preview.
+   `anywhere` also lets the container shrink to its parent's width. Code blocks
+   and tables keep their own overflow-x scroll below. */
 .markdown {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.markdown a {
   overflow-wrap: anywhere;
   word-break: break-word;
 }

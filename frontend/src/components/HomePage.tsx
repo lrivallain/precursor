@@ -9,6 +9,7 @@ import {
   MessagesSquare,
   Radio,
   Sparkles,
+  SquareKanban,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
@@ -36,6 +37,8 @@ interface Props {
   liveSurface: ReactNode;
   agentSurface: ReactNode;
   liveEnabled?: boolean;
+  /** Whether the Kanban section is available (adds a "Jump to" nav link). */
+  kanbanEnabled?: boolean;
   /** Jump straight into a section's list/surface (leaves the home launcher). */
   onNavigate?: (mode: SidebarMode) => void;
 }
@@ -55,6 +58,7 @@ export function HomePage({
   liveSurface,
   agentSurface,
   liveEnabled = true,
+  kanbanEnabled = false,
   onNavigate,
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
@@ -127,6 +131,15 @@ export function HomePage({
       : []),
     { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
     { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
+    ...(kanbanEnabled
+      ? [
+          {
+            mode: "kanban",
+            label: "Kanban",
+            icon: <SquareKanban size={14} />,
+          } satisfies NavLink,
+        ]
+      : []),
   ];
 
   return (

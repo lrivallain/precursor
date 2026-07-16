@@ -25,8 +25,11 @@ import type {
   GitActionResult,
   GitHubIssue,
   GitStatus,
+  IssueComment,
+  IssueLabel,
   IssuePushResult,
   IssueSummary,
+  ItemStatusResult,
   LLMModel,
   LLMProviderSpec,
   LocalPath,
@@ -50,8 +53,10 @@ import type {
   NotesDraft,
   NoteDraftAttachment,
   PluginDescriptor,
-  Reminder,
-  ReminderContainer,
+  ProjectBoard,
+  ProjectSummary,
+  IssueDetail,
+  Reminder,  ReminderContainer,
   ReminderCreate,
   ReminderItem,
   Role,
@@ -92,6 +97,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+// FastAPI errors are thrown by `request` as "<status> <statusText>: <body>",
+// where the body is usually `{"detail": "..."}`. Surface just that detail so
+// UI error states read cleanly instead of echoing the raw HTTP prefix + JSON.
+export function apiErrorMessage(e: unknown, fallback = "Something went wrong"): string {
+  if (!(e instanceof Error)) return fallback;
+  const idx = e.message.indexOf(": ");
+  const body = idx >= 0 ? e.message.slice(idx + 2) : e.message;
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.detail === "string") return parsed.detail;
+  } catch {
+    // Not JSON — fall through to the raw message.
+  }
+  return e.message || fallback;
 }
 
 // Multipart POST for single-file uploads. Shared by every attachment endpoint,
@@ -400,6 +421,43 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+
+    // Projects v2 (kanban board)
+    listProjects: (repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<ProjectSummary[]>(`/api/github/projects${qs}`);
+    },
+    projectBoard: (projectId: string) =>
+      request<ProjectBoard>(`/api/github/projects/${encodeURIComponent(projectId)}/board`),
+    getIssue: (number: number, repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<IssueDetail>(`/api/github/issues/${number}${qs}`);
+    },
+    addIssueComment: (number: number, body: string, repo?: string) =>
+      request<IssueComment>(`/api/github/issues/${number}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body, repo }),
+      }),
+    setIssueLabels: (number: number, labels: string[], repo?: string) =>
+      request<IssueLabel[]>(`/api/github/issues/${number}/labels`, {
+        method: "PUT",
+        body: JSON.stringify({ labels, repo }),
+      }),
+    listLabels: (repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<IssueLabel[]>(`/api/github/labels${qs}`);
+    },
+    setProjectItemStatus: (
+      projectId: string,
+      itemId: string,
+      data: { field_id: string; option_id: string },
+    ) =>
+      request<ItemStatusResult>(
+        `/api/github/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(
+          itemId,
+        )}/status`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
 
     // Summaries
     summarizeIssue: (topicId: number, opts: { force?: boolean } = {}) =>

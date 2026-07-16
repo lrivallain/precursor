@@ -34,12 +34,14 @@ import { AgentList } from "./components/AgentList";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
+import { KanbanBoard } from "./components/KanbanBoard";
+import { ProjectList } from "./components/ProjectList";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
-import { api } from "./lib/api";
+import { api, apiErrorMessage } from "./lib/api";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
@@ -51,6 +53,7 @@ import type {
   AgentSession,
   Chat,
   MeetingSession,
+  ProjectSummary,
   ReminderItem,
   Topic,
   TopicNode,
@@ -88,44 +91,44 @@ interface AppRoute {
   // The raw agent path segment — a public UUID for new links, or a legacy
   // integer id. Resolved to an internal numeric id once the agent list loads.
   agentRef: string | null;
+  // The selected ProjectV2 URL segment (a per-owner number, optionally with a
+  // title slug) when on the kanban route. Resolved to the opaque node id once
+  // the project list loads.
+  kanbanProjectRef: string | null;
 }
 
 function parseAppRoute(): AppRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-  if (segs[0] === "ws")
-    return { mode: "workspaces", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
+  const base: AppRoute = {
+    mode: "topics",
+    topicSlug: null,
+    chatSlug: null,
+    liveSlug: null,
+    agentRef: null,
+    kanbanProjectRef: null,
+  };
+  if (segs[0] === "ws") return { ...base, mode: "workspaces" };
   if (segs[0] === "agents") {
-    return {
-      mode: "agents",
-      topicSlug: null,
-      chatSlug: null,
-      liveSlug: null,
-      agentRef: segs[1] ? decodeURIComponent(segs[1]) : null,
-    };
+    return { ...base, mode: "agents", agentRef: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
   if (segs[0] === "chats") {
-    return {
-      mode: "chats",
-      topicSlug: null,
-      chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
-      liveSlug: null,
-      agentRef: null,
-    };
+    return { ...base, mode: "chats", chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
   if (segs[0] === "live") {
+    return { ...base, mode: "live", liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
+  }
+  if (segs[0] === "kanban") {
     return {
-      mode: "live",
-      topicSlug: null,
-      chatSlug: null,
-      liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null,
-      agentRef: null,
+      ...base,
+      mode: "kanban",
+      kanbanProjectRef: segs[1] ? decodeURIComponent(segs[1]) : null,
     };
   }
   if (segs[0] === "topics") {
     const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
-    return { mode: "topics", topicSlug: last, chatSlug: null, liveSlug: null, agentRef: null };
+    return { ...base, mode: "topics", topicSlug: last };
   }
-  return { mode: "topics", topicSlug: null, chatSlug: null, liveSlug: null, agentRef: null };
+  return base;
 }
 
 /** The home launcher lives at the root path `/` (no path segments). */
@@ -187,6 +190,31 @@ function chatUrl(chat: Chat): string {
 function liveUrl(session: MeetingSession | null): string {
   if (session == null) return "/live";
   return "/live/" + encodeURIComponent(session.slug);
+}
+
+function kanbanUrl(project: ProjectSummary | null): string {
+  if (!project) return "/kanban";
+  return "/kanban/" + encodeURIComponent(projectSlug(project));
+}
+
+// Human-readable, stable slug for a ProjectV2: its per-owner `number` (the
+// resolvable key) plus a slugified title for readability, e.g. "4-work-ms".
+function projectSlug(project: ProjectSummary): string {
+  const base = project.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return base ? `${project.number}-${base}` : String(project.number);
+}
+
+// Resolve a kanban URL segment back to a project number. Only the leading
+// integer is significant, so the trailing title slug is cosmetic and can drift
+// without breaking the link (e.g. "4", "4-work-ms", "4-renamed" all resolve).
+function projectRefNumber(ref: string | null): number | null {
+  if (!ref) return null;
+  const match = /^(\d+)/.exec(ref);
+  return match ? Number(match[1]) : null;
 }
 
 // Agents are addressed by their public UUID (copilot_session_id) in the URL.
@@ -280,6 +308,16 @@ export default function App() {
   // Live meeting sessions are loaded lazily when the user first enters live mode.
   const [meetingSessions, setMeetingSessions] = useState<MeetingSession[] | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
+  // GitHub Projects v2 are loaded lazily when the user first enters kanban mode.
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  // The opaque ProjectV2 node id of the active board (board fetches need it).
+  // The URL carries a number-based ref instead, resolved to this once the
+  // project list loads.
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  // A kanban URL ref (project number/slug) awaiting resolution against the
+  // loaded project list. Initialised from the entry URL, cleared once resolved.
+  const pendingProjectRef = useRef<string | null>(parseAppRoute().kanbanProjectRef);
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
@@ -342,6 +380,10 @@ export default function App() {
 
   const settings = useSettings();
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
+  const globalGithubRepo = (settings?.github_repo ?? "").trim();
+  // The kanban board needs both a configured repo and the GitHub issue surface
+  // turned on — otherwise there are no ProjectsV2 to render.
+  const kanbanEnabled = issueAssociationsEnabled && globalGithubRepo.length > 0;
   const agentsEnabled = settings?.agents_enabled ?? false;
   const liveEnabled = settings?.live_enabled ?? true;
   const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
@@ -386,6 +428,18 @@ export default function App() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  const activeProjectIdRef = useRef<string | null>(activeProjectId);
+  useEffect(() => {
+    activeProjectIdRef.current = activeProjectId;
+  }, [activeProjectId]);
+
+  // Mirror the loaded project list so changeMode / URL sync can resolve the
+  // active project's number-based slug without re-subscribing.
+  const projectsRef = useRef<ProjectSummary[] | null>(projects);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
 
   // Mirror the current sidebar mode into a ref. The active item refs persist
   // across mode switches (changeMode doesn't clear them), so "the user is
@@ -567,6 +621,23 @@ export default function App() {
       }
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
+      if (r.mode === "kanban") {
+        if (r.kanbanProjectRef == null) {
+          pendingProjectRef.current = null;
+          setActiveProjectId(null);
+          return;
+        }
+        const num = projectRefNumber(r.kanbanProjectRef);
+        const match = projectsRef.current?.find((p) => p.number === num);
+        if (match) {
+          pendingProjectRef.current = null;
+          setActiveProjectId(match.id);
+        } else {
+          // Projects not loaded yet — stash the ref for the load effect.
+          pendingProjectRef.current = r.kanbanProjectRef;
+        }
+        return;
+      }
       if (r.mode === "live") {
         const slug = r.liveSlug;
         if (!slug) {
@@ -682,6 +753,20 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
 
+  // activeProjectId -> /kanban/<number>-<slug> (or /kanban when none selected).
+  // Depends on `projects` so a board opened before the list resolves gets its
+  // slug rewritten once the project's number/title are known.
+  useEffect(() => {
+    if (atHome) return;
+    if (sidebarMode !== "kanban") return;
+    // A deep link we haven't resolved yet — leave the URL untouched so its
+    // number ref survives until the load effect maps it to a project.
+    if (activeProjectId == null && pendingProjectRef.current) return;
+    const active = projects?.find((p) => p.id === activeProjectId) ?? null;
+    const target = kanbanUrl(active);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
+  }, [activeProjectId, projects, sidebarMode, atHome]);
+
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
   // rewritten from a transient integer fallback once the list resolves.
@@ -734,6 +819,10 @@ export default function App() {
       target = "/live";
     } else if (next === "agents") {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
+    } else if (next === "kanban") {
+      const active =
+        projectsRef.current?.find((p) => p.id === activeProjectIdRef.current) ?? null;
+      target = kanbanUrl(active);
     } else {
       target = "/ws";
     }
@@ -827,6 +916,58 @@ export default function App() {
       setSidebarMode("topics");
     }
   }, [liveEnabled, sidebarMode]);
+
+  // Same guard for the kanban board: if the repo/issue settings that gate it get
+  // turned off (or a deep link lands while disabled), fall back to Topics. Wait
+  // for settings to load first — otherwise a deep link to /kanban is bounced to
+  // /topics before `kanbanEnabled` resolves from the initial null settings.
+  useEffect(() => {
+    if (settings == null) return;
+    if (!kanbanEnabled && sidebarMode === "kanban") {
+      history.pushState(null, "", "/topics");
+      setSidebarMode("topics");
+    }
+  }, [kanbanEnabled, sidebarMode, settings]);
+
+  // Lazily load projects the first time the user enters kanban mode. Re-runs if
+  // the configured repo changes (projects reset to null by that handler).
+  useEffect(() => {
+    if (sidebarMode !== "kanban" || !kanbanEnabled || projects !== null) return;
+    setProjectsError(null);
+    void api.github
+      .listProjects()
+      .then((list) => {
+        setProjects(list);
+        // Resolve a deep-linked project ref (a number/slug) to its node id;
+        // otherwise auto-select the first project.
+        const num = projectRefNumber(pendingProjectRef.current);
+        const fromRef = num != null ? list.find((p) => p.number === num) : undefined;
+        pendingProjectRef.current = null;
+        setActiveProjectId((id) => id ?? fromRef?.id ?? list[0]?.id ?? null);
+      })
+      .catch((e) => {
+        setProjects([]);
+        setProjectsError(apiErrorMessage(e, "Failed to load projects"));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarMode, kanbanEnabled]);
+
+  // When the configured repo changes, drop the cached project list + selection
+  // so the next kanban visit reloads for the new repo. Skips the initial
+  // settings load so a deep-linked project id isn't wiped before it resolves.
+  const prevRepoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (settings == null) return;
+    if (prevRepoRef.current === null) {
+      prevRepoRef.current = globalGithubRepo;
+      return;
+    }
+    if (prevRepoRef.current === globalGithubRepo) return;
+    prevRepoRef.current = globalGithubRepo;
+    setProjects(null);
+    setActiveProjectId(null);
+    setProjectsError(null);
+  }, [globalGithubRepo, settings]);
 
   // Reflect the active workspace + open file in the URL so a reload returns to
   // the same place. replaceState keeps it as a single history entry.
@@ -1196,7 +1337,9 @@ export default function App() {
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
     else if (sidebarMode === "agents") setActiveAgentId(null);
-    else setCreateWorkspaceOpen(true);
+    else if (sidebarMode === "kanban") {
+      // No "new" affordance for the kanban board (the header hides the "+").
+    } else setCreateWorkspaceOpen(true);
   }
 
   // ---- Workspaces -------------------------------------------------------
@@ -1444,6 +1587,17 @@ export default function App() {
             onArchiveMany={handleArchiveAgents}
           />
         }
+        kanbanSlot={
+          <ProjectList
+            projects={projects}
+            activeId={activeProjectId}
+            error={projectsError}
+            onSelect={(p) => {
+              pendingProjectRef.current = null;
+              setActiveProjectId(p.id);
+            }}
+          />
+        }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onSelect={handleSelect}
         onNew={handleNew}
@@ -1458,6 +1612,7 @@ export default function App() {
         onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
         onOpenArchive={() => setArchiveOpen(true)}
         unreadByMode={unreadByMode}
+        kanbanEnabled={kanbanEnabled}
       />
       )}
 
@@ -1592,6 +1747,10 @@ export default function App() {
             ) : (
               <span className="truncate font-medium min-w-0 flex-1">Live</span>
             )
+          ) : sidebarMode === "kanban" ? (
+            <span className="truncate font-medium min-w-0 flex-1">
+              {projects?.find((p) => p.id === activeProjectId)?.title ?? "Kanban"}
+            </span>
           ) : (
             <>
               {activeAgent ? (
@@ -1676,6 +1835,7 @@ export default function App() {
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
+              kanbanEnabled={kanbanEnabled}
               onNavigate={changeMode}
               topicSurface={
                 <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
@@ -1817,6 +1977,26 @@ export default function App() {
                   history.pushState(null, "", liveUrl(session));
                 }}
               />
+            )
+          ) : sidebarMode === "kanban" ? (
+            projects === null ? (
+              <EmptyHero label="Loading projects…" />
+            ) : projectsError ? (
+              <EmptyHero label={projectsError} />
+            ) : activeProjectId ? (
+              <KanbanBoard
+                key={activeProjectId}
+                projectId={activeProjectId}
+                fallbackRepo={globalGithubRepo}
+                onOpenTopic={(topicId) => {
+                  changeMode("topics");
+                  void handleSelect(topicId);
+                }}
+              />
+            ) : projects.length === 0 ? (
+              <EmptyHero label="No GitHub projects found for this repository." />
+            ) : (
+              <EmptyHero label="Select a project to view its board." />
             )
           ) : (
             <AgentView
