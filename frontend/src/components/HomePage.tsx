@@ -69,9 +69,12 @@ export function HomePage({
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<HomeKind | null>(null);
   // Distinguish a single click (show wizard / open) from a double click (open
-  // section): a single click's action is deferred briefly and cancelled when a
-  // double click lands, so the two gestures don't both fire.
+  // section): a single click's action is deferred by a short, fixed window and
+  // cancelled when a second click on the same card lands, so the two gestures
+  // don't both fire. We do our own detection instead of the native dblclick
+  // event, whose threshold can be long enough to feel laggy.
   const clickTimer = useRef<number | null>(null);
+  const pendingMode = useRef<SidebarMode | null>(null);
 
   useEffect(
     () => () => {
@@ -97,27 +100,43 @@ export function HomePage({
 
   const firstName = (me?.github?.name || me?.github?.login || "").split(" ")[0];
 
-  // A single click reveals the section's wizard (or opens the section when it
-  // has none); a double click always opens the section.
-  function openSection(section: Section) {
-    if (clickTimer.current) {
-      window.clearTimeout(clickTimer.current);
-      clickTimer.current = null;
+  function clearPending() {
+    if (clickTimer.current) window.clearTimeout(clickTimer.current);
+    clickTimer.current = null;
+    pendingMode.current = null;
+  }
+
+  /** Single-click action: reveal the wizard (or open a wizard-less section). */
+  function activate(section: Section) {
+    if (section.createKind) {
+      const kind = section.createKind;
+      setSelected((cur) => (cur === kind ? null : kind));
+    } else {
+      onNavigate?.(section.mode);
     }
+  }
+
+  function openSection(section: Section) {
+    clearPending();
     onNavigate?.(section.mode);
   }
 
-  function activateSection(section: Section) {
-    if (clickTimer.current) window.clearTimeout(clickTimer.current);
+  // Distinguish single from double click ourselves with a 250ms window: a
+  // second click on the same card within the window opens the section; a lone
+  // click resolves to `activate` once the window elapses.
+  function handleCardClick(section: Section) {
+    if (clickTimer.current && pendingMode.current === section.mode) {
+      clearPending();
+      onNavigate?.(section.mode);
+      return;
+    }
+    clearPending();
+    pendingMode.current = section.mode;
     clickTimer.current = window.setTimeout(() => {
       clickTimer.current = null;
-      if (section.createKind) {
-        const kind = section.createKind;
-        setSelected((cur) => (cur === kind ? null : kind));
-      } else {
-        onNavigate?.(section.mode);
-      }
-    }, 200);
+      pendingMode.current = null;
+      activate(section);
+    }, 250);
   }
 
   const sections: Section[] = [
@@ -221,12 +240,11 @@ export function HomePage({
                   key={section.mode}
                   role="button"
                   tabIndex={0}
-                  onClick={() => activateSection(section)}
-                  onDoubleClick={() => openSection(section)}
+                  onClick={() => handleCardClick(section)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      activateSection(section);
+                      activate(section);
                     }
                   }}
                   aria-pressed={active}
