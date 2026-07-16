@@ -59,11 +59,15 @@ from precursor.backend.schemas import (
     TranslateResult,
 )
 from precursor.backend.services.app_settings import (
+    resolve_global_github_repo,
+    resolve_issue_associations_enabled,
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
 )
 from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
+from precursor.backend.services.github_auth import resolve_github_token
+from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
@@ -684,7 +688,8 @@ async def post_summary_to_topic(
             status.HTTP_400_BAD_REQUEST,
             "Attach a topic to this session before posting a summary.",
         )
-    if await session.get(Topic, ms.topic_id) is None:
+    topic = await session.get(Topic, ms.topic_id)
+    if topic is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Linked topic no longer exists.")
 
     # Copy the note attachments into the topic so they survive the meeting
@@ -739,9 +744,39 @@ async def post_summary_to_topic(
     ms.summary_posted_topic_id = ms.topic_id
     await session.commit()
 
+    # When the topic is linked to a GitHub issue, mirror the recap there as a
+    # comment. Best-effort: a GitHub failure must not undo the topic post, so we
+    # log and return without the issue fields rather than raising.
+    issue_number: int | None = None
+    issue_comment_url: str | None = None
+    if topic.github_issue_number is not None and await resolve_issue_associations_enabled(session):
+        repo = topic.github_repo or await resolve_global_github_repo(session)
+        token = await resolve_github_token(session)
+        if repo and token:
+            client = GitHubClient(token=token)
+            try:
+                comment = await client.add_issue_comment(repo, topic.github_issue_number, body)
+                issue_number = topic.github_issue_number
+                issue_comment_url = comment.get("url")
+            except Exception:
+                logger.warning(
+                    "Failed to mirror meeting summary to %s#%s",
+                    repo,
+                    topic.github_issue_number,
+                    exc_info=True,
+                )
+            finally:
+                await client.aclose()
+
     await publish_message_changed(ms.topic_id)
     await publish_meeting_changed(ms.id)
-    return MeetingSummaryPostResult(topic_id=ms.topic_id, message_id=msg.id, posted_at=posted_at)
+    return MeetingSummaryPostResult(
+        topic_id=ms.topic_id,
+        message_id=msg.id,
+        posted_at=posted_at,
+        issue_number=issue_number,
+        issue_comment_url=issue_comment_url,
+    )
 
 
 # --------------------------------------------------------------------------

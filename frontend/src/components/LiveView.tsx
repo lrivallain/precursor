@@ -323,6 +323,12 @@ export function LiveView({
     () => allTopics.find((t) => t.id === session.topic_id)?.title ?? null,
     [allTopics, session.topic_id],
   );
+  // Issue linked to the attached topic (if any); posting the recap also mirrors
+  // it as a comment on this issue.
+  const topicIssueNumber = useMemo(
+    () => allTopics.find((t) => t.id === session.topic_id)?.github_issue_number ?? null,
+    [allTopics, session.topic_id],
+  );
 
   const handleFinalSegment = useCallback(
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
@@ -971,6 +977,7 @@ export function LiveView({
       onGenerate={() => void generateSummary()}
       suggestedAttendees={suggestedAttendees}
       topicTitle={topicTitle}
+      topicIssueNumber={topicIssueNumber}
       canGenerate={segments.length > 0}
     />
   );

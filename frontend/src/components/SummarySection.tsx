@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Copy, Eye, Loader2, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 import { Markdown } from "./Markdown";
 
 interface Props {
@@ -15,6 +16,8 @@ interface Props {
   /** Speaker-derived names not yet in the attendee list. */
   suggestedAttendees: string[];
   topicTitle: string | null;
+  /** Issue number linked to the attached topic; posting also comments there. */
+  topicIssueNumber: number | null;
   canGenerate: boolean;
 }
 
@@ -33,6 +36,7 @@ export function SummarySection({
   onGenerate,
   suggestedAttendees,
   topicTitle,
+  topicIssueNumber,
   canGenerate,
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
@@ -44,6 +48,9 @@ export function SummarySection({
 
   const attendees = session.attendees ?? [];
   const canPost = session.topic_id != null;
+  // The attached topic carries a GitHub issue, so posting also mirrors the
+  // recap there as a comment — surfaced with a GitHub glyph on the post button.
+  const willComment = canPost && topicIssueNumber != null;
   const postedAt = session.summary_posted_at;
   const postedLabel = postedAt
     ? new Date(postedAt).toLocaleString(undefined, {
@@ -217,10 +224,22 @@ export function SummarySection({
             type="button"
             onClick={() => void post()}
             disabled={!text || posting || !canPost}
-            data-tooltip={canPost ? undefined : "Attach a topic to post"}
+            data-tooltip={
+              !canPost
+                ? "Attach a topic to post"
+                : willComment
+                  ? `Also comments on issue #${topicIssueNumber}`
+                  : undefined
+            }
             className="inline-flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
-            {posted ? <Check size={14} /> : <Send size={14} />}
+            {posted ? (
+              <Check size={14} />
+            ) : willComment ? (
+              <Github size={14} />
+            ) : (
+              <Send size={14} />
+            )}
             {posted ? "Posted" : posting ? "Posting…" : postedAt ? "Post again" : "Post to topic"}
           </button>
         </div>

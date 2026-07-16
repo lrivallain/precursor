@@ -169,6 +169,11 @@ class MeetingPostResult(BaseModel):
 
 class MeetingSummaryPostResult(MeetingPostResult):
     posted_at: datetime
+    # Set when the linked topic also carries a GitHub issue and the summary was
+    # mirrored there as a comment; null when no issue is attached or the mirror
+    # failed/was skipped.
+    issue_number: int | None = None
+    issue_comment_url: str | None = None
 
 
 class AgendaAttendee(BaseModel):
