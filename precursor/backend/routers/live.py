@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from precursor.backend.db import get_session
+from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import (
     Attachment,
     Chat,
@@ -66,7 +66,7 @@ from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent
+from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent, UsageEvent
 from precursor.backend.services.meeting_agenda import fetch_agenda
 from precursor.backend.services.meeting_analysis import (
     analyze_session,
@@ -83,6 +83,7 @@ from precursor.backend.services.meeting_summary import (
     summarize_topic_conversation,
 )
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
+from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -584,6 +585,7 @@ async def ask(
     provider = await get_llm_provider(session)
     model = await resolve_live_fast_model(session)
     effort = await resolve_live_reasoning_effort(session)
+    topic_id = ms.topic_id
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
         try:
@@ -598,6 +600,21 @@ async def ask(
             ):
                 if isinstance(event, TextDeltaEvent) and event.content:
                     yield {"event": "token", "data": json.dumps({"content": event.content})}
+                elif isinstance(event, UsageEvent):
+                    # Meter this live Q&A round-trip. Persist in a fresh session:
+                    # the request-scoped one may be closed by the time this
+                    # generator runs (see routers/chat.py).
+                    async with SessionLocal() as us:
+                        await record_usage(
+                            us,
+                            prompt_tokens=event.prompt_tokens,
+                            completion_tokens=event.completion_tokens,
+                            total_tokens=event.total_tokens,
+                            source="/live-ask",
+                            model=model,
+                            topic_id=topic_id,
+                        )
+                        await us.commit()
             yield {"event": "done", "data": json.dumps({})}
         except Exception as exc:  # surface a clean error frame to the client
             logger.warning("Meeting Q&A stream failed: %s", exc)
