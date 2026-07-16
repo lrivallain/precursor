@@ -1024,3 +1024,37 @@ export interface MeetingInsight {
   content: string;
   created_at: string;
 }
+
+// ---- Global content search (⌘K palette) --------------------------------
+// Mirrors precursor.backend.schemas.search. A flat, ranked list of hits across
+// topics, chats, agents (prompts + final answers) and live sessions.
+export type SearchSection = "topics" | "chats" | "agents" | "live";
+
+export type SearchField =
+  | "title"
+  | "description"
+  | "message"
+  | "prompt"
+  | "answer"
+  | "transcript"
+  | "insight"
+  | "notes"
+  | "summary";
+
+export interface SearchResult {
+  section: SearchSection;
+  field: SearchField;
+  is_title: boolean;
+  entity_id: number;
+  // Navigation handle: a topic/chat/live slug or an agent's public id.
+  ref: string | null;
+  title: string;
+  snippet: string;
+  role: string | null;
+  updated_at: string | null;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResult[];
+}
