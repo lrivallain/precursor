@@ -55,7 +55,7 @@ export function ProjectList({ projects, activeId, error, onSelect }: ProjectList
                     onClick={() => onSelect(p)}
                     title={p.short_description ?? p.title}
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
-                      isActive ? "bg-accent/15 text-accent" : "hover:bg-surface"
+                      isActive ? "section-selected" : "hover:bg-surface"
                     }`}
                   >
                     <SquareKanban size={14} className="shrink-0 opacity-70" />
