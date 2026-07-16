@@ -18,6 +18,9 @@ interface KanbanBoardProps {
 // isn't part of the drag-drop contract.
 const NO_STATUS = "__no_status__";
 
+// How often the board silently re-fetches from GitHub while mounted.
+const AUTO_REFRESH_MS = 30_000;
+
 interface Column {
   id: string;
   name: string;
@@ -44,6 +47,9 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
   const [filter, setFilter] = useState("");
   // Mirror the drag id so the drop handler never reads a stale closure value.
   const dragIdRef = useRef<string | null>(null);
+  // True while an optimistic status mutation is in flight — auto-refresh pauses
+  // so it never clobbers the pending change with stale server data.
+  const mutatingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,6 +68,27 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Silent background refresh: swaps in fresh data without a spinner and only
+  // when the user isn't mid-interaction. Guards are re-checked after the await
+  // because the user may have grabbed a card while the request was in flight.
+  const silentRefresh = useCallback(async () => {
+    if (dragIdRef.current || mutatingRef.current) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    try {
+      const data = await api.github.projectBoard(projectId);
+      if (dragIdRef.current || mutatingRef.current) return;
+      setBoard(data);
+      setError(null);
+    } catch {
+      // Keep the current board on transient failures — nothing to disturb.
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => void silentRefresh(), AUTO_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [silentRefresh]);
 
   const columns = useMemo<Column[]>(() => {
     if (!board) return [];
@@ -133,6 +160,7 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
         ),
       });
       setActionError(null);
+      mutatingRef.current = true;
       try {
         await api.github.setProjectItemStatus(projectId, itemId, {
           field_id: fieldId,
@@ -144,6 +172,8 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
         setActionError(
           `Couldn't move "${card.title}": ${apiErrorMessage(e, "update failed")}`,
         );
+      } finally {
+        mutatingRef.current = false;
       }
     },
     [board, projectId, setDrag],
