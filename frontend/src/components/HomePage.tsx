@@ -4,12 +4,13 @@ import {
   ArrowRight,
   Bot,
   FolderGit2,
-  MessageSquare,
   MessageSquarePlus,
   MessagesSquare,
+  Plus,
   Radio,
   Sparkles,
   SquareKanban,
+  X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
@@ -17,17 +18,33 @@ import type { Me } from "../lib/types";
 
 type HomeKind = "topics" | "chats" | "live" | "agents";
 
-interface LauncherCard {
-  kind: HomeKind;
-  title: string;
-  description: string;
-  icon: ReactNode;
+/** Per-section color scheme. Full class strings so Tailwind keeps them. */
+interface Palette {
+  /** Icon badge background + text. */
+  icon: string;
+  /** Card border + tint when its start surface is open. */
+  active: string;
+  /** Card hover accent (border + tint). */
+  hover: string;
+  /** Filled primary action button. */
+  primary: string;
+  /** Accent text (arrows, hover chrome). */
+  accent: string;
 }
 
-interface NavLink {
+interface Section {
+  /** Sidebar mode to jump to when visiting the section. */
   mode: SidebarMode;
-  label: string;
+  /** Present when the section supports starting a new item inline. */
+  createKind?: HomeKind;
+  title: string;
+  description: string;
+  /** Label for the "start new" action (create sections only). */
+  newLabel?: string;
+  /** Label for the "visit section" action. */
+  openLabel: string;
   icon: ReactNode;
+  color: Palette;
 }
 
 interface Props {
@@ -37,20 +54,18 @@ interface Props {
   liveSurface: ReactNode;
   agentSurface: ReactNode;
   liveEnabled?: boolean;
-  /** Whether the Kanban section is available (adds a "Jump to" nav link). */
+  /** Whether the Kanban section is available (adds its card). */
   kanbanEnabled?: boolean;
   /** Jump straight into a section's list/surface (leaves the home launcher). */
   onNavigate?: (mode: SidebarMode) => void;
 }
 
 /**
- * Landing surface shown at `/`. A greeting and the launcher cards (topic, chat,
- * live session, agent), pinned to the top. Picking a card reveals that section's
- * start surface right below on the same page — no redirect, and the cards stay
- * put. Picking it again hides the surface.
- *
- * The sidebar is hidden at home, so a top nav row lets the user jump directly
- * into any existing section.
+ * Landing surface shown at `/`. A greeting and a grid of section cards, each of
+ * which can both start a new item (when suitable) and jump into the related
+ * section — no separate nav row. Every section carries its own color scheme to
+ * make the grid easy to scan. Starting a new item reveals that section's start
+ * surface right below on the same page; picking it again hides the surface.
  */
 export function HomePage({
   topicSurface,
@@ -81,39 +96,119 @@ export function HomePage({
 
   const firstName = (me?.github?.name || me?.github?.login || "").split(" ")[0];
 
-  const cards: LauncherCard[] = [
+  const sections: Section[] = [
     {
-      kind: "topics",
-      title: "New topic",
+      mode: "topics",
+      createKind: "topics",
+      title: "Topics",
       description:
-        "A long-lived thread that keeps its own history, context, and optional linked issue.",
+        "Long-lived threads that keep their own history, context, and optional linked issue.",
+      newLabel: "New topic",
+      openLabel: "Browse topics",
       icon: <MessagesSquare size={20} />,
+      color: {
+        icon: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+        active: "border-sky-500/60 bg-sky-500/10",
+        hover: "hover:border-sky-500/50 hover:bg-sky-500/5",
+        primary:
+          "bg-sky-500/15 text-sky-700 hover:bg-sky-500/25 dark:text-sky-300 border border-sky-500/30",
+        accent: "text-sky-600 dark:text-sky-400",
+      },
     },
     {
-      kind: "chats",
-      title: "New chat",
+      mode: "chats",
+      createKind: "chats",
+      title: "Chats",
       description:
-        "A quick, throwaway conversation. Type a prompt and get going in seconds.",
+        "Quick, throwaway conversations. Type a prompt and get going in seconds.",
+      newLabel: "New chat",
+      openLabel: "Browse chats",
       icon: <MessageSquarePlus size={20} />,
+      color: {
+        icon: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        active: "border-emerald-500/60 bg-emerald-500/10",
+        hover: "hover:border-emerald-500/50 hover:bg-emerald-500/5",
+        primary:
+          "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300 border border-emerald-500/30",
+        accent: "text-emerald-600 dark:text-emerald-400",
+      },
     },
     ...(liveEnabled
       ? [
           {
-            kind: "live",
-            title: "New live session",
+            mode: "live",
+            createKind: "live",
+            title: "Live sessions",
             description:
               "Capture a meeting live with transcription, notes, and summaries as it happens.",
+            newLabel: "New live session",
+            openLabel: "Browse sessions",
             icon: <Radio size={20} />,
-          } satisfies LauncherCard,
+            color: {
+              icon: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+              active: "border-rose-500/60 bg-rose-500/10",
+              hover: "hover:border-rose-500/50 hover:bg-rose-500/5",
+              primary:
+                "bg-rose-500/15 text-rose-700 hover:bg-rose-500/25 dark:text-rose-300 border border-rose-500/30",
+              accent: "text-rose-600 dark:text-rose-400",
+            },
+          } satisfies Section,
         ]
       : []),
     {
-      kind: "agents",
-      title: "New agent",
+      mode: "agents",
+      createKind: "agents",
+      title: "Agents",
       description:
         "Hand a task to an autonomous coding agent and follow its progress.",
+      newLabel: "New agent",
+      openLabel: "Browse agents",
       icon: <Bot size={20} />,
+      color: {
+        icon: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+        active: "border-violet-500/60 bg-violet-500/10",
+        hover: "hover:border-violet-500/50 hover:bg-violet-500/5",
+        primary:
+          "bg-violet-500/15 text-violet-700 hover:bg-violet-500/25 dark:text-violet-300 border border-violet-500/30",
+        accent: "text-violet-600 dark:text-violet-400",
+      },
     },
+    {
+      mode: "workspaces",
+      title: "Files",
+      description:
+        "Browse the workspaces and files backing your sessions.",
+      openLabel: "Browse files",
+      icon: <FolderGit2 size={20} />,
+      color: {
+        icon: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+        active: "border-amber-500/60 bg-amber-500/10",
+        hover: "hover:border-amber-500/50 hover:bg-amber-500/5",
+        primary:
+          "bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:text-amber-300 border border-amber-500/30",
+        accent: "text-amber-600 dark:text-amber-400",
+      },
+    },
+    ...(kanbanEnabled
+      ? [
+          {
+            mode: "kanban",
+            title: "Kanban",
+            description:
+              "Track linked issues on a board across your projects.",
+            openLabel: "Open board",
+            icon: <SquareKanban size={20} />,
+            color: {
+              icon: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
+              active: "border-cyan-500/60 bg-cyan-500/10",
+              hover: "hover:border-cyan-500/50 hover:bg-cyan-500/5",
+              primary:
+                "bg-cyan-500/15 text-cyan-700 hover:bg-cyan-500/25 dark:text-cyan-300 border border-cyan-500/30",
+              accent: "text-cyan-600 dark:text-cyan-400",
+            },
+          } satisfies Section,
+        ]
+      : []),
   ];
 
   const surfaces: Record<HomeKind, ReactNode> = {
@@ -123,29 +218,10 @@ export function HomePage({
     agents: agentSurface,
   };
 
-  const navLinks: NavLink[] = [
-    { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
-    { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
-    ...(liveEnabled
-      ? [{ mode: "live", label: "Live", icon: <Radio size={14} /> } satisfies NavLink]
-      : []),
-    { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
-    { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
-    ...(kanbanEnabled
-      ? [
-          {
-            mode: "kanban",
-            label: "Kanban",
-            icon: <SquareKanban size={14} />,
-          } satisfies NavLink,
-        ]
-      : []),
-  ];
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex w-full shrink-0 flex-col">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-8">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-accent">
               <Sparkles size={18} />
@@ -159,65 +235,71 @@ export function HomePage({
             <p className="text-sm text-muted">What would you like to start?</p>
           </div>
 
-          {onNavigate && (
-            <nav
-              aria-label="Sections"
-              className="flex flex-wrap items-center gap-1.5"
-            >
-              <span className="mr-1 text-xs font-medium text-muted">
-                Jump to
-              </span>
-              {navLinks.map((link) => (
-                <button
-                  key={link.mode}
-                  type="button"
-                  onClick={() => onNavigate(link.mode)}
-                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface/60 px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent/50 hover:bg-surface hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                >
-                  {link.icon}
-                  <span className="whitespace-nowrap">{link.label}</span>
-                </button>
-              ))}
-            </nav>
-          )}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {cards.map((card) => {
-              const active = selected === card.kind;
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {sections.map((section) => {
+              const active =
+                !!section.createKind && selected === section.createKind;
               return (
-                <button
-                  key={card.kind}
-                  type="button"
-                  onClick={() =>
-                    setSelected((cur) => (cur === card.kind ? null : card.kind))
-                  }
-                  aria-pressed={active}
-                  className={`group flex flex-col gap-3 rounded-xl border p-5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                <div
+                  key={section.mode}
+                  className={`flex flex-col gap-4 rounded-xl border p-5 transition-colors ${
                     active
-                      ? "border-accent/60 bg-accent/10"
-                      : "border-border bg-surface/60 hover:border-accent/50 hover:bg-surface"
+                      ? section.color.active
+                      : `border-border bg-surface/60 ${section.color.hover}`
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                      {card.icon}
+                  <div className="flex items-start justify-between gap-2">
+                    <span
+                      className={`flex h-10 w-10 items-center justify-center rounded-lg ${section.color.icon}`}
+                    >
+                      {section.icon}
                     </span>
-                    <ArrowRight
-                      size={18}
-                      className={`transition-transform ${
-                        active
-                          ? "text-accent"
-                          : "text-muted group-hover:translate-x-0.5 group-hover:text-accent"
-                      }`}
-                    />
+                    <span className="text-sm font-medium">{section.title}</span>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-sm font-medium">{card.title}</span>
-                    <span className="text-[12px] leading-relaxed text-muted">
-                      {card.description}
-                    </span>
+
+                  <p className="flex-1 text-[12px] leading-relaxed text-muted">
+                    {section.description}
+                  </p>
+
+                  <div className="flex items-center gap-2">
+                    {section.createKind && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelected((cur) =>
+                            cur === section.createKind
+                              ? null
+                              : section.createKind ?? null,
+                          )
+                        }
+                        aria-pressed={active}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${section.color.primary}`}
+                      >
+                        {active ? <X size={15} /> : <Plus size={15} />}
+                        <span className="whitespace-nowrap">
+                          {active ? "Close" : section.newLabel}
+                        </span>
+                      </button>
+                    )}
+                    {onNavigate && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigate(section.mode)}
+                        className={`group flex items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                          section.createKind ? "" : "flex-1"
+                        }`}
+                      >
+                        <span className="whitespace-nowrap">
+                          {section.createKind ? "Open" : section.openLabel}
+                        </span>
+                        <ArrowRight
+                          size={15}
+                          className={`transition-transform group-hover:translate-x-0.5 ${section.color.accent}`}
+                        />
+                      </button>
+                    )}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
