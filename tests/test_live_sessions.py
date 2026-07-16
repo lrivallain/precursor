@@ -274,6 +274,12 @@ def test_meeting_ask_streams_answer() -> None:
         assert "event: token" in body
         assert "event: done" in body
 
+        # The live Q&A round-trip is metered into the global usage ledger even
+        # though the exchange is never persisted as a message.
+        stats = client.get("/api/stats/usage").json()
+        assert stats["totals"]["message_count"] >= 1
+        assert stats["totals"]["total_tokens"] > 0
+
 
 def test_meeting_summary_generate_and_post() -> None:
     app = create_app()
