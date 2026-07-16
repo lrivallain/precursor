@@ -58,6 +58,13 @@ export function SummarySection({
         timeStyle: "short",
       })
     : null;
+  const postLabel = posted
+    ? "Posted"
+    : posting
+      ? "Posting…"
+      : postedAt
+        ? "Post again"
+        : "Post to topic";
 
   async function saveAttendees(next: string[]): Promise<void> {
     try {
@@ -233,14 +240,18 @@ export function SummarySection({
             }
             className="inline-flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
-            {posted ? (
-              <Check size={14} />
-            ) : willComment ? (
-              <Github size={14} />
+            {willComment ? (
+              <>
+                {postLabel}
+                <span aria-hidden className="mx-0.5 h-3.5 w-px bg-white/40" />
+                {posted ? <Check size={14} /> : <Github size={14} />}
+              </>
             ) : (
-              <Send size={14} />
+              <>
+                {posted ? <Check size={14} /> : <Send size={14} />}
+                {postLabel}
+              </>
             )}
-            {posted ? "Posted" : posting ? "Posting…" : postedAt ? "Post again" : "Post to topic"}
           </button>
         </div>
       </div>
