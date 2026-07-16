@@ -5,11 +5,19 @@ import type { Me } from "../lib/types";
 
 interface Props {
   collapsed?: boolean;
+  /** Direction the (expanded) popover opens. Defaults to "up" for the sidebar
+   * footer; use "down" when the persona row sits at the top of a surface. */
+  menuPlacement?: "up" | "down";
   onOpenSettings: () => void;
   onOpenArchive: () => void;
 }
 
-export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }: Props) {
+export function PersonaMenu({
+  collapsed = false,
+  menuPlacement = "up",
+  onOpenSettings,
+  onOpenArchive,
+}: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -148,7 +156,7 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         <SettingsIcon size={16} />
       </button>
       {menuOpen && (
-        <PersonaMenuPopover anchor="expanded" onArchive={chooseArchive} />
+        <PersonaMenuPopover anchor="expanded" placement={menuPlacement} onArchive={chooseArchive} />
       )}
     </div>
   );
@@ -156,16 +164,20 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
 
 interface PopoverProps {
   anchor: "expanded" | "collapsed";
+  placement?: "up" | "down";
   onArchive: () => void;
 }
 
-function PersonaMenuPopover({ anchor, onArchive }: PopoverProps) {
+function PersonaMenuPopover({ anchor, placement = "up", onArchive }: PopoverProps) {
   // Expanded sidebar: popover floats above the persona row, anchored to its
   // left edge. Collapsed sidebar: it sits to the right of the rail so it does
-  // not get clipped by the narrow column.
+  // not get clipped by the narrow column. When the row is at the top of a
+  // surface (home page), open downward instead so it is not clipped.
   const position =
     anchor === "expanded"
-      ? "bottom-full mb-2 left-0 right-0"
+      ? placement === "down"
+        ? "top-full mt-2 left-0 right-0"
+        : "bottom-full mb-2 left-0 right-0"
       : "left-full ml-2 bottom-0 w-56";
   return (
     <div

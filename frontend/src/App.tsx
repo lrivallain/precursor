@@ -1837,6 +1837,8 @@ export default function App() {
               liveEnabled={liveEnabled}
               kanbanEnabled={kanbanEnabled}
               onNavigate={changeMode}
+              onOpenSettings={() => setGlobalSettingsOpen(true)}
+              onOpenArchive={() => setArchiveOpen(true)}
               topicSurface={
                 <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
               }

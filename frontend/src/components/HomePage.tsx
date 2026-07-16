@@ -15,6 +15,7 @@ import {
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
 import type { Me } from "../lib/types";
+import { PersonaMenu } from "./PersonaMenu";
 
 type HomeKind = "topics" | "chats" | "live" | "agents";
 
@@ -58,6 +59,10 @@ interface Props {
   kanbanEnabled?: boolean;
   /** Jump straight into a section's list/surface (leaves the home launcher). */
   onNavigate?: (mode: SidebarMode) => void;
+  /** Open the global settings panel (from the persona menu). */
+  onOpenSettings?: () => void;
+  /** Open the archives panel (from the persona menu). */
+  onOpenArchive?: () => void;
 }
 
 /**
@@ -75,6 +80,8 @@ export function HomePage({
   liveEnabled = true,
   kanbanEnabled = false,
   onNavigate,
+  onOpenSettings,
+  onOpenArchive,
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<HomeKind | null>(null);
@@ -222,17 +229,29 @@ export function HomePage({
     <div className="flex h-full flex-col">
       <div className="flex w-full shrink-0 flex-col">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-accent">
-              <Sparkles size={18} />
-              <span className="text-xs font-medium uppercase tracking-wide">
-                Precursor
-              </span>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-accent">
+                <Sparkles size={18} />
+                <span className="text-xs font-medium uppercase tracking-wide">
+                  Precursor
+                </span>
+              </div>
+              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                {firstName ? `Hey ${firstName}!` : "Hey there!"}
+              </h1>
+              <p className="text-sm text-muted">What would you like to start?</p>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              {firstName ? `Hey ${firstName}!` : "Hey there!"}
-            </h1>
-            <p className="text-sm text-muted">What would you like to start?</p>
+
+            {(onOpenSettings || onOpenArchive) && (
+              <div className="w-56 max-w-[45%] shrink-0 rounded-lg border border-border bg-surface/60 p-1">
+                <PersonaMenu
+                  menuPlacement="down"
+                  onOpenSettings={onOpenSettings ?? (() => {})}
+                  onOpenArchive={onOpenArchive ?? (() => {})}
+                />
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
