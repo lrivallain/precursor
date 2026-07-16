@@ -864,13 +864,16 @@ export default function App() {
   }, [liveEnabled, sidebarMode]);
 
   // Same guard for the kanban board: if the repo/issue settings that gate it get
-  // turned off (or a deep link lands while disabled), fall back to Topics.
+  // turned off (or a deep link lands while disabled), fall back to Topics. Wait
+  // for settings to load first — otherwise a deep link to /kanban is bounced to
+  // /topics before `kanbanEnabled` resolves from the initial null settings.
   useEffect(() => {
+    if (settings == null) return;
     if (!kanbanEnabled && sidebarMode === "kanban") {
       history.pushState(null, "", "/topics");
       setSidebarMode("topics");
     }
-  }, [kanbanEnabled, sidebarMode]);
+  }, [kanbanEnabled, sidebarMode, settings]);
 
   // Lazily load projects the first time the user enters kanban mode. Re-runs if
   // the configured repo changes (projects reset to null by that handler).
@@ -1771,6 +1774,7 @@ export default function App() {
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
+              kanbanEnabled={kanbanEnabled}
               onNavigate={changeMode}
               topicSurface={
                 <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
