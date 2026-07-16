@@ -61,6 +61,17 @@ body {
 /* Markdown rendering — re-establishes element styling stripped by Tailwind's
    preflight so react-markdown output renders fully (headings, lists, tables…).
    Theme-aware via CSS variables; used everywhere through the <Markdown> comp. */
+/* Keep long, unbreakable strings (URLs, tokens) inside the container instead of
+   overflowing horizontally — important in width-constrained surfaces like the
+   kanban issue preview. Code blocks keep their own overflow-x scroll below. */
+.markdown {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.markdown a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .markdown :where(p, ul, ol, pre, blockquote, table, h1, h2, h3, h4, h5, h6, hr):not(:last-child) {
   margin-bottom: 0.6rem;
 }
