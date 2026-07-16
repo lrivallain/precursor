@@ -555,7 +555,7 @@ export function LiveView({
     onUpdated(updated);
   }
 
-  async function generateSummary(): Promise<void> {
+  async function generateSummary(base: MeetingSession = session): Promise<void> {
     focusTab("summary");
     if (genRef.current) return;
     genRef.current = true;
@@ -565,8 +565,10 @@ export function LiveView({
       const res = await api.meetings.summarize(session.id);
       setSummaryText(res.summary);
       // The backend persisted the recap; mirror it onto the session so a later
-      // open (or the "Summary ●" dot) stays in sync without regenerating.
-      onUpdated({ ...session, summary: res.summary || null });
+      // open (or the "Summary ●" dot) stays in sync without regenerating. Merge
+      // onto `base` (the caller's freshest session) rather than the closure's
+      // `session` prop, which is stale when auto-drafting right after end.
+      onUpdated({ ...base, summary: res.summary || null });
     } catch (e) {
       setSummaryError(
         e instanceof Error ? e.message : "Couldn't generate a summary — record more first.",
@@ -599,7 +601,7 @@ export function LiveView({
         !session.summary &&
         !summaryText.trim()
       )
-        void generateSummary();
+        void generateSummary(updated);
     } finally {
       setBusy(false);
     }
