@@ -270,6 +270,18 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
           fallbackRepo={fallbackRepo}
           onOpenTopic={onOpenTopic}
           onClose={() => setPreviewCard(null)}
+          onLabelsChanged={(itemId, labels) => {
+            setBoard((b) =>
+              b
+                ? {
+                    ...b,
+                    items: b.items.map((it) =>
+                      it.id === itemId ? { ...it, labels } : it,
+                    ),
+                  }
+                : b,
+            );
+          }}
         />
       )}
     </div>

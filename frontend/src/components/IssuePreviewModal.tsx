@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   ExternalLink,
   GitPullRequest,
   MessagesSquare,
+  Send,
+  Tag,
   X,
 } from "lucide-react";
-import type { IssueDetail, ProjectCard } from "../lib/types";
+import type { IssueDetail, IssueLabel, ProjectCard } from "../lib/types";
 import { api, apiErrorMessage } from "../lib/api";
 import { Modal } from "./Modal";
 import { Markdown } from "./Markdown";
@@ -19,21 +22,32 @@ interface IssuePreviewModalProps {
   onClose: () => void;
   /** Open the linked Precursor topic (when the issue has one). */
   onOpenTopic?: (topicId: number) => void;
+  /** Notify the board that this issue's labels changed (to refresh cards). */
+  onLabelsChanged?: (itemId: string, labels: IssueLabel[]) => void;
 }
 
 /**
- * Read-only preview of a kanban card's issue/PR: title, state, labels, body,
- * and comments, fetched on open. Surfaces "Open on GitHub" and, when a
- * Precursor topic is linked to the issue, a shortcut to open that topic.
+ * Preview of a kanban card's issue/PR: title, state, labels, body, and
+ * comments. Supports editing labels (from the repo's label set) and posting a
+ * new comment. Also surfaces "Open on GitHub" and, when a Precursor topic is
+ * linked to the issue, a shortcut to open that topic.
  */
 export function IssuePreviewModal({
   card,
   fallbackRepo,
   onClose,
   onOpenTopic,
+  onLabelsChanged,
 }: IssuePreviewModalProps) {
+  const repo = card.repo ?? fallbackRepo;
   const [detail, setDetail] = useState<IssueDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [commentText, setCommentText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+
+  const [labelEditorOpen, setLabelEditorOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,7 +58,7 @@ export function IssuePreviewModal({
       return;
     }
     api.github
-      .getIssue(card.number, card.repo ?? fallbackRepo)
+      .getIssue(card.number, repo)
       .then((d) => {
         if (!cancelled) setDetail(d);
       })
@@ -54,10 +68,32 @@ export function IssuePreviewModal({
     return () => {
       cancelled = true;
     };
-  }, [card.number, card.repo, fallbackRepo]);
+  }, [card.number, repo]);
 
   const isPr = card.type === "pull_request";
   const stateForBadge = (detail?.state ?? card.state ?? "").toLowerCase();
+  const labels = detail?.labels ?? card.labels;
+
+  async function submitComment(): Promise<void> {
+    const body = commentText.trim();
+    if (!body || card.number == null) return;
+    setPosting(true);
+    setCommentError(null);
+    try {
+      const comment = await api.github.addIssueComment(card.number, body, repo);
+      setDetail((d) => (d ? { ...d, comments: [...d.comments, comment] } : d));
+      setCommentText("");
+    } catch (e) {
+      setCommentError(apiErrorMessage(e, "Failed to post comment"));
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  function applyLabels(next: IssueLabel[]): void {
+    setDetail((d) => (d ? { ...d, labels: next } : d));
+    onLabelsChanged?.(card.id, next);
+  }
 
   return (
     <Modal
@@ -76,7 +112,7 @@ export function IssuePreviewModal({
               </span>
             )}
             {stateForBadge && <IssueStateBadge state={stateForBadge} />}
-            <span className="truncate">{card.repo ?? fallbackRepo}</span>
+            <span className="truncate">{repo}</span>
           </div>
           <h2 className="text-base font-semibold leading-snug">
             {detail?.title ?? card.title}
@@ -93,12 +129,34 @@ export function IssuePreviewModal({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        {(detail?.labels?.length ?? card.labels.length) > 0 && (
-          <div className="mb-3 flex flex-wrap gap-1">
-            {(detail?.labels ?? card.labels).map((label) => (
-              <IssueLabelChip key={label.name} label={label} />
-            ))}
-          </div>
+        {/* Labels + edit affordance */}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {labels.map((label) => (
+            <IssueLabelChip key={label.name} label={label} />
+          ))}
+          {card.number != null && (
+            <button
+              type="button"
+              onClick={() => setLabelEditorOpen((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:border-accent/50 hover:text-text"
+            >
+              <Tag size={11} />
+              {labels.length ? "Edit labels" : "Add labels"}
+            </button>
+          )}
+        </div>
+
+        {labelEditorOpen && card.number != null && (
+          <LabelEditor
+            repo={repo}
+            issueNumber={card.number}
+            current={labels}
+            onClose={() => setLabelEditorOpen(false)}
+            onSaved={(next) => {
+              applyLabels(next);
+              setLabelEditorOpen(false);
+            }}
+          />
         )}
 
         {error ? (
@@ -124,14 +182,46 @@ export function IssuePreviewModal({
                 </h3>
                 {detail.comments.map((c) => (
                   <div key={c.id} className="rounded-lg border border-border bg-surface/40 p-3">
-                    <div className="mb-1 text-xs font-medium text-muted">
-                      @{c.user}
-                    </div>
+                    <div className="mb-1 text-xs font-medium text-muted">@{c.user}</div>
                     <Markdown className="text-sm">{c.body}</Markdown>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* Comment composer */}
+            <div className="mt-5 border-t border-border pt-4">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Add a comment
+              </label>
+              <textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void submitComment();
+                  }
+                }}
+                rows={3}
+                placeholder="Leave a comment… (⌘/Ctrl+Enter to post)"
+                className="w-full resize-y rounded border border-border bg-surface px-2.5 py-2 text-sm outline-none focus:border-accent"
+              />
+              {commentError && (
+                <p className="mt-1 text-xs text-red-500">{commentError}</p>
+              )}
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void submitComment()}
+                  disabled={posting || !commentText.trim()}
+                  className="inline-flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send size={14} />
+                  {posting ? "Posting…" : "Comment"}
+                </button>
+              </div>
+            </div>
           </>
         )}
       </div>
@@ -168,5 +258,155 @@ export function IssuePreviewModal({
         )}
       </footer>
     </Modal>
+  );
+}
+
+interface LabelEditorProps {
+  repo: string;
+  issueNumber: number;
+  current: IssueLabel[];
+  onClose: () => void;
+  onSaved: (labels: IssueLabel[]) => void;
+}
+
+/**
+ * Inline multi-select of the repo's labels. Loads the repo label set on mount,
+ * seeds the selection from the issue's current labels, and PUTs the new set on
+ * save (GitHub replaces all labels).
+ */
+function LabelEditor({ repo, issueNumber, current, onClose, onSaved }: LabelEditorProps) {
+  const [all, setAll] = useState<IssueLabel[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(current.map((l) => l.name)),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api.github
+      .listLabels(repo)
+      .then((list) => {
+        if (!cancelled) setAll(list);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(apiErrorMessage(e, "Failed to load labels"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo]);
+
+  const filtered = useMemo(() => {
+    const list = all ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((l) => l.name.toLowerCase().includes(q));
+  }, [all, query]);
+
+  function toggle(name: string): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await api.github.setIssueLabels(issueNumber, [...selected], repo);
+      onSaved(next);
+    } catch (e) {
+      setError(apiErrorMessage(e, "Failed to save labels"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mb-3 rounded-lg border border-border bg-surface/40 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Labels
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded p-1 text-muted hover:bg-surface hover:text-text"
+          aria-label="Cancel"
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      {error && <p className="mb-2 text-xs text-red-500">{error}</p>}
+
+      {all === null ? (
+        <div className="py-3 text-center text-sm text-muted">Loading labels…</div>
+      ) : (
+        <>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter labels…"
+            className="mb-2 w-full rounded border border-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
+          />
+          <div className="max-h-44 space-y-0.5 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="py-2 text-center text-xs text-muted">No labels.</div>
+            ) : (
+              filtered.map((label) => {
+                const on = selected.has(label.name);
+                return (
+                  <button
+                    key={label.name}
+                    type="button"
+                    onClick={() => toggle(label.name)}
+                    className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm ${
+                      on ? "bg-accent/10" : "hover:bg-surface"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                        on ? "border-accent bg-accent text-white" : "border-border"
+                      }`}
+                    >
+                      {on && <Check size={11} />}
+                    </span>
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full"
+                      style={{ backgroundColor: `#${label.color}` }}
+                    />
+                    <span className="truncate">{label.name}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-border px-3 py-1.5 text-sm hover:bg-surface"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving}
+              className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save labels"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

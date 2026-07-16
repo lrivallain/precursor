@@ -30,6 +30,16 @@ class IssueCreatePayload(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
+class IssueCommentPayload(BaseModel):
+    repo: str | None = None  # falls back to global setting
+    body: str = Field(min_length=1)
+
+
+class IssueLabelsPayload(BaseModel):
+    repo: str | None = None  # falls back to global setting
+    labels: list[str] = Field(default_factory=list)
+
+
 async def _resolve_repo(repo: str | None, session: AsyncSession) -> str:
     if not await resolve_issue_associations_enabled(session):
         raise HTTPException(
@@ -164,3 +174,37 @@ async def list_labels(
         return await client.list_labels(target)
     finally:
         await client.aclose()
+
+
+@router.post("/issues/{number}/comments", response_model=IssueComment, status_code=201)
+async def add_issue_comment(
+    number: int,
+    payload: IssueCommentPayload,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> IssueComment:
+    target = await _resolve_repo(payload.repo, session)
+    token = await _require_token(session)
+    client = GitHubClient(token=token)
+    try:
+        comment = await client.add_issue_comment(target, number, payload.body)
+    finally:
+        await client.aclose()
+    return IssueComment.model_validate(comment)
+
+
+@router.put("/issues/{number}/labels", response_model=list[ProjectLabel])
+async def set_issue_labels(
+    number: int,
+    payload: IssueLabelsPayload,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> list[ProjectLabel]:
+    target = await _resolve_repo(payload.repo, session)
+    token = await _require_token(session)
+    client = GitHubClient(token=token)
+    try:
+        labels = await client.set_issue_labels(target, number, payload.labels)
+    finally:
+        await client.aclose()
+    return [ProjectLabel.model_validate(label) for label in labels]

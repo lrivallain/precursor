@@ -25,6 +25,8 @@ import type {
   GitActionResult,
   GitHubIssue,
   GitStatus,
+  IssueComment,
+  IssueLabel,
   IssuePushResult,
   IssueSummary,
   ItemStatusResult,
@@ -54,8 +56,7 @@ import type {
   ProjectBoard,
   ProjectSummary,
   IssueDetail,
-  Reminder,
-  ReminderContainer,
+  Reminder,  ReminderContainer,
   ReminderCreate,
   ReminderItem,
   Role,
@@ -431,6 +432,20 @@ export const api = {
     getIssue: (number: number, repo?: string) => {
       const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
       return request<IssueDetail>(`/api/github/issues/${number}${qs}`);
+    },
+    addIssueComment: (number: number, body: string, repo?: string) =>
+      request<IssueComment>(`/api/github/issues/${number}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body, repo }),
+      }),
+    setIssueLabels: (number: number, labels: string[], repo?: string) =>
+      request<IssueLabel[]>(`/api/github/issues/${number}/labels`, {
+        method: "PUT",
+        body: JSON.stringify({ labels, repo }),
+      }),
+    listLabels: (repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<IssueLabel[]>(`/api/github/labels${qs}`);
     },
     setProjectItemStatus: (
       projectId: string,

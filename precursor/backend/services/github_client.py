@@ -221,8 +221,24 @@ class GitHubClient:
         return {
             "id": c["id"],
             "url": c.get("html_url"),
+            "user": (c.get("user") or {}).get("login") or "",
             "body": c.get("body") or "",
+            "updated_at": c.get("updated_at") or c.get("created_at") or "",
         }
+
+    async def set_issue_labels(
+        self, repo: str, number: int, labels: list[str]
+    ) -> list[dict[str, Any]]:
+        """Replace an issue's labels with ``labels`` and return the new set."""
+        owner, name = self._split(repo)
+        r = await self._client.put(
+            f"/repos/{owner}/{name}/issues/{number}/labels",
+            json={"labels": labels},
+        )
+        r.raise_for_status()
+        return [
+            {"name": label["name"], "color": label.get("color") or "888888"} for label in r.json()
+        ]
 
     async def upload_issue_comment_attachment(
         self,

@@ -36,6 +36,23 @@ class _FakeClient:
     async def list_issue_comments(self, repo: str, number: int) -> list[dict[str, Any]]:
         return [{"id": 1, "user": "octocat", "body": "first", "updated_at": "2024-01-02T00:00:00Z"}]
 
+    async def add_issue_comment(self, repo: str, number: int, body: str) -> dict[str, Any]:
+        return {
+            "id": 99,
+            "url": f"https://github.com/{repo}/issues/{number}#c99",
+            "user": "octocat",
+            "body": body,
+            "updated_at": "2024-01-03T00:00:00Z",
+        }
+
+    async def set_issue_labels(
+        self, repo: str, number: int, labels: list[str]
+    ) -> list[dict[str, Any]]:
+        return [{"name": name, "color": "ededed"} for name in labels]
+
+    async def list_labels(self, repo: str) -> list[dict[str, Any]]:
+        return [{"name": "bug", "color": "d73a4a"}, {"name": "docs", "color": "0075ca"}]
+
 
 @pytest.fixture()
 def _mock_github(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,3 +106,35 @@ def test_issue_detail_resolves_linked_topic(_mock_github: None) -> None:
         # A different repo must not match the topic.
         r2 = client.get("/api/github/issues/12?repo=other/repo")
         assert r2.json()["linked_topic_id"] is None
+
+
+def test_add_comment(_mock_github: None) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/github/issues/12/comments",
+            json={"repo": "acme/app", "body": "Looks good"},
+        )
+        assert r.status_code == 201
+        c = r.json()
+        assert c["body"] == "Looks good"
+        assert c["user"] == "octocat"
+
+
+def test_set_labels(_mock_github: None) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.put(
+            "/api/github/issues/12/labels",
+            json={"repo": "acme/app", "labels": ["bug", "docs"]},
+        )
+        assert r.status_code == 200
+        names = [label["name"] for label in r.json()]
+        assert names == ["bug", "docs"]
+
+
+def test_add_comment_requires_body(_mock_github: None) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.post("/api/github/issues/12/comments", json={"repo": "acme/app", "body": ""})
+        assert r.status_code == 422
