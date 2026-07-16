@@ -310,9 +310,10 @@ export function CommandPalette({
     } else if (e.key === "Enter") {
       e.preventDefault();
       rowRuns[active]?.();
-    } else if (/^[1-9]$/.test(e.key) && !query) {
-      // Digit shortcuts jump straight to the Nth section when not mid-search.
-      const idx = Number(e.key) - 1;
+    } else if (/^[0-9]$/.test(e.key) && !query) {
+      // Digit shortcuts jump straight to the Nth section (0-indexed) when not
+      // mid-search.
+      const idx = Number(e.key);
       if (sections[idx]) {
         e.preventDefault();
         rowRuns[idx]?.();
@@ -452,9 +453,9 @@ export function CommandPalette({
                       <span className="truncate text-sm font-medium">{it.label}</span>
                       <span className="truncate text-[11px] text-muted">{it.hint}</span>
                     </span>
-                    {!query && i < 9 && (
+                    {!query && i < 10 && (
                       <kbd className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                        {i + 1}
+                        {i}
                       </kbd>
                     )}
                   </button>
@@ -488,7 +489,7 @@ export function CommandPalette({
       <div className="flex items-center gap-3 border-t border-border px-3 py-1.5 text-[10px] text-muted shrink-0">
         <span>↑↓ Navigate</span>
         <span>↵ Open</span>
-        {!hasQuery && <span>1–9 Jump</span>}
+        {!hasQuery && <span>0–9 Jump</span>}
         <span className="ml-auto">Esc Close</span>
       </div>
     </Modal>
