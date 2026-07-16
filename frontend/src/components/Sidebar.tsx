@@ -21,6 +21,7 @@ import {
   SquareKanban,
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
+import { SECTION_COLORS } from "../lib/sections";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
@@ -168,7 +169,7 @@ export function Sidebar({
           </button>
         )}
         <button
-          className={`relative p-2 rounded ${!atHome && mode === "topics" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${!atHome && mode === "topics" ? SECTION_COLORS.topics.activeTab : "hover:bg-surface"}`}
           aria-label="Topics"
           data-tooltip="Topics"
           onClick={() => onModeChange("topics")}
@@ -177,7 +178,7 @@ export function Sidebar({
           <ModeUnreadDot count={unreadByMode?.topics ?? 0} />
         </button>
         <button
-          className={`relative p-2 rounded ${!atHome && mode === "chats" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${!atHome && mode === "chats" ? SECTION_COLORS.chats.activeTab : "hover:bg-surface"}`}
           aria-label="Chats"
           data-tooltip="Chats"
           onClick={() => onModeChange("chats")}
@@ -187,7 +188,7 @@ export function Sidebar({
         </button>
         {liveEnabled && (
           <button
-            className={`relative p-2 rounded ${!atHome && mode === "live" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+            className={`relative p-2 rounded ${!atHome && mode === "live" ? SECTION_COLORS.live.activeTab : "hover:bg-surface"}`}
             aria-label="Live"
             data-tooltip="Live"
             onClick={() => onModeChange("live")}
@@ -196,7 +197,7 @@ export function Sidebar({
           </button>
         )}
         <button
-          className={`p-2 rounded ${!atHome && mode === "workspaces" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`p-2 rounded ${!atHome && mode === "workspaces" ? SECTION_COLORS.workspaces.activeTab : "hover:bg-surface"}`}
           aria-label="Workspaces"
           data-tooltip="Workspaces"
           onClick={() => onModeChange("workspaces")}
@@ -204,7 +205,7 @@ export function Sidebar({
           <FolderGit2 size={18} />
         </button>
         <button
-          className={`relative p-2 rounded ${!atHome && mode === "agents" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`relative p-2 rounded ${!atHome && mode === "agents" ? SECTION_COLORS.agents.activeTab : "hover:bg-surface"}`}
           aria-label="Agents"
           data-tooltip="Agents"
           onClick={() => onModeChange("agents")}
@@ -214,7 +215,7 @@ export function Sidebar({
         </button>
         {kanbanEnabled && (
           <button
-            className={`p-2 rounded ${!atHome && mode === "kanban" ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+            className={`p-2 rounded ${!atHome && mode === "kanban" ? SECTION_COLORS.kanban.activeTab : "hover:bg-surface"}`}
             aria-label="Kanban"
             data-tooltip="Kanban"
             onClick={() => onModeChange("kanban")}
@@ -445,7 +446,7 @@ function TopicItem({
     <li>
       <div
         className={`group flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer text-sm ${
-          isActive ? "bg-surface text-text" : "hover:bg-surface text-text/90"
+          isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
         style={{ paddingLeft: 6 + depth * 12 }}
         onClick={() => onSelect(node.id)}
@@ -802,7 +803,7 @@ function ModeSwitcher({
               key={m.mode}
               ref={isActive ? activeRef : undefined}
               className={`flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
-                isActive ? "bg-accent/15 text-accent" : "hover:bg-surface text-muted"
+                isActive ? SECTION_COLORS[m.mode].activeTab : "hover:bg-surface text-muted"
               }`}
               onClick={() => onModeChange(m.mode)}
             >
@@ -882,7 +883,7 @@ function PinnedItem({
     <li>
       <div
         className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm ${
-          isActive ? "bg-surface text-text" : "hover:bg-surface text-text/90"
+          isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
         onClick={() => onSelect(node.id)}
       >

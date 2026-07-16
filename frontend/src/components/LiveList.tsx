@@ -116,7 +116,7 @@ export function LiveList({
                       sel.active && selected
                         ? "bg-accent/15"
                         : isActive && !sel.active
-                          ? "bg-accent/15 text-accent"
+                          ? "section-selected"
                           : "hover:bg-surface"
                     }`}
                   >

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, Settings as SettingsIcon, User } from "lucide-react";
+import { Archive, Info, Settings as SettingsIcon, User } from "lucide-react";
 import { api } from "../lib/api";
 import type { Me } from "../lib/types";
+import { AboutModal } from "./AboutModal";
 
 interface Props {
   collapsed?: boolean;
@@ -12,6 +13,7 @@ interface Props {
 export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -81,6 +83,11 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
     onOpenArchive();
   }
 
+  function chooseAbout() {
+    setMenuOpen(false);
+    setAboutOpen(true);
+  }
+
   if (collapsed) {
     return (
       <div ref={rootRef} className="relative flex flex-col items-center gap-1">
@@ -109,8 +116,13 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
           <SettingsIcon size={16} />
         </button>
         {menuOpen && (
-          <PersonaMenuPopover anchor="collapsed" onArchive={chooseArchive} />
+          <PersonaMenuPopover
+            anchor="collapsed"
+            onArchive={chooseArchive}
+            onAbout={chooseAbout}
+          />
         )}
+        {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
       </div>
     );
   }
@@ -148,8 +160,13 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         <SettingsIcon size={16} />
       </button>
       {menuOpen && (
-        <PersonaMenuPopover anchor="expanded" onArchive={chooseArchive} />
+        <PersonaMenuPopover
+          anchor="expanded"
+          onArchive={chooseArchive}
+          onAbout={chooseAbout}
+        />
       )}
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </div>
   );
 }
@@ -157,9 +174,10 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
 interface PopoverProps {
   anchor: "expanded" | "collapsed";
   onArchive: () => void;
+  onAbout: () => void;
 }
 
-function PersonaMenuPopover({ anchor, onArchive }: PopoverProps) {
+function PersonaMenuPopover({ anchor, onArchive, onAbout }: PopoverProps) {
   // Expanded sidebar: popover floats above the persona row, anchored to its
   // left edge. Collapsed sidebar: it sits to the right of the rail so it does
   // not get clipped by the narrow column.
@@ -181,6 +199,15 @@ function PersonaMenuPopover({ anchor, onArchive }: PopoverProps) {
       >
         <Archive size={14} className="text-muted" />
         <span>Archives</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={onAbout}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface"
+      >
+        <Info size={14} className="text-muted" />
+        <span>About</span>
       </button>
     </div>
   );

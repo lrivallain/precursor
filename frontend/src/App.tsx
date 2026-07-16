@@ -1531,7 +1531,11 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full w-full bg-bg text-text">
+    <div
+      className={`flex h-full w-full bg-bg text-text${
+        atHome ? "" : ` section-${sidebarMode}`
+      }`}
+    >
       <TooltipProvider />
       <DetachedDraftHost />
       {!atHome && (
@@ -1837,6 +1841,8 @@ export default function App() {
               liveEnabled={liveEnabled}
               kanbanEnabled={kanbanEnabled}
               onNavigate={changeMode}
+              onOpenSettings={() => setGlobalSettingsOpen(true)}
+              onOpenArchive={() => setArchiveOpen(true)}
               topicSurface={
                 <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
               }
