@@ -15,23 +15,10 @@ import {
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
 import type { Me } from "../lib/types";
+import { SECTION_COLORS } from "../lib/sections";
 import { PersonaMenu } from "./PersonaMenu";
 
 type HomeKind = "topics" | "chats" | "live" | "agents";
-
-/** Per-section color scheme. Full class strings so Tailwind keeps them. */
-interface Palette {
-  /** Icon badge background + text. */
-  icon: string;
-  /** Card border + tint when its start surface is open. */
-  active: string;
-  /** Card hover accent (border + tint). */
-  hover: string;
-  /** Filled primary action button. */
-  primary: string;
-  /** Accent text (arrows, hover chrome). */
-  accent: string;
-}
 
 interface Section {
   /** Sidebar mode to jump to when visiting the section. */
@@ -45,7 +32,6 @@ interface Section {
   /** Label for the "visit section" action. */
   openLabel: string;
   icon: ReactNode;
-  color: Palette;
 }
 
 interface Props {
@@ -113,14 +99,6 @@ export function HomePage({
       newLabel: "New topic",
       openLabel: "Browse topics",
       icon: <MessagesSquare size={20} />,
-      color: {
-        icon: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-        active: "border-sky-500/60 bg-sky-500/10",
-        hover: "hover:border-sky-500/50 hover:bg-sky-500/5",
-        primary:
-          "bg-sky-500/15 text-sky-700 hover:bg-sky-500/25 dark:text-sky-300 border border-sky-500/30",
-        accent: "text-sky-600 dark:text-sky-400",
-      },
     },
     {
       mode: "chats",
@@ -131,14 +109,6 @@ export function HomePage({
       newLabel: "New chat",
       openLabel: "Browse chats",
       icon: <MessageSquarePlus size={20} />,
-      color: {
-        icon: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-        active: "border-emerald-500/60 bg-emerald-500/10",
-        hover: "hover:border-emerald-500/50 hover:bg-emerald-500/5",
-        primary:
-          "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300 border border-emerald-500/30",
-        accent: "text-emerald-600 dark:text-emerald-400",
-      },
     },
     ...(liveEnabled
       ? [
@@ -151,14 +121,6 @@ export function HomePage({
             newLabel: "New live session",
             openLabel: "Browse sessions",
             icon: <Radio size={20} />,
-            color: {
-              icon: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-              active: "border-rose-500/60 bg-rose-500/10",
-              hover: "hover:border-rose-500/50 hover:bg-rose-500/5",
-              primary:
-                "bg-rose-500/15 text-rose-700 hover:bg-rose-500/25 dark:text-rose-300 border border-rose-500/30",
-              accent: "text-rose-600 dark:text-rose-400",
-            },
           } satisfies Section,
         ]
       : []),
@@ -171,14 +133,6 @@ export function HomePage({
       newLabel: "New agent",
       openLabel: "Browse agents",
       icon: <Bot size={20} />,
-      color: {
-        icon: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-        active: "border-violet-500/60 bg-violet-500/10",
-        hover: "hover:border-violet-500/50 hover:bg-violet-500/5",
-        primary:
-          "bg-violet-500/15 text-violet-700 hover:bg-violet-500/25 dark:text-violet-300 border border-violet-500/30",
-        accent: "text-violet-600 dark:text-violet-400",
-      },
     },
     {
       mode: "workspaces",
@@ -187,14 +141,6 @@ export function HomePage({
         "Browse the workspaces and files backing your sessions.",
       openLabel: "Browse files",
       icon: <FolderGit2 size={20} />,
-      color: {
-        icon: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-        active: "border-amber-500/60 bg-amber-500/10",
-        hover: "hover:border-amber-500/50 hover:bg-amber-500/5",
-        primary:
-          "bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:text-amber-300 border border-amber-500/30",
-        accent: "text-amber-600 dark:text-amber-400",
-      },
     },
     ...(kanbanEnabled
       ? [
@@ -205,14 +151,6 @@ export function HomePage({
               "Track linked issues on a board across your projects.",
             openLabel: "Open board",
             icon: <SquareKanban size={20} />,
-            color: {
-              icon: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
-              active: "border-cyan-500/60 bg-cyan-500/10",
-              hover: "hover:border-cyan-500/50 hover:bg-cyan-500/5",
-              primary:
-                "bg-cyan-500/15 text-cyan-700 hover:bg-cyan-500/25 dark:text-cyan-300 border border-cyan-500/30",
-              accent: "text-cyan-600 dark:text-cyan-400",
-            },
           } satisfies Section,
         ]
       : []),
@@ -246,18 +184,19 @@ export function HomePage({
             {sections.map((section) => {
               const active =
                 !!section.createKind && selected === section.createKind;
+              const color = SECTION_COLORS[section.mode];
               return (
                 <div
                   key={section.mode}
                   className={`flex flex-col gap-4 rounded-xl border p-5 transition-colors ${
                     active
-                      ? section.color.active
-                      : `border-border bg-surface/60 ${section.color.hover}`
+                      ? color.activeCard
+                      : `border-border bg-surface/60 ${color.hoverCard}`
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span
-                      className={`flex h-10 w-10 items-center justify-center rounded-lg ${section.color.icon}`}
+                      className={`flex h-10 w-10 items-center justify-center rounded-lg ${color.icon}`}
                     >
                       {section.icon}
                     </span>
@@ -280,7 +219,7 @@ export function HomePage({
                           )
                         }
                         aria-pressed={active}
-                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${section.color.primary}`}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${color.primaryBtn}`}
                       >
                         {active ? <X size={15} /> : <Plus size={15} />}
                         <span className="whitespace-nowrap">
@@ -301,7 +240,7 @@ export function HomePage({
                         </span>
                         <ArrowRight
                           size={15}
-                          className={`transition-transform group-hover:translate-x-0.5 ${section.color.accent}`}
+                          className={`transition-transform group-hover:translate-x-0.5 ${color.accentText}`}
                         />
                       </button>
                     )}
