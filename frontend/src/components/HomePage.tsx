@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
@@ -6,11 +6,9 @@ import {
   FolderGit2,
   MessageSquarePlus,
   MessagesSquare,
-  Plus,
   Radio,
   Sparkles,
   SquareKanban,
-  X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
@@ -52,11 +50,10 @@ interface Props {
 }
 
 /**
- * Landing surface shown at `/`. A greeting and a grid of section cards, each of
- * which can both start a new item (when suitable) and jump into the related
- * section — no separate nav row. Every section carries its own color scheme to
- * make the grid easy to scan. Starting a new item reveals that section's start
- * surface right below on the same page; picking it again hides the surface.
+ * Landing surface shown at `/`. A greeting and a grid of section cards. A single
+ * click reveals that section's start surface right below (or, for sections with
+ * no wizard, jumps straight into the section); a double click opens the section.
+ * Every section carries its own color scheme to make the grid easy to scan.
  */
 export function HomePage({
   topicSurface,
@@ -71,6 +68,17 @@ export function HomePage({
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<HomeKind | null>(null);
+  // Distinguish a single click (show wizard / open) from a double click (open
+  // section): a single click's action is deferred briefly and cancelled when a
+  // double click lands, so the two gestures don't both fire.
+  const clickTimer = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (clickTimer.current) window.clearTimeout(clickTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +96,29 @@ export function HomePage({
   }, []);
 
   const firstName = (me?.github?.name || me?.github?.login || "").split(" ")[0];
+
+  // A single click reveals the section's wizard (or opens the section when it
+  // has none); a double click always opens the section.
+  function openSection(section: Section) {
+    if (clickTimer.current) {
+      window.clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    }
+    onNavigate?.(section.mode);
+  }
+
+  function activateSection(section: Section) {
+    if (clickTimer.current) window.clearTimeout(clickTimer.current);
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      if (section.createKind) {
+        const kind = section.createKind;
+        setSelected((cur) => (cur === kind ? null : kind));
+      } else {
+        onNavigate?.(section.mode);
+      }
+    }, 200);
+  }
 
   const sections: Section[] = [
     {
@@ -186,9 +217,18 @@ export function HomePage({
                 !!section.createKind && selected === section.createKind;
               const color = SECTION_COLORS[section.mode];
               return (
-                <div
+                <button
                   key={section.mode}
-                  className={`flex flex-col gap-4 rounded-xl border p-5 transition-colors ${
+                  type="button"
+                  onClick={() => activateSection(section)}
+                  onDoubleClick={() => openSection(section)}
+                  aria-pressed={active}
+                  title={
+                    section.createKind
+                      ? `${section.newLabel} — double-click to ${section.openLabel.toLowerCase()}`
+                      : section.openLabel
+                  }
+                  className={`flex cursor-pointer flex-col gap-4 rounded-xl border p-5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                     active
                       ? color.activeCard
                       : `border-border bg-surface/60 ${color.hoverCard}`
@@ -207,45 +247,24 @@ export function HomePage({
                     {section.description}
                   </p>
 
-                  <div className="flex items-center gap-2">
-                    {section.createKind && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelected((cur) =>
-                            cur === section.createKind
-                              ? null
-                              : section.createKind ?? null,
-                          )
-                        }
-                        aria-pressed={active}
-                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${color.primaryBtn}`}
-                      >
-                        {active ? <X size={15} /> : <Plus size={15} />}
-                        <span className="whitespace-nowrap">
-                          {active ? "Close" : section.newLabel}
-                        </span>
-                      </button>
-                    )}
-                    {onNavigate && (
-                      <button
-                        type="button"
-                        onClick={() => onNavigate(section.mode)}
-                        className={`group flex items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-surface hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                          section.createKind ? "" : "flex-1"
-                        }`}
-                      >
-                        <span className="whitespace-nowrap">
-                          {section.createKind ? "Open" : section.openLabel}
-                        </span>
-                        <ArrowRight
-                          size={15}
-                          className={`transition-transform group-hover:translate-x-0.5 ${color.accentText}`}
-                        />
-                      </button>
-                    )}
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+                    <span className="whitespace-nowrap">
+                      {section.createKind
+                        ? active
+                          ? "Click to hide form"
+                          : "Click to start"
+                        : "Click to open"}
+                    </span>
+                    <span
+                      className={`flex items-center gap-1 whitespace-nowrap ${color.accentText}`}
+                    >
+                      {section.createKind
+                        ? "Double-click to open"
+                        : section.openLabel}
+                      <ArrowRight size={13} />
+                    </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
