@@ -8,6 +8,8 @@ export interface ModalProps {
   children: ReactNode;
   /** Class list for the centered panel (width, background, border, padding). */
   panelClassName?: string;
+  /** Inline style for the centered panel (e.g. explicit resizable width/height). */
+  panelStyle?: React.CSSProperties;
   /** Backdrop tint utility. Defaults to a translucent black scrim. */
   backdropClassName?: string;
   /** Stacking tier from the shared Z_INDEX scale. Defaults to MODAL. */
@@ -33,6 +35,7 @@ export function Modal({
   onClose,
   children,
   panelClassName,
+  panelStyle,
   backdropClassName = "bg-black/40",
   zIndex = Z_INDEX.MODAL,
   padded = false,
@@ -69,6 +72,7 @@ export function Modal({
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
         className={panelClassName}
+        style={panelStyle}
       >
         {children}
       </div>

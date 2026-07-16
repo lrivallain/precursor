@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { IssueDetail, IssueLabel, ProjectCard } from "../lib/types";
 import { api, apiErrorMessage } from "../lib/api";
+import { useResizableBox } from "../lib/useResizableBox";
 import { Modal } from "./Modal";
 import { Markdown } from "./Markdown";
 import { IssueLabelChip, IssueStateBadge } from "./IssueTags";
@@ -48,6 +49,16 @@ export function IssuePreviewModal({
   const [commentError, setCommentError] = useState<string | null>(null);
 
   const [labelEditorOpen, setLabelEditorOpen] = useState(false);
+
+  const { size, onResizeStart } = useResizableBox({
+    storageKey: "precursor:issuePreview:size",
+    defaultWidth: 672, // matches the previous max-w-2xl
+    defaultHeight: Math.round(
+      (typeof window !== "undefined" ? window.innerHeight : 800) * 0.85,
+    ),
+    minWidth: 380,
+    minHeight: 320,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -100,7 +111,8 @@ export function IssuePreviewModal({
       onClose={onClose}
       closeOnEscape
       padded
-      panelClassName="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-xl"
+      panelClassName="relative flex max-h-full max-w-full flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-xl"
+      panelStyle={{ width: size.width, height: size.height }}
     >
       <header className="flex items-start gap-2 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
@@ -274,6 +286,33 @@ export function IssuePreviewModal({
           </a>
         )}
       </footer>
+
+      {/* Bottom-right corner grip to resize the dialog (width + height). */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        onMouseDown={onResizeStart}
+        title="Drag to resize"
+        className="group absolute bottom-0 right-0 z-10 flex h-4 w-4 cursor-nwse-resize items-end justify-end p-0.5"
+      >
+        <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-muted group-hover:text-accent">
+          <path
+            d="M9 1v8H1"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            opacity="0.5"
+          />
+          <path
+            d="M9 5v4H5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
     </Modal>
   );
 }
