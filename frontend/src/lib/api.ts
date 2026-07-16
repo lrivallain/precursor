@@ -65,6 +65,7 @@ import type {
   Schedule,
   ScheduleUpdate,
   TopicScheduleCreate,
+  SearchResponse,
   Settings,
   SettingsUpdate,
   Skill,
@@ -856,6 +857,14 @@ export const api = {
     // Usage statistics
     getUsageStats: () => request<UsageStats>(`/api/stats/usage`),
     getSystemStats: () => request<SystemStats>(`/api/stats/system`),
+  },
+
+  search: {
+    // Cross-entity content search backing the ⌘K palette.
+    query: (q: string, limit = 40) =>
+      request<SearchResponse>(
+        `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      ),
   },
 };
 

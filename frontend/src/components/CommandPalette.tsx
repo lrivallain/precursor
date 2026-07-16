@@ -1,18 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import {
+  AlignLeft,
+  AudioLines,
   Bot,
   FolderGit2,
   Home,
+  Lightbulb,
   MessageSquare,
   MessagesSquare,
   Radio,
   Search,
+  Sparkles,
   SquareKanban,
+  StickyNote,
+  Type,
+  User,
 } from "lucide-react";
 import type { SidebarMode } from "./Sidebar";
 import { SECTION_COLORS } from "../lib/sections";
 import { Modal } from "./Modal";
+import { api } from "../lib/api";
+import type { SearchField, SearchResult, SearchSection } from "../lib/types";
 
 /**
  * A single jump target in the palette. `mode` drives the icon tint (via
@@ -37,25 +46,96 @@ interface Props {
   onNavigate: (mode: SidebarMode) => void;
   /** Jump to the home launcher. */
   onGoHome: () => void;
+  /** Open a specific content hit (topic/chat/agent/live session). */
+  onOpenResult: (result: SearchResult) => void;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
 }
 
+// Section → icon for a content hit's left badge (tinted via SECTION_COLORS).
+const SECTION_ICON: Record<SearchSection, ComponentType<{ size?: number; className?: string }>> = {
+  topics: MessagesSquare,
+  chats: MessageSquare,
+  live: Radio,
+  agents: Bot,
+};
+
+// Which field matched → badge label + icon. Title hits are grouped separately;
+// the icon still disambiguates the origin of a hit at a glance.
+const FIELD_META: Record<
+  SearchField,
+  { label: string; icon: ComponentType<{ size?: number; className?: string }> }
+> = {
+  title: { label: "Title", icon: Type },
+  description: { label: "Description", icon: AlignLeft },
+  message: { label: "Message", icon: MessageSquare },
+  prompt: { label: "Prompt", icon: User },
+  answer: { label: "Answer", icon: Sparkles },
+  transcript: { label: "Transcript", icon: AudioLines },
+  insight: { label: "Insight", icon: Lightbulb },
+  notes: { label: "Notes", icon: StickyNote },
+  summary: { label: "Summary", icon: Sparkles },
+};
+
+// Human labels for the section chip on a content hit.
+const SECTION_LABEL: Record<SearchSection, string> = {
+  topics: "Topic",
+  chats: "Chat",
+  live: "Live",
+  agents: "Agent",
+};
+
 /**
- * Keyboard-first section switcher. Opened with ⌘K / Ctrl+K, it lists every
- * section as a flat, filterable list so no section is ever hidden behind the
- * sidebar's horizontal overflow. Type to filter, ↑/↓ to move, Enter to jump,
- * a digit to pick that numbered row, Esc to dismiss.
+ * Split `text` around every (case-insensitive) occurrence of `query`, wrapping
+ * matches in a tinted <mark> so the palette shows *where* a hit matched. `cls`
+ * carries the section's colour so the highlight reads in that section's hue.
+ */
+function highlight(text: string, query: string, cls: string): ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const lq = q.toLowerCase();
+  const out: ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  for (;;) {
+    const idx = lower.indexOf(lq, i);
+    if (idx < 0) {
+      out.push(text.slice(i));
+      break;
+    }
+    if (idx > i) out.push(text.slice(i, idx));
+    out.push(
+      <mark key={key++} className={`rounded-[3px] px-0.5 ${cls}`}>
+        {text.slice(idx, idx + q.length)}
+      </mark>,
+    );
+    i = idx + q.length;
+  }
+  return out;
+}
+
+/**
+ * Keyboard-first launcher **and** content search. Opened with ⌘K / Ctrl+K.
+ *
+ * With an empty query it's the section switcher (type to filter, ↑/↓ to move,
+ * Enter to jump, a digit to pick that numbered row). Once you type, it also
+ * searches across topics, chats, agents (prompts + final answers) and live
+ * sessions: title/name hits are floated above discussion hits, and every hit is
+ * badged with its section colour/icon and the field that matched.
  */
 export function CommandPalette({
   onClose,
   onNavigate,
   onGoHome,
+  onOpenResult,
   liveEnabled = true,
   kanbanEnabled = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
@@ -142,19 +222,72 @@ export function CommandPalette({
     return all;
   }, [liveEnabled, kanbanEnabled, onNavigate, onGoHome, onClose]);
 
-  const filtered = useMemo(() => {
+  const sections = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return items;
     return items.filter(
-      (it) =>
-        it.label.toLowerCase().includes(q) || it.keywords.includes(q),
+      (it) => it.label.toLowerCase().includes(q) || it.keywords.includes(q),
     );
   }, [items, query]);
 
-  // Clamp the active row whenever the filtered set shrinks.
+  // Debounced content search. Empty query clears results; a stale in-flight
+  // request is ignored via the `cancelled` guard.
   useEffect(() => {
-    setActive((a) => Math.min(a, Math.max(0, filtered.length - 1)));
-  }, [filtered.length]);
+    const q = query.trim();
+    if (!q) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const resp = await api.search.query(q);
+        if (!cancelled) setResults(resp.results);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 180);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query]);
+
+  // Title hits float above discussion hits (the backend already sorts this way,
+  // but we split them into labelled groups to make the priority explicit).
+  const titleHits = useMemo(() => results.filter((r) => r.is_title), [results]);
+  const bodyHits = useMemo(() => results.filter((r) => !r.is_title), [results]);
+
+  // Flat activation order across every interactive row: sections, then title
+  // hits, then discussion hits. Keeps ↑/↓/Enter working over the whole list.
+  const rowRuns = useMemo<(() => void)[]>(() => {
+    const runs: (() => void)[] = sections.map((it) => it.run);
+    const open = (r: SearchResult) => () => {
+      onOpenResult(r);
+      onClose();
+    };
+    for (const r of titleHits) runs.push(open(r));
+    for (const r of bodyHits) runs.push(open(r));
+    return runs;
+  }, [sections, titleHits, bodyHits, onOpenResult, onClose]);
+
+  const sectionCount = sections.length;
+  const titleBase = sectionCount;
+  const bodyBase = sectionCount + titleHits.length;
+
+  // Clamp the active row whenever the combined set shrinks.
+  useEffect(() => {
+    setActive((a) => Math.min(a, Math.max(0, rowRuns.length - 1)));
+  }, [rowRuns.length]);
+
+  // Reset to the top on every new query so the first (best) hit is preselected.
+  useEffect(() => {
+    setActive(0);
+  }, [query]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -162,30 +295,92 @@ export function CommandPalette({
 
   // Keep the highlighted row scrolled into view for long, filtered lists.
   useEffect(() => {
-    const el = listRef.current?.children[active] as HTMLElement | undefined;
-    el?.scrollIntoView({ block: "nearest" });
+    const el = listRef.current?.querySelector(`[data-row="${active}"]`);
+    (el as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   function onKeyDown(e: React.KeyboardEvent): void {
+    const n = rowRuns.length;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((a) => (filtered.length ? (a + 1) % filtered.length : 0));
+      setActive((a) => (n ? (a + 1) % n : 0));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((a) =>
-        filtered.length ? (a - 1 + filtered.length) % filtered.length : 0,
-      );
+      setActive((a) => (n ? (a - 1 + n) % n : 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      filtered[active]?.run();
+      rowRuns[active]?.();
     } else if (/^[1-9]$/.test(e.key) && !query) {
-      // Digit shortcuts jump straight to the Nth row when not mid-search.
+      // Digit shortcuts jump straight to the Nth section when not mid-search.
       const idx = Number(e.key) - 1;
-      if (filtered[idx]) {
+      if (sections[idx]) {
         e.preventDefault();
-        filtered[idx].run();
+        rowRuns[idx]?.();
       }
     }
+  }
+
+  const hasQuery = query.trim().length > 0;
+  const nothingFound =
+    hasQuery && !searching && sections.length === 0 && results.length === 0;
+
+  function resultRow(r: SearchResult, index: number): ReactNode {
+    const isActive = index === active;
+    const tint = SECTION_COLORS[r.section].icon;
+    const accent = SECTION_COLORS[r.section].accentText;
+    const SectionIcon = SECTION_ICON[r.section];
+    const meta = FIELD_META[r.field];
+    const FieldIcon = meta.icon;
+    // Title hits show the (highlighted) title as the primary line; body hits
+    // show the title plainly with the highlighted snippet beneath it.
+    return (
+      <li key={`${r.section}-${r.entity_id}-${r.field}-${index}`}>
+        <button
+          type="button"
+          data-row={index}
+          onMouseMove={() => setActive(index)}
+          onClick={() => rowRuns[index]?.()}
+          className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
+            isActive ? "bg-surface" : "hover:bg-surface/60"
+          }`}
+        >
+          <span
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tint}`}
+          >
+            <SectionIcon size={16} />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium">
+                {r.is_title ? highlight(r.title, query, tint) : r.title}
+              </span>
+              <span
+                className={`shrink-0 text-[10px] font-medium uppercase tracking-wide ${accent}`}
+              >
+                {SECTION_LABEL[r.section]}
+              </span>
+            </span>
+            {!r.is_title && r.snippet && (
+              <span className="truncate text-[11px] text-muted">
+                {r.role && (
+                  <span className="mr-1 font-medium capitalize text-muted/80">
+                    {r.role}:
+                  </span>
+                )}
+                {highlight(r.snippet, query, tint)}
+              </span>
+            )}
+          </span>
+          <span
+            className={`ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${tint}`}
+            title={`Matched in ${meta.label.toLowerCase()}`}
+          >
+            <FieldIcon size={11} />
+            {meta.label}
+          </span>
+        </button>
+      </li>
+    );
   }
 
   return (
@@ -196,7 +391,7 @@ export function CommandPalette({
       padded
       backdropClassName="bg-black/40"
       panelClassName="bg-bg border border-border rounded-xl shadow-2xl flex flex-col w-full overflow-hidden"
-      panelStyle={{ maxWidth: 520, maxHeight: "70vh" }}
+      panelStyle={{ maxWidth: 560, maxHeight: "72vh" }}
       labelledBy="command-palette-input"
     >
       <div className="flex items-center gap-2 border-b border-border px-3 h-12 shrink-0">
@@ -207,56 +402,93 @@ export function CommandPalette({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Jump to a section…"
+          placeholder="Search topics, chats, agents, live… or jump to a section"
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
           autoComplete="off"
           spellCheck={false}
         />
+        {searching && (
+          <span className="shrink-0 text-[10px] text-muted">Searching…</span>
+        )}
       </div>
 
       <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
-        {filtered.length === 0 && (
+        {nothingFound && (
           <li className="px-3 py-6 text-center text-sm text-muted">
-            No matching sections.
+            No matches for “{query.trim()}”.
           </li>
         )}
-        {filtered.map((it, i) => {
-          const isActive = i === active;
-          const tint = it.mode ? SECTION_COLORS[it.mode].icon : "bg-accent/10 text-accent";
-          return (
-            <li key={it.id}>
-              <button
-                type="button"
-                onMouseMove={() => setActive(i)}
-                onClick={() => it.run()}
-                className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
-                  isActive ? "bg-surface" : "hover:bg-surface/60"
-                }`}
-              >
-                <span
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tint}`}
-                >
-                  <it.icon size={16} />
-                </span>
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-medium">{it.label}</span>
-                  <span className="truncate text-[11px] text-muted">{it.hint}</span>
-                </span>
-                {!query && i < 9 && (
-                  <kbd className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                    {i + 1}
-                  </kbd>
-                )}
-              </button>
+
+        {/* Sections — jump targets (the original palette behaviour). */}
+        {sections.length > 0 && (
+          <>
+            {hasQuery && (
+              <li className="px-2 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                Go to
+              </li>
+            )}
+            {sections.map((it, i) => {
+              const isActive = i === active;
+              const tint = it.mode
+                ? SECTION_COLORS[it.mode].icon
+                : "bg-accent/10 text-accent";
+              return (
+                <li key={it.id}>
+                  <button
+                    type="button"
+                    data-row={i}
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => rowRuns[i]?.()}
+                    className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
+                      isActive ? "bg-surface" : "hover:bg-surface/60"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tint}`}
+                    >
+                      <it.icon size={16} />
+                    </span>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm font-medium">{it.label}</span>
+                      <span className="truncate text-[11px] text-muted">{it.hint}</span>
+                    </span>
+                    {!query && i < 9 && (
+                      <kbd className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                        {i + 1}
+                      </kbd>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </>
+        )}
+
+        {/* Title matches — floated above discussion hits. */}
+        {titleHits.length > 0 && (
+          <>
+            <li className="px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              Titles
             </li>
-          );
-        })}
+            {titleHits.map((r, i) => resultRow(r, titleBase + i))}
+          </>
+        )}
+
+        {/* Discussion / body matches. */}
+        {bodyHits.length > 0 && (
+          <>
+            <li className="px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              In content
+            </li>
+            {bodyHits.map((r, i) => resultRow(r, bodyBase + i))}
+          </>
+        )}
       </ul>
 
       <div className="flex items-center gap-3 border-t border-border px-3 py-1.5 text-[10px] text-muted shrink-0">
         <span>↑↓ Navigate</span>
         <span>↵ Open</span>
-        <span>1–9 Jump</span>
+        {!hasQuery && <span>1–9 Jump</span>}
         <span className="ml-auto">Esc Close</span>
       </div>
     </Modal>

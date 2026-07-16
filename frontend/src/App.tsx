@@ -56,6 +56,7 @@ import type {
   MeetingSession,
   ProjectSummary,
   ReminderItem,
+  SearchResult,
   Topic,
   TopicNode,
   Workspace,
@@ -1260,6 +1261,36 @@ export default function App() {
     }
   }
 
+  // Open a content-search hit from the command palette. Mirrors the per-section
+  // deep-link resolution: leave home, switch mode, and reveal the entity by its
+  // stable id (topic/chat/live-session row id, or agent internal id).
+  async function openSearchResult(result: SearchResult): Promise<void> {
+    setAtHome(false);
+    try {
+      if (result.section === "topics") {
+        setSidebarMode("topics");
+        await handleSelect(result.entity_id);
+      } else if (result.section === "chats") {
+        setSidebarMode("chats");
+        await handleSelectChat(await api.chats.get(result.entity_id));
+      } else if (result.section === "agents") {
+        setSidebarMode("agents");
+        setActiveAgentId(result.entity_id);
+      } else if (result.section === "live") {
+        setSidebarMode("live");
+        // Ensure the session list is loaded so the URL-sync effect can resolve
+        // the slug once we select it.
+        if (!meetingSessionsRef.current?.some((s) => s.id === result.entity_id)) {
+          await loadMeetingSessions();
+        }
+        setActiveSessionId(result.entity_id);
+      }
+    } catch {
+      // Entity may have been deleted since the search — leave the user in the
+      // section they landed on rather than surfacing an error.
+    }
+  }
+
   async function handleArchiveChats(ids: number[]): Promise<void> {
     await Promise.all(ids.map((id) => api.chats.archive(id)));
     if (activeChat && ids.includes(activeChat.id)) setActiveChat(null);
@@ -1558,6 +1589,7 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
           onNavigate={changeMode}
           onGoHome={goHome}
+          onOpenResult={openSearchResult}
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
         />
