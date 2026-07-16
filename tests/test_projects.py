@@ -229,3 +229,56 @@ def test_graphql_raises_typed_scope_error() -> None:
     import asyncio
 
     asyncio.run(_run())
+
+
+def test_board_query_captures_full_item_shape() -> None:
+    """Regression: get_project_board's GraphQL query must be brace-balanced.
+
+    A missing closing brace made GitHub reject the query with a syntax error,
+    which the client surfaced as a misleading "project not found". Capture the
+    query the method sends and assert its braces balance so the shape can't
+    silently break again.
+    """
+    from precursor.backend.services.github_client import GitHubClient
+
+    client = GitHubClient(token="tok")
+    captured: dict[str, str] = {}
+
+    class _Resp:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {
+                "data": {
+                    "node": {
+                        "id": "PVT_1",
+                        "title": "Board",
+                        "url": None,
+                        "field": {"id": "F", "name": "Status", "options": []},
+                        "items": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        },
+                    }
+                }
+            }
+
+    async def _fake_post(_path: str, *, json: dict[str, Any], **_kw: Any) -> _Resp:
+        captured["query"] = json["query"]
+        return _Resp()
+
+    async def _run() -> None:
+        client._client.post = _fake_post  # type: ignore[method-assign]
+        try:
+            await client.get_project_board("PVT_1")
+        finally:
+            await client.aclose()
+
+    import asyncio
+
+    asyncio.run(_run())
+    q = captured["query"]
+    assert q.count("{") == q.count("}"), "unbalanced braces in board query"

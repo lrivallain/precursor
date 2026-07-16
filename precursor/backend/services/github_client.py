@@ -370,7 +370,7 @@ class GitHubClient:
             "... on PullRequest{number title url state "
             "labels(first:20){nodes{name color}}}"
             "... on DraftIssue{title}}"
-            "}}}}"
+            "}}}}}"
         )
         title = ""
         url: str | None = None
