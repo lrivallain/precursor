@@ -116,9 +116,13 @@ def test_discovered_skill_disabled_until_enabled() -> None:
 
 
 def test_enablement_lost_when_file_deleted() -> None:
+    # Keep a second skill so discovery stays non-empty after the deletion — the
+    # empty-directory guard only preserves rows when *no* files are found.
+    _write_external_skill("survivor", "Stays", "Alive.")
     path = _write_external_skill("ghost", "Spooky", "Boo.")
     app = create_app()
     with TestClient(app) as client:
+        client.patch("/api/skills/survivor", json={"enabled": True})
         client.patch("/api/skills/ghost", json={"enabled": True})
         # The enablement is now tracked by a DB row.
         # Delete the underlying file as another tool might.
@@ -140,6 +144,42 @@ def test_enablement_lost_when_file_deleted() -> None:
                 ).scalar_one()
 
         assert asyncio.run(_count()) == 0
+
+
+def test_empty_directory_preserves_enablement() -> None:
+    """A transiently empty/unreadable skills dir must not wipe enablement rows."""
+    path = _write_external_skill("lonely", "Only one", "Body.")
+    app = create_app()
+    with TestClient(app) as client:
+        client.patch("/api/skills/lonely", json={"enabled": True})
+        # Simulate the skills directory going away (e.g. not yet mounted): drop
+        # the only file so discovery turns up nothing.
+        path.unlink()
+        path.parent.rmdir()
+
+        # No file → the skill isn't listed, but its enablement row survives.
+        skills = client.get("/api/skills").json()
+        assert _by_name(skills, "lonely") is None
+
+        async def _row() -> Skill | None:
+            async with SessionLocal() as session:
+                from sqlalchemy import select
+
+                return (
+                    await session.execute(select(Skill).where(Skill.name == "lonely"))
+                ).scalar_one_or_none()
+
+        row = asyncio.run(_row())
+        assert row is not None
+        assert row.enabled is True
+
+        # When the file reappears, the preserved row re-links → still enabled.
+        _write_external_skill("lonely", "Only one", "Body.")
+        again = client.get("/api/skills").json()
+        entry = _by_name(again, "lonely")
+        assert entry is not None
+        assert entry["enabled"] is True
+        assert entry["active"] is True
 
 
 # ---------------------------------------------------------------------------
