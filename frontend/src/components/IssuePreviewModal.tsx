@@ -169,7 +169,10 @@ export function IssuePreviewModal({
         ) : (
           <>
             {detail.body.trim() ? (
-              <div className="rounded-lg border border-border bg-surface/40 p-3">
+              <div className="rounded-lg border border-border bg-surface p-3.5 shadow-sm">
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Description
+                </div>
                 <Markdown className="text-sm">{detail.body}</Markdown>
               </div>
             ) : (
@@ -177,17 +180,26 @@ export function IssuePreviewModal({
             )}
 
             {detail.comments.length > 0 && (
-              <div className="mt-5 space-y-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  {detail.comments.length}{" "}
-                  {detail.comments.length === 1 ? "comment" : "comments"}
-                </h3>
+              <div className="mt-6 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-px flex-1 bg-border" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-accent">
+                    {detail.comments.length}{" "}
+                    {detail.comments.length === 1 ? "comment" : "comments"}
+                  </h3>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
                 {detail.comments.map((c) => (
                   <div
                     key={c.id}
-                    className="rounded-lg border border-accent/20 bg-accent/5 p-3"
+                    className="ml-3 rounded-lg border border-accent/30 bg-accent/10 p-3 shadow-sm"
                   >
-                    <div className="mb-1 text-xs font-medium text-accent/90">@{c.user}</div>
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[10px] font-bold uppercase text-white">
+                        {c.user.charAt(0)}
+                      </span>
+                      <span className="text-xs font-semibold text-text">@{c.user}</span>
+                    </div>
                     <Markdown className="text-sm">{c.body}</Markdown>
                   </div>
                 ))}
