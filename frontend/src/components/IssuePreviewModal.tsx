@@ -169,7 +169,9 @@ export function IssuePreviewModal({
         ) : (
           <>
             {detail.body.trim() ? (
-              <Markdown className="text-sm">{detail.body}</Markdown>
+              <div className="rounded-lg border border-border bg-surface/40 p-3">
+                <Markdown className="text-sm">{detail.body}</Markdown>
+              </div>
             ) : (
               <p className="text-sm italic text-muted">No description provided.</p>
             )}
@@ -181,8 +183,11 @@ export function IssuePreviewModal({
                   {detail.comments.length === 1 ? "comment" : "comments"}
                 </h3>
                 {detail.comments.map((c) => (
-                  <div key={c.id} className="rounded-lg border border-border bg-surface/40 p-3">
-                    <div className="mb-1 text-xs font-medium text-muted">@{c.user}</div>
+                  <div
+                    key={c.id}
+                    className="rounded-lg border border-accent/20 bg-accent/5 p-3"
+                  >
+                    <div className="mb-1 text-xs font-medium text-accent/90">@{c.user}</div>
                     <Markdown className="text-sm">{c.body}</Markdown>
                   </div>
                 ))}
