@@ -6,10 +6,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
+from precursor.backend.models import Topic
+from precursor.backend.schemas.projects import IssueComment, IssueDetail, ProjectLabel
 from precursor.backend.services.app_settings import (
     resolve_global_github_repo,
     resolve_issue_associations_enabled,
@@ -67,6 +70,68 @@ async def list_issues(
         return await client.list_issues(target, query=q)
     finally:
         await client.aclose()
+
+
+@router.get("/issues/{number}", response_model=IssueDetail)
+async def get_issue_detail(
+    number: int,
+    repo: str | None = None,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> IssueDetail:
+    """Full issue/PR view + comments for the kanban card preview.
+
+    ``repo`` targets the item's source repo (ProjectsV2 can span repos); it
+    falls back to the configured global repo. Also resolves the linked
+    Precursor topic, if one points at this issue in the same repo.
+    """
+    target = await _resolve_repo(repo, session)
+    token = await _require_token(session)
+    client = GitHubClient(token=token)
+    try:
+        issue = await client.get_issue(target, number)
+        comments = await client.list_issue_comments(target, number)
+    finally:
+        await client.aclose()
+
+    linked_id, linked_title = await _find_linked_topic(session, target, number)
+    return IssueDetail(
+        number=issue["number"],
+        title=issue["title"],
+        state=issue["state"],
+        url=issue.get("url"),
+        body=issue.get("body") or "",
+        labels=[ProjectLabel.model_validate(label) for label in issue.get("labels", [])],
+        updated_at=issue.get("updated_at"),
+        comments=[IssueComment.model_validate(c) for c in comments],
+        linked_topic_id=linked_id,
+        linked_topic_title=linked_title,
+    )
+
+
+async def _find_linked_topic(
+    session: AsyncSession, repo: str, number: int
+) -> tuple[int | None, str | None]:
+    """Return the (id, title) of a topic linked to ``repo#number``, else nulls.
+
+    A topic's effective repo is its own ``github_repo`` or the global default,
+    so a topic with no explicit repo matches when ``repo`` is the global one.
+    The most recently updated match wins when several topics share an issue.
+    """
+    global_repo = await resolve_global_github_repo(session)
+    rows = (
+        await session.execute(
+            select(Topic)
+            .where(Topic.github_issue_number == number)
+            .where(Topic.archived_at.is_(None))
+            .order_by(Topic.updated_at.desc())
+        )
+    ).scalars()
+    for topic in rows:
+        effective = topic.github_repo or global_repo
+        if effective == repo:
+            return topic.id, topic.title
+    return None, None
 
 
 @router.post("/issues", status_code=status.HTTP_201_CREATED)

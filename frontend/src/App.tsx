@@ -1923,7 +1923,15 @@ export default function App() {
             ) : projectsError ? (
               <EmptyHero label={projectsError} />
             ) : activeProjectId ? (
-              <KanbanBoard key={activeProjectId} projectId={activeProjectId} />
+              <KanbanBoard
+                key={activeProjectId}
+                projectId={activeProjectId}
+                fallbackRepo={globalGithubRepo}
+                onOpenTopic={(topicId) => {
+                  changeMode("topics");
+                  void handleSelect(topicId);
+                }}
+              />
             ) : projects.length === 0 ? (
               <EmptyHero label="No GitHub projects found for this repository." />
             ) : (

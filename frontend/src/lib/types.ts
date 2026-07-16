@@ -489,9 +489,31 @@ export interface ProjectCard {
   title: string;
   url: string | null;
   state: string | null;
+  // owner/name of the item's source repo (ProjectsV2 can span repos).
+  repo: string | null;
   status_option_id: string | null;
   status_name: string | null;
   labels: IssueLabel[];
+}
+
+export interface IssueComment {
+  id: number;
+  user: string;
+  body: string;
+  updated_at: string;
+}
+
+export interface IssueDetail {
+  number: number;
+  title: string;
+  state: string;
+  url: string | null;
+  body: string;
+  labels: IssueLabel[];
+  updated_at: string | null;
+  comments: IssueComment[];
+  linked_topic_id: number | null;
+  linked_topic_title: string | null;
 }
 
 export interface ProjectBoard {

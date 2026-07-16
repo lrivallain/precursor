@@ -3,9 +3,14 @@ import { AlertTriangle, ExternalLink, GitPullRequest, RefreshCw } from "lucide-r
 import type { ProjectBoard, ProjectCard } from "../lib/types";
 import { api, apiErrorMessage } from "../lib/api";
 import { IssueLabelChip } from "./IssueTags";
+import { IssuePreviewModal } from "./IssuePreviewModal";
 
 interface KanbanBoardProps {
   projectId: string;
+  /** Configured repo, used to preview cards that don't carry their own repo. */
+  fallbackRepo: string;
+  /** Open the Precursor topic linked to an issue (from the preview modal). */
+  onOpenTopic?: (topicId: number) => void;
 }
 
 // Synthetic column holding items that have no Status assigned. It only accepts
@@ -26,13 +31,15 @@ interface Column {
  * onto a column optimistically updates local state and calls the backend; a
  * failed update rolls the board back and surfaces the error.
  */
-export function KanbanBoard({ projectId }: KanbanBoardProps) {
+export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoardProps) {
   const [board, setBoard] = useState<ProjectBoard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
+  // The card whose issue preview is open (null when the modal is closed).
+  const [previewCard, setPreviewCard] = useState<ProjectCard | null>(null);
   // Mirror the drag id so the drop handler never reads a stale closure value.
   const dragIdRef = useRef<string | null>(null);
 
@@ -245,6 +252,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
                       setDrag(null);
                       setOverCol(null);
                     }}
+                    onOpen={() => setPreviewCard(card)}
                   />
                 ))}
                 {col.cards.length === 0 && (
@@ -255,6 +263,15 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
           ))}
         </div>
       </div>
+
+      {previewCard && (
+        <IssuePreviewModal
+          card={previewCard}
+          fallbackRepo={fallbackRepo}
+          onOpenTopic={onOpenTopic}
+          onClose={() => setPreviewCard(null)}
+        />
+      )}
     </div>
   );
 }
@@ -264,15 +281,25 @@ interface KanbanCardProps {
   dragging: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
+  onOpen: () => void;
 }
 
-function KanbanCard({ card, dragging, onDragStart, onDragEnd }: KanbanCardProps) {
+function KanbanCard({ card, dragging, onDragStart, onDragEnd, onOpen }: KanbanCardProps) {
   const isPr = card.type === "pull_request";
   return (
     <article
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
       className={`cursor-grab rounded-md border border-border bg-bg p-2.5 text-sm shadow-sm transition active:cursor-grabbing ${
         dragging ? "opacity-40" : "hover:border-accent/50"
       }`}
@@ -286,21 +313,7 @@ function KanbanCard({ card, dragging, onDragStart, onDragEnd }: KanbanCardProps)
         )}
         {card.state && <StateDot state={card.state} />}
       </div>
-      {card.url ? (
-        <a
-          href={card.url}
-          target="_blank"
-          rel="noreferrer"
-          // Don't start a drag from the link; let the click open the item.
-          draggable={false}
-          onClick={(e) => e.stopPropagation()}
-          className="line-clamp-3 font-medium hover:text-accent hover:underline"
-        >
-          {card.title}
-        </a>
-      ) : (
-        <span className="line-clamp-3 font-medium">{card.title}</span>
-      )}
+      <span className="line-clamp-3 font-medium">{card.title}</span>
       {card.labels.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {card.labels.map((label) => (

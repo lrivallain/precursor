@@ -53,6 +53,7 @@ import type {
   PluginDescriptor,
   ProjectBoard,
   ProjectSummary,
+  IssueDetail,
   Reminder,
   ReminderContainer,
   ReminderCreate,
@@ -427,6 +428,10 @@ export const api = {
     },
     projectBoard: (projectId: string) =>
       request<ProjectBoard>(`/api/github/projects/${encodeURIComponent(projectId)}/board`),
+    getIssue: (number: number, repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<IssueDetail>(`/api/github/issues/${number}${qs}`);
+    },
     setProjectItemStatus: (
       projectId: string,
       itemId: string,

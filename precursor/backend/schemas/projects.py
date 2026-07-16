@@ -47,6 +47,10 @@ class ProjectCard(BaseModel):
     title: str
     url: str | None = None
     state: str | None = None
+    # ``owner/name`` of the item's source repo — ProjectsV2 can span repos, so
+    # this drives the issue-preview fetch and topic linking rather than assuming
+    # the configured repo.
+    repo: str | None = None
     status_option_id: str | None = None
     status_name: str | None = None
     labels: list[ProjectLabel] = Field(default_factory=list)
@@ -70,3 +74,26 @@ class ItemStatusUpdate(BaseModel):
 class ItemStatusResult(BaseModel):
     item_id: str
     option_id: str
+
+
+class IssueComment(BaseModel):
+    id: int
+    user: str
+    body: str
+    updated_at: str
+
+
+class IssueDetail(BaseModel):
+    """Full issue/PR view for the kanban card preview."""
+
+    number: int
+    title: str
+    state: str
+    url: str | None = None
+    body: str = ""
+    labels: list[ProjectLabel] = Field(default_factory=list)
+    updated_at: str | None = None
+    comments: list[IssueComment] = Field(default_factory=list)
+    # The linked Precursor topic, when a topic points at this issue/repo.
+    linked_topic_id: int | None = None
+    linked_topic_title: str | None = None

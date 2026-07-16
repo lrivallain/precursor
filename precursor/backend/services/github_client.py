@@ -366,8 +366,10 @@ class GitHubClient:
             "content{"
             "__typename "
             "... on Issue{number title url state stateReason "
+            "repository{nameWithOwner}"
             "labels(first:20){nodes{name color}}}"
             "... on PullRequest{number title url state "
+            "repository{nameWithOwner}"
             "labels(first:20){nodes{name color}}}"
             "... on DraftIssue{title}}"
             "}}}}}"
@@ -446,6 +448,7 @@ class GitHubClient:
             return None
         status = item.get("fieldValueByName") or {}
         labels = (content.get("labels") or {}).get("nodes") or []
+        repository = (content.get("repository") or {}).get("nameWithOwner")
         return {
             "id": item["id"],
             "type": "pull_request" if typename == "PullRequest" else "issue",
@@ -453,6 +456,7 @@ class GitHubClient:
             "title": content.get("title") or "",
             "url": content.get("url"),
             "state": content.get("state"),
+            "repo": repository,
             "status_option_id": status.get("optionId"),
             "status_name": status.get("name"),
             "labels": [
