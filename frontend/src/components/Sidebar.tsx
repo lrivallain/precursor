@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
 import { SECTION_COLORS } from "../lib/sections";
+import { Z_INDEX } from "../lib/constants";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
@@ -215,7 +216,20 @@ export function Sidebar({
   return (
     <div className="flex h-full shrink-0">
       {navStyle === "rail" && (
-        <nav className="no-scrollbar flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-border py-2">
+        <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
+          {onOpenPalette && (
+            <>
+              <button
+                className="p-2 rounded hover:bg-surface"
+                aria-label="Jump to section"
+                data-tooltip="Jump to section (⌘K)"
+                onClick={onOpenPalette}
+              >
+                <Search size={18} />
+              </button>
+              <div className="my-1 h-px w-6 bg-border" />
+            </>
+          )}
           <SectionRailButtons
             mode={mode}
             atHome={atHome}
@@ -224,6 +238,8 @@ export function Sidebar({
             unreadByMode={unreadByMode}
             liveEnabled={liveEnabled}
             kanbanEnabled={kanbanEnabled}
+            showNew={false}
+            labelOnHover
           />
         </nav>
       )}
@@ -252,16 +268,6 @@ export function Sidebar({
           />
           <span className="flex-1 truncate font-semibold tracking-tight">Precursor</span>
         </button>
-        {onOpenPalette && (
-          <button
-            className="p-1.5 rounded hover:bg-surface"
-            aria-label="Jump to section"
-            data-tooltip="Jump to section (⌘K)"
-            onClick={onOpenPalette}
-          >
-            <Search size={16} />
-          </button>
-        )}
         <button
           className="p-1.5 rounded hover:bg-surface"
           aria-label={navStyle === "rail" ? "Use tab navigation" : "Use rail navigation"}
@@ -270,7 +276,7 @@ export function Sidebar({
         >
           {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
         </button>
-        {navStyle === "tabs" && mode !== "kanban" && (
+        {mode !== "kanban" && (
           <button
             className="p-1.5 rounded hover:bg-surface"
             aria-label={newActionLabel(mode)}
@@ -302,6 +308,7 @@ export function Sidebar({
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
+          onOpenPalette={onOpenPalette}
         />
       )}
 
@@ -671,10 +678,14 @@ const MODES: {
 ];
 
 // Vertical section rail: an always-visible column of section icons (Home +
-// every enabled mode + the "New" action). Shared by the collapsed sidebar and
-// the expanded "rail" navigation style so both stay in lockstep. Home is only
-// rendered when `onGoHome` is passed — the expanded layout already exposes Home
-// via its "Precursor" header button, so it omits it here to avoid a duplicate.
+// every enabled mode, and — in the collapsed sidebar — the "New" action).
+// Shared by the collapsed sidebar and the expanded "rail" navigation style so
+// both stay in lockstep. Home is only rendered when `onGoHome` is passed — the
+// expanded layout already exposes Home via its "Precursor" header button, so it
+// omits it. `showNew` controls the trailing "New" button (kept in the collapsed
+// rail, which has no header; the expanded rail relies on the header "+").
+// `labelOnHover` reveals the full section name as a flyout pill next to each
+// icon (expanded rail) instead of the collapsed rail's hover tooltip.
 function SectionRailButtons({
   mode,
   atHome = false,
@@ -684,6 +695,8 @@ function SectionRailButtons({
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
+  showNew = true,
+  labelOnHover = false,
 }: {
   mode: SidebarMode;
   atHome?: boolean;
@@ -693,20 +706,32 @@ function SectionRailButtons({
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
+  showNew?: boolean;
+  labelOnHover?: boolean;
 }) {
   const modes = MODES.filter(
     (m) => (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
   );
+  // Flyout label pill shown to the right of an icon on hover (rail mode).
+  const flyout = (label: string) =>
+    labelOnHover ? (
+      <span
+        className={`pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-bg px-2 py-1 text-xs font-medium shadow-md opacity-0 transition-opacity group-hover:opacity-100 ${Z_INDEX.POPOVER}`}
+      >
+        {label}
+      </span>
+    ) : null;
   return (
     <>
       {onGoHome && (
         <button
-          className={`relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          className={`group relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
           aria-label="Home"
-          data-tooltip="Home"
+          data-tooltip={labelOnHover ? undefined : "Home"}
           onClick={onGoHome}
         >
           <Home size={18} />
+          {flyout("Home")}
         </button>
       )}
       {modes.map((m) => {
@@ -714,26 +739,30 @@ function SectionRailButtons({
         return (
           <button
             key={m.mode}
-            className={`relative p-2 rounded ${isActive ? SECTION_COLORS[m.mode].activeTab : "hover:bg-surface"}`}
+            className={`group relative p-2 rounded ${isActive ? SECTION_COLORS[m.mode].activeTab : "hover:bg-surface"}`}
             aria-label={m.label}
-            data-tooltip={m.label}
+            data-tooltip={labelOnHover ? undefined : m.label}
             onClick={() => onModeChange(m.mode)}
           >
             <m.Icon size={18} />
             <ModeUnreadDot count={unreadByMode?.[m.mode] ?? 0} />
+            {flyout(m.label)}
           </button>
         );
       })}
-      <div className="my-1 h-px w-6 bg-border" />
-      {mode !== "kanban" && (
-        <button
-          className="p-2 rounded hover:bg-surface"
-          aria-label={newActionLabel(mode)}
-          data-tooltip={newActionLabel(mode)}
-          onClick={onNew}
-        >
-          <Plus size={18} />
-        </button>
+      {showNew && mode !== "kanban" && (
+        <>
+          <div className="my-1 h-px w-6 bg-border" />
+          <button
+            className="group relative p-2 rounded hover:bg-surface"
+            aria-label={newActionLabel(mode)}
+            data-tooltip={labelOnHover ? undefined : newActionLabel(mode)}
+            onClick={onNew}
+          >
+            <Plus size={18} />
+            {flyout(newActionLabel(mode))}
+          </button>
+        </>
       )}
     </>
   );
@@ -750,6 +779,7 @@ function ModeSwitcher({
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
+  onOpenPalette,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
@@ -757,6 +787,7 @@ function ModeSwitcher({
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
+  onOpenPalette?: () => void;
 }) {
   const modes = useMemo(
     () =>
@@ -860,6 +891,17 @@ function ModeSwitcher({
       ref={wrapperRef}
       className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border"
     >
+      {onOpenPalette && (
+        <button
+          type="button"
+          className="flex shrink-0 items-center justify-center rounded px-1.5 text-muted hover:bg-surface hover:text-text"
+          aria-label="Jump to section"
+          data-tooltip="Jump to section (⌘K)"
+          onClick={onOpenPalette}
+        >
+          <Search size={16} />
+        </button>
+      )}
       {canLeft && (
         <button
           type="button"
