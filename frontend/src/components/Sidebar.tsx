@@ -83,6 +83,8 @@ interface Props {
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
+  /** Opens the command palette (⌘K) for width-independent section jumps. */
+  onOpenPalette?: () => void;
   /** Per-mode unread totals, used to badge the mode switcher tabs. */
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   /** Whether the Live section is enabled (hides its tab when off). */
@@ -117,6 +119,7 @@ export function Sidebar({
   onReminderDone,
   onOpenGlobalSettings,
   onOpenArchive,
+  onOpenPalette,
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
@@ -158,6 +161,16 @@ export function Sidebar({
           <PanelLeftOpen size={18} />
         </button>
         <div className="my-1 h-px w-6 bg-border" />
+        {onOpenPalette && (
+          <button
+            className="p-2 rounded hover:bg-surface"
+            aria-label="Jump to section"
+            data-tooltip="Jump to section (⌘K)"
+            onClick={onOpenPalette}
+          >
+            <Search size={18} />
+          </button>
+        )}
         {onGoHome && (
           <button
             className={`relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
@@ -266,6 +279,16 @@ export function Sidebar({
           />
           <span className="flex-1 truncate font-semibold tracking-tight">Precursor</span>
         </button>
+        {onOpenPalette && (
+          <button
+            className="p-1.5 rounded hover:bg-surface"
+            aria-label="Jump to section"
+            data-tooltip="Jump to section (⌘K)"
+            onClick={onOpenPalette}
+          >
+            <Search size={16} />
+          </button>
+        )}
         {mode !== "kanban" && (
           <button
             className="p-1.5 rounded hover:bg-surface"

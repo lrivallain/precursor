@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
+import { CommandPalette } from "./components/CommandPalette";
 import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
 import { ChatSessionPanel } from "./components/ChatSessionPanel";
@@ -341,6 +342,7 @@ export default function App() {
     "settings",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // The parent topic preselected in the inline "new topic" form (set by the
   // sidebar "+" and the tree's per-node "+ child"). `null` means top level.
   const [topicDraftParentId, setTopicDraftParentId] = useState<number | null>(null);
@@ -907,6 +909,19 @@ export default function App() {
     setSidebarMode("agents");
     setActiveAgentId(id);
   }
+
+  // Global ⌘K / Ctrl+K toggles the command palette — a width-independent way to
+  // jump to any section regardless of the sidebar's horizontal overflow.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // If the Live section gets disabled while it's open (or a deep link lands on
   // it while disabled), fall back to Topics.
@@ -1538,6 +1553,15 @@ export default function App() {
     >
       <TooltipProvider />
       <DetachedDraftHost />
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          onNavigate={changeMode}
+          onGoHome={goHome}
+          liveEnabled={liveEnabled}
+          kanbanEnabled={kanbanEnabled}
+        />
+      )}
       {!atHome && (
       <Sidebar
         tree={tree}
@@ -1548,6 +1572,7 @@ export default function App() {
         onModeChange={changeMode}
         atHome={atHome}
         onGoHome={goHome}
+        onOpenPalette={() => setPaletteOpen(true)}
         chatSlot={
           <ChatList
             activeId={activeChat?.id ?? null}
