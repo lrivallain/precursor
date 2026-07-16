@@ -91,8 +91,10 @@ interface AppRoute {
   // The raw agent path segment — a public UUID for new links, or a legacy
   // integer id. Resolved to an internal numeric id once the agent list loads.
   agentRef: string | null;
-  // The selected ProjectV2 node id (opaque) when on the kanban route.
-  kanbanProjectId: string | null;
+  // The selected ProjectV2 URL segment (a per-owner number, optionally with a
+  // title slug) when on the kanban route. Resolved to the opaque node id once
+  // the project list loads.
+  kanbanProjectRef: string | null;
 }
 
 function parseAppRoute(): AppRoute {
@@ -103,7 +105,7 @@ function parseAppRoute(): AppRoute {
     chatSlug: null,
     liveSlug: null,
     agentRef: null,
-    kanbanProjectId: null,
+    kanbanProjectRef: null,
   };
   if (segs[0] === "ws") return { ...base, mode: "workspaces" };
   if (segs[0] === "agents") {
@@ -119,7 +121,7 @@ function parseAppRoute(): AppRoute {
     return {
       ...base,
       mode: "kanban",
-      kanbanProjectId: segs[1] ? decodeURIComponent(segs[1]) : null,
+      kanbanProjectRef: segs[1] ? decodeURIComponent(segs[1]) : null,
     };
   }
   if (segs[0] === "topics") {
@@ -190,9 +192,29 @@ function liveUrl(session: MeetingSession | null): string {
   return "/live/" + encodeURIComponent(session.slug);
 }
 
-function kanbanUrl(projectId: string | null): string {
-  if (!projectId) return "/kanban";
-  return "/kanban/" + encodeURIComponent(projectId);
+function kanbanUrl(project: ProjectSummary | null): string {
+  if (!project) return "/kanban";
+  return "/kanban/" + encodeURIComponent(projectSlug(project));
+}
+
+// Human-readable, stable slug for a ProjectV2: its per-owner `number` (the
+// resolvable key) plus a slugified title for readability, e.g. "4-work-ms".
+function projectSlug(project: ProjectSummary): string {
+  const base = project.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return base ? `${project.number}-${base}` : String(project.number);
+}
+
+// Resolve a kanban URL segment back to a project number. Only the leading
+// integer is significant, so the trailing title slug is cosmetic and can drift
+// without breaking the link (e.g. "4", "4-work-ms", "4-renamed" all resolve).
+function projectRefNumber(ref: string | null): number | null {
+  if (!ref) return null;
+  const match = /^(\d+)/.exec(ref);
+  return match ? Number(match[1]) : null;
 }
 
 // Agents are addressed by their public UUID (copilot_session_id) in the URL.
@@ -289,9 +311,13 @@ export default function App() {
   // GitHub Projects v2 are loaded lazily when the user first enters kanban mode.
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(
-    () => parseAppRoute().kanbanProjectId,
-  );
+  // The opaque ProjectV2 node id of the active board (board fetches need it).
+  // The URL carries a number-based ref instead, resolved to this once the
+  // project list loads.
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  // A kanban URL ref (project number/slug) awaiting resolution against the
+  // loaded project list. Initialised from the entry URL, cleared once resolved.
+  const pendingProjectRef = useRef<string | null>(parseAppRoute().kanbanProjectRef);
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
@@ -407,6 +433,13 @@ export default function App() {
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
+
+  // Mirror the loaded project list so changeMode / URL sync can resolve the
+  // active project's number-based slug without re-subscribing.
+  const projectsRef = useRef<ProjectSummary[] | null>(projects);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
 
   // Mirror the current sidebar mode into a ref. The active item refs persist
   // across mode switches (changeMode doesn't clear them), so "the user is
@@ -589,7 +622,20 @@ export default function App() {
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
       if (r.mode === "kanban") {
-        setActiveProjectId(r.kanbanProjectId);
+        if (r.kanbanProjectRef == null) {
+          pendingProjectRef.current = null;
+          setActiveProjectId(null);
+          return;
+        }
+        const num = projectRefNumber(r.kanbanProjectRef);
+        const match = projectsRef.current?.find((p) => p.number === num);
+        if (match) {
+          pendingProjectRef.current = null;
+          setActiveProjectId(match.id);
+        } else {
+          // Projects not loaded yet — stash the ref for the load effect.
+          pendingProjectRef.current = r.kanbanProjectRef;
+        }
         return;
       }
       if (r.mode === "live") {
@@ -707,13 +753,19 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
 
-  // activeProjectId -> /kanban/<id> (or /kanban when nothing is selected).
+  // activeProjectId -> /kanban/<number>-<slug> (or /kanban when none selected).
+  // Depends on `projects` so a board opened before the list resolves gets its
+  // slug rewritten once the project's number/title are known.
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "kanban") return;
-    const target = kanbanUrl(activeProjectId);
+    // A deep link we haven't resolved yet — leave the URL untouched so its
+    // number ref survives until the load effect maps it to a project.
+    if (activeProjectId == null && pendingProjectRef.current) return;
+    const active = projects?.find((p) => p.id === activeProjectId) ?? null;
+    const target = kanbanUrl(active);
     if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeProjectId, sidebarMode, atHome]);
+  }, [activeProjectId, projects, sidebarMode, atHome]);
 
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
@@ -768,7 +820,9 @@ export default function App() {
     } else if (next === "agents") {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else if (next === "kanban") {
-      target = kanbanUrl(activeProjectIdRef.current);
+      const active =
+        projectsRef.current?.find((p) => p.id === activeProjectIdRef.current) ?? null;
+      target = kanbanUrl(active);
     } else {
       target = "/ws";
     }
@@ -884,8 +938,12 @@ export default function App() {
       .listProjects()
       .then((list) => {
         setProjects(list);
-        // Auto-select the first project when the URL didn't pin one.
-        setActiveProjectId((id) => id ?? (list[0]?.id ?? null));
+        // Resolve a deep-linked project ref (a number/slug) to its node id;
+        // otherwise auto-select the first project.
+        const num = projectRefNumber(pendingProjectRef.current);
+        const fromRef = num != null ? list.find((p) => p.number === num) : undefined;
+        pendingProjectRef.current = null;
+        setActiveProjectId((id) => id ?? fromRef?.id ?? list[0]?.id ?? null);
       })
       .catch((e) => {
         setProjects([]);
@@ -1534,7 +1592,10 @@ export default function App() {
             projects={projects}
             activeId={activeProjectId}
             error={projectsError}
-            onSelect={(p) => setActiveProjectId(p.id)}
+            onSelect={(p) => {
+              pendingProjectRef.current = null;
+              setActiveProjectId(p.id);
+            }}
           />
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
