@@ -36,11 +36,13 @@ class GitHubInsufficientScopeError(Exception):
     def __init__(self, required_scopes: list[str] | None = None) -> None:
         scopes = required_scopes or ["read:project"]
         primary = scopes[0]
+        # The read-write ``project`` scope is a superset of ``read:project``, so
+        # recommending it alone unblocks both reading boards and moving cards.
         super().__init__(
-            f"GitHub token is missing the '{primary}' scope required to read "
-            "Projects. Grant it with `gh auth refresh -s "
-            f"{primary},project` (or add a token with the 'project' scope in "
-            "Settings), then retry."
+            f"GitHub token is missing the '{primary}' scope required for "
+            "Projects. Grant it with `gh auth refresh -h github.com -s project` "
+            "(or add a token with the 'project' scope in Settings), then "
+            "restart Precursor."
         )
         self.required_scopes = scopes
 

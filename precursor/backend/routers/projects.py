@@ -117,6 +117,8 @@ async def update_item_status(
             field_id=payload.field_id,
             option_id=payload.option_id,
         )
+    except GitHubInsufficientScopeError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, f"Failed to update project item: {exc}"
