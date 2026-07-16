@@ -37,6 +37,43 @@
   --accent: #60a5fa;
 }
 
+/* Per-section accent. A `.section-<mode>` class is set on an ancestor (the app
+   root, keyed to the active sidebar mode, and the home start surfaces) so
+   descendants can tint themselves to the current section via the helpers below
+   or arbitrary `var(--section-accent)` values. Falls back to the app accent
+   when no section is active. Values mirror the section palette in lib/sections
+   (600 in light, 400 in dark). */
+.section-topics { --section-accent: #0284c7; }
+.section-chats { --section-accent: #059669; }
+.section-live { --section-accent: #e11d48; }
+.section-agents { --section-accent: #7c3aed; }
+.section-workspaces { --section-accent: #d97706; }
+.section-kanban { --section-accent: #0891b2; }
+.dark .section-topics { --section-accent: #38bdf8; }
+.dark .section-chats { --section-accent: #34d399; }
+.dark .section-live { --section-accent: #fb7185; }
+.dark .section-agents { --section-accent: #a78bfa; }
+.dark .section-workspaces { --section-accent: #fbbf24; }
+.dark .section-kanban { --section-accent: #22d3ee; }
+
+/* Input/composer border that turns the active section accent on focus. */
+.section-focus-border {
+  border-color: var(--border);
+}
+.section-focus-border:focus-within {
+  border-color: var(--section-accent, var(--accent));
+}
+
+/* Selected/active list row tinted to the active section accent. */
+.section-selected {
+  background-color: color-mix(
+    in oklab,
+    var(--section-accent, var(--accent)) 15%,
+    transparent
+  );
+  color: var(--section-accent, var(--accent));
+}
+
 html,
 body,
 #root {

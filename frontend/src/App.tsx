@@ -1531,7 +1531,11 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full w-full bg-bg text-text">
+    <div
+      className={`flex h-full w-full bg-bg text-text${
+        atHome ? "" : ` section-${sidebarMode}`
+      }`}
+    >
       <TooltipProvider />
       <DetachedDraftHost />
       {!atHome && (

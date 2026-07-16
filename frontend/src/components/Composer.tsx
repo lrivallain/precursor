@@ -162,7 +162,7 @@ export function Composer({
               ? "holo-active border-transparent"
               : isDraggingFile
                 ? "border-accent ring-2 ring-accent/40"
-                : "border-border focus-within:border-accent"
+                : "section-focus-border"
         }`}
         onDragOver={(e) => {
           if (attachments && e.dataTransfer.types.includes("Files")) {

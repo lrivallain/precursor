@@ -446,7 +446,7 @@ function TopicItem({
     <li>
       <div
         className={`group flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer text-sm ${
-          isActive ? "bg-surface text-text" : "hover:bg-surface text-text/90"
+          isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
         style={{ paddingLeft: 6 + depth * 12 }}
         onClick={() => onSelect(node.id)}
@@ -883,7 +883,7 @@ function PinnedItem({
     <li>
       <div
         className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm ${
-          isActive ? "bg-surface text-text" : "hover:bg-surface text-text/90"
+          isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
         onClick={() => onSelect(node.id)}
       >

@@ -48,7 +48,7 @@ export function WorkspaceList({ workspaces, activeId, onSelect }: WorkspaceListP
                     type="button"
                     onClick={() => onSelect(w)}
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
-                      isActive ? "bg-accent/15 text-accent" : "hover:bg-surface"
+                      isActive ? "section-selected" : "hover:bg-surface"
                     }`}
                   >
                     {w.kind === "git" ? (
