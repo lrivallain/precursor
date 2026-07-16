@@ -217,16 +217,21 @@ export function HomePage({
                 !!section.createKind && selected === section.createKind;
               const color = SECTION_COLORS[section.mode];
               return (
-                <button
+                <div
                   key={section.mode}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => activateSection(section)}
                   onDoubleClick={() => openSection(section)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      activateSection(section);
+                    }
+                  }}
                   aria-pressed={active}
-                  title={
-                    section.createKind
-                      ? `${section.newLabel} — double-click to ${section.openLabel.toLowerCase()}`
-                      : section.openLabel
+                  aria-label={
+                    section.createKind ? section.newLabel : section.openLabel
                   }
                   className={`flex cursor-pointer flex-col gap-4 rounded-xl border p-5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                     active
@@ -247,24 +252,25 @@ export function HomePage({
                     {section.description}
                   </p>
 
-                  <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
-                    <span className="whitespace-nowrap">
-                      {section.createKind
-                        ? active
-                          ? "Click to hide form"
-                          : "Click to start"
-                        : "Click to open"}
-                    </span>
-                    <span
-                      className={`flex items-center gap-1 whitespace-nowrap ${color.accentText}`}
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openSection(section);
+                      }}
+                      className={`group flex items-center gap-1 rounded text-[11px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${color.accentText}`}
                     >
-                      {section.createKind
-                        ? "Double-click to open"
-                        : section.openLabel}
-                      <ArrowRight size={13} />
-                    </span>
+                      <span className="whitespace-nowrap">
+                        {section.openLabel}
+                      </span>
+                      <ArrowRight
+                        size={13}
+                        className="transition-transform group-hover:translate-x-0.5"
+                      />
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
