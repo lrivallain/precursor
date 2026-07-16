@@ -278,7 +278,7 @@ export function Sidebar({
         </button>
         {mode !== "kanban" && (
           <button
-            className="p-1.5 rounded hover:bg-surface"
+            className={`p-1.5 rounded-full transition-opacity hover:opacity-80 ${SECTION_COLORS[mode].icon}`}
             aria-label={newActionLabel(mode)}
             data-tooltip={newActionLabel(mode)}
             onClick={onNew}
@@ -716,7 +716,7 @@ function SectionRailButtons({
   const flyout = (label: string) =>
     labelOnHover ? (
       <span
-        className={`pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-bg px-2 py-1 text-xs font-medium shadow-md opacity-0 transition-opacity group-hover:opacity-100 ${Z_INDEX.POPOVER}`}
+        className={`pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-bg px-2.5 py-1 text-sm font-medium shadow-md opacity-0 transition-opacity group-hover:opacity-100 ${Z_INDEX.POPOVER}`}
       >
         {label}
       </span>
@@ -739,7 +739,7 @@ function SectionRailButtons({
         return (
           <button
             key={m.mode}
-            className={`group relative p-2 rounded ${isActive ? SECTION_COLORS[m.mode].activeTab : "hover:bg-surface"}`}
+            className={`group relative p-2 rounded ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab}`}
             aria-label={m.label}
             data-tooltip={labelOnHover ? undefined : m.label}
             onClick={() => onModeChange(m.mode)}
@@ -926,7 +926,9 @@ function ModeSwitcher({
               key={m.mode}
               ref={isActive ? activeRef : undefined}
               className={`flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
-                isActive ? SECTION_COLORS[m.mode].activeTab : "hover:bg-surface text-muted"
+                isActive
+                  ? SECTION_COLORS[m.mode].activeTab
+                  : `text-muted ${SECTION_COLORS[m.mode].hoverTab}`
               }`}
               onClick={() => onModeChange(m.mode)}
             >
