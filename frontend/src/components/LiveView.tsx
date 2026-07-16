@@ -40,6 +40,27 @@ import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
 import { Markdown } from "./Markdown";
 
+// Persisted audio-capture preferences (input device + mic mix-in). Kept in
+// localStorage so a user's choice carries across sessions and app restarts.
+const AUDIO_DEVICE_KEY = "precursor.live.audioDeviceId";
+const AUDIO_MIC_KEY = "precursor.live.captureMic";
+
+function readStoredDeviceId(): string {
+  try {
+    return window.localStorage.getItem(AUDIO_DEVICE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function readStoredCaptureMic(): boolean {
+  try {
+    return window.localStorage.getItem(AUDIO_MIC_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "", label: "Default" },
   { value: "en-US", label: "English (US)" },
@@ -169,8 +190,8 @@ export function LiveView({
   const [segments, setSegments] = useState<MeetingSegment[]>([]);
   const [interim, setInterim] = useState("");
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
-  const [deviceId, setDeviceId] = useState<string>("");
-  const [captureMic, setCaptureMic] = useState(false);
+  const [deviceId, setDeviceId] = useState<string>(readStoredDeviceId);
+  const [captureMic, setCaptureMic] = useState<boolean>(readStoredCaptureMic);
   const [helpOpen, setHelpOpen] = useState(false);
 
   const [summaryText, setSummaryText] = useState(session.summary ?? "");
@@ -428,6 +449,22 @@ export function LiveView({
       .then(setDevices)
       .catch(() => {});
   }, [sttReady]);
+
+  // Persist the audio-capture prefs so they survive across sessions/restarts.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUDIO_DEVICE_KEY, deviceId);
+    } catch {
+      /* storage unavailable — prefs just won't persist */
+    }
+  }, [deviceId]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUDIO_MIC_KEY, captureMic ? "1" : "0");
+    } catch {
+      /* storage unavailable — prefs just won't persist */
+    }
+  }, [captureMic]);
 
   // Auto-scroll the transcript as phrases arrive.
   useEffect(() => {
