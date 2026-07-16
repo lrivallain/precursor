@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ExternalLink, GitPullRequest, RefreshCw } from "lucide-react";
+import { AlertTriangle, ExternalLink, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
 import type { ProjectBoard, ProjectCard } from "../lib/types";
 import { api, apiErrorMessage } from "../lib/api";
 import { IssueLabelChip } from "./IssueTags";
@@ -17,6 +17,9 @@ interface KanbanBoardProps {
 // cards as a *source* — dropping onto it is a no-op because clearing a status
 // isn't part of the drag-drop contract.
 const NO_STATUS = "__no_status__";
+
+// How often the board silently re-fetches from GitHub while mounted.
+const AUTO_REFRESH_MS = 30_000;
 
 interface Column {
   id: string;
@@ -40,8 +43,13 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
   const [overCol, setOverCol] = useState<string | null>(null);
   // The card whose issue preview is open (null when the modal is closed).
   const [previewCard, setPreviewCard] = useState<ProjectCard | null>(null);
+  // Global free-text filter applied across all columns.
+  const [filter, setFilter] = useState("");
   // Mirror the drag id so the drop handler never reads a stale closure value.
   const dragIdRef = useRef<string | null>(null);
+  // True while an optimistic status mutation is in flight — auto-refresh pauses
+  // so it never clobbers the pending change with stale server data.
+  const mutatingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +68,27 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Silent background refresh: swaps in fresh data without a spinner and only
+  // when the user isn't mid-interaction. Guards are re-checked after the await
+  // because the user may have grabbed a card while the request was in flight.
+  const silentRefresh = useCallback(async () => {
+    if (dragIdRef.current || mutatingRef.current) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    try {
+      const data = await api.github.projectBoard(projectId);
+      if (dragIdRef.current || mutatingRef.current) return;
+      setBoard(data);
+      setError(null);
+    } catch {
+      // Keep the current board on transient failures — nothing to disturb.
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => void silentRefresh(), AUTO_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [silentRefresh]);
 
   const columns = useMemo<Column[]>(() => {
     if (!board) return [];
@@ -83,6 +112,26 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
     }
     return cols;
   }, [board]);
+
+  // Apply the global filter across every column. Matching is case-insensitive
+  // and spans title, issue/PR number, state, repo, and label names.
+  const filteredColumns = useMemo<Column[]>(() => {
+    const query = filter.trim().toLowerCase();
+    if (!query) return columns;
+    const matches = (card: ProjectCard) => {
+      const haystack = [
+        card.title,
+        card.number != null ? `#${card.number}` : "",
+        card.state ?? "",
+        card.repo ?? "",
+        ...card.labels.map((l) => l.name),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    };
+    return columns.map((col) => ({ ...col, cards: col.cards.filter(matches) }));
+  }, [columns, filter]);
 
   const setDrag = useCallback((id: string | null) => {
     dragIdRef.current = id;
@@ -111,6 +160,7 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
         ),
       });
       setActionError(null);
+      mutatingRef.current = true;
       try {
         await api.github.setProjectItemStatus(projectId, itemId, {
           field_id: fieldId,
@@ -122,6 +172,8 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
         setActionError(
           `Couldn't move "${card.title}": ${apiErrorMessage(e, "update failed")}`,
         );
+      } finally {
+        mutatingRef.current = false;
       }
     },
     [board, projectId, setDrag],
@@ -159,13 +211,50 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
   }
 
   const cardCount = board.items.length;
+  const visibleCount = filteredColumns.reduce((sum, col) => sum + col.cards.length, 0);
+  const filtering = filter.trim().length > 0;
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2">
-        <span className="text-sm text-muted">
-          {cardCount} {cardCount === 1 ? "item" : "items"}
-        </span>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
+            />
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter issues…"
+              aria-label="Filter issues"
+              className="w-56 rounded border border-border bg-bg py-1.5 pl-8 pr-7 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent/40"
+            />
+            {filtering && (
+              <button
+                type="button"
+                onClick={() => setFilter("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted hover:bg-surface hover:text-text"
+                aria-label="Clear filter"
+                data-tooltip="Clear filter"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <span className="text-sm text-muted">
+            {filtering ? (
+              <>
+                {visibleCount} of {cardCount} {cardCount === 1 ? "item" : "items"}
+              </>
+            ) : (
+              <>
+                {cardCount} {cardCount === 1 ? "item" : "items"}
+              </>
+            )}
+          </span>
+        </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -207,7 +296,7 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
 
       <div className="flex-1 overflow-x-auto">
         <div className="flex h-full items-stretch gap-3 p-3">
-          {columns.map((col) => (
+          {filteredColumns.map((col) => (
             <div
               key={col.id}
               className={`flex w-72 shrink-0 flex-col overflow-hidden rounded-lg border bg-surface/40 ${
