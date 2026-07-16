@@ -712,13 +712,20 @@ function SectionRailButtons({
   const modes = MODES.filter(
     (m) => (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
   );
-  // Flyout label pill shown to the right of an icon on hover (rail mode).
-  const flyout = (label: string) =>
+  // Hover label rendered as a flush continuation of the icon: same section
+  // tint, no gap/border, squared seam — so it reads as the icon extending into
+  // a pill rather than a detached bubble. An opaque base (bg-bg) under the tint
+  // keeps content from bleeding through, matching the button's own tint-over-bg.
+  const flyout = (label: string, tint: string) =>
     labelOnHover ? (
       <span
-        className={`pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-bg px-2.5 py-1 text-sm font-medium shadow-md opacity-0 transition-opacity group-hover:opacity-100 ${Z_INDEX.POPOVER}`}
+        className={`pointer-events-none absolute inset-y-0 left-full flex items-center rounded-r-md bg-bg opacity-0 transition-opacity group-hover:opacity-100 ${Z_INDEX.POPOVER}`}
       >
-        {label}
+        <span
+          className={`flex h-full items-center whitespace-nowrap rounded-r-md pl-2 pr-3 text-sm font-medium ${tint}`}
+        >
+          {label}
+        </span>
       </span>
     ) : null;
   return (
@@ -731,7 +738,7 @@ function SectionRailButtons({
           onClick={onGoHome}
         >
           <Home size={18} />
-          {flyout("Home")}
+          {flyout("Home", "bg-surface text-text")}
         </button>
       )}
       {modes.map((m) => {
@@ -739,14 +746,14 @@ function SectionRailButtons({
         return (
           <button
             key={m.mode}
-            className={`group relative p-2 rounded ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab}`}
+            className={`group relative p-2 rounded ${labelOnHover ? "hover:rounded-r-none" : ""} ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab}`}
             aria-label={m.label}
             data-tooltip={labelOnHover ? undefined : m.label}
             onClick={() => onModeChange(m.mode)}
           >
             <m.Icon size={18} />
             <ModeUnreadDot count={unreadByMode?.[m.mode] ?? 0} />
-            {flyout(m.label)}
+            {flyout(m.label, SECTION_COLORS[m.mode].icon)}
           </button>
         );
       })}
@@ -760,7 +767,7 @@ function SectionRailButtons({
             onClick={onNew}
           >
             <Plus size={18} />
-            {flyout(newActionLabel(mode))}
+            {flyout(newActionLabel(mode), "bg-surface text-text")}
           </button>
         </>
       )}
