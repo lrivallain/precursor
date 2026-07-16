@@ -27,6 +27,7 @@ import type {
   GitStatus,
   IssuePushResult,
   IssueSummary,
+  ItemStatusResult,
   LLMModel,
   LLMProviderSpec,
   LocalPath,
@@ -50,6 +51,8 @@ import type {
   NotesDraft,
   NoteDraftAttachment,
   PluginDescriptor,
+  ProjectBoard,
+  ProjectSummary,
   Reminder,
   ReminderContainer,
   ReminderCreate,
@@ -400,6 +403,25 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+
+    // Projects v2 (kanban board)
+    listProjects: (repo?: string) => {
+      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+      return request<ProjectSummary[]>(`/api/github/projects${qs}`);
+    },
+    projectBoard: (projectId: string) =>
+      request<ProjectBoard>(`/api/github/projects/${encodeURIComponent(projectId)}/board`),
+    setProjectItemStatus: (
+      projectId: string,
+      itemId: string,
+      data: { field_id: string; option_id: string },
+    ) =>
+      request<ItemStatusResult>(
+        `/api/github/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(
+          itemId,
+        )}/status`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
 
     // Summaries
     summarizeIssue: (topicId: number, opts: { force?: boolean } = {}) =>

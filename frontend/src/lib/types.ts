@@ -458,6 +458,56 @@ export interface GitHubIssue {
   updated_at: string;
 }
 
+// --- GitHub Projects v2 (kanban board) ---
+// Mirrors precursor.backend.schemas.projects.
+
+export interface ProjectSummary {
+  id: string;
+  number: number;
+  title: string;
+  url: string | null;
+  closed: boolean;
+  short_description: string | null;
+}
+
+export interface ProjectColumn {
+  id: string;
+  name: string;
+}
+
+export interface ProjectStatusField {
+  id: string;
+  name: string;
+  options: ProjectColumn[];
+}
+
+export interface ProjectCard {
+  // ProjectV2 item id — the handle used for status mutations.
+  id: string;
+  type: "issue" | "pull_request";
+  number: number | null;
+  title: string;
+  url: string | null;
+  state: string | null;
+  status_option_id: string | null;
+  status_name: string | null;
+  labels: IssueLabel[];
+}
+
+export interface ProjectBoard {
+  id: string;
+  title: string;
+  url: string | null;
+  status_field: ProjectStatusField | null;
+  items: ProjectCard[];
+}
+
+export interface ItemStatusResult {
+  item_id: string;
+  option_id: string;
+}
+
+
 export interface MCPTool {
   name: string;
   description: string;
