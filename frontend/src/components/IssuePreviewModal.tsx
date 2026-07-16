@@ -140,9 +140,10 @@ export function IssuePreviewModal({
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        {/* Labels + edit affordance */}
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+      {/* Labels bar — stays fixed above the scroll area so the editor can
+          float over the content instead of pushing it down. */}
+      <div className="relative border-b border-border px-4 py-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           {labels.map((label) => (
             <IssueLabelChip key={label.name} label={label} />
           ))}
@@ -159,18 +160,22 @@ export function IssuePreviewModal({
         </div>
 
         {labelEditorOpen && card.number != null && (
-          <LabelEditor
-            repo={repo}
-            issueNumber={card.number}
-            current={labels}
-            onClose={() => setLabelEditorOpen(false)}
-            onSaved={(next) => {
-              applyLabels(next);
-              setLabelEditorOpen(false);
-            }}
-          />
+          <div className="absolute left-4 right-4 top-full z-20 mt-1">
+            <LabelEditor
+              repo={repo}
+              issueNumber={card.number}
+              current={labels}
+              onClose={() => setLabelEditorOpen(false)}
+              onSaved={(next) => {
+                applyLabels(next);
+                setLabelEditorOpen(false);
+              }}
+            />
+          </div>
         )}
+      </div>
 
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {error ? (
           <div className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
             <AlertTriangle size={14} className="shrink-0" />
@@ -384,7 +389,7 @@ function LabelEditor({ repo, issueNumber, current, onClose, onSaved }: LabelEdit
   }
 
   return (
-    <div className="mb-3 rounded-lg border border-border bg-surface/40 p-3">
+    <div className="rounded-lg border border-border bg-bg p-3 shadow-xl">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted">
           Labels
