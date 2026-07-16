@@ -26,6 +26,7 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import (
     GitHubClient,
+    GitHubInsufficientScopeError,
     GitHubRepoNotAccessibleError,
 )
 
@@ -69,6 +70,8 @@ async def list_projects(
     client = GitHubClient(token=token)
     try:
         projects = await client.list_repo_projects(target)
+    except GitHubInsufficientScopeError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except GitHubRepoNotAccessibleError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     finally:
@@ -87,6 +90,8 @@ async def get_board(
     client = GitHubClient(token=token)
     try:
         board = await client.get_project_board(project_id)
+    except GitHubInsufficientScopeError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     finally:

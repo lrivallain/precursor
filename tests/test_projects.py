@@ -14,7 +14,10 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
 from precursor.backend.routers import projects as projects_router
-from precursor.backend.services.github_client import GitHubRepoNotAccessibleError
+from precursor.backend.services.github_client import (
+    GitHubInsufficientScopeError,
+    GitHubRepoNotAccessibleError,
+)
 
 
 class _FakeClient:
@@ -163,3 +166,66 @@ def test_list_projects_inaccessible_repo_returns_404(_mock_github: None) -> None
             r = client.get("/api/github/projects")
             assert r.status_code == 404
             assert "not found or not accessible" in r.json()["detail"]
+
+
+def test_list_projects_missing_scope_returns_403(_mock_github: None) -> None:
+    class _NoScopeClient(_FakeClient):
+        async def list_repo_projects(self, repo: str) -> list[dict[str, Any]]:
+            raise GitHubInsufficientScopeError(["read:project"])
+
+    import precursor.backend.routers.projects as pr
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pr, "GitHubClient", _NoScopeClient)
+        app = create_app()
+        with TestClient(app) as client:
+            r = client.get("/api/github/projects")
+            assert r.status_code == 403
+            assert "read:project" in r.json()["detail"]
+
+
+def test_graphql_raises_typed_scope_error() -> None:
+    """_graphql maps an INSUFFICIENT_SCOPES payload to the typed error."""
+    from precursor.backend.services.github_client import (
+        GitHubClient,
+        GitHubInsufficientScopeError,
+    )
+
+    client = GitHubClient(token="tok")
+
+    class _Resp:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {
+                "data": {"repositoryOwner": None},
+                "errors": [
+                    {
+                        "type": "INSUFFICIENT_SCOPES",
+                        "message": (
+                            "requires one of the following scopes: "
+                            "['read:project'], but your token ..."
+                        ),
+                    }
+                ],
+            }
+
+    async def _fake_post(_path: str, **_kwargs: Any) -> _Resp:
+        return _Resp()
+
+    async def _run() -> None:
+        client._client.post = _fake_post  # type: ignore[method-assign]
+        try:
+            await client._graphql("q", {}, raise_on_error=False)
+            raise AssertionError("expected GitHubInsufficientScopeError")
+        except GitHubInsufficientScopeError as exc:
+            assert exc.required_scopes == ["read:project"]
+        finally:
+            await client.aclose()
+
+    import asyncio
+
+    asyncio.run(_run())

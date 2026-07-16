@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -21,6 +22,44 @@ class GitHubRepoNotAccessibleError(Exception):
     def __init__(self, repo: str) -> None:
         super().__init__(f"Repository '{repo}' not found or not accessible")
         self.repo = repo
+
+
+class GitHubInsufficientScopeError(Exception):
+    """The token authenticates but lacks an OAuth scope the query needs.
+
+    GitHub returns this as an ``INSUFFICIENT_SCOPES`` GraphQL error (HTTP 200).
+    ProjectsV2 reads require ``read:project`` — a scope the ``repo`` scope does
+    not imply — so a token that can see issues may still be rejected here. We
+    surface an actionable message instead of the misleading "not accessible".
+    """
+
+    def __init__(self, required_scopes: list[str] | None = None) -> None:
+        scopes = required_scopes or ["read:project"]
+        primary = scopes[0]
+        super().__init__(
+            f"GitHub token is missing the '{primary}' scope required to read "
+            "Projects. Grant it with `gh auth refresh -s "
+            f"{primary},project` (or add a token with the 'project' scope in "
+            "Settings), then retry."
+        )
+        self.required_scopes = scopes
+
+
+_SCOPE_RE = re.compile(r"\['([^']+)'\]")
+
+
+def _required_scopes(error: dict[str, Any]) -> list[str]:
+    """Pull the required scope(s) out of an INSUFFICIENT_SCOPES message.
+
+    GitHub phrases it as: "... requires one of the following scopes:
+    ['read:project'], but your token ...". Falls back to ``read:project`` when
+    the message can't be parsed.
+    """
+    message = error.get("message") if isinstance(error, dict) else ""
+    match = _SCOPE_RE.search(message or "")
+    if match:
+        return [s.strip() for s in match.group(1).split(",") if s.strip()]
+    return ["read:project"]
 
 
 class GitHubClient:
@@ -248,26 +287,50 @@ class GitHubClient:
         r.raise_for_status()
         payload = r.json()
         errors = payload.get("errors")
-        if errors and raise_on_error:
-            message = errors[0].get("message") if isinstance(errors[0], dict) else str(errors[0])
-            raise RuntimeError(f"GitHub GraphQL error: {message}")
+        if errors:
+            # A missing OAuth scope is never a "degrade to empty" case — the
+            # token simply can't run this query — so raise a typed, actionable
+            # error regardless of ``raise_on_error``.
+            scope_error = next(
+                (
+                    e
+                    for e in errors
+                    if isinstance(e, dict) and e.get("type") == "INSUFFICIENT_SCOPES"
+                ),
+                None,
+            )
+            if scope_error is not None:
+                raise GitHubInsufficientScopeError(_required_scopes(scope_error))
+            if raise_on_error:
+                message = (
+                    errors[0].get("message") if isinstance(errors[0], dict) else str(errors[0])
+                )
+                raise RuntimeError(f"GitHub GraphQL error: {message}")
         return payload.get("data") or {}
 
     async def list_repo_projects(self, repo: str) -> list[dict[str, Any]]:
-        """List open ProjectsV2 linked to ``owner/name`` (newest first)."""
-        owner, name = self._split(repo)
+        """List the repo owner's open ProjectsV2 (newest first).
+
+        ProjectsV2 are owned by a user/org and are only *optionally* linked to a
+        repository, so scoping to the owner (rather than
+        ``repository.projectsV2``) surfaces every board the account has —
+        including ones not linked to any repo. ``repo`` is still the input
+        because the kanban mode is gated on a configured ``owner/name``.
+        """
+        owner, _name = self._split(repo)
         query = (
-            "query($o:String!,$n:String!){"
-            "repository(owner:$o,name:$n){"
+            "query($o:String!){"
+            "repositoryOwner(login:$o){"
+            "... on ProjectV2Owner{"
             "projectsV2(first:50,orderBy:{field:UPDATED_AT,direction:DESC}){"
             "nodes{id number title url closed shortDescription}"
-            "}}}"
+            "}}}}"
         )
-        data = await self._graphql(query, {"o": owner, "n": name}, raise_on_error=False)
-        repository = data.get("repository")
-        if repository is None:
+        data = await self._graphql(query, {"o": owner}, raise_on_error=False)
+        owner_node = data.get("repositoryOwner")
+        if owner_node is None:
             raise GitHubRepoNotAccessibleError(repo)
-        nodes = (repository.get("projectsV2") or {}).get("nodes") or []
+        nodes = (owner_node.get("projectsV2") or {}).get("nodes") or []
         return [
             {
                 "id": p["id"],
