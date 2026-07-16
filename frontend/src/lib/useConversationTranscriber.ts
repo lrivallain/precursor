@@ -85,6 +85,11 @@ export function useConversationTranscriber({
   const [error, setError] = useState<string | null>(null);
 
   const transcriberRef = useRef<ConversationTranscriber | null>(null);
+  // Synchronous latch: transcriberRef is only assigned after several awaits
+  // (token fetch, SDK import, getUserMedia), so a rapid double-click could pass
+  // the transcriberRef guard twice and spin up two recordings. This flag is set
+  // before those awaits so the second call is rejected immediately.
+  const startingRef = useRef(false);
   // We own the captured MediaStreams (rather than letting the SDK open the
   // device) so teardown can stop their tracks and reliably release the OS
   // devices — the SDK's close() alone leaves the capture indicator on.
@@ -142,7 +147,8 @@ export function useConversationTranscriber({
   useEffect(() => teardown, [teardown]);
 
   const start = useCallback(() => {
-    if (!enabled || transcriberRef.current) return;
+    if (!enabled || transcriberRef.current || startingRef.current) return;
+    startingRef.current = true;
     setError(null);
     void (async () => {
       try {
@@ -212,6 +218,10 @@ export function useConversationTranscriber({
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not reach the speech service");
         teardown();
+      } finally {
+        // Latch released once transcriberRef is set (guarding further starts) or
+        // teardown cleared it after a failure, freeing a retry.
+        startingRef.current = false;
       }
     })();
   }, [enabled, lang, deviceId, captureMic, teardown]);
