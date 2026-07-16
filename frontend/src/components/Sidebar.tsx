@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import {
   AlarmClock,
   Bot,
@@ -12,8 +12,10 @@ import {
   Home,
   MessageSquare,
   MessagesSquare,
+  PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelTop,
   Pin,
   Plus,
   Radio,
@@ -22,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
 import { SECTION_COLORS } from "../lib/sections";
+import { Z_INDEX } from "../lib/constants";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
@@ -83,6 +86,8 @@ interface Props {
   onRefresh: () => Promise<void> | void;
   onOpenGlobalSettings: () => void;
   onOpenArchive: () => void;
+  /** Opens the command palette (⌘K) for width-independent section jumps. */
+  onOpenPalette?: () => void;
   /** Per-mode unread totals, used to badge the mode switcher tabs. */
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   /** Whether the Live section is enabled (hides its tab when off). */
@@ -117,6 +122,7 @@ export function Sidebar({
   onReminderDone,
   onOpenGlobalSettings,
   onOpenArchive,
+  onOpenPalette,
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
@@ -132,6 +138,20 @@ export function Sidebar({
     min: 200,
     max: 520,
   });
+  // Expanded-sidebar section navigation style. "rail" shows an always-visible
+  // vertical icon rail (no section is hidden by width); "tabs" keeps the
+  // horizontal, scrollable switcher. Persisted so the choice sticks. Only
+  // affects the expanded layout — the collapsed sidebar is always a rail.
+  const [navStyle, setNavStyle] = useState<"rail" | "tabs">(() => {
+    if (typeof window === "undefined") return "rail";
+    return window.localStorage.getItem("precursor:sidebar:navStyle") === "tabs"
+      ? "tabs"
+      : "rail";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("precursor:sidebar:navStyle", navStyle);
+  }, [navStyle]);
 
   const filtered = useMemo(() => filterTree(tree, query.trim().toLowerCase()), [tree, query]);
   // Pinned topics surface as a flat list at the top of the sidebar so they
@@ -158,6 +178,16 @@ export function Sidebar({
           <PanelLeftOpen size={18} />
         </button>
         <div className="my-1 h-px w-6 bg-border" />
+        {onOpenPalette && (
+          <button
+            className="p-2 rounded hover:bg-surface"
+            aria-label="Jump to section"
+            data-tooltip="Jump to section (⌘K)"
+            onClick={onOpenPalette}
+          >
+            <Search size={18} />
+          </button>
+        )}
         {onGoHome && (
           <button
             className={`relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
@@ -168,72 +198,15 @@ export function Sidebar({
             <Home size={18} />
           </button>
         )}
-        <button
-          className={`relative p-2 rounded ${!atHome && mode === "topics" ? SECTION_COLORS.topics.activeTab : "hover:bg-surface"}`}
-          aria-label="Topics"
-          data-tooltip="Topics"
-          onClick={() => onModeChange("topics")}
-        >
-          <MessagesSquare size={18} />
-          <ModeUnreadDot count={unreadByMode?.topics ?? 0} />
-        </button>
-        <button
-          className={`relative p-2 rounded ${!atHome && mode === "chats" ? SECTION_COLORS.chats.activeTab : "hover:bg-surface"}`}
-          aria-label="Chats"
-          data-tooltip="Chats"
-          onClick={() => onModeChange("chats")}
-        >
-          <MessageSquare size={18} />
-          <ModeUnreadDot count={unreadByMode?.chats ?? 0} />
-        </button>
-        {liveEnabled && (
-          <button
-            className={`relative p-2 rounded ${!atHome && mode === "live" ? SECTION_COLORS.live.activeTab : "hover:bg-surface"}`}
-            aria-label="Live"
-            data-tooltip="Live"
-            onClick={() => onModeChange("live")}
-          >
-            <Radio size={18} />
-          </button>
-        )}
-        <button
-          className={`p-2 rounded ${!atHome && mode === "workspaces" ? SECTION_COLORS.workspaces.activeTab : "hover:bg-surface"}`}
-          aria-label="Workspaces"
-          data-tooltip="Workspaces"
-          onClick={() => onModeChange("workspaces")}
-        >
-          <FolderGit2 size={18} />
-        </button>
-        <button
-          className={`relative p-2 rounded ${!atHome && mode === "agents" ? SECTION_COLORS.agents.activeTab : "hover:bg-surface"}`}
-          aria-label="Agents"
-          data-tooltip="Agents"
-          onClick={() => onModeChange("agents")}
-        >
-          <Bot size={18} />
-          <ModeUnreadDot count={unreadByMode?.agents ?? 0} />
-        </button>
-        {kanbanEnabled && (
-          <button
-            className={`p-2 rounded ${!atHome && mode === "kanban" ? SECTION_COLORS.kanban.activeTab : "hover:bg-surface"}`}
-            aria-label="Kanban"
-            data-tooltip="Kanban"
-            onClick={() => onModeChange("kanban")}
-          >
-            <SquareKanban size={18} />
-          </button>
-        )}
-        <div className="my-1 h-px w-6 bg-border" />
-        {mode !== "kanban" && (
-          <button
-            className="p-2 rounded hover:bg-surface"
-            aria-label={newActionLabel(mode)}
-            data-tooltip={newActionLabel(mode)}
-            onClick={onNew}
-          >
-            <Plus size={18} />
-          </button>
-        )}
+        <SectionRailButtons
+          mode={mode}
+          atHome={atHome}
+          onModeChange={onModeChange}
+          onNew={onNew}
+          unreadByMode={unreadByMode}
+          liveEnabled={liveEnabled}
+          kanbanEnabled={kanbanEnabled}
+        />
         <div className="flex-1" />
         <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </aside>
@@ -241,11 +214,40 @@ export function Sidebar({
   }
 
   return (
-    <aside
-      className="relative border-r border-border flex flex-col shrink-0"
-      style={{ width }}
-    >
-      <ResizeHandle onMouseDown={onResizeStart} />
+    <div className="flex h-full shrink-0">
+      {navStyle === "rail" && (
+        <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
+          {onOpenPalette && (
+            <>
+              <button
+                className="p-2 rounded hover:bg-surface"
+                aria-label="Jump to section"
+                data-tooltip="Jump to section (⌘K)"
+                onClick={onOpenPalette}
+              >
+                <Search size={18} />
+              </button>
+              <div className="my-1 h-px w-6 bg-border" />
+            </>
+          )}
+          <SectionRailButtons
+            mode={mode}
+            atHome={atHome}
+            onModeChange={onModeChange}
+            onNew={onNew}
+            unreadByMode={unreadByMode}
+            liveEnabled={liveEnabled}
+            kanbanEnabled={kanbanEnabled}
+            showNew={false}
+            labelOnHover
+          />
+        </nav>
+      )}
+      <aside
+        className="relative border-r border-border flex flex-col shrink-0 min-w-0"
+        style={{ width }}
+      >
+        <ResizeHandle onMouseDown={onResizeStart} />
       <div className="flex items-center gap-2 px-3 h-12 border-b border-border">
         <button
           type="button"
@@ -266,9 +268,17 @@ export function Sidebar({
           />
           <span className="flex-1 truncate font-semibold tracking-tight">Precursor</span>
         </button>
+        <button
+          className="p-1.5 rounded hover:bg-surface"
+          aria-label={navStyle === "rail" ? "Use tab navigation" : "Use rail navigation"}
+          data-tooltip={navStyle === "rail" ? "Switch to tabs" : "Switch to rail"}
+          onClick={() => setNavStyle((s) => (s === "rail" ? "tabs" : "rail"))}
+        >
+          {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
+        </button>
         {mode !== "kanban" && (
           <button
-            className="p-1.5 rounded hover:bg-surface"
+            className={`p-1.5 rounded-full transition-opacity hover:opacity-80 ${SECTION_COLORS[mode].icon}`}
             aria-label={newActionLabel(mode)}
             data-tooltip={newActionLabel(mode)}
             onClick={onNew}
@@ -288,15 +298,19 @@ export function Sidebar({
 
       {/* Mode switcher: Topics ⟷ Chats ⟷ Files. Persona + settings stay
           visible at the bottom of the sidebar across every mode. When the
-          sidebar is too narrow, overflow modes collapse into a ">>" menu. */}
-      <ModeSwitcher
-        mode={mode}
-        onModeChange={onModeChange}
-        atHome={atHome}
-        unreadByMode={unreadByMode}
-        liveEnabled={liveEnabled}
-        kanbanEnabled={kanbanEnabled}
-      />
+          sidebar is too narrow, overflow modes collapse into a ">>" menu.
+          Hidden in "rail" mode, where the vertical rail handles switching. */}
+      {navStyle === "tabs" && (
+        <ModeSwitcher
+          mode={mode}
+          onModeChange={onModeChange}
+          atHome={atHome}
+          unreadByMode={unreadByMode}
+          liveEnabled={liveEnabled}
+          kanbanEnabled={kanbanEnabled}
+          onOpenPalette={onOpenPalette}
+        />
+      )}
 
       {/* Fired reminders surface here across every mode until acknowledged. */}
       {reminders.length > 0 && (
@@ -405,7 +419,8 @@ export function Sidebar({
       <div className="border-t border-border px-2 py-2">
         <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
       </div>
-    </aside>
+      </aside>
+    </div>
   );
 }
 
@@ -649,14 +664,116 @@ function collectPinned(tree: TopicNode[]): TopicNode[] {
   return out;
 }
 
-const MODES: { mode: SidebarMode; label: string; icon: ReactNode }[] = [
-  { mode: "topics", label: "Topics", icon: <MessagesSquare size={14} /> },
-  { mode: "chats", label: "Chats", icon: <MessageSquare size={14} /> },
-  { mode: "live", label: "Live", icon: <Radio size={14} /> },
-  { mode: "workspaces", label: "Files", icon: <FolderGit2 size={14} /> },
-  { mode: "agents", label: "Agents", icon: <Bot size={14} /> },
-  { mode: "kanban", label: "Kanban", icon: <SquareKanban size={14} /> },
+const MODES: {
+  mode: SidebarMode;
+  label: string;
+  Icon: ComponentType<{ size?: number; className?: string }>;
+}[] = [
+  { mode: "topics", label: "Topics", Icon: MessagesSquare },
+  { mode: "chats", label: "Chats", Icon: MessageSquare },
+  { mode: "live", label: "Live", Icon: Radio },
+  { mode: "workspaces", label: "Files", Icon: FolderGit2 },
+  { mode: "agents", label: "Agents", Icon: Bot },
+  { mode: "kanban", label: "Kanban", Icon: SquareKanban },
 ];
+
+// Vertical section rail: an always-visible column of section icons (Home +
+// every enabled mode, and — in the collapsed sidebar — the "New" action).
+// Shared by the collapsed sidebar and the expanded "rail" navigation style so
+// both stay in lockstep. Home is only rendered when `onGoHome` is passed — the
+// expanded layout already exposes Home via its "Precursor" header button, so it
+// omits it. `showNew` controls the trailing "New" button (kept in the collapsed
+// rail, which has no header; the expanded rail relies on the header "+").
+// `labelOnHover` reveals the full section name as a flyout pill next to each
+// icon (expanded rail) instead of the collapsed rail's hover tooltip.
+function SectionRailButtons({
+  mode,
+  atHome = false,
+  onGoHome,
+  onModeChange,
+  onNew,
+  unreadByMode,
+  liveEnabled = true,
+  kanbanEnabled = false,
+  showNew = true,
+  labelOnHover = false,
+}: {
+  mode: SidebarMode;
+  atHome?: boolean;
+  onGoHome?: () => void;
+  onModeChange: (mode: SidebarMode) => void;
+  onNew: () => void;
+  unreadByMode?: Partial<Record<SidebarMode, number>>;
+  liveEnabled?: boolean;
+  kanbanEnabled?: boolean;
+  showNew?: boolean;
+  labelOnHover?: boolean;
+}) {
+  const modes = MODES.filter(
+    (m) => (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
+  );
+  // Hover label rendered as a flush continuation of the icon: same section
+  // tint, no gap/border, squared seam — so it reads as the icon extending into
+  // a pill rather than a detached bubble. An opaque base (bg-bg) under the tint
+  // keeps content from bleeding through, matching the button's own tint-over-bg.
+  const flyout = (label: string, tint: string) =>
+    labelOnHover ? (
+      <span
+        className={`pointer-events-none absolute inset-y-0 left-full flex items-center rounded-r-md bg-bg opacity-0 transition-opacity group-hover:opacity-100 ${Z_INDEX.POPOVER}`}
+      >
+        <span
+          className={`flex h-full items-center whitespace-nowrap rounded-r-md pl-2 pr-3 text-sm font-medium ${tint}`}
+        >
+          {label}
+        </span>
+      </span>
+    ) : null;
+  return (
+    <>
+      {onGoHome && (
+        <button
+          className={`group relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
+          aria-label="Home"
+          data-tooltip={labelOnHover ? undefined : "Home"}
+          onClick={onGoHome}
+        >
+          <Home size={18} />
+          {flyout("Home", "bg-surface text-text")}
+        </button>
+      )}
+      {modes.map((m) => {
+        const isActive = !atHome && mode === m.mode;
+        return (
+          <button
+            key={m.mode}
+            className={`group relative p-2 rounded ${labelOnHover ? "hover:rounded-r-none" : ""} ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab}`}
+            aria-label={m.label}
+            data-tooltip={labelOnHover ? undefined : m.label}
+            onClick={() => onModeChange(m.mode)}
+          >
+            <m.Icon size={18} />
+            <ModeUnreadDot count={unreadByMode?.[m.mode] ?? 0} />
+            {flyout(m.label, SECTION_COLORS[m.mode].icon)}
+          </button>
+        );
+      })}
+      {showNew && mode !== "kanban" && (
+        <>
+          <div className="my-1 h-px w-6 bg-border" />
+          <button
+            className="group relative p-2 rounded hover:bg-surface"
+            aria-label={newActionLabel(mode)}
+            data-tooltip={labelOnHover ? undefined : newActionLabel(mode)}
+            onClick={onNew}
+          >
+            <Plus size={18} />
+            {flyout(newActionLabel(mode), "bg-surface text-text")}
+          </button>
+        </>
+      )}
+    </>
+  );
+}
 
 // Horizontal mode switcher: all modes live in a single scrollable row so the
 // active mode is never hidden behind an overflow menu. Left/right chevrons
@@ -669,6 +786,7 @@ function ModeSwitcher({
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
+  onOpenPalette,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
@@ -676,6 +794,7 @@ function ModeSwitcher({
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
+  onOpenPalette?: () => void;
 }) {
   const modes = useMemo(
     () =>
@@ -779,6 +898,17 @@ function ModeSwitcher({
       ref={wrapperRef}
       className="relative flex items-stretch gap-1 px-2 py-2 border-b border-border"
     >
+      {onOpenPalette && (
+        <button
+          type="button"
+          className="flex shrink-0 items-center justify-center rounded px-1.5 text-muted hover:bg-surface hover:text-text"
+          aria-label="Jump to section"
+          data-tooltip="Jump to section (⌘K)"
+          onClick={onOpenPalette}
+        >
+          <Search size={16} />
+        </button>
+      )}
       {canLeft && (
         <button
           type="button"
@@ -803,11 +933,13 @@ function ModeSwitcher({
               key={m.mode}
               ref={isActive ? activeRef : undefined}
               className={`flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
-                isActive ? SECTION_COLORS[m.mode].activeTab : "hover:bg-surface text-muted"
+                isActive
+                  ? SECTION_COLORS[m.mode].activeTab
+                  : `text-muted ${SECTION_COLORS[m.mode].hoverTab}`
               }`}
               onClick={() => onModeChange(m.mode)}
             >
-              {m.icon} <span className="whitespace-nowrap">{m.label}</span>
+              <m.Icon size={14} /> <span className="whitespace-nowrap">{m.label}</span>
               {unread > 0 && !isActive && <UnreadBadge count={unread} />}
             </button>
           );
