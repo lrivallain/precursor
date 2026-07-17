@@ -249,7 +249,7 @@ export function ReminderModal({
               refineKind="note"
               rows={3}
               placeholder="What should this bring back up?"
-              className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+              className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
             />
           </div>
 
