@@ -44,7 +44,58 @@
   overflow: hidden;
 }
 
+/* Click-to-zoom affordance on screenshots. */
+.vp-doc .pc-shot img,
+.pc-hero-showcase .frame img {
+  cursor: zoom-in;
+}
+.medium-zoom-image {
+  cursor: zoom-out;
+}
+.medium-zoom-overlay {
+  z-index: 40;
+}
+.medium-zoom-image--opened {
+  z-index: 41;
+  border-radius: 8px;
+}
+
 .pc-shot img {
   display: block;
   width: 100%;
+}
+
+/* Hero showcase screenshot rendered under the landing hero (theme-mapped). */
+.pc-hero-showcase {
+  max-width: 1152px;
+  margin: 1rem auto 0;
+  padding: 0 24px;
+}
+
+.pc-hero-showcase .frame {
+  border-radius: 14px;
+  border: 1px solid var(--vp-c-divider);
+  box-shadow: 0 24px 64px rgba(2, 8, 20, 0.22);
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+}
+
+.pc-hero-showcase img {
+  display: block;
+  width: 100%;
+}
+
+.pc-hero-showcase .caption {
+  margin: 0.75rem 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--vp-c-text-2);
+}
+
+/* Swap the light/dark screenshot to match the active theme. */
+html:not(.dark) .pc-hero-showcase .dark-only {
+  display: none;
+}
+html.dark .pc-hero-showcase .light-only {
+  display: none;
 }

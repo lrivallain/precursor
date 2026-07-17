@@ -8,9 +8,6 @@ hero:
     A single, local-first app that keeps your AI conversations next to the GitHub
     issues they belong to — with live meetings, autonomous agents, MCP tools, and
     a scheduler, all in one uvicorn process.
-  image:
-    src: /logo.svg
-    alt: Precursor
   actions:
     - theme: brand
       text: Get started
