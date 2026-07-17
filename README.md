@@ -215,6 +215,12 @@ Releases ship from a pushed `v<version>` tag via GitHub Actions. See
 
 ## Documentation
 
+📖 **[Website & full documentation](https://lrivallain.github.io/precursor/)** —
+feature guides, installation, configuration, architecture, and contribution
+docs, published from [`website/`](website/) on every push.
+
+In-repo references:
+
 - [Architecture](docs/architecture.md)
 - [Plugin system](docs/plugins.md)
 - [Contributing](CONTRIBUTING.md)

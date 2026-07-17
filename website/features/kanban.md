@@ -8,8 +8,6 @@ The **Kanban** section tracks the GitHub issues linked to your
 [topics](/features/topics) on a board that spans your projects — a bird's-eye view
 of work in flight, grouped by status.
 
-<Screenshot src="/screenshots/kanban.png" alt="A Kanban board with columns of issue cards drawn from linked topics" caption="A Kanban board over the issues your topics are linked to, across projects." />
-
 ## What it shows
 
 Because every topic can be linked to a GitHub issue, Precursor already knows the
