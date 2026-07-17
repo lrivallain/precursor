@@ -329,7 +329,7 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ title }),
       }),
-    update: (id: number, payload: { title?: string; task?: string }) =>
+    update: (id: number, payload: { title?: string; task?: string; role_id?: number | null }) =>
       request<AgentSession>(`/api/agents/${id}`, {
         method: "PATCH",
         body: JSON.stringify(payload),

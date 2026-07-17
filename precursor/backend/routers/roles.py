@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Chat, Role, Topic, Workspace
+from precursor.backend.models import AgentSession, Chat, MeetingSession, Role, Topic, Workspace
 from precursor.backend.schemas import RoleCreate, RoleRead, RoleUpdate
 
 router = APIRouter(prefix="/api/roles", tags=["roles"])
@@ -120,7 +120,7 @@ async def delete_role(role_id: int, session: AsyncSession = Depends(get_session)
     # the references explicitly rather than relying on the DB FK, since SQLite
     # does not enforce ON DELETE SET NULL unless foreign_keys pragma is on — and
     # this codebase manages such cleanups in the API layer (see topics.delete).
-    for model in (Topic, Chat, Workspace):
+    for model in (Topic, Chat, Workspace, MeetingSession, AgentSession):
         await session.execute(update(model).where(model.role_id == role_id).values(role_id=None))
     await session.delete(role)
     await session.commit()

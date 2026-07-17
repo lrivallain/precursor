@@ -108,6 +108,13 @@ class AgentSession(Base, TimestampMixin):
         ForeignKey("chats.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Assistant Role appended to the agent's system preamble to give it a
+    # persistent persona. Null resolves to the default role (no persona
+    # injected). SET NULL on delete reverts to default.
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Last time the runtime reported activity for this session (event arrival).
     last_activity_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

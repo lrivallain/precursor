@@ -1583,6 +1583,16 @@ export default function App() {
       setWorkspaces((prev) =>
         prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
       );
+    } else if (sidebarMode === "live" && activeSession) {
+      const updated = await api.meetings.updateSession(activeSession.id, { role_id: roleId });
+      setMeetingSessions((prev) =>
+        prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
+      );
+    } else if (sidebarMode === "agents" && activeAgent) {
+      const updated = await api.agents.update(activeAgent.id, { role_id: roleId });
+      setAgents((prev) =>
+        prev ? prev.map((a) => (a.id === updated.id ? updated : a)) : prev,
+      );
     }
   }
 
@@ -1591,12 +1601,20 @@ export default function App() {
       ? (activeTopic?.role_id ?? null)
       : sidebarMode === "chats"
         ? (activeChat?.role_id ?? null)
-        : (activeWorkspace?.role_id ?? null);
+        : sidebarMode === "workspaces"
+          ? (activeWorkspace?.role_id ?? null)
+          : sidebarMode === "live"
+            ? (activeSession?.role_id ?? null)
+            : sidebarMode === "agents"
+              ? (activeAgent?.role_id ?? null)
+              : null;
 
   const hasActiveDiscussion =
     (sidebarMode === "topics" && !!activeTopic) ||
     (sidebarMode === "chats" && !!activeChat) ||
-    (sidebarMode === "workspaces" && !!activeWorkspace);
+    (sidebarMode === "workspaces" && !!activeWorkspace) ||
+    (sidebarMode === "live" && !!activeSession) ||
+    (sidebarMode === "agents" && !!activeAgent);
 
   async function loadWorkspaces(): Promise<Workspace[]> {
     const list = await api.workspaces.list();

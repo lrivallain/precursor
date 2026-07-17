@@ -76,6 +76,7 @@ from precursor.backend.services.events import (
     set_current_client_id,
 )
 from precursor.backend.services.memories import build_memory_prompt
+from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import (
     SUGGESTIONS_INSTRUCTION,
     split_suggestions,
@@ -638,18 +639,25 @@ class AgentManager:
         return "\n".join(lines)
 
     async def _system_preamble(self, agent: AgentSession) -> str | None:
-        """Combined system-message append: operator custom prompt + memory + topic binding.
+        """Combined system-message append: role persona + operator custom prompt + memory + topic binding.
 
         The SDK base prompt isn't ours to set, so each piece is *appended*. The
-        custom prompt (Settings → Agents) comes first as general guidance,
-        long-term memory follows as standing context (matching chat/topic turns),
-        then the topic binding so the agent always knows which record it's on.
+        agent's Assistant Role persona comes first (it defines who the agent is),
+        then the custom prompt (Settings → Agents) as general guidance, long-term
+        memory as standing context (matching chat/topic turns), then the topic
+        binding so the agent always knows which record it's on.
         """
         async with SessionLocal() as session:
+            role_prompt = (await resolve_role_prompt(session, agent.role_id)).strip()
             custom = (await resolve_agents_system_prompt(session)).strip()
             memory = await build_memory_prompt(session)
+        persona = (
+            f"Active assistant role — adopt this persona for the whole task:\n{role_prompt}"
+            if role_prompt
+            else ""
+        )
         topic = await self._topic_context(agent)
-        parts = [p for p in (custom, memory, topic, SUGGESTIONS_INSTRUCTION) if p]
+        parts = [p for p in (persona, custom, memory, topic, SUGGESTIONS_INSTRUCTION) if p]
         return "\n\n".join(parts) if parts else None
 
     # ------------------------------------------------------------------ sessions

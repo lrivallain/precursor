@@ -30,6 +30,7 @@ class MeetingSessionUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     language: str | None = Field(default=None, max_length=32)
     topic_id: int | None = None
+    role_id: int | None = None
     status: MeetingStatus | None = None
     notes: str | None = Field(default=None, max_length=100000)
     features: list[str] | None = None
@@ -44,6 +45,7 @@ class MeetingSessionRead(BaseModel):
     status: MeetingStatus
     language: str | None = None
     topic_id: int | None = None
+    role_id: int | None = None
     chat_id: int | None = None
     speaker_names: dict[str, str] = Field(default_factory=dict)
     attendees: list[str] = Field(default_factory=list)

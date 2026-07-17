@@ -25,9 +25,18 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
+
+
+def role_persona_instruction(role_prompt: str) -> str:
+    """Wrap a resolved role system prompt as a persona directive for the live
+    assistant. Empty for the default (empty) role so nothing is injected."""
+    if not role_prompt.strip():
+        return ""
+    return f"Active assistant role — adopt this persona for every reply:\n{role_prompt.strip()}"
 
 # Characters of transcript / topic context fed to the model. Kept modest so the
 # analysis stays fast; the snapshot is re-derived each run so older context that
@@ -192,6 +201,9 @@ async def live_chat_grounding(session: AsyncSession, chat_id: int) -> str:
         "meeting context below; it updates as the meeting progresses. Prefer it "
         "over prior assumptions for anything time-sensitive."
     ]
+    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    if persona:
+        parts.append(persona)
     if segments:
         parts.append(f"Transcript so far:\n{_format_transcript(segments, ms.speaker_names)}")
     if insights:
@@ -416,6 +428,9 @@ async def analyze_session(
     lang = language_name(ms.language)
     if lang:
         system += f"\n\nWrite every insight's content and the suggestion in {lang}."
+    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    if persona:
+        system += f"\n\n{persona}"
 
     user_parts = [f"Transcript so far:\n{transcript}"]
     meeting_ctx = meeting_context_text(ms.external_meeting)

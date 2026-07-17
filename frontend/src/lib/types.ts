@@ -162,6 +162,9 @@ export interface AgentSession {
   model: string | null;
   topic_id: number | null;
   chat_id: number | null;
+  // Assistant Role appended to the agent's system preamble. Null resolves to
+  // the default role (no persona).
+  role_id: number | null;
   last_activity_at: string | null;
   archived_at: string | null;
   last_read_at: string | null;
@@ -222,6 +225,7 @@ export interface AgentSessionCreate {
   model?: string | null;
   topic_id?: number | null;
   chat_id?: number | null;
+  role_id?: number | null;
 }
 
 // A normalised SDK event, shaped for the workflow-step timeline.
@@ -946,6 +950,9 @@ export interface MeetingSession {
   status: MeetingStatus;
   language: string | null;
   topic_id: number | null;
+  // Assistant Role grounding the live assistant (insights/tips, Q&A, chat).
+  // Null resolves to the default role (no persona).
+  role_id: number | null;
   // Chat spawned for the "Ask assistant" tab (created on first ask), or null.
   chat_id: number | null;
   // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
@@ -989,6 +996,7 @@ export interface MeetingSessionUpdate {
   title?: string | null;
   language?: string | null;
   topic_id?: number | null;
+  role_id?: number | null;
   status?: MeetingStatus;
   notes?: string | null;
   features?: string[];

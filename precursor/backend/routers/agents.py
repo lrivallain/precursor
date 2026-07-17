@@ -184,6 +184,7 @@ async def create_agent(
         model=payload.model,
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
+        role_id=payload.role_id,
         status="pending",
     )
     session.add(agent)
@@ -321,6 +322,14 @@ async def update_agent(
     if payload.title is not None:
         agent.title = payload.title.strip()[:200] or agent.title
 
+    # Reassigning the role re-primes the agent: its persona lives in the SDK
+    # session's system preamble, baked in once at (re)creation. Tearing the live
+    # session down (below) forces the new persona to be injected on the next run.
+    role_changed = False
+    if "role_id" in payload.model_fields_set and payload.role_id != agent.role_id:
+        agent.role_id = payload.role_id
+        role_changed = True
+
     restart = False
     if payload.task is not None:
         new_task = payload.task.strip()
@@ -340,6 +349,10 @@ async def update_agent(
     if restart:
         mgr = get_agent_manager()
         mgr.enqueue(mgr.restart_with_task(agent.id))
+    elif role_changed:
+        # No task replay needed — just drop the cached SDK session so the new
+        # persona is re-injected the next time the agent runs or resumes.
+        await get_agent_manager().teardown_session(agent.id)
 
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id

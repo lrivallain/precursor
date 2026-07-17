@@ -79,6 +79,7 @@ from precursor.backend.services.meeting_analysis import (
     language_name,
     meeting_context_text,
     meeting_details_markdown,
+    role_persona_instruction,
     translate_lines,
     translate_transcript,
 )
@@ -86,6 +87,7 @@ from precursor.backend.services.meeting_summary import (
     generate_summary,
     summarize_topic_conversation,
 )
+from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.usage_stats import record_usage
 
@@ -573,6 +575,9 @@ async def ask(
     lang = language_name(ms.language)
     if lang:
         system += f" Respond in {lang}."
+    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    if persona:
+        system += f"\n\n{persona}"
     user_parts = [
         f"Question: {payload.question}",
         f"\nTranscript so far:\n{transcript or '(empty)'}",

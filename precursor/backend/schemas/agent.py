@@ -36,6 +36,7 @@ class AgentSessionRead(BaseModel):
     model: str | None = None
     topic_id: int | None = None
     chat_id: int | None = None
+    role_id: int | None = None
     last_activity_at: UtcDateTime | None = None
     archived_at: UtcDateTime | None = None
     last_read_at: UtcDateTime | None = None
@@ -57,6 +58,7 @@ class AgentSessionCreate(BaseModel):
     model: str | None = None
     topic_id: int | None = None
     chat_id: int | None = None
+    role_id: int | None = None
 
 
 class AgentSendRequest(BaseModel):
@@ -70,11 +72,12 @@ class AgentUpdateRequest(BaseModel):
 
     Both fields are optional so a caller can patch either independently (the
     Settings drawer sends ``title`` on rename and ``task`` when the instructions
-    are edited).
+    are edited). ``role_id`` reassigns the agent's Assistant Role.
     """
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     task: str | None = Field(default=None, min_length=1)
+    role_id: int | None = None
 
 
 class AgentLinkRequest(BaseModel):
