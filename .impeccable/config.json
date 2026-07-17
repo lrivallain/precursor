@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "bounce-easing",
+        "value": "animate-bounce",
+        "files": [
+          "frontend/src/components/Sidebar.tsx"
+        ],
+        "reason": "StreamingDots typing indicator — bouncing dots are an intentional, standard pattern",
+        "createdAt": "2026-07-17T08:48:34.796Z"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "frontend/src/index.css"
+        ],
+        "reason": "Markdown blockquote left border — standard typography, not a card accent",
+        "createdAt": "2026-07-17T08:48:36.549Z"
+      }
+    ]
+  }
+}
