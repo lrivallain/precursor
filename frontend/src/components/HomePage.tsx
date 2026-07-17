@@ -49,6 +49,9 @@ interface Props {
   onOpenArchive?: () => void;
 }
 
+/** Fold/unroll duration for the start-surface panel; mirrors the CSS transition. */
+const REVEAL_MS = 400;
+
 /**
  * Landing surface shown at `/`. A greeting and a grid of section cards. A single
  * click reveals that section's start surface right below (or, for sections with
@@ -68,6 +71,14 @@ export function HomePage({
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<HomeKind | null>(null);
+  // Cross-fade between wizards: `shown` is the surface currently mounted and
+  // `open` drives its unroll. When `selected` (the target) diverges we fold the
+  // current panel closed, swap `shown` once it's collapsed, then unroll the new
+  // one — so switching sections reads as a smooth fold-out → fold-in rather than
+  // an instant content swap.
+  const [shown, setShown] = useState<HomeKind | null>(null);
+  const [open, setOpen] = useState(false);
+  const swapTimer = useRef<number | null>(null);
   // Distinguish a single click (show wizard / open) from a double click (open
   // section): a single click's action is deferred by a short, fixed window and
   // cancelled when a second click on the same card lands, so the two gestures
@@ -79,9 +90,43 @@ export function HomePage({
   useEffect(
     () => () => {
       if (clickTimer.current) window.clearTimeout(clickTimer.current);
+      if (swapTimer.current) window.clearTimeout(swapTimer.current);
     },
     [],
   );
+
+  // Fold the visible panel closed before swapping in the target surface. When
+  // nothing is showing yet, mount the target straight away (it opens below).
+  useEffect(() => {
+    if (selected === shown) return;
+    if (shown === null) {
+      setShown(selected);
+      return;
+    }
+    setOpen(false);
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (swapTimer.current) window.clearTimeout(swapTimer.current);
+    swapTimer.current = window.setTimeout(
+      () => setShown(selected),
+      reduce ? 0 : REVEAL_MS,
+    );
+    return () => {
+      if (swapTimer.current) window.clearTimeout(swapTimer.current);
+    };
+  }, [selected, shown]);
+
+  // Once the target surface is mounted, unroll it open on the next frame so the
+  // grid-rows transition runs from collapsed → full.
+  useEffect(() => {
+    if (shown !== null && shown === selected) {
+      const raf = requestAnimationFrame(() => setOpen(true));
+      return () => cancelAnimationFrame(raf);
+    }
+    if (shown === null) setOpen(false);
+  }, [shown, selected]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -298,12 +343,12 @@ export function HomePage({
       {/* The picked start surface renders on the same page, under the cards.
           The shared hero/form surfaces vertically center by default as full-pane
           empty states; top-align them here so they sit right below the cards. */}
-      {selected && (
-        <div className={`min-h-0 flex-1 overflow-y-auto section-${selected}`}>
+      {shown && (
+        <div className={`min-h-0 flex-1 overflow-y-auto section-${shown}`}>
           <div className="mx-auto w-full max-w-2xl px-8 pb-8">
-            <div key={selected} className="wizard-reveal">
+            <div className={`wizard-reveal${open ? " is-open" : ""}`}>
               <div className="wizard-panel [&>*]:!h-auto [&>*]:!justify-start [&>*]:!py-6">
-                {surfaces[selected]}
+                {surfaces[shown]}
               </div>
             </div>
           </div>
