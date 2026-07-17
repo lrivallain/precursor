@@ -146,7 +146,7 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-2 border-b border-border px-4 py-2">
         <Gauge size={16} className="shrink-0 text-teal-600 dark:text-teal-400" />
         <div className="min-w-0">
@@ -200,7 +200,7 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
         </div>
       )}
 
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative flex-1 min-h-0 overflow-hidden">
         {status.state === "running" ? (
           <iframe
             key={frameNonce}
