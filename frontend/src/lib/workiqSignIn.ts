@@ -29,6 +29,10 @@ let pendingNavigated = false;
  *
  * A no-op when this window has no pending popup — only the window that started
  * the sign-in opened one, even though the event is broadcast to all of them.
+ *
+ * This may fire more than once for a single sign-in: the backend first tries a
+ * silent ``prompt=none`` pass and, if Entra needs interaction, re-surfaces the
+ * interactive URL — we simply re-navigate the same popup to whichever URL comes.
  */
 export function emitWorkiqAuthUrl(url: string): void {
   if (pendingPopup && !pendingPopup.closed) {

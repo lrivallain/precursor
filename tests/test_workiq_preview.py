@@ -181,7 +181,177 @@ async def test_resolve_bearer_falls_back_on_transient_error(monkeypatch) -> None
     assert len(warnings) == 1
 
 
-def test_reauthenticate_requires_preview_enabled() -> None:
+def test_augment_authorization_url_adds_and_preserves() -> None:
+    """We splice in login_hint/prompt without clobbering SDK-set params."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    base = "https://login.example/authorize?client_id=abc&scope=openid"
+
+    # No-op when nothing to add.
+    assert wp._augment_authorization_url(base, login_hint=None, prompt=None) == base
+
+    out = wp._augment_authorization_url(base, login_hint="user@contoso.com", prompt="none")
+    from urllib.parse import parse_qs, urlsplit
+
+    params = parse_qs(urlsplit(out).query)
+    assert params["login_hint"] == ["user@contoso.com"]
+    assert params["prompt"] == ["none"]
+    # Original params survive untouched.
+    assert params["client_id"] == ["abc"]
+    assert params["scope"] == ["openid"]
+
+    # An existing param wins — we never overwrite what the SDK set.
+    preset = base + "&prompt=login&login_hint=someone@else.com"
+    out2 = wp._augment_authorization_url(preset, login_hint="user@contoso.com", prompt="none")
+    p2 = parse_qs(urlsplit(out2).query)
+    assert p2["prompt"] == ["login"]
+    assert p2["login_hint"] == ["someone@else.com"]
+
+
+def _fake_jwt(claims: dict) -> str:
+    import base64
+    import json
+
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    return f"header.{payload}.signature"
+
+
+def test_login_hint_from_access_token_decodes_username() -> None:
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    assert (
+        wp._login_hint_from_access_token(_fake_jwt({"preferred_username": "u@contoso.com"}))
+        == "u@contoso.com"
+    )
+    # Falls back through the claim priority list.
+    assert (
+        wp._login_hint_from_access_token(_fake_jwt({"upn": "up@contoso.com"})) == "up@contoso.com"
+    )
+    # Opaque / malformed tokens yield no hint rather than raising.
+    assert wp._login_hint_from_access_token("not-a-jwt") is None
+    assert wp._login_hint_from_access_token(_fake_jwt({"sub": "no-username-claim"})) is None
+
+
+async def test_login_hint_persisted_and_survives_token_clear() -> None:
+    """set_tokens captures the account; clearing tokens keeps the hint."""
+    from mcp.shared.auth import OAuthToken
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens()
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(
+            access_token=_fake_jwt({"preferred_username": "hint@contoso.com"}),
+            token_type="Bearer",
+            expires_in=3600,
+            refresh_token="r",
+        )
+    )
+    assert await wp.get_workiq_login_hint() == "hint@contoso.com"
+
+    # Clearing the tokens must NOT drop the hint — it's not a credential, and we
+    # reuse it to pre-select the account on the next re-auth.
+    await wp.clear_workiq_oauth_tokens()
+    assert await wp.get_workiq_login_hint() == "hint@contoso.com"
+
+
+async def test_try_silent_reauth_falls_back_on_interaction_required(monkeypatch) -> None:
+    """A group-wrapped interaction-required signal means 'prompt the user'."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _needs_interaction(_provider) -> None:
+        raise BaseExceptionGroup("grp", [wp.WorkIQInteractionRequiredError("login_required")])
+
+    monkeypatch.setattr(wp, "_run_signin", _needs_interaction)
+    assert (
+        await wp._try_silent_reauth(login_hint="u@contoso.com", open_system_browser=False) is False
+    )
+
+    async def _ok(_provider) -> None:
+        return None
+
+    monkeypatch.setattr(wp, "_run_signin", _ok)
+    assert await wp._try_silent_reauth(login_hint=None, open_system_browser=False) is True
+
+    async def _boom(_provider) -> None:
+        raise RuntimeError("transport exploded")
+
+    monkeypatch.setattr(wp, "_run_signin", _boom)
+    with pytest.raises(RuntimeError, match="transport exploded"):
+        await wp._try_silent_reauth(login_hint=None, open_system_browser=False)
+
+
+async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> None:
+    """Silent success skips the prompt; silent fallback runs it; toggle disables it."""
+    import types
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    events: list[str] = []
+
+    async def _noop_clear() -> None:
+        events.append("clear")
+
+    async def _hint() -> str | None:
+        return "u@contoso.com"
+
+    async def _run_signin(_provider) -> None:
+        events.append("interactive")
+
+    monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
+    monkeypatch.setattr(wp, "get_workiq_login_hint", _hint)
+    monkeypatch.setattr(wp, "_run_signin", _run_signin)
+
+    def _settings(enabled: bool):
+        return lambda: types.SimpleNamespace(workiq_silent_reauth_enabled=enabled)
+
+    # Silent succeeds → no interactive prompt.
+    async def _silent_ok(*, login_hint, open_system_browser) -> bool:
+        events.append(f"silent({login_hint})")
+        return True
+
+    monkeypatch.setattr(wp, "get_settings", _settings(True))
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_ok)
+    events.clear()
+    await wp.reauthenticate_workiq(open_system_browser=False)
+    assert events == ["clear", "silent(u@contoso.com)"]
+
+    # Silent needs interaction → falls back to the interactive prompt.
+    async def _silent_fail(*, login_hint, open_system_browser) -> bool:
+        events.append("silent")
+        return False
+
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_fail)
+    events.clear()
+    await wp.reauthenticate_workiq(open_system_browser=False)
+    assert events == ["clear", "silent", "interactive"]
+
+    # Silent disabled → straight to the interactive prompt, no silent pass.
+    async def _silent_unexpected(*, login_hint, open_system_browser) -> bool:  # pragma: no cover
+        events.append("silent-should-not-run")
+        return True
+
+    monkeypatch.setattr(wp, "get_settings", _settings(False))
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_unexpected)
+    events.clear()
+    await wp.reauthenticate_workiq(open_system_browser=False)
+    assert events == ["clear", "interactive"]
+
+
+def test_callback_page_pending_status_is_neutral() -> None:
+    """The interaction-required loopback page is calm and doesn't auto-close."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    html = wp._render_callback_page(
+        status="pending", title="Finishing sign-in…", message="one moment"
+    )
+    assert "badge pending" in html
+    assert "var autoClose = false" in html
+    assert "var pending = true" in html
+
     app = create_app()
     with TestClient(app) as client:
         # Preview off by default → the endpoint refuses rather than opening a flow.
