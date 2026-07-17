@@ -2165,6 +2165,11 @@ export default function App() {
                   history.pushState(null, "", liveUrl(null));
                 }}
                 onRecordingChange={setLiveRecordingId}
+                onOpenTopic={async (topicId) => {
+                  setAtHome(false);
+                  setSidebarMode("topics");
+                  setActiveTopic(await api.topics.get(topicId));
+                }}
               />
             ) : (
               <LiveStartHero

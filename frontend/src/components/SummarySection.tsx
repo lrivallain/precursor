@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Check, Copy, Eye, Loader2, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
+import { Check, Eye, Loader2, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
 import { GithubIcon as Github } from "./icons/GithubIcon";
-import { Markdown } from "./Markdown";
+import { CopyableMarkdown } from "./CopyableMarkdown";
 import { RefineTextarea } from "./RefineTextarea";
 
 interface Props {
@@ -42,7 +42,6 @@ export function SummarySection({
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [newAttendee, setNewAttendee] = useState("");
-  const [copied, setCopied] = useState(false);
   const [posting, setPosting] = useState(false);
   const [posted, setPosted] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
@@ -85,16 +84,6 @@ export function SummarySection({
 
   function removeAttendee(name: string): void {
     void saveAttendees(attendees.filter((a) => a !== name));
-  }
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
   }
 
   async function post(): Promise<void> {
@@ -221,15 +210,6 @@ export function SummarySection({
           )}
           <button
             type="button"
-            onClick={() => void copy()}
-            disabled={!text}
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1.5 text-sm hover:bg-surface disabled:opacity-50"
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button
-            type="button"
             onClick={() => void post()}
             disabled={!text || posting || !canPost}
             data-tooltip={
@@ -279,7 +259,7 @@ export function SummarySection({
             className="h-full min-h-[12rem] w-full resize-none rounded border border-border bg-surface px-3 py-2 font-mono text-[13px] outline-none focus:border-accent"
           />
         ) : text.trim() ? (
-          <Markdown>{text}</Markdown>
+          <CopyableMarkdown>{text}</CopyableMarkdown>
         ) : (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
             <p className="mb-1 font-medium text-text">No summary yet</p>
