@@ -277,8 +277,12 @@ export function LiveView({
   // only the clicked occurrence shows the editor (the rename applies to all).
   const [editingSegId, setEditingSegId] = useState<number | null>(null);
 
-  // Segment indices where recording resumed (draw a separator before them).
-  const [recordingBoundaries, setRecordingBoundaries] = useState<number[]>([]);
+  // Segment indices where recording (re)started — draw a separator before them.
+  // `resume` = user pressed Record again; `reconnect` = a transparent recovery
+  // from an Azure ~20-min drop, which also starts a new speaker namespace.
+  const [recordingBoundaries, setRecordingBoundaries] = useState<
+    { index: number; kind: "resume" | "reconnect" }[]
+  >([]);
   const prevListeningRef = useRef(false);
   // Current recording-run ordinal. Diarization labels are namespaced with it so
   // renames stay scoped to the run they were made in (Azure re-numbers speakers
@@ -361,6 +365,16 @@ export function LiveView({
     [session.id],
   );
 
+  // A transparent reconnect (Azure ~20-min 1006 drop, recovered without a hard
+  // cut) re-numbers speakers, so start a fresh voice-attribution run and mark
+  // the boundary as a reconnect.
+  const handleReconnect = useCallback(() => {
+    runRef.current += 1;
+    if (segCountRef.current > 0) {
+      setRecordingBoundaries((b) => [...b, { index: segCountRef.current, kind: "reconnect" }]);
+    }
+  }, []);
+
   const transcriber = useConversationTranscriber({
     onFinalSegment: handleFinalSegment,
     onInterim: setInterim,
@@ -368,6 +382,7 @@ export function LiveView({
     lang: session.language || undefined,
     deviceId: deviceId || undefined,
     captureMic,
+    onReconnect: handleReconnect,
   });
   const recording = transcriber.listening;
 
@@ -383,7 +398,7 @@ export function LiveView({
     if (recording && !prevListeningRef.current) {
       runRef.current += 1;
       if (segCountRef.current > 0) {
-        setRecordingBoundaries((b) => [...b, segCountRef.current]);
+        setRecordingBoundaries((b) => [...b, { index: segCountRef.current, kind: "resume" }]);
       }
     }
     prevListeningRef.current = recording;
@@ -818,7 +833,10 @@ export function LiveView({
   }, [segments, translationOn, translateStart, translationLang, runTranslation]);
 
   // ---- Section nodes -----------------------------------------------------
-  const boundarySet = useMemo(() => new Set(recordingBoundaries), [recordingBoundaries]);
+  const boundaryMap = useMemo(
+    () => new Map(recordingBoundaries.map((b) => [b.index, b.kind])),
+    [recordingBoundaries],
+  );
   const transcriptNode = (
     <div ref={transcriptRef} className="h-full overflow-y-auto px-4 py-4">
       {segments.length === 0 && !interim ? (
@@ -832,13 +850,23 @@ export function LiveView({
         </div>
       ) : (
         <div className="mx-auto max-w-3xl space-y-2">
-          {segments.map((seg, i) => (
+          {segments.map((seg, i) => {
+            const boundary = boundaryMap.get(i);
+            return (
             <div key={seg.id}>
-              {boundarySet.has(i) && (
+              {boundary === "resume" && (
                 <div className="my-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted">
                   <div className="h-px flex-1 bg-border" />
                   Recording resumed
                   <div className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              {boundary === "reconnect" && (
+                <div className="my-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-500">
+                  <div className="h-px flex-1 bg-amber-500/30" />
+                  <RefreshCw size={11} aria-hidden="true" />
+                  Reconnected
+                  <div className="h-px flex-1 bg-amber-500/30" />
                 </div>
               )}
               <div className="flex gap-2 text-sm">
@@ -875,7 +903,8 @@ export function LiveView({
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
           {interim && (
             <div className="flex gap-2 text-sm">
               <span className="w-10 shrink-0" />
