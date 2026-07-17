@@ -1,6 +1,7 @@
 import { Check, Eye, Loader2, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
+import { RefineTextarea } from "./RefineTextarea";
 import type { MeetingAttachment } from "../lib/types";
 
 interface Props {
@@ -127,10 +128,12 @@ export function NotesSection({ text, setText, saving, saved, onUpload, defaultPr
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {mode === "edit" ? (
-          <textarea
+          <RefineTextarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValueChange={setText}
+            refineKind="note"
+            containerClassName="h-full"
             onPaste={(e) => {
               const files = Array.from(e.clipboardData?.items ?? [])
                 .filter((it) => it.kind === "file")

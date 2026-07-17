@@ -3,6 +3,7 @@ import { Archive, ArrowUpRight, Eraser, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Chat, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { RefineTextarea } from "./RefineTextarea";
 
 interface Props {
   chat: Chat;
@@ -183,9 +184,10 @@ export function ChatSettingsPanel({
 
             <section>
               <label className="block text-xs text-muted mb-1">Description</label>
-              <textarea
+              <RefineTextarea
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onValueChange={setDescription}
+                refineKind="description"
                 rows={4}
                 placeholder="Optional — steers the assistant's system context."
                 className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"

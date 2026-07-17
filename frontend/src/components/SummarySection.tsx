@@ -4,6 +4,7 @@ import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { Markdown } from "./Markdown";
+import { RefineTextarea } from "./RefineTextarea";
 
 interface Props {
   session: MeetingSession;
@@ -269,9 +270,11 @@ export function SummarySection({
             <Loader2 size={16} className="animate-spin" /> Generating summary…
           </div>
         ) : mode === "edit" ? (
-          <textarea
+          <RefineTextarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValueChange={setText}
+            refineKind="summary"
+            containerClassName="h-full"
             placeholder="The generated summary appears here…"
             className="h-full min-h-[12rem] w-full resize-none rounded border border-border bg-surface px-3 py-2 font-mono text-[13px] outline-none focus:border-accent"
           />

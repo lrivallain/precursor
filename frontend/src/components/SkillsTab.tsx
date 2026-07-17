@@ -14,6 +14,7 @@ import { api } from "../lib/api";
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import type { Skill } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { RefineTextarea } from "./RefineTextarea";
 
 export function SkillsTab() {
   const confirmAction = useConfirm();
@@ -307,9 +308,10 @@ function SkillEditor({ skill, onClose, onSaved }: EditorProps) {
             <label className="block text-xs text-muted mb-1">
               Instructions
             </label>
-            <textarea
+            <RefineTextarea
               value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
+              onValueChange={setInstructions}
+              refineKind="instructions"
               rows={10}
               placeholder="Translate text or word to English.&#10;&#10;If multiple words exist: provide the usage context to help selection."
               className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm font-mono outline-none focus:border-accent"

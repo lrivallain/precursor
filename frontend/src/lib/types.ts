@@ -1058,3 +1058,19 @@ export interface SearchResponse {
   query: string;
   results: SearchResult[];
 }
+
+// ── Refine with AI ──────────────────────────────────────────────────────────
+// Mirrors precursor/backend/schemas/refine.py
+
+export interface RefineRequest {
+  text: string;
+  // Context hint that tailors the rewrite (e.g. "system_prompt", "note").
+  kind?: string;
+  // Optional freeform steer ("make it shorter", "more formal").
+  instruction?: string;
+}
+
+export interface RefineResponse {
+  text: string;
+  model: string;
+}

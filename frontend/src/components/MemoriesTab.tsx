@@ -3,6 +3,7 @@ import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Memory } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { RefineTextarea } from "./RefineTextarea";
 
 const KIND_SUGGESTIONS = ["context", "preference", "fact", "note"];
 
@@ -213,9 +214,10 @@ function MemoryEditor({ memory, onClose, onSaved }: EditorProps) {
 
           <div>
             <label className="block text-xs text-muted mb-1">Content</label>
-            <textarea
+            <RefineTextarea
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onValueChange={setContent}
+              refineKind="memory"
               rows={6}
               placeholder="User is a Cloud Solution Architect at Microsoft."
               className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"

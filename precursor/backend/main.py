@@ -43,6 +43,7 @@ from precursor.backend.routers import (
     memories,
     projects,
     raw,
+    refine,
     reminders,
     roles,
     search,
@@ -251,6 +252,7 @@ def create_app() -> FastAPI:
         version.router,
         stats.router,
         search.router,
+        refine.router,
     ):
         app.include_router(r)
 

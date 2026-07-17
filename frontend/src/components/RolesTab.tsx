@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { rolesStore, useRoles } from "../lib/rolesStore";
 import type { Role } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { RefineTextarea } from "./RefineTextarea";
 
 export function RolesTab() {
   const confirmAction = useConfirm();
@@ -209,9 +210,10 @@ function RoleEditor({ role, onClose, onSaved }: EditorProps) {
 
           <div>
             <label className="block text-xs text-muted mb-1">System prompt</label>
-            <textarea
+            <RefineTextarea
               value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
+              onValueChange={setSystemPrompt}
+              refineKind="system_prompt"
               rows={10}
               placeholder="You are a meticulous senior engineer. Review for correctness, edge cases, and security. Be direct and concise."
               className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm font-mono outline-none focus:border-accent"

@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, Paperclip, Plus, Send, Square, StopCircle, X } from "lucide-react";
+import {
+  Loader2,
+  Mic,
+  Paperclip,
+  Plus,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Square,
+  StopCircle,
+  X,
+} from "lucide-react";
 import { api } from "../lib/api";
 import { ATTACHMENT_ACCEPT } from "../lib/attachments";
+import { useRefine } from "../lib/useRefine";
 import type { SlashCommand } from "../lib/commands";
 import type { Attachment } from "../lib/types";
 import { SlashCommandPicker } from "./SlashCommandPicker";
@@ -88,6 +100,20 @@ export function Composer({
 
   const pickerOpen = suggestions.length > 0;
   useEffect(() => setPickerIndex(0), [value]);
+
+  const {
+    refine,
+    revert,
+    reset: resetRefine,
+    canRevert,
+    busy: refining,
+    error: refineError,
+  } = useRefine({ kind: "chat_message" });
+
+  // Drop a stale revert once the draft is sent/cleared externally.
+  useEffect(() => {
+    if (!value) resetRefine();
+  }, [value, resetRefine]);
 
   // Focus + move the caret to the end whenever an external prefill bumps the
   // token (e.g. the "Continue" button on an agent summary).
@@ -219,6 +245,7 @@ export function Composer({
           value={value}
           onChange={(e) => {
             historyIndexRef.current = null;
+            if (canRevert) resetRefine();
             onChange(e.target.value);
           }}
           onPaste={(e) => {
@@ -350,6 +377,36 @@ export function Composer({
             {toolbarStart}
           </div>
           <div className="flex items-center gap-1 shrink-0 ml-auto">
+            <button
+              type="button"
+              onClick={async () => {
+                if (canRevert) {
+                  const prev = revert();
+                  if (prev !== null) onChange(prev);
+                  return;
+                }
+                const next = await refine(value);
+                if (next !== null) onChange(next);
+              }}
+              disabled={refining || (!canRevert && !value.trim())}
+              className={`p-2 rounded-lg disabled:opacity-40 ${
+                refineError
+                  ? "text-red-500 hover:bg-bg"
+                  : "text-muted hover:text-text hover:bg-bg"
+              }`}
+              aria-label={canRevert ? "Revert to your text" : "Refine with AI"}
+              data-tooltip={
+                refineError ?? (canRevert ? "Revert to your text" : "Refine with AI")
+              }
+            >
+              {refining ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : canRevert ? (
+                <RotateCcw size={18} />
+              ) : (
+                <Sparkles size={18} />
+              )}
+            </button>
             {speech.supported && speech.listening && (
               <span className="flex items-center gap-1.5 pl-1 pr-1.5 text-[11px] text-red-500">
                 <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-red-500 animate-pulse" />

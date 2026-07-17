@@ -59,6 +59,8 @@ import type {
   Reminder,  ReminderContainer,
   ReminderCreate,
   ReminderItem,
+  RefineRequest,
+  RefineResponse,
   Role,
   RoleCreate,
   RoleUpdate,
@@ -871,6 +873,16 @@ export const api = {
       request<SearchResponse>(
         `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
       ),
+  },
+
+  ai: {
+    // Rewrite a block of user-authored text. Backs the "Refine with AI"
+    // affordance on textareas across the app.
+    refine: (data: RefineRequest) =>
+      request<RefineResponse>(`/api/refine`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 };
 

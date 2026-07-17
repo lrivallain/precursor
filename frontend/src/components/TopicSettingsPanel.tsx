@@ -20,6 +20,7 @@ import type { Schedule, Topic, TopicNode } from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
+import { RefineTextarea } from "./RefineTextarea";
 import { Markdown } from "./Markdown";
 import {
   defaultRecurrence,
@@ -306,9 +307,10 @@ export function TopicSettingsPanel({
 
               <section>
                 <label className="block text-xs text-muted mb-1">Description</label>
-                <textarea
+                <RefineTextarea
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onValueChange={setDescription}
+                  refineKind="description"
                   rows={4}
                   className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                 />
@@ -380,9 +382,10 @@ export function TopicSettingsPanel({
                   <div className="ml-1.5 space-y-4 border-l border-border pl-4">
                     <div>
                       <label className="block text-xs text-muted mb-1">Prompt to run each time</label>
-                      <textarea
+                      <RefineTextarea
                         value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
+                        onValueChange={setPrompt}
+                        refineKind="scheduled_prompt"
                         rows={4}
                         placeholder="What should the assistant do on every run?"
                         className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Select } from "./Select";
+import { RefineTextarea } from "./RefineTextarea";
 import { useSettings } from "../lib/settingsStore";
 import type { Topic, TopicNode } from "../lib/types";
 
@@ -99,9 +100,10 @@ export function TopicCreateForm({
         <label className="block text-xs text-muted mb-1">
           Description (optional)
         </label>
-        <textarea
+        <RefineTextarea
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onValueChange={setDescription}
+          refineKind="description"
           rows={3}
           placeholder="Context the assistant should keep in mind"
           className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"

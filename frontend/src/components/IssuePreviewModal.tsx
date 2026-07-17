@@ -14,6 +14,7 @@ import { api, apiErrorMessage } from "../lib/api";
 import { useResizableBox } from "../lib/useResizableBox";
 import { Modal } from "./Modal";
 import { Markdown } from "./Markdown";
+import { RefineTextarea } from "./RefineTextarea";
 import { IssueLabelChip, IssueStateBadge } from "./IssueTags";
 
 interface IssuePreviewModalProps {
@@ -228,9 +229,10 @@ export function IssuePreviewModal({
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
                 Add a comment
               </label>
-              <textarea
+              <RefineTextarea
                 value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
+                onValueChange={setCommentText}
+                refineKind="comment"
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                     e.preventDefault();
