@@ -1,6 +1,6 @@
 import { Check, Eye, Loader2, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Markdown } from "./Markdown";
+import { CopyableMarkdown } from "./CopyableMarkdown";
 import { RefineTextarea } from "./RefineTextarea";
 import type { MeetingAttachment } from "../lib/types";
 
@@ -165,7 +165,7 @@ export function NotesSection({ text, setText, saving, saved, onUpload, defaultPr
             }`}
           />
         ) : text.trim() ? (
-          <Markdown>{text}</Markdown>
+          <CopyableMarkdown>{text}</CopyableMarkdown>
         ) : (
           <p className="text-sm text-muted">Nothing to preview yet.</p>
         )}

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   CircleHelp,
+  ExternalLink,
+  FileText,
   Lightbulb,
   Mic,
   Radio,
@@ -38,6 +40,7 @@ import { LiveChatSection } from "./LiveChatSection";
 import { TranslationSection } from "./TranslationSection";
 import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
+import { GithubIcon as Github } from "./icons/GithubIcon";
 import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
 
@@ -168,6 +171,8 @@ interface LiveViewProps {
   onArchived?: () => void | Promise<void>;
   /** Report the recording session id (or null) so the sidebar can show a dot. */
   onRecordingChange?: (sessionId: number | null) => void;
+  /** Open the attached topic in the Topics view. */
+  onOpenTopic?: (topicId: number) => void;
 }
 
 /**
@@ -182,6 +187,7 @@ export function LiveView({
   onDeleted,
   onArchived,
   onRecordingChange,
+  onOpenTopic,
 }: LiveViewProps) {
   const confirmAction = useConfirm();
   const settings = useSettings();
@@ -324,16 +330,16 @@ export function LiveView({
   const translationOn = features.includes("translation");
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
-  const topicTitle = useMemo(
-    () => allTopics.find((t) => t.id === session.topic_id)?.title ?? null,
+  const linkedTopic = useMemo(
+    () => allTopics.find((t) => t.id === session.topic_id) ?? null,
     [allTopics, session.topic_id],
   );
+  const topicTitle = linkedTopic?.title ?? null;
   // Issue linked to the attached topic (if any); posting the recap also mirrors
   // it as a comment on this issue.
-  const topicIssueNumber = useMemo(
-    () => allTopics.find((t) => t.id === session.topic_id)?.github_issue_number ?? null,
-    [allTopics, session.topic_id],
-  );
+  const topicIssueNumber = linkedTopic?.github_issue_number ?? null;
+  // Repo backing the issue link — the topic's own repo, else the global default.
+  const topicIssueRepo = linkedTopic?.github_repo || settings?.github_repo || "";
 
   const handleFinalSegment = useCallback(
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
@@ -1184,6 +1190,34 @@ export function LiveView({
             onChange={(id) => void applyTopic(id)}
           />
         </label>
+
+        {session.topic_id != null && (
+          <div className="flex items-center gap-1.5">
+            {onOpenTopic && (
+              <button
+                type="button"
+                onClick={() => onOpenTopic(session.topic_id!)}
+                data-tooltip="Open topic"
+                className="inline-flex max-w-[12rem] items-center gap-1 rounded border border-border px-2 py-1 text-[12px] text-muted hover:bg-surface hover:text-text"
+              >
+                <FileText size={12} className="shrink-0" />
+                <span className="truncate">{topicTitle ?? "Topic"}</span>
+              </button>
+            )}
+            {topicIssueNumber != null && topicIssueRepo && (
+              <a
+                href={`https://github.com/${topicIssueRepo}/issues/${topicIssueNumber}`}
+                target="_blank"
+                rel="noreferrer"
+                data-tooltip={`Open issue #${topicIssueNumber} on GitHub`}
+                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[12px] text-muted hover:bg-surface hover:text-text"
+              >
+                <Github size={12} className="shrink-0" />#{topicIssueNumber}
+                <ExternalLink size={11} className="shrink-0" />
+              </a>
+            )}
+          </div>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <FeaturePicker
