@@ -57,6 +57,7 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "memory_write",
     "post_message",
     "schedules",
+    "reminders",
 )
 DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
 

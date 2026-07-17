@@ -22,6 +22,8 @@ Sections → tools:
 - ``post_message`` → post_message (write — runs a full assistant turn)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
+- ``reminders``    → list_reminders, get_reminder, set_reminder,
+                     cancel_reminder (write — one-shot topic reminders)
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from precursor.backend.models import (
     Memory,
     Message,
     MessageRole,
+    Reminder,
     Topic,
     TopicSchedule,
 )
@@ -192,6 +195,18 @@ def _schedule_dict(s: TopicSchedule) -> dict[str, Any]:
         "next_run_at": _iso(s.next_run_at),
         "last_run_at": _iso(s.last_run_at),
         "last_error": s.last_error,
+    }
+
+
+def _reminder_dict(r: Reminder) -> dict[str, Any]:
+    return {
+        "id": r.id,
+        "topic_id": r.topic_id,
+        "chat_id": r.chat_id,
+        "remind_at": _iso(r.remind_at),
+        "note": r.note,
+        "status": r.status,
+        "fired_at": _iso(r.fired_at),
     }
 
 
@@ -627,6 +642,118 @@ async def run_schedule_now(topic_id: int) -> dict[str, Any]:
         await session.refresh(s)
         result = _schedule_dict(s)
     return result
+
+
+# --------------------------------------------------------------------------
+# reminders (write — one-shot topic reminders)
+# --------------------------------------------------------------------------
+def _parse_remind_at(value: str) -> datetime:
+    """Parse an ISO 8601 ``remind_at`` string into an aware UTC datetime.
+
+    Accepts a trailing ``Z`` and naive strings (assumed UTC), so callers can
+    pass either ``2026-07-20T09:00:00Z`` or ``2026-07-20T09:00:00+02:00``.
+    """
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+@mcp.tool()
+async def list_reminders() -> dict[str, Any]:
+    """List one-shot reminders set on topics, soonest first.
+
+    Includes both ``scheduled`` (waiting) and ``fired`` (due, awaiting
+    acknowledgment) reminders. Reminders attached to chats are omitted — this
+    server is topic-scoped.
+    """
+    if not await _section_enabled("reminders"):
+        return {"error": _GATED.format(section="reminders")}
+    async with SessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Reminder)
+                    .where(Reminder.topic_id.is_not(None))
+                    .order_by(Reminder.remind_at)
+                    .limit(_MAX_ROWS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return {"reminders": [_reminder_dict(r) for r in rows], "count": len(rows)}
+
+
+@mcp.tool()
+async def get_reminder(topic_id: int) -> dict[str, Any]:
+    """Get the one-shot reminder set on a topic, if any."""
+    if not await _section_enabled("reminders"):
+        return {"error": _GATED.format(section="reminders")}
+    from precursor.backend.services import reminders as reminder_service
+
+    async with SessionLocal() as session:
+        reminder = await reminder_service.get_reminder(session, "topic", topic_id)
+    if reminder is None:
+        return {"error": f"No reminder set for topic {topic_id}"}
+    return _reminder_dict(reminder)
+
+
+@mcp.tool()
+async def set_reminder(topic_id: int, remind_at: str, note: str | None = None) -> dict[str, Any]:
+    """Set (or replace) a one-shot reminder on a topic.
+
+    ``remind_at`` is an ISO 8601 timestamp (e.g. ``2026-07-20T09:00:00Z``);
+    naive values are treated as UTC. At that time the topic resurfaces with a
+    posted system message. ``note`` is optional free text (max 2000 chars).
+    A topic holds at most one reminder, so this replaces any existing one.
+    """
+    if not await _section_enabled("reminders"):
+        return {"error": _GATED.format(section="reminders")}
+    from precursor.backend.schemas.reminder import ReminderCreate
+    from precursor.backend.services import reminders as reminder_service
+    from precursor.backend.services.reminder_ticker import get_reminder_ticker
+
+    try:
+        parsed = _parse_remind_at(remind_at)
+    except ValueError:
+        return {"error": f"remind_at is not a valid ISO 8601 datetime: {remind_at!r}"}
+    try:
+        payload = ReminderCreate(remind_at=parsed, note=note)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    async with SessionLocal() as session:
+        if not await reminder_service.container_exists(session, "topic", topic_id):
+            return {"error": f"Topic {topic_id} not found"}
+        reminder = await reminder_service.set_reminder(
+            session, "topic", topic_id, remind_at=payload.remind_at, note=payload.note
+        )
+        result = _reminder_dict(reminder)
+    # Fire promptly for near/past times instead of waiting for the next poll.
+    # A no-op unless the ticker is running in this process (in-app HTTP host).
+    await get_reminder_ticker().nudge()
+    return result
+
+
+@mcp.tool()
+async def cancel_reminder(topic_id: int) -> dict[str, Any]:
+    """Cancel (or acknowledge) a topic's reminder, deleting it.
+
+    Works on both ``scheduled`` and ``fired`` reminders. Returns an error if the
+    topic has no reminder.
+    """
+    if not await _section_enabled("reminders"):
+        return {"error": _GATED.format(section="reminders")}
+    from precursor.backend.services import reminders as reminder_service
+
+    async with SessionLocal() as session:
+        deleted = await reminder_service.delete_reminder(session, "topic", topic_id)
+    if not deleted:
+        return {"error": f"No reminder set for topic {topic_id}"}
+    return {"topic_id": topic_id, "deleted": True}
 
 
 # Loopback hosts the HTTP transport is allowed to bind to. 0.0.0.0 is *not*

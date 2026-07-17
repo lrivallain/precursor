@@ -31,7 +31,7 @@ def test_server_info_describes_sections() -> None:
         assert info["transport"] == "stdio"
         assert set(info["sections"]) == set(MCP_EXPOSE_SECTIONS)
         tool_names = {t["name"] for t in info["tools"]}
-        assert {"list_topics", "post_message", "create_schedule"} <= tool_names
+        assert {"list_topics", "post_message", "create_schedule", "set_reminder"} <= tool_names
 
 
 def test_mcp_expose_defaults_all_off() -> None:
@@ -87,6 +87,66 @@ async def test_tool_runs_when_section_enabled() -> None:
     result = await ps.list_topics()
     assert "error" not in result
     assert "topics" in result
+
+
+async def _make_topic(title: str) -> int:
+    """Create a topic directly and return its id (tests share one DB)."""
+    from precursor.backend.models import Topic
+    from precursor.backend.services.slugs import allocate_unique_slug, slugify
+
+    async with SessionLocal() as session:
+        topic = Topic(
+            title=title,
+            slug=await allocate_unique_slug(session, slugify(title) or "topic", Topic),
+        )
+        session.add(topic)
+        await session.commit()
+        return topic.id
+
+
+async def test_reminder_tools_gated_when_section_off() -> None:
+    await _set_expose("{}")
+    for result in (
+        await ps.list_reminders(),
+        await ps.get_reminder(1),
+        await ps.set_reminder(1, "2026-07-20T09:00:00Z"),
+        await ps.cancel_reminder(1),
+    ):
+        assert "error" in result
+        assert "not exposed" in result["error"]
+
+
+async def test_reminder_tool_lifecycle() -> None:
+    await _set_expose('{"reminders": true}')
+    topic_id = await _make_topic("Remind me MCP")
+
+    # No reminder yet.
+    assert "error" in await ps.get_reminder(topic_id)
+
+    # Set one in the future so it stays "scheduled".
+    created = await ps.set_reminder(topic_id, "2999-01-01T09:00:00Z", note="water the plants")
+    assert created["topic_id"] == topic_id
+    assert created["status"] == "scheduled"
+    assert created["note"] == "water the plants"
+
+    fetched = await ps.get_reminder(topic_id)
+    assert fetched["id"] == created["id"]
+
+    listed = await ps.list_reminders()
+    assert any(r["topic_id"] == topic_id for r in listed["reminders"])
+
+    cancelled = await ps.cancel_reminder(topic_id)
+    assert cancelled == {"topic_id": topic_id, "deleted": True}
+    assert "error" in await ps.get_reminder(topic_id)
+
+
+async def test_set_reminder_rejects_bad_datetime_and_missing_topic() -> None:
+    await _set_expose('{"reminders": true}')
+    bad = await ps.set_reminder(1, "not-a-date")
+    assert "error" in bad and "ISO 8601" in bad["error"]
+
+    missing = await ps.set_reminder(999_999, "2999-01-01T09:00:00Z")
+    assert "error" in missing and "not found" in missing["error"]
 
 
 def _mcp_post(client: TestClient, body: dict, session_id: str | None = None) -> object:
