@@ -980,7 +980,7 @@ function ReminderRow({ item, onSelect, onDone }: ReminderRowProps) {
           type="button"
           className="shrink-0 p-0.5 rounded text-muted hover:text-text hover:bg-border opacity-0 group-hover:opacity-100"
           aria-label="Mark reminder done"
-          title="Done"
+          data-tooltip="Done"
           onClick={(e) => {
             e.stopPropagation();
             onDone(item);

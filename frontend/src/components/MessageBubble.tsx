@@ -412,7 +412,6 @@ export function AgentExchangeBadge({ agentSessionId }: { agentSessionId: number 
         );
       }}
       className="group inline-flex cursor-pointer items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-      title="Open the agent session"
       data-tooltip="Open the agent session"
     >
       <Bot size={11} />

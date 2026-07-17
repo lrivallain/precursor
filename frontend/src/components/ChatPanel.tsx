@@ -962,7 +962,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                           type="button"
                           onClick={() => prefillAgentFollowUp(agentRef)}
                           className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-purple-500/40 px-2 py-0.5 text-[10px] font-medium text-purple-600 hover:bg-purple-500/10 dark:text-purple-300"
-                          title="Continue this agent session"
                           data-tooltip="Continue this agent session"
                         >
                           <ArrowRightCircle size={11} />

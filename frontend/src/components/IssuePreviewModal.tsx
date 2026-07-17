@@ -272,7 +272,7 @@ export function IssuePreviewModal({
                 onClose();
               }}
               className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/40 bg-violet-500/10 px-3 py-1.5 text-sm font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-              title="Open the linked Precursor topic"
+              data-tooltip="Open the linked Precursor topic"
             >
               <MessagesSquare size={14} />
               <span className="max-w-[16rem] truncate">

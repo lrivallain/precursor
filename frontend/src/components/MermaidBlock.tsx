@@ -91,7 +91,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
             type="button"
             onClick={() => setShowSource((v) => !v)}
             className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg"
-            title={showSource ? "Show preview" : "Show source"}
+            data-tooltip={showSource ? "Show preview" : "Show source"}
           >
             {showSource ? <ImageIcon size={13} /> : <Code2 size={13} />}
             {showSource ? "Preview" : "Code"}
@@ -100,7 +100,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
             type="button"
             onClick={copy}
             className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg"
-            title="Copy mermaid source"
+            data-tooltip="Copy mermaid source"
           >
             {copied ? <Check size={13} /> : <Copy size={13} />}
             {copied ? "Copied" : "Copy"}

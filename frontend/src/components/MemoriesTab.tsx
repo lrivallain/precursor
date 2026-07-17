@@ -100,7 +100,8 @@ export function MemoriesTab() {
                 type="button"
                 onClick={() => setEditing(m)}
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
-                title="Edit"
+                aria-label="Edit"
+                data-tooltip="Edit"
               >
                 <Pencil size={14} />
               </button>
@@ -109,7 +110,8 @@ export function MemoriesTab() {
                 onClick={() => void handleDelete(m)}
                 disabled={busyId === m.id}
                 className="p-1 rounded hover:bg-surface text-muted hover:text-red-500 disabled:opacity-40"
-                title="Delete"
+                aria-label="Delete"
+                data-tooltip="Delete"
               >
                 <Trash2 size={14} />
               </button>

@@ -711,7 +711,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      title={title}
+      data-tooltip={title}
       className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-accent/40 bg-bg text-xs text-accent hover:bg-accent/10 disabled:opacity-50"
     >
       {icon}
