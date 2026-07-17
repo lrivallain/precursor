@@ -130,3 +130,85 @@ def test_role_prompt_injected_into_topic_system_context() -> None:
 
         prompt = anyio.run(_check)
         assert "Always answer like a pirate." in prompt
+
+
+def test_assign_role_to_live_session_and_revert_on_delete() -> None:
+    """A Live meeting session carries a role that reverts to default on delete."""
+    app = create_app()
+    with TestClient(app) as client:
+        role = client.post(
+            "/api/roles",
+            json={"name": "facilitator", "system_prompt": "Keep the meeting on track."},
+        ).json()
+        sid = client.post("/api/live", json={"title": "Standup"}).json()["id"]
+
+        r = client.patch(f"/api/live/{sid}", json={"role_id": role["id"]})
+        assert r.status_code == 200
+        assert r.json()["role_id"] == role["id"]
+
+        # Selecting the default (null) clears it.
+        cleared = client.patch(f"/api/live/{sid}", json={"role_id": None})
+        assert cleared.json()["role_id"] is None
+
+        # Reassign, then delete the role — the session reverts to default.
+        client.patch(f"/api/live/{sid}", json={"role_id": role["id"]})
+        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
+        assert client.get(f"/api/live/{sid}").json()["role_id"] is None
+
+
+def test_assign_role_to_agent_and_revert_on_delete() -> None:
+    """An agent session carries a role that reverts to default on delete."""
+    import anyio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    app = create_app()
+    with TestClient(app) as client:
+        role = client.post(
+            "/api/roles",
+            json={"name": "researcher", "system_prompt": "Dig deep before answering."},
+        ).json()
+
+        async def _make() -> int:
+            async with SessionLocal() as session:
+                agent = AgentSession(title="Task", task_prompt="seed", status="idle")
+                session.add(agent)
+                await session.commit()
+                await session.refresh(agent)
+                return agent.id
+
+        agent_id = anyio.run(_make)
+
+        r = client.patch(f"/api/agents/{agent_id}", json={"role_id": role["id"]})
+        assert r.status_code == 200
+        assert r.json()["role_id"] == role["id"]
+
+        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
+        assert client.get(f"/api/agents/{agent_id}").json()["role_id"] is None
+
+
+def test_role_persona_grounds_live_chat() -> None:
+    """The Live session's role prompt is injected into the Ask-assistant chat grounding."""
+    import anyio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.meeting_analysis import live_chat_grounding
+
+    app = create_app()
+    with TestClient(app) as client:
+        role = client.post(
+            "/api/roles",
+            json={"name": "sme", "system_prompt": "Answer as a domain expert."},
+        ).json()
+        sid = client.post("/api/live", json={"title": "Review"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"role_id": role["id"]})
+        # Spawn the assistant chat so grounding can resolve the session by chat_id.
+        chat = client.post(f"/api/live/{sid}/chat").json()
+
+        async def _ground() -> str:
+            async with SessionLocal() as session:
+                return await live_chat_grounding(session, chat["id"])
+
+        grounding = anyio.run(_ground)
+        assert "Answer as a domain expert." in grounding

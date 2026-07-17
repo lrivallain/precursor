@@ -48,6 +48,13 @@ class MeetingSession(Base, TimestampMixin):
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Assistant Role that grounds the live assistant (insights/tips, Q&A and the
+    # Ask-assistant chat). Null resolves to the default role (no persona
+    # injected). SET NULL on delete reverts to default.
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Chat spawned for the "Ask assistant" tab, created on the first question and
     # grounded on the live context. Logically references chats.id; kept as a
     # plain indexed column (no DB-level FK) because SQLite can't ADD a FK via
