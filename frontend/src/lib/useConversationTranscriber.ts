@@ -28,6 +28,13 @@ interface Options {
   deviceId?: string;
   /** Also capture the default microphone and mix it with the selected device. */
   captureMic?: boolean;
+  /**
+   * Called after a *transparent reconnect* (an Azure ~20-min 1006 drop) has
+   * re-established the live session — not on the initial connect. Azure
+   * re-numbers speakers on each new session, so the caller should start a fresh
+   * voice-attribution namespace from here.
+   */
+  onReconnect?: () => void;
 }
 
 interface Result {
@@ -93,6 +100,7 @@ export function useConversationTranscriber({
   lang,
   deviceId,
   captureMic,
+  onReconnect,
 }: Options): Result {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,11 +141,13 @@ export function useConversationTranscriber({
   const langRef = useRef(lang);
   const deviceIdRef = useRef(deviceId);
   const captureMicRef = useRef(captureMic);
+  const onReconnectRef = useRef(onReconnect);
   finalRef.current = onFinalSegment;
   interimRef.current = onInterim;
   langRef.current = lang;
   deviceIdRef.current = deviceId;
   captureMicRef.current = captureMic;
+  onReconnectRef.current = onReconnect;
   // Latest closures, so transcriber event handlers (captured at connect time)
   // always reach the current reconnect logic without stale references.
   const startSessionRef = useRef<(() => Promise<void>) | undefined>(undefined);
@@ -204,6 +214,10 @@ export function useConversationTranscriber({
   // or track the SDK may already have torn down. Throws on failure so the caller
   // (initial start() or the reconnect loop) can react.
   const startSession = useCallback(async (): Promise<void> => {
+    // True when this connect is re-establishing a dropped session (set by
+    // scheduleReconnect) rather than the initial start; drives the onReconnect
+    // notification below once the new session is live.
+    const isReconnect = reconnectingRef.current;
     clearTimers();
     const { token, endpoint, language } = await api.stt.getToken();
     // Lazy-loaded so the ~450KB SDK only ships when capture is used.
@@ -283,6 +297,9 @@ export function useConversationTranscriber({
     lastErrorRef.current = null;
     setError(null);
     setListening(true);
+    // Azure re-numbers speakers on each new session, so let the caller open a
+    // fresh voice-attribution namespace (and mark the boundary) after a reconnect.
+    if (isReconnect) onReconnectRef.current?.();
     refreshTimerRef.current = setInterval(
       () => {
         void (async () => {
