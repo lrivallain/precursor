@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Gauge, Search } from "lucide-react";
+import { Gauge, Link2, Search } from "lucide-react";
 import type { Cockpit, CockpitState } from "../lib/types";
 
 interface CockpitListProps {
@@ -70,9 +70,13 @@ export function CockpitList({ cockpits, activeId, onSelect }: CockpitListProps) 
                       isActive ? "section-selected" : "hover:bg-surface"
                     }`}
                   >
-                    <Gauge size={14} className="shrink-0 opacity-70" />
+                    {c.kind === "url" ? (
+                      <Link2 size={14} className="shrink-0 opacity-70" />
+                    ) : (
+                      <Gauge size={14} className="shrink-0 opacity-70" />
+                    )}
                     <span className="flex-1 truncate">{c.name}</span>
-                    <CockpitStateDot state={c.status.state} />
+                    {c.kind === "command" && <CockpitStateDot state={c.status.state} />}
                   </button>
                 </li>
               );

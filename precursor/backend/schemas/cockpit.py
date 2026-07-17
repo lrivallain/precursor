@@ -1,9 +1,9 @@
 """Cockpit Pydantic schemas.
 
-A cockpit is a user-registered local webapp. The persisted *definition* (name,
-command, port, …) is separate from the ephemeral *runtime status* (whether the
-process is running and reachable), so the read model carries both: the columns
-from the DB plus a live ``status`` block filled in by the ``CockpitManager``.
+A cockpit is either a **command** (spawned + reverse-proxied, with a start/stop
+lifecycle) or a **url** (a fixed URL embedded directly, no process). The read
+model carries the persisted definition plus, for command cockpits, a live
+``status`` block filled in by the ``CockpitManager``.
 """
 
 from __future__ import annotations
@@ -13,14 +13,17 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 MAX_COMMAND_LEN = 4_000
 MAX_ENV_LEN = 8_000
+MAX_URL_LEN = 2_000
 
-# Lifecycle states surfaced to the UI:
+CockpitKind = Literal["command", "url"]
+
+# Lifecycle states surfaced to the UI (command cockpits only):
 # * stopped      — no process (never started or cleanly stopped)
 # * starting     — spawned, port not yet accepting connections
 # * running      — port is reachable; safe to embed
@@ -47,14 +50,25 @@ def _validate_env(v: str | None) -> str | None:
     return json.dumps(parsed)
 
 
+def _validate_url(v: str) -> str:
+    v = v.strip()
+    if not (v.startswith("http://") or v.startswith("https://")):
+        raise ValueError("url must start with http:// or https://")
+    return v
+
+
 class CockpitCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    command: str = Field(min_length=1, max_length=MAX_COMMAND_LEN)
-    port: int = Field(ge=1, le=65_535)
+    kind: CockpitKind = "command"
     description: str | None = None
+    # Command cockpits:
+    command: str | None = Field(default=None, max_length=MAX_COMMAND_LEN)
+    port: int | None = Field(default=None, ge=1, le=65_535)
     cwd: str | None = None
     # JSON object string, e.g. '{"NODE_ENV": "development"}'.
     env: str | None = Field(default=None, max_length=MAX_ENV_LEN)
+    # URL cockpits:
+    url: str | None = Field(default=None, max_length=MAX_URL_LEN)
     # Optional explicit slug; derived from the name when omitted.
     slug: str | None = Field(default=None, min_length=1, max_length=64)
 
@@ -76,19 +90,41 @@ class CockpitCreate(BaseModel):
     def _check_env(cls, v: str | None) -> str | None:
         return _validate_env(v)
 
+    @model_validator(mode="after")
+    def _check_kind(self) -> CockpitCreate:
+        if self.kind == "command":
+            if not (self.command or "").strip():
+                raise ValueError("command is required for a command cockpit")
+            if self.port is None:
+                raise ValueError("port is required for a command cockpit")
+        else:  # url
+            if not (self.url or "").strip():
+                raise ValueError("url is required for a url cockpit")
+            self.url = _validate_url(self.url or "")
+        return self
+
 
 class CockpitUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    command: str | None = Field(default=None, min_length=1, max_length=MAX_COMMAND_LEN)
-    port: int | None = Field(default=None, ge=1, le=65_535)
+    kind: CockpitKind | None = None
     description: str | None = None
+    command: str | None = Field(default=None, max_length=MAX_COMMAND_LEN)
+    port: int | None = Field(default=None, ge=1, le=65_535)
     cwd: str | None = None
     env: str | None = Field(default=None, max_length=MAX_ENV_LEN)
+    url: str | None = Field(default=None, max_length=MAX_URL_LEN)
 
     @field_validator("env")
     @classmethod
     def _check_env(cls, v: str | None) -> str | None:
         return _validate_env(v)
+
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return v
+        return _validate_url(v)
 
 
 class CockpitStatus(BaseModel):
@@ -109,11 +145,13 @@ class CockpitRead(BaseModel):
     id: int
     name: str
     slug: str
+    kind: CockpitKind = "command"
     description: str | None = None
-    command: str
+    command: str | None = None
     cwd: str | None = None
-    port: int
+    port: int | None = None
     env: str | None = None
+    url: str | None = None
     created_at: datetime
     updated_at: datetime
     status: CockpitStatus = Field(default_factory=CockpitStatus)

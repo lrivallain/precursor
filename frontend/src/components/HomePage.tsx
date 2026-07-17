@@ -242,7 +242,7 @@ export function HomePage({
       mode: "cockpits",
       title: "Cockpits",
       description:
-        "Launch and embed your local web apps on demand.",
+        "Launch local web apps or embed a URL, on demand.",
       openLabel: "Open cockpits",
       icon: <Gauge size={20} />,
     },

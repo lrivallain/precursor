@@ -804,6 +804,8 @@ export interface WorkspaceFileContent {
 
 // ---- Cockpits ----------------------------------------------------------
 
+export type CockpitKind = "command" | "url";
+
 export type CockpitState =
   | "stopped"
   | "starting"
@@ -824,11 +826,13 @@ export interface Cockpit {
   id: number;
   name: string;
   slug: string;
+  kind: CockpitKind;
   description: string | null;
-  command: string;
+  command: string | null;
   cwd: string | null;
-  port: number;
+  port: number | null;
   env: string | null;
+  url: string | null;
   created_at: string;
   updated_at: string;
   status: CockpitStatus;
@@ -836,21 +840,25 @@ export interface Cockpit {
 
 export interface CockpitCreate {
   name: string;
-  command: string;
-  port: number;
+  kind?: CockpitKind;
+  command?: string | null;
+  port?: number | null;
   description?: string | null;
   cwd?: string | null;
   env?: string | null;
+  url?: string | null;
   slug?: string | null;
 }
 
 export interface CockpitUpdate {
   name?: string;
-  command?: string;
-  port?: number;
+  kind?: CockpitKind;
+  command?: string | null;
+  port?: number | null;
   description?: string | null;
   cwd?: string | null;
   env?: string | null;
+  url?: string | null;
 }
 
 

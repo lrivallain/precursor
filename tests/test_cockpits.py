@@ -100,6 +100,73 @@ def test_cockpit_slugs_are_unique() -> None:
 
 
 # --------------------------------------------------------------------------
+# URL cockpits
+# --------------------------------------------------------------------------
+
+
+def test_url_cockpit_crud_and_lifecycle_guard() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/cockpits",
+            json={
+                "name": "Internal Dash",
+                "kind": "url",
+                "url": "https://dash.internal.example.com/board",
+            },
+        )
+        assert created.status_code == 201
+        body = created.json()
+        cid = body["id"]
+        assert body["kind"] == "url"
+        assert body["url"] == "https://dash.internal.example.com/board"
+        assert body["command"] is None
+        assert body["port"] is None
+
+        # A url cockpit has no process to start.
+        assert client.post(f"/api/cockpits/{cid}/start").status_code == 400
+        assert client.post(f"/api/cockpits/{cid}/restart").status_code == 400
+
+        # It can be edited (e.g. point at a new URL).
+        patched = client.patch(
+            f"/api/cockpits/{cid}", json={"url": "https://dash.internal.example.com/v2"}
+        ).json()
+        assert patched["url"] == "https://dash.internal.example.com/v2"
+
+
+def test_url_cockpit_requires_valid_url() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        # Missing url.
+        assert client.post("/api/cockpits", json={"name": "x", "kind": "url"}).status_code == 422
+        # Non-http(s) url.
+        assert (
+            client.post(
+                "/api/cockpits",
+                json={"name": "x", "kind": "url", "url": "ftp://nope"},
+            ).status_code
+            == 422
+        )
+
+
+def test_command_cockpit_requires_command_and_port() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        assert (
+            client.post(
+                "/api/cockpits", json={"name": "x", "kind": "command", "port": 8080}
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/api/cockpits", json={"name": "x", "kind": "command", "command": "echo"}
+            ).status_code
+            == 422
+        )
+
+
+# --------------------------------------------------------------------------
 # Lifecycle + reverse proxy (spawns a real short-lived server)
 # --------------------------------------------------------------------------
 

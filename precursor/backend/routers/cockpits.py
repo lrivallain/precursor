@@ -121,8 +121,23 @@ def _env_dict(cockpit: Cockpit) -> dict[str, str]:
 
 def _to_read(cockpit: Cockpit) -> CockpitRead:
     read = CockpitRead.model_validate(cockpit)
-    read.status = get_cockpit_manager().get_status(cockpit.id)
+    if cockpit.kind == "command":
+        read.status = get_cockpit_manager().get_status(cockpit.id)
+    else:
+        # URL cockpits store placeholder command/port to satisfy NOT NULL;
+        # present them as null so the API/UI never surfaces the sentinels.
+        read.command = None
+        read.port = None
     return read
+
+
+def _require_command(cockpit: Cockpit) -> None:
+    """Reject process-lifecycle operations on url cockpits."""
+    if cockpit.kind != "command":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This is a URL cockpit — it has no process to start, stop, or proxy.",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -143,14 +158,18 @@ async def create_cockpit(
 ) -> CockpitRead:
     _guard_enabled()
     slug = await _allocate_slug(session, slugify(payload.slug or payload.name))
+    is_url = payload.kind == "url"
     cockpit = Cockpit(
         name=payload.name.strip(),
         slug=slug,
+        kind=payload.kind,
         description=(payload.description or "").strip() or None,
-        command=payload.command.strip(),
-        cwd=(payload.cwd or "").strip() or None,
-        port=payload.port,
-        env=payload.env,
+        # NOT NULL columns: url cockpits store harmless placeholders.
+        command="" if is_url else (payload.command or "").strip(),
+        cwd=None if is_url else ((payload.cwd or "").strip() or None),
+        port=0 if is_url else payload.port,
+        env=None if is_url else payload.env,
+        url=(payload.url or "").strip() if is_url else None,
     )
     session.add(cockpit)
     await session.commit()
@@ -183,6 +202,8 @@ async def update_cockpit(
         cockpit.cwd = (data["cwd"] or "").strip() or None
     if "env" in data:
         cockpit.env = data["env"]
+    if "url" in data:
+        cockpit.url = (data["url"] or "").strip() or None
     await session.commit()
     await session.refresh(cockpit)
     return _to_read(cockpit)
@@ -208,6 +229,7 @@ async def start_cockpit(
 ) -> CockpitStatus:
     _guard_enabled()
     cockpit = await _get(cockpit_id, session)
+    _require_command(cockpit)
     return await get_cockpit_manager().start(
         cockpit_id=cockpit.id,
         command=cockpit.command,
@@ -223,6 +245,7 @@ async def restart_cockpit(
 ) -> CockpitStatus:
     _guard_enabled()
     cockpit = await _get(cockpit_id, session)
+    _require_command(cockpit)
     return await get_cockpit_manager().restart(
         cockpit_id=cockpit.id,
         command=cockpit.command,

@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ExternalLink,
   Gauge,
+  Link2,
   Loader2,
   Pencil,
   Play,
@@ -67,8 +68,10 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   );
 
   // Poll live status while the view is open so the header + iframe react to the
-  // process going ready, unreachable, or crashing on its own.
+  // process going ready, unreachable, or crashing on its own. URL cockpits have
+  // no process, so there's nothing to poll.
   useEffect(() => {
+    if (cockpit.kind !== "command") return;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -83,7 +86,7 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [cockpit.id, applyStatus]);
+  }, [cockpit.id, cockpit.kind, applyStatus]);
 
   // Pull logs while the drawer is open (and always useful when crashed).
   useEffect(() => {
@@ -106,6 +109,7 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   }, [logsOpen, cockpit.id, status.state]);
 
   const isActive = status.state === "running" || status.state === "starting";
+  const isUrl = cockpit.kind === "url";
 
   async function run(
     action: () => Promise<CockpitStatus>,
@@ -142,53 +146,69 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   }
 
   function openInTab(): void {
-    window.open(`http://localhost:${cockpit.port}/`, "_blank", "noopener,noreferrer");
+    const target = isUrl ? (cockpit.url ?? "") : `http://localhost:${cockpit.port}/`;
+    if (target) window.open(target, "_blank", "noopener,noreferrer");
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <Gauge size={16} className="shrink-0 text-teal-600 dark:text-teal-400" />
+        {isUrl ? (
+          <Link2 size={16} className="shrink-0 text-teal-600 dark:text-teal-400" />
+        ) : (
+          <Gauge size={16} className="shrink-0 text-teal-600 dark:text-teal-400" />
+        )}
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{cockpit.name}</div>
-          <div className="flex items-center gap-1.5 text-xs text-muted">
-            <CockpitStateDot state={status.state} />
-            <span>{STATE_LABEL[status.state]}</span>
-            <span className="opacity-50">·</span>
-            <span className="font-mono">:{cockpit.port}</span>
-          </div>
+          {isUrl ? (
+            <div className="truncate font-mono text-xs text-muted" title={cockpit.url ?? ""}>
+              {cockpit.url}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs text-muted">
+              <CockpitStateDot state={status.state} />
+              <span>{STATE_LABEL[status.state]}</span>
+              <span className="opacity-50">·</span>
+              <span className="font-mono">:{cockpit.port}</span>
+            </div>
+          )}
         </div>
 
         <div className="ml-auto flex items-center gap-1">
-          {isActive ? (
+          {!isUrl &&
+            (isActive ? (
+              <HeaderButton
+                onClick={() => run(() => api.cockpits.stop(cockpit.id))}
+                busy={busy}
+                icon={<Square size={14} />}
+                label="Stop"
+              />
+            ) : (
+              <HeaderButton
+                onClick={() => run(() => api.cockpits.start(cockpit.id), { reloadFrame: true })}
+                busy={busy}
+                icon={<Play size={14} />}
+                label="Start"
+                primary
+              />
+            ))}
+          {!isUrl && (
             <HeaderButton
-              onClick={() => run(() => api.cockpits.stop(cockpit.id))}
+              onClick={() => run(() => api.cockpits.restart(cockpit.id), { reloadFrame: true })}
               busy={busy}
-              icon={<Square size={14} />}
-              label="Stop"
-            />
-          ) : (
-            <HeaderButton
-              onClick={() => run(() => api.cockpits.start(cockpit.id), { reloadFrame: true })}
-              busy={busy}
-              icon={<Play size={14} />}
-              label="Start"
-              primary
+              icon={<RotateCw size={14} />}
+              label="Restart"
             />
           )}
-          <HeaderButton
-            onClick={() => run(() => api.cockpits.restart(cockpit.id), { reloadFrame: true })}
-            busy={busy}
-            icon={<RotateCw size={14} />}
-            label="Restart"
-          />
           <HeaderButton onClick={openInTab} icon={<ExternalLink size={14} />} label="Open in tab" />
-          <HeaderButton
-            onClick={() => setLogsOpen((v) => !v)}
-            icon={<Terminal size={14} />}
-            label="Logs"
-            active={logsOpen}
-          />
+          {!isUrl && (
+            <HeaderButton
+              onClick={() => setLogsOpen((v) => !v)}
+              icon={<Terminal size={14} />}
+              label="Logs"
+              active={logsOpen}
+            />
+          )}
           <HeaderButton onClick={() => setEditing(true)} icon={<Pencil size={14} />} label="Edit" />
           <HeaderButton onClick={remove} icon={<Trash2 size={14} />} label="Delete" danger />
         </div>
@@ -201,7 +221,13 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
       )}
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
-        {status.state === "running" ? (
+        {isUrl ? (
+          <iframe
+            title={cockpit.name}
+            src={cockpit.url ?? ""}
+            className="h-full w-full border-0 bg-white"
+          />
+        ) : status.state === "running" ? (
           <iframe
             key={frameNonce}
             title={cockpit.name}
@@ -211,8 +237,8 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
         ) : (
           <CockpitPlaceholder
             state={status.state}
-            port={cockpit.port}
-            command={cockpit.command}
+            port={cockpit.port ?? 0}
+            command={cockpit.command ?? ""}
             detail={status.detail}
             busy={busy}
             onStart={() => run(() => api.cockpits.start(cockpit.id), { reloadFrame: true })}
@@ -398,32 +424,46 @@ export function CockpitFormModal({
   onSaved: (cockpit: Cockpit) => void;
 }) {
   const isEdit = !!cockpit;
+  const [kind, setKind] = useState<"command" | "url">(cockpit?.kind ?? "command");
   const [name, setName] = useState(cockpit?.name ?? "");
   const [command, setCommand] = useState(cockpit?.command ?? "");
-  const [port, setPort] = useState(cockpit ? String(cockpit.port) : "");
+  const [port, setPort] = useState(cockpit?.port != null ? String(cockpit.port) : "");
   const [cwd, setCwd] = useState(cockpit?.cwd ?? "");
+  const [url, setUrl] = useState(cockpit?.url ?? "");
   const [description, setDescription] = useState(cockpit?.description ?? "");
   const [env, setEnv] = useState(envJsonToLines(cockpit?.env ?? null));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isUrl = kind === "url";
   const portNum = Number.parseInt(port, 10);
   const portValid = Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535;
-  const canSubmit = name.trim().length > 0 && command.trim().length > 0 && portValid;
+  const urlValid = /^https?:\/\//i.test(url.trim());
+  const canSubmit =
+    name.trim().length > 0 &&
+    (isUrl ? urlValid : command.trim().length > 0 && portValid);
 
   async function submit(): Promise<void> {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
     try {
-      const payload = {
-        name: name.trim(),
-        command: command.trim(),
-        port: portNum,
-        cwd: cwd.trim() || null,
-        description: description.trim() || null,
-        env: envLinesToJson(env),
-      };
+      const payload = isUrl
+        ? {
+            name: name.trim(),
+            kind: "url" as const,
+            url: url.trim(),
+            description: description.trim() || null,
+          }
+        : {
+            name: name.trim(),
+            kind: "command" as const,
+            command: command.trim(),
+            port: portNum,
+            cwd: cwd.trim() || null,
+            description: description.trim() || null,
+            env: envLinesToJson(env),
+          };
       const saved = isEdit
         ? await api.cockpits.update(cockpit.id, payload)
         : await api.cockpits.create(payload);
@@ -444,10 +484,44 @@ export function CockpitFormModal({
     >
       <div className="w-[32rem] max-w-[94vw] space-y-3 rounded-lg border border-border bg-bg p-5 shadow-xl">
         <h2 className="font-medium">{isEdit ? "Edit cockpit" : "New cockpit"}</h2>
+
+        <div className="flex gap-1 rounded border border-border bg-surface p-0.5 text-sm">
+          <button
+            type="button"
+            onClick={() => setKind("command")}
+            aria-pressed={!isUrl}
+            className={`flex-1 rounded px-2 py-1 ${
+              !isUrl ? "bg-accent text-white" : "text-muted hover:text-text"
+            }`}
+          >
+            Command
+          </button>
+          <button
+            type="button"
+            onClick={() => setKind("url")}
+            aria-pressed={isUrl}
+            className={`flex-1 rounded px-2 py-1 ${
+              isUrl ? "bg-accent text-white" : "text-muted hover:text-text"
+            }`}
+          >
+            URL
+          </button>
+        </div>
+
         <p className="text-xs text-muted">
-          Registers a local web app. On start, the command runs on your machine and Precursor
-          embeds the app once its port responds. The command runs with your privileges — only
-          register cockpits you trust.
+          {isUrl ? (
+            <>
+              Embeds a fixed URL directly in an iframe — no process, no start/stop. Some sites
+              refuse to be framed (e.g. ones sending <code>X-Frame-Options</code>); use “Open in
+              tab” for those.
+            </>
+          ) : (
+            <>
+              Registers a local web app. On start, the command runs on your machine and Precursor
+              embeds it once its port responds. The command runs with your privileges — only
+              register cockpits you trust.
+            </>
+          )}
         </p>
 
         <label className="block text-sm">
@@ -456,42 +530,56 @@ export function CockpitFormModal({
             className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Metrics dashboard"
+            placeholder={isUrl ? "Internal dashboard" : "Metrics dashboard"}
             autoFocus
           />
         </label>
 
-        <label className="block text-sm">
-          <span className="text-muted">Run command</span>
-          <input
-            className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            placeholder="npm run dev -- --port 5173"
-          />
-        </label>
+        {isUrl ? (
+          <label className="block text-sm">
+            <span className="text-muted">URL</span>
+            <input
+              className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://dashboard.internal.contoso.com"
+            />
+          </label>
+        ) : (
+          <>
+            <label className="block text-sm">
+              <span className="text-muted">Run command</span>
+              <input
+                className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="npm run dev -- --port 5173"
+              />
+            </label>
 
-        <div className="flex gap-3">
-          <label className="block w-28 shrink-0 text-sm">
-            <span className="text-muted">Port</span>
-            <input
-              className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
-              value={port}
-              onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))}
-              placeholder="5173"
-              inputMode="numeric"
-            />
-          </label>
-          <label className="block flex-1 text-sm">
-            <span className="text-muted">Working directory (optional)</span>
-            <input
-              className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
-              placeholder="/Users/me/projects/dashboard"
-            />
-          </label>
-        </div>
+            <div className="flex gap-3">
+              <label className="block w-28 shrink-0 text-sm">
+                <span className="text-muted">Port</span>
+                <input
+                  className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
+                  value={port}
+                  onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder="5173"
+                  inputMode="numeric"
+                />
+              </label>
+              <label className="block flex-1 text-sm">
+                <span className="text-muted">Working directory (optional)</span>
+                <input
+                  className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 font-mono text-sm outline-none focus:border-accent"
+                  value={cwd}
+                  onChange={(e) => setCwd(e.target.value)}
+                  placeholder="/Users/me/projects/dashboard"
+                />
+              </label>
+            </div>
+          </>
+        )}
 
         <label className="block text-sm">
           <span className="text-muted">Description (optional)</span>
@@ -503,15 +591,19 @@ export function CockpitFormModal({
           />
         </label>
 
-        <label className="block text-sm">
-          <span className="text-muted">Environment variables (optional, one KEY=VALUE per line)</span>
-          <textarea
-            className="mt-1 h-20 w-full resize-none rounded border border-border bg-surface px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
-            value={env}
-            onChange={(e) => setEnv(e.target.value)}
-            placeholder={"NODE_ENV=development\nAPI_URL=http://localhost:3000"}
-          />
-        </label>
+        {!isUrl && (
+          <label className="block text-sm">
+            <span className="text-muted">
+              Environment variables (optional, one KEY=VALUE per line)
+            </span>
+            <textarea
+              className="mt-1 h-20 w-full resize-none rounded border border-border bg-surface px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
+              value={env}
+              onChange={(e) => setEnv(e.target.value)}
+              placeholder={"NODE_ENV=development\nAPI_URL=http://localhost:3000"}
+            />
+          </label>
+        )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
 
