@@ -56,6 +56,42 @@
 .dark .section-workspaces { --section-accent: #fbbf24; }
 .dark .section-kanban { --section-accent: #22d3ee; }
 
+/* Home start-surface ("wizard") panel. Revealed under the section cards when a
+   card is clicked: the panel unrolls open from the top like a blind (its height
+   animates via a 0fr→1fr grid track) with a soft fade, and wears a thin
+   section-tinted border with rounded corners. Driven by an `.is-open` class
+   (not a one-shot keyframe) so switching sections can fold the old panel closed
+   and unroll the new one in the same motion. The accent comes from the
+   `.section-<mode>` ancestor set on the scroll container. */
+.wizard-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.wizard-reveal.is-open {
+  grid-template-rows: 1fr;
+}
+
+.wizard-panel {
+  overflow: hidden;
+  min-height: 0;
+  border: 1px solid
+    color-mix(in oklab, var(--section-accent, var(--accent)) 35%, transparent);
+  border-radius: 0.75rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.wizard-reveal.is-open > .wizard-panel {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-reveal,
+  .wizard-panel {
+    transition: none;
+  }
+}
+
 /* Input/composer border that turns the active section accent on focus. */
 .section-focus-border {
   border-color: var(--border);
