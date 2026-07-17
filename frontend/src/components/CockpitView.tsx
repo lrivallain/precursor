@@ -28,12 +28,25 @@ const STATE_LABEL: Record<CockpitState, string> = {
 
 interface CockpitViewProps {
   cockpit: Cockpit;
+  // Deep path within the embedded app to open initially (from the URL).
+  initialPath?: string | null;
   onChanged: (id: number, status: CockpitStatus) => void;
+  // Fired when the user navigates inside a same-origin (proxied command)
+  // cockpit, so the parent can mirror the path into the app URL. Not called for
+  // url cockpits (cross-origin — the browser blocks reading their location).
+  onPathChange?: (path: string | null) => void;
   onUpdated: (cockpit: Cockpit) => void;
   onDeleted: () => void;
 }
 
-export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: CockpitViewProps) {
+export function CockpitView({
+  cockpit,
+  initialPath = null,
+  onChanged,
+  onPathChange,
+  onUpdated,
+  onDeleted,
+}: CockpitViewProps) {
   const confirmAction = useConfirm();
   const [status, setStatus] = useState<CockpitStatus>(cockpit.status);
   const [busy, setBusy] = useState(false);
@@ -43,9 +56,15 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   const [logs, setLogs] = useState("");
   // Bumped to force the iframe to reload (e.g. after a restart).
   const [frameNonce, setFrameNonce] = useState(0);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  // The embedded app's current sub-path (after the proxy prefix), tracked for
+  // same-origin command cockpits so Open-in-tab and the URL follow navigation.
+  const currentPathRef = useRef<string | null>(initialPath);
 
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
+  const onPathChangeRef = useRef(onPathChange);
+  onPathChangeRef.current = onPathChange;
 
   // Keep local status in step with the parent's copy when switching cockpits.
   useEffect(() => {
@@ -111,15 +130,75 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   const isActive = status.state === "running" || status.state === "starting";
   const isUrl = cockpit.kind === "url";
 
+  // Build the iframe src for a given deep path. Command cockpits go through the
+  // same-origin reverse proxy; url cockpits embed the external URL directly.
+  const buildSrc = useCallback(
+    (path: string | null): string => {
+      const rest = (path ?? "").replace(/^\/+/, "");
+      if (isUrl) {
+        const base = cockpit.url ?? "";
+        return rest ? `${base.replace(/\/+$/, "")}/${rest}` : base;
+      }
+      return api.cockpits.proxyUrl(cockpit.id) + rest;
+    },
+    [isUrl, cockpit.url, cockpit.id],
+  );
+
+  // The src is set once at mount (with the initial deep path) and only changes
+  // on restart — never from path-sync, which would reload the iframe in a loop.
+  const [iframeSrc, setIframeSrc] = useState(() => buildSrc(initialPath));
+
+  // If the target changes (e.g. a url cockpit's URL is edited), rebuild the src
+  // at the current path so the iframe follows. No-op on mount (same value).
+  useEffect(() => {
+    setIframeSrc(buildSrc(currentPathRef.current));
+  }, [buildSrc]);
+
+  // Mirror in-app navigation into the URL. Only possible for command cockpits:
+  // their proxied iframe is same-origin, so we can read its location. URL
+  // cockpits are cross-origin and the browser blocks it.
+  useEffect(() => {
+    if (isUrl || status.state !== "running") return;
+    const prefix = api.cockpits.proxyUrl(cockpit.id);
+    const read = () => {
+      const win = iframeRef.current?.contentWindow;
+      if (!win) return;
+      let pathname: string;
+      try {
+        pathname = win.location.pathname;
+      } catch {
+        return; // navigated cross-origin (external redirect) — can't read
+      }
+      if (!pathname.startsWith(prefix)) return;
+      const norm = pathname.slice(prefix.length).replace(/^\/+/, "") || null;
+      if (norm !== currentPathRef.current) {
+        currentPathRef.current = norm;
+        onPathChangeRef.current?.(norm);
+      }
+    };
+    const el = iframeRef.current;
+    el?.addEventListener("load", read);
+    const timer = window.setInterval(read, 800);
+    return () => {
+      el?.removeEventListener("load", read);
+      window.clearInterval(timer);
+    };
+  }, [isUrl, status.state, cockpit.id, frameNonce]);
+
   async function run(
     action: () => Promise<CockpitStatus>,
-    opts: { reloadFrame?: boolean } = {},
+    opts: { reloadFrame?: boolean; resetPath?: boolean } = {},
   ): Promise<void> {
     setBusy(true);
     setError(null);
     try {
       const next = await action();
       applyStatus(next);
+      if (opts.resetPath) {
+        currentPathRef.current = null;
+        setIframeSrc(buildSrc(null));
+        onPathChangeRef.current?.(null);
+      }
       if (opts.reloadFrame) setFrameNonce((n) => n + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -146,7 +225,14 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
   }
 
   function openInTab(): void {
-    const target = isUrl ? (cockpit.url ?? "") : `http://localhost:${cockpit.port}/`;
+    const rest = (currentPathRef.current ?? "").replace(/^\/+/, "");
+    let target: string;
+    if (isUrl) {
+      const base = cockpit.url ?? "";
+      target = rest ? `${base.replace(/\/+$/, "")}/${rest}` : base;
+    } else {
+      target = `http://localhost:${cockpit.port}/${rest}`;
+    }
     if (target) window.open(target, "_blank", "noopener,noreferrer");
   }
 
@@ -194,7 +280,9 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
             ))}
           {!isUrl && (
             <HeaderButton
-              onClick={() => run(() => api.cockpits.restart(cockpit.id), { reloadFrame: true })}
+              onClick={() =>
+                run(() => api.cockpits.restart(cockpit.id), { reloadFrame: true, resetPath: true })
+              }
               busy={busy}
               icon={<RotateCw size={14} />}
               label="Restart"
@@ -223,15 +311,17 @@ export function CockpitView({ cockpit, onChanged, onUpdated, onDeleted }: Cockpi
       <div className="relative flex-1 min-h-0 overflow-hidden">
         {isUrl ? (
           <iframe
+            ref={iframeRef}
             title={cockpit.name}
-            src={cockpit.url ?? ""}
+            src={iframeSrc}
             className="h-full w-full border-0 bg-white"
           />
         ) : status.state === "running" ? (
           <iframe
+            ref={iframeRef}
             key={frameNonce}
             title={cockpit.name}
-            src={api.cockpits.proxyUrl(cockpit.id)}
+            src={iframeSrc}
             className="h-full w-full border-0 bg-white"
           />
         ) : (

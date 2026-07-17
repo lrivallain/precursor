@@ -110,6 +110,11 @@ interface AppRoute {
   // selecting which card's detail preview to open. null when the hash is absent
   // or not a positive integer.
   kanbanItemRef: number | null;
+  // The selected cockpit id and an optional deep path *within* the embedded app
+  // (everything after the id), e.g. /cockpits/1/reports/q3 → id 1, path
+  // "reports/q3". Both null when not on a specific cockpit.
+  cockpitId: number | null;
+  cockpitPath: string | null;
 }
 
 // Parse a "#<number>" URL fragment into an issue/PR number. Anything that isn't
@@ -131,9 +136,20 @@ function parseAppRoute(): AppRoute {
     agentRef: null,
     kanbanProjectRef: null,
     kanbanItemRef: null,
+    cockpitId: null,
+    cockpitPath: null,
   };
   if (segs[0] === "ws") return { ...base, mode: "workspaces" };
-  if (segs[0] === "cockpits") return { ...base, mode: "cockpits" };
+  if (segs[0] === "cockpits") {
+    const id = segs[1] ? Number.parseInt(decodeURIComponent(segs[1]), 10) : NaN;
+    const validId = Number.isSafeInteger(id) && id > 0 ? id : null;
+    // Everything after the id is a deep path into the embedded app.
+    const path =
+      validId != null && segs.length > 2
+        ? segs.slice(2).map(decodeURIComponent).join("/")
+        : null;
+    return { ...base, mode: "cockpits", cockpitId: validId, cockpitPath: path };
+  }
   if (segs[0] === "agents") {
     return { ...base, mode: "agents", agentRef: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
@@ -217,6 +233,16 @@ function chatUrl(chat: Chat): string {
 function liveUrl(session: MeetingSession | null): string {
   if (session == null) return "/live";
   return "/live/" + encodeURIComponent(session.slug);
+}
+
+// /cockpits, /cockpits/<id>, or /cockpits/<id>/<deep/path/in/app>. The deep
+// path segments come straight from the embedded app's own pathname, so they're
+// already URL-safe — pass them through without re-encoding.
+function cockpitUrl(id: number | null, path: string | null): string {
+  if (id == null) return "/cockpits";
+  const base = `/cockpits/${id}`;
+  const rest = (path ?? "").replace(/^\/+/, "");
+  return rest ? `${base}/${rest}` : base;
 }
 
 function kanbanUrl(project: ProjectSummary | null): string {
@@ -394,7 +420,17 @@ export default function App() {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   // Cockpits are loaded lazily when the user first enters cockpits mode.
   const [cockpits, setCockpits] = useState<Cockpit[] | null>(null);
-  const [activeCockpitId, setActiveCockpitId] = useState<number | null>(null);
+  const [activeCockpitId, setActiveCockpitId] = useState<number | null>(
+    parseAppRoute().cockpitId,
+  );
+  // The deep path within the *embedded* app (everything after the cockpit id in
+  // the URL). Kept per-id so it only applies to the cockpit it belongs to.
+  const [cockpitRoute, setCockpitRoute] = useState<{ id: number | null; path: string | null }>(
+    () => {
+      const r = parseAppRoute();
+      return { id: r.cockpitId, path: r.cockpitPath };
+    },
+  );
   const [createCockpitOpen, setCreateCockpitOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -745,7 +781,10 @@ export default function App() {
         return;
       }
       if (r.mode === "cockpits") {
-        // Selection isn't URL-addressable; the lazy-load effect picks one.
+        // Reflect the URL's cockpit id + deep path into state. The deep path is
+        // handed to CockpitView as its initial iframe location.
+        setCockpitRoute({ id: r.cockpitId, path: r.cockpitPath });
+        if (r.cockpitId != null) setActiveCockpitId(r.cockpitId);
         return;
       }
       if (r.mode === "topics") {
@@ -999,7 +1038,7 @@ export default function App() {
         projectsRef.current?.find((p) => p.id === activeProjectIdRef.current) ?? null;
       target = kanbanUrl(active);
     } else if (next === "cockpits") {
-      target = "/cockpits";
+      target = cockpitUrl(activeCockpitId, null);
     } else {
       target = "/ws";
     }
@@ -1653,15 +1692,48 @@ export default function App() {
   }
 
   // Lazily load cockpits the first time the user enters that mode, then pick
-  // the first one so the panel isn't empty.
+  // the cockpit named in the URL (else the first) so the panel isn't empty.
   useEffect(() => {
     if (sidebarMode !== "cockpits" || cockpits !== null) return;
     void loadCockpits().then((list) => {
       if (list.length === 0) return;
-      setActiveCockpitId((id) => id ?? list[0].id);
+      setActiveCockpitId((prev) =>
+        prev != null && list.some((c) => c.id === prev) ? prev : list[0].id,
+      );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarMode]);
+
+  // Keep the URL in step with the active cockpit + its deep path. replaceState
+  // (not push) so auto-selection and in-app navigation don't spam back/forward;
+  // explicit cockpit switches push their own entry via handleSelectCockpit.
+  useEffect(() => {
+    if (atHome || sidebarMode !== "cockpits" || activeCockpitId == null) return;
+    const path = cockpitRoute.id === activeCockpitId ? cockpitRoute.path : null;
+    const target = cockpitUrl(activeCockpitId, path);
+    if (window.location.pathname !== target) {
+      history.replaceState(null, "", target);
+    }
+  }, [activeCockpitId, cockpitRoute, sidebarMode, atHome]);
+
+  function handleSelectCockpit(c: Cockpit): void {
+    setActiveCockpitId(c.id);
+    setCockpitRoute({ id: c.id, path: null });
+    history.pushState(null, "", cockpitUrl(c.id, null));
+  }
+
+  // Called by CockpitView when the user navigates *inside* a same-origin
+  // (proxied command) cockpit — mirrors that path into our URL. Guarded so a
+  // late iframe callback can't rewrite the URL after switching cockpits.
+  function navigateCockpit(id: number, path: string | null): void {
+    if (activeCockpitId !== id) return;
+    setCockpitRoute({ id, path });
+  }
+
+  // Deep path to hand CockpitView as its initial iframe location — only when it
+  // belongs to the active cockpit.
+  const cockpitInitialPath =
+    activeCockpit && cockpitRoute.id === activeCockpit.id ? cockpitRoute.path : null;
 
   // Reflect a cockpit's live status into the list (drives the sidebar dot)
   // without refetching the whole list on every poll.
@@ -1886,7 +1958,7 @@ export default function App() {
           <CockpitList
             cockpits={cockpits}
             activeId={activeCockpitId}
-            onSelect={(c) => setActiveCockpitId(c.id)}
+            onSelect={handleSelectCockpit}
           />
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -2367,11 +2439,16 @@ export default function App() {
               <CockpitView
                 key={activeCockpit.id}
                 cockpit={activeCockpit}
+                initialPath={cockpitInitialPath}
                 onChanged={handleCockpitStatus}
+                onPathChange={(p) => navigateCockpit(activeCockpit.id, p)}
                 onUpdated={handleCockpitUpdated}
                 onDeleted={async () => {
                   const list = await loadCockpits();
-                  setActiveCockpitId(list[0]?.id ?? null);
+                  const next = list[0] ?? null;
+                  setActiveCockpitId(next?.id ?? null);
+                  setCockpitRoute({ id: next?.id ?? null, path: null });
+                  history.replaceState(null, "", cockpitUrl(next?.id ?? null, null));
                 }}
               />
             ) : (
@@ -2474,6 +2551,8 @@ export default function App() {
             setCreateCockpitOpen(false);
             setCockpits((prev) => (prev ? [cockpit, ...prev] : [cockpit]));
             setActiveCockpitId(cockpit.id);
+            setCockpitRoute({ id: cockpit.id, path: null });
+            history.pushState(null, "", cockpitUrl(cockpit.id, null));
           }}
         />
       )}
