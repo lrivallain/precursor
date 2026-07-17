@@ -3,6 +3,7 @@ import { Archive, CalendarClock, Play, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { AgentSession, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { RefineTextarea } from "./RefineTextarea";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { TopicPicker } from "./AgentView";
 import {
@@ -195,9 +196,10 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
 
             <section>
               <label className="block text-xs text-muted mb-1">Instructions (task)</label>
-              <textarea
+              <RefineTextarea
                 value={task}
-                onChange={(e) => setTask(e.target.value)}
+                onValueChange={setTask}
+                refineKind="instructions"
                 disabled={taskLocked || saving}
                 rows={10}
                 spellCheck={false}

@@ -1947,7 +1947,6 @@ export default function App() {
                         void handleSelect(tid);
                       }}
                       className="group inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-                      title="Open the associated topic"
                       data-tooltip="Open the associated topic"
                     >
                       <MessagesSquare size={12} />

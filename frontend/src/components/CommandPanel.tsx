@@ -2,6 +2,7 @@ import { type ClipboardEventHandler, type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, Eye, Loader2, Pencil, X } from "lucide-react";
 import { Markdown } from "./Markdown";
+import { RefineTextarea } from "./RefineTextarea";
 import { useFloatingWindow } from "../lib/useFloatingWindow";
 
 interface TitleField {
@@ -194,13 +195,15 @@ export function CommandPanel({
               />
             </label>
           )}
-          <textarea
+          <RefineTextarea
             value={body}
-            onChange={(e) => onBodyChange(e.target.value)}
+            onValueChange={onBodyChange}
+            refineKind="comment"
             onPaste={onBodyPaste}
             placeholder={bodyPlaceholder}
             disabled={disabled}
             aria-label={`${title} body`}
+            containerClassName="flex-1 min-h-0 flex"
             className={`flex-1 min-h-0 w-full resize-none bg-bg border border-border rounded p-2 text-sm outline-none focus:border-accent disabled:opacity-60 ${bodyClassName}`}
           />
         </>

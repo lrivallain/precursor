@@ -14,6 +14,7 @@ import { api, apiErrorMessage } from "../lib/api";
 import { useResizableBox } from "../lib/useResizableBox";
 import { Modal } from "./Modal";
 import { Markdown } from "./Markdown";
+import { RefineTextarea } from "./RefineTextarea";
 import { IssueLabelChip, IssueStateBadge } from "./IssueTags";
 
 interface IssuePreviewModalProps {
@@ -228,9 +229,10 @@ export function IssuePreviewModal({
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
                 Add a comment
               </label>
-              <textarea
+              <RefineTextarea
                 value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
+                onValueChange={setCommentText}
+                refineKind="comment"
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                     e.preventDefault();
@@ -270,7 +272,7 @@ export function IssuePreviewModal({
                 onClose();
               }}
               className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/40 bg-violet-500/10 px-3 py-1.5 text-sm font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-              title="Open the linked Precursor topic"
+              data-tooltip="Open the linked Precursor topic"
             >
               <MessagesSquare size={14} />
               <span className="max-w-[16rem] truncate">

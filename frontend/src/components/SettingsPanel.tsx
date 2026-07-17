@@ -2188,7 +2188,8 @@ function McpServerEditor({
                           setArgsList((prev) => prev.filter((_, j) => j !== i))
                         }
                         className="p-1 rounded hover:bg-surface text-muted hover:text-red-500"
-                        title="Remove"
+                        aria-label="Remove"
+                        data-tooltip="Remove"
                       >
                         <X size={12} />
                       </button>

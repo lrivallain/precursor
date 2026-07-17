@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { Select } from "./Select";
+import { RefineTextarea } from "./RefineTextarea";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 import { useConfirm } from "./ConfirmDialog";
 import type { AgentApprovalPolicy, AgentModelInfo, AgentPermissionGrant } from "../lib/types";
@@ -217,13 +218,14 @@ export function AgentsSettings() {
       {enabled && (
         <label className="block space-y-1">
           <span className="block text-sm">Custom system message</span>
-          <textarea
+          <RefineTextarea
             value={systemPrompt}
             disabled={busy}
             rows={4}
+            refineKind="system_prompt"
             placeholder="Extra instructions appended to every agent session…"
-            onChange={(e) =>
-              settingsStore.set({ ...settings!, agents_system_prompt: e.target.value })
+            onValueChange={(v) =>
+              settingsStore.set({ ...settings!, agents_system_prompt: v })
             }
             onBlur={(e) => void patch({ agents_system_prompt: e.target.value })}
             className="w-full resize-y rounded border border-border bg-surface px-2 py-1.5 font-mono text-[12px] leading-snug"

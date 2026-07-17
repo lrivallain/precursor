@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { Modal } from "./Modal";
+import { RefineTextarea } from "./RefineTextarea";
 import { Z_INDEX } from "../lib/constants";
 import type { Reminder, ReminderContainer } from "../lib/types";
 
@@ -242,12 +243,13 @@ export function ReminderModal({
 
           <div>
             <label className="block text-xs text-muted mb-1">Note (optional)</label>
-            <textarea
+            <RefineTextarea
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onValueChange={setNote}
+              refineKind="note"
               rows={3}
               placeholder="What should this bring back up?"
-              className="w-full resize-none bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+              className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
             />
           </div>
 

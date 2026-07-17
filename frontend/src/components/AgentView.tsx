@@ -302,7 +302,7 @@ function MessageNode({
               type="button"
               onClick={() => setOpen((v) => !v)}
               className="mt-1 flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted hover:bg-bg"
-              title={open ? "Collapse" : "Show full system message"}
+              data-tooltip={open ? "Collapse" : "Show full system message"}
             >
               <ChevronDown
                 size={12}
@@ -467,7 +467,7 @@ function ToolBox({
             type="button"
             onClick={() => setOpen((v) => !v)}
             className="ml-auto flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted hover:bg-bg"
-            title={detailOpen ? "Hide details" : "Show what was done"}
+            data-tooltip={detailOpen ? "Hide details" : "Show what was done"}
           >
             <ChevronDown
               size={12}
@@ -515,7 +515,7 @@ function ToolField({ label, value }: { label: string; value: string }) {
             type="button"
             onClick={() => setExpanded((v) => !v)}
             className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted hover:bg-bg"
-            title={expanded ? "Collapse" : "Show full content"}
+            data-tooltip={expanded ? "Collapse" : "Show full content"}
           >
             <ChevronDown
               size={11}

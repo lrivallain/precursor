@@ -3,6 +3,7 @@ import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Memory } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { RefineTextarea } from "./RefineTextarea";
 
 const KIND_SUGGESTIONS = ["context", "preference", "fact", "note"];
 
@@ -99,7 +100,8 @@ export function MemoriesTab() {
                 type="button"
                 onClick={() => setEditing(m)}
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
-                title="Edit"
+                aria-label="Edit"
+                data-tooltip="Edit"
               >
                 <Pencil size={14} />
               </button>
@@ -108,7 +110,8 @@ export function MemoriesTab() {
                 onClick={() => void handleDelete(m)}
                 disabled={busyId === m.id}
                 className="p-1 rounded hover:bg-surface text-muted hover:text-red-500 disabled:opacity-40"
-                title="Delete"
+                aria-label="Delete"
+                data-tooltip="Delete"
               >
                 <Trash2 size={14} />
               </button>
@@ -213,9 +216,10 @@ function MemoryEditor({ memory, onClose, onSaved }: EditorProps) {
 
           <div>
             <label className="block text-xs text-muted mb-1">Content</label>
-            <textarea
+            <RefineTextarea
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onValueChange={setContent}
+              refineKind="memory"
               rows={6}
               placeholder="User is a Cloud Solution Architect at Microsoft."
               className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"

@@ -271,7 +271,7 @@ export function NotesPanel({
             onClick={() => void onAction("append", text)}
             disabled={empty || busy}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border text-xs hover:bg-bg disabled:opacity-40"
-            title="Append the notes to the conversation without invoking the assistant."
+            data-tooltip="Append the notes to the conversation without invoking the assistant."
           >
             <MessageSquarePlus size={14} />
             Add to chat
@@ -280,7 +280,7 @@ export function NotesPanel({
             onClick={() => void onAction("append-and-ask", text)}
             disabled={empty || busy}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border text-xs hover:bg-bg disabled:opacity-40"
-            title="Append the notes and ask the assistant to comment on them."
+            data-tooltip="Append the notes and ask the assistant to comment on them."
           >
             <Send size={14} />
             Add &amp; ask AI
@@ -290,7 +290,7 @@ export function NotesPanel({
               onClick={() => void onAction("post-comment", text)}
               disabled={empty || busy || !hasIssue}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-accent text-white text-xs disabled:opacity-40"
-              title={
+              data-tooltip={
                 hasIssue
                   ? "Post the notes as a comment on the linked GitHub issue."
                   : "Link a GitHub issue to this topic to enable posting."
