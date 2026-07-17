@@ -15,6 +15,10 @@ import type {
   Chat,
   ChatCreate,
   ChatUpdate,
+  Cockpit,
+  CockpitCreate,
+  CockpitStatus,
+  CockpitUpdate,
   CommentDraft,
   CommentPostResult,
   GhCloseResult,
@@ -856,6 +860,34 @@ export const api = {
       ),
     localPath: (workspaceId: number) =>
       request<LocalPath>(`/api/workspaces/${workspaceId}/local-path`),
+  },
+
+  cockpits: {
+    list: () => request<Cockpit[]>(`/api/cockpits`),
+    create: (data: CockpitCreate) =>
+      request<Cockpit>(`/api/cockpits`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: number, data: CockpitUpdate) =>
+      request<Cockpit>(`/api/cockpits/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    remove: (id: number) =>
+      request<void>(`/api/cockpits/${id}`, { method: "DELETE" }),
+    start: (id: number) =>
+      request<CockpitStatus>(`/api/cockpits/${id}/start`, { method: "POST" }),
+    restart: (id: number) =>
+      request<CockpitStatus>(`/api/cockpits/${id}/restart`, { method: "POST" }),
+    stop: (id: number) =>
+      request<CockpitStatus>(`/api/cockpits/${id}/stop`, { method: "POST" }),
+    status: (id: number) =>
+      request<CockpitStatus>(`/api/cockpits/${id}/status`),
+    logs: (id: number) =>
+      request<{ logs: string }>(`/api/cockpits/${id}/logs`),
+    // URL for embedding the running cockpit through the backend reverse proxy.
+    proxyUrl: (id: number) => `/api/cockpits/${id}/proxy/`,
   },
 
   system: {

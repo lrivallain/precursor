@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Bot,
   FolderGit2,
+  Gauge,
   MessageSquarePlus,
   MessagesSquare,
   Radio,
@@ -236,6 +237,14 @@ export function HomePage({
         "Browse the workspaces and files backing your sessions.",
       openLabel: "Browse files",
       icon: <FolderGit2 size={20} />,
+    },
+    {
+      mode: "cockpits",
+      title: "Cockpits",
+      description:
+        "Launch and embed your local web apps on demand.",
+      openLabel: "Open cockpits",
+      icon: <Gauge size={20} />,
     },
     ...(kanbanEnabled
       ? [

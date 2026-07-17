@@ -6,6 +6,7 @@ from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
+from precursor.backend.models.cockpit import Cockpit
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.meeting import (
@@ -35,6 +36,7 @@ __all__ = [
     "Attachment",
     "Base",
     "Chat",
+    "Cockpit",
     "IssueContextCache",
     "MCPServer",
     "MeetingAttachment",

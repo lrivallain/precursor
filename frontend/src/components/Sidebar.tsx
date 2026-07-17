@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   FolderGit2,
+  Gauge,
   Home,
   MessageSquare,
   MessagesSquare,
@@ -31,7 +32,14 @@ import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 
-export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
+export type SidebarMode =
+  | "topics"
+  | "chats"
+  | "live"
+  | "workspaces"
+  | "agents"
+  | "kanban"
+  | "cockpits";
 
 // Label for the header "New" action, which is mode-aware.
 function newActionLabel(mode: SidebarMode): string {
@@ -44,6 +52,8 @@ function newActionLabel(mode: SidebarMode): string {
       return "New workspace";
     case "agents":
       return "New agent";
+    case "cockpits":
+      return "New cockpit";
     default:
       return "New topic";
   }
@@ -70,6 +80,8 @@ interface Props {
   agentSlot?: ReactNode;
   /** Rendered in the body when mode === "kanban" (the project picker list). */
   kanbanSlot?: ReactNode;
+  /** Rendered in the body when mode === "cockpits" (the cockpit list). */
+  cockpitSlot?: ReactNode;
   onToggleCollapsed: () => void;
   onSelect: (id: number) => void;
   /** Mode-aware "New" action (topic / chat / workspace) in the header. */
@@ -111,6 +123,7 @@ export function Sidebar({
   workspaceSlot,
   agentSlot,
   kanbanSlot,
+  cockpitSlot,
   onToggleCollapsed,
   onSelect,
   onNew,
@@ -346,6 +359,8 @@ export function Sidebar({
         agentSlot
       ) : mode === "kanban" ? (
         kanbanSlot
+      ) : mode === "cockpits" ? (
+        cockpitSlot
       ) : (
         <>
           <div className="px-3 py-2 border-b border-border">
@@ -675,6 +690,7 @@ const MODES: {
   { mode: "workspaces", label: "Files", Icon: FolderGit2 },
   { mode: "agents", label: "Agents", Icon: Bot },
   { mode: "kanban", label: "Kanban", Icon: SquareKanban },
+  { mode: "cockpits", label: "Cockpits", Icon: Gauge },
 ];
 
 // Vertical section rail: an always-visible column of section icons (Home +

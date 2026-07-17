@@ -32,6 +32,7 @@ from precursor.backend.routers import (
     chat,
     chat_messages,
     chats,
+    cockpits,
     commands,
     events,
     github,
@@ -133,6 +134,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await backup_ticker.stop()
         await workiq_keepalive.stop()
         await agent_manager.stop()
+        from precursor.backend.services.cockpits import get_cockpit_manager
+
+        await get_cockpit_manager().stop_all()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
 
         await get_mcp_client_manager().aclose()
@@ -253,6 +257,7 @@ def create_app() -> FastAPI:
         stats.router,
         search.router,
         refine.router,
+        cockpits.router,
     ):
         app.include_router(r)
 

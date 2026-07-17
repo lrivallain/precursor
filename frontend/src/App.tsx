@@ -32,6 +32,8 @@ import {
   WorkspaceView,
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
+import { CockpitList } from "./components/CockpitList";
+import { CockpitView, CockpitFormModal } from "./components/CockpitView";
 import { LiveList } from "./components/LiveList";
 import { LiveView } from "./components/LiveView";
 import { LiveStartHero } from "./components/LiveStartHero";
@@ -58,6 +60,8 @@ import { useIssueContext } from "./lib/useIssueContext";
 import type {
   AgentSession,
   Chat,
+  Cockpit,
+  CockpitStatus,
   MeetingSession,
   ProjectSummary,
   ReminderItem,
@@ -129,6 +133,7 @@ function parseAppRoute(): AppRoute {
     kanbanItemRef: null,
   };
   if (segs[0] === "ws") return { ...base, mode: "workspaces" };
+  if (segs[0] === "cockpits") return { ...base, mode: "cockpits" };
   if (segs[0] === "agents") {
     return { ...base, mode: "agents", agentRef: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
@@ -387,6 +392,10 @@ export default function App() {
   // run from a topic. Cleared once consumed.
   const [agentDraftTopicId, setAgentDraftTopicId] = useState<number | null>(null);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  // Cockpits are loaded lazily when the user first enters cockpits mode.
+  const [cockpits, setCockpits] = useState<Cockpit[] | null>(null);
+  const [activeCockpitId, setActiveCockpitId] = useState<number | null>(null);
+  const [createCockpitOpen, setCreateCockpitOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
     "settings",
@@ -735,6 +744,10 @@ export default function App() {
         }
         return;
       }
+      if (r.mode === "cockpits") {
+        // Selection isn't URL-addressable; the lazy-load effect picks one.
+        return;
+      }
       if (r.mode === "topics") {
         const slug = r.topicSlug;
         if (!slug || activeTopicRef.current?.slug === slug) return;
@@ -985,6 +998,8 @@ export default function App() {
       const active =
         projectsRef.current?.find((p) => p.id === activeProjectIdRef.current) ?? null;
       target = kanbanUrl(active);
+    } else if (next === "cockpits") {
+      target = "/cockpits";
     } else {
       target = "/ws";
     }
@@ -1024,6 +1039,10 @@ export default function App() {
       setActiveAgentId(null);
       history.pushState(null, "", "/agents");
       setSidebarMode("agents");
+    } else if (mode === "cockpits") {
+      history.pushState(null, "", "/cockpits");
+      setSidebarMode("cockpits");
+      setCreateCockpitOpen(true);
     } else {
       history.pushState(null, "", "/ws");
       setSidebarMode("workspaces");
@@ -1551,7 +1570,8 @@ export default function App() {
     else if (sidebarMode === "agents") setActiveAgentId(null);
     else if (sidebarMode === "kanban") {
       // No "new" affordance for the kanban board (the header hides the "+").
-    } else setCreateWorkspaceOpen(true);
+    } else if (sidebarMode === "cockpits") setCreateCockpitOpen(true);
+    else setCreateWorkspaceOpen(true);
   }
 
   // ---- Workspaces -------------------------------------------------------
@@ -1621,6 +1641,40 @@ export default function App() {
   function handleSelectWorkspace(ws: Workspace): void {
     setActiveWorkspaceId(ws.id);
     navigateWorkspace(ws.slug, null);
+  }
+
+  // ---- Cockpits ---------------------------------------------------------
+  const activeCockpit = cockpits?.find((c) => c.id === activeCockpitId) ?? null;
+
+  async function loadCockpits(): Promise<Cockpit[]> {
+    const list = await api.cockpits.list();
+    setCockpits(list);
+    return list;
+  }
+
+  // Lazily load cockpits the first time the user enters that mode, then pick
+  // the first one so the panel isn't empty.
+  useEffect(() => {
+    if (sidebarMode !== "cockpits" || cockpits !== null) return;
+    void loadCockpits().then((list) => {
+      if (list.length === 0) return;
+      setActiveCockpitId((id) => id ?? list[0].id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarMode]);
+
+  // Reflect a cockpit's live status into the list (drives the sidebar dot)
+  // without refetching the whole list on every poll.
+  function handleCockpitStatus(id: number, status: CockpitStatus): void {
+    setCockpits((prev) =>
+      prev ? prev.map((c) => (c.id === id ? { ...c, status } : c)) : prev,
+    );
+  }
+
+  function handleCockpitUpdated(updated: Cockpit): void {
+    setCockpits((prev) =>
+      prev ? prev.map((c) => (c.id === updated.id ? updated : c)) : prev,
+    );
   }
 
   // ---- Live meeting sessions --------------------------------------------
@@ -1828,6 +1882,13 @@ export default function App() {
             }}
           />
         }
+        cockpitSlot={
+          <CockpitList
+            cockpits={cockpits}
+            activeId={activeCockpitId}
+            onSelect={(c) => setActiveCockpitId(c.id)}
+          />
+        }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onSelect={handleSelect}
         onNew={handleNew}
@@ -2023,6 +2084,10 @@ export default function App() {
           ) : sidebarMode === "kanban" ? (
             <span className="truncate font-medium min-w-0 flex-1">
               {projects?.find((p) => p.id === activeProjectId)?.title ?? "Kanban"}
+            </span>
+          ) : sidebarMode === "cockpits" ? (
+            <span className="truncate font-medium min-w-0 flex-1">
+              {activeCockpit ? activeCockpit.name : "Cockpits"}
             </span>
           ) : (
             <>
@@ -2295,6 +2360,23 @@ export default function App() {
             ) : (
               <EmptyHero label="Select a project to view its board." />
             )
+          ) : sidebarMode === "cockpits" ? (
+            cockpits === null ? (
+              <EmptyHero label="Loading cockpits…" />
+            ) : activeCockpit ? (
+              <CockpitView
+                key={activeCockpit.id}
+                cockpit={activeCockpit}
+                onChanged={handleCockpitStatus}
+                onUpdated={handleCockpitUpdated}
+                onDeleted={async () => {
+                  const list = await loadCockpits();
+                  setActiveCockpitId(list[0]?.id ?? null);
+                }}
+              />
+            ) : (
+              <EmptyHero label="No cockpits yet. Create one with the + button." />
+            )
           ) : (
             <AgentView
               agents={agents ?? []}
@@ -2381,6 +2463,17 @@ export default function App() {
             await loadWorkspaces();
             setActiveWorkspaceId(workspace.id);
             navigateWorkspace(workspace.slug, null);
+          }}
+        />
+      )}
+
+      {createCockpitOpen && (
+        <CockpitFormModal
+          onClose={() => setCreateCockpitOpen(false)}
+          onSaved={(cockpit) => {
+            setCreateCockpitOpen(false);
+            setCockpits((prev) => (prev ? [cockpit, ...prev] : [cockpit]));
+            setActiveCockpitId(cockpit.id);
           }}
         />
       )}

@@ -83,4 +83,14 @@ export const SECTION_COLORS: Record<SidebarMode, SectionColor> = {
     activeTab: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
     hoverTab: "hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400",
   },
+  cockpits: {
+    icon: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+    activeCard: "border-teal-500/60 bg-teal-500/10",
+    hoverCard: "hover:border-teal-500/50 hover:bg-teal-500/5",
+    primaryBtn:
+      "bg-teal-500/15 text-teal-700 hover:bg-teal-500/25 dark:text-teal-300 border border-teal-500/30",
+    accentText: "text-teal-600 dark:text-teal-400",
+    activeTab: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+    hoverTab: "hover:bg-teal-500/10 hover:text-teal-600 dark:hover:text-teal-400",
+  },
 };

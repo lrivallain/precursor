@@ -802,6 +802,58 @@ export interface WorkspaceFileContent {
   content: string;
 }
 
+// ---- Cockpits ----------------------------------------------------------
+
+export type CockpitState =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "unreachable"
+  | "crashed";
+
+export interface CockpitStatus {
+  state: CockpitState;
+  pid: number | null;
+  port: number | null;
+  started_at: string | null;
+  exit_code: number | null;
+  detail: string | null;
+}
+
+export interface Cockpit {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  command: string;
+  cwd: string | null;
+  port: number;
+  env: string | null;
+  created_at: string;
+  updated_at: string;
+  status: CockpitStatus;
+}
+
+export interface CockpitCreate {
+  name: string;
+  command: string;
+  port: number;
+  description?: string | null;
+  cwd?: string | null;
+  env?: string | null;
+  slug?: string | null;
+}
+
+export interface CockpitUpdate {
+  name?: string;
+  command?: string;
+  port?: number;
+  description?: string | null;
+  cwd?: string | null;
+  env?: string | null;
+}
+
+
 export interface GitFileStatus {
   path: string;
   code: string;

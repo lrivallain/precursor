@@ -21,6 +21,9 @@ older ones.
   SDK agent attached to a topic/chat, followed in a workflow-style tab. Off by
   default — needs the `agents` extra and a toggle in **Settings → Agents**
   (see [Optional: Agents mode](#optional-agents-mode))
+- **Cockpits**: register a locally-run web app with a start command + port and
+  launch it on demand — Precursor spawns it, waits for the port, and embeds it
+  through a reverse proxy (with an open-in-tab fallback)
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Plugin-ready**: backend entry points + a frontend extension registry,

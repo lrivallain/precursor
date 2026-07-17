@@ -133,6 +133,21 @@ class Settings(BaseSettings):
     cmd_runner_pids_limit: int = 256
     cmd_runner_cpus: str = "1"
 
+    # Cockpits — user-registered local webapps launched on demand. Each cockpit
+    # runs its command directly on the host (same trust level as cmd-runner host
+    # mode) and is embedded via the backend reverse proxy. Because this is
+    # arbitrary local command execution, it is only ever exposed on a loopback
+    # bind. See services/cockpits.py.
+    cockpits_enabled: bool = True
+    # How long to wait for a started cockpit's port to accept connections before
+    # marking it "unreachable" (the process keeps running so the user can retry
+    # or open it in a tab).
+    cockpits_readiness_timeout_seconds: int = 40
+    # Grace period between SIGTERM and SIGKILL when stopping a cockpit tree.
+    cockpits_stop_grace_seconds: int = 5
+    # Max bytes of combined stdout/stderr retained per running cockpit (ring).
+    cockpits_max_log_bytes: int = 200_000
+
     # MCP client — the chat/tool loop keeps each enabled server's session warm
     # across turns instead of re-spawning/initialising it every message (that
     # cold start dominated time-to-first-token). A warm session is released
