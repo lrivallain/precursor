@@ -1706,6 +1706,7 @@ export default function App() {
           onOpenResult={openSearchResult}
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
+          initialQuery={atHome ? "" : searchHighlight.trim()}
         />
       )}
       {!atHome && (

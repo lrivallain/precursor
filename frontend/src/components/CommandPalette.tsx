@@ -50,6 +50,12 @@ interface Props {
   onOpenResult: (result: SearchResult, query: string) => void;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
+  /**
+   * Seed the input with the ongoing search term (from `?q=`) so reopening the
+   * palette after picking a hit continues the same search instead of starting
+   * blank.
+   */
+  initialQuery?: string;
 }
 
 // Section → icon for a content hit's left badge (tinted via SECTION_COLORS).
@@ -131,8 +137,9 @@ export function CommandPalette({
   onOpenResult,
   liveEnabled = true,
   kanbanEnabled = false,
+  initialQuery = "",
 }: Props) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -290,7 +297,12 @@ export function CommandPalette({
   }, [query]);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    // Preselect a seeded term so the user can refine (type over) or extend it
+    // without manually clearing first.
+    if (initialQuery) el.select();
   }, []);
 
   // Keep the highlighted row scrolled into view for long, filtered lists.
