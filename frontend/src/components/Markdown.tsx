@@ -9,10 +9,12 @@ import {
 } from "react";
 import { AlertTriangle, Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
+import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
 
 interface MarkdownProps {
   children: string;
@@ -155,11 +157,21 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * caused visible layout thrash / scrollbar flicker on content-heavy topics.
  */
 export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
+  // A non-empty highlight term (set when a content-search hit is opened) adds a
+  // rehype pass that wraps matches in <mark>. Kept off the plugin list entirely
+  // when idle so normal rendering pays nothing.
+  const highlight = useSearchHighlight();
+  const rehypePlugins: PluggableList = highlight.trim()
+    ? [
+        [rehypeHighlight, { detect: true, ignoreMissing: true }],
+        makeHighlightRehype(highlight),
+      ]
+    : [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
   return (
     <div className={className ? `markdown ${className}` : "markdown"}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        rehypePlugins={rehypePlugins}
         components={{
           pre({ children: preChildren, ...props }) {
             const mermaid = mermaidFromPre(preChildren);

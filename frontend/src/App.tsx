@@ -5,9 +5,11 @@ import {
   MessagesSquare,
   Pin,
   PinOff,
+  Search,
   Settings as SettingsIcon,
   Square,
   Trash2,
+  X,
 } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -43,6 +45,7 @@ import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { api, apiErrorMessage } from "./lib/api";
+import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
@@ -295,6 +298,12 @@ export default function App() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => parseAppRoute().mode);
   // The root path `/` shows the home launcher instead of any mode's content.
   const [atHome, setAtHome] = useState<boolean>(() => isHomePath());
+  // Active "find" term for the open conversation, seeded from the ?q= URL param
+  // and set when a content-search hit is opened. Highlights matches in message
+  // bodies; empty means no highlighting.
+  const [searchHighlight, setSearchHighlight] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("q") ?? "",
+  );
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
@@ -610,6 +619,8 @@ export default function App() {
   // when the active item changes. Equality checks break the feedback loop.
   useEffect(() => {
     const syncFromUrl = (): void => {
+      // Keep the highlight term in step with the URL for reloads / back-forward.
+      setSearchHighlight(new URLSearchParams(window.location.search).get("q") ?? "");
       if (isHomePath()) {
         setAtHome(true);
         setWsRoute({ open: false, slug: null, path: null });
@@ -784,8 +795,56 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeAgentId, sidebarMode, agents, atHome]);
 
-  // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
-  // back to its Agents-mode session.
+  // Mirror the highlight term into `?q=` on the current path so a reloaded or
+  // shared link re-highlights. Runs after the pathname effects above (which
+  // pushState a path without a query), re-appending `q` via replaceState.
+  // Depends on the selection state so it re-fires after each navigation. The
+  // query is dropped at home, where there's no conversation to highlight.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cur = params.get("q") ?? "";
+    const want = atHome ? "" : searchHighlight.trim();
+    if (cur === want) return;
+    if (want) params.set("q", want);
+    else params.delete("q");
+    const qs = params.toString();
+    history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }, [
+    searchHighlight,
+    atHome,
+    sidebarMode,
+    activeTopic,
+    activeChat,
+    activeAgentId,
+    activeSessionId,
+  ]);
+
+  // Bring the first highlighted match into view once the opened conversation has
+  // rendered. Messages load asynchronously, so poll briefly until a match
+  // appears (or give up after ~2.5s).
+  useEffect(() => {
+    if (!searchHighlight.trim() || atHome) return;
+    let tries = 0;
+    const id = window.setInterval(() => {
+      const el = document.querySelector(".search-hl");
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        window.clearInterval(id);
+      } else if (++tries > 20) {
+        window.clearInterval(id);
+      }
+    }, 120);
+    return () => window.clearInterval(id);
+  }, [
+    searchHighlight,
+    atHome,
+    activeTopic,
+    activeChat,
+    activeAgentId,
+    activeSessionId,
+  ]);
+
+
   useEffect(() => {
     function onOpenAgent(e: Event): void {
       const detail = (e as CustomEvent<{ id: number | null; topicId?: number }>).detail;
@@ -1264,8 +1323,11 @@ export default function App() {
   // Open a content-search hit from the command palette. Mirrors the per-section
   // deep-link resolution: leave home, switch mode, and reveal the entity by its
   // stable id (topic/chat/live-session row id, or agent internal id).
-  async function openSearchResult(result: SearchResult): Promise<void> {
+  async function openSearchResult(result: SearchResult, query: string): Promise<void> {
     setAtHome(false);
+    // Carry the matched term into the opened view so its bodies get highlighted;
+    // the ?q= URL sync effect mirrors it for shareable/reloadable links.
+    setSearchHighlight(query.trim());
     try {
       if (result.section === "topics") {
         setSidebarMode("topics");
@@ -1892,7 +1954,28 @@ export default function App() {
 
         <McpAuthBanner />
 
+        {searchHighlight.trim() && !atHome && (
+          <div className="flex items-center justify-center gap-2 border-b border-border bg-accent/5 px-3 py-1 text-[11px] text-muted">
+            <Search size={12} className="shrink-0" />
+            <span>
+              Highlighting{" "}
+              <span className="font-medium text-text">“{searchHighlight.trim()}”</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setSearchHighlight("")}
+              className="ml-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:text-red-500"
+              aria-label="Clear highlight"
+              data-tooltip="Clear highlight"
+            >
+              <X size={12} />
+              Clear
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 min-h-0">
+          <SearchHighlightProvider term={atHome ? "" : searchHighlight.trim()}>
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
@@ -2074,6 +2157,7 @@ export default function App() {
               draftTopicId={agentDraftTopicId}
             />
           )}
+          </SearchHighlightProvider>
         </div>
       </main>
 

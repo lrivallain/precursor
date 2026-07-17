@@ -27,6 +27,7 @@ import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
+import { HighlightedText } from "../lib/searchHighlight";
 import { MessageMeta } from "./MessageMeta";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { TopicPicker } from "./TopicPicker";
@@ -318,7 +319,13 @@ function MessageNode({
           </div>
         ) : (
           <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
-            {event.text.length > 1500 ? `${event.text.slice(0, 1500)}…` : event.text}
+            <HighlightedText
+              text={
+                event.text.length > 1500
+                  ? `${event.text.slice(0, 1500)}…`
+                  : event.text
+              }
+            />
           </p>
         ))}
       {isAssistant && event.text && (
