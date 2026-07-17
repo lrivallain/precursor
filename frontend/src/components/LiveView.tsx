@@ -39,6 +39,7 @@ import { TranslationSection } from "./TranslationSection";
 import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
 import { Markdown } from "./Markdown";
+import { HighlightedText } from "../lib/searchHighlight";
 
 // Persisted audio-capture preferences (input device + mic mix-in). Kept in
 // localStorage so a user's choice carries across sessions and app restarts.
@@ -868,7 +869,9 @@ export function LiveView({
                         {displayName(seg.speaker_label)}
                       </button>
                     ))}
-                  <span className="text-text">{seg.text}</span>
+                  <span className="text-text">
+                    <HighlightedText text={seg.text} />
+                  </span>
                 </div>
               </div>
             </div>
@@ -954,7 +957,7 @@ export function LiveView({
                 <ul className="space-y-1">
                   {g.items.map((it) => (
                     <li key={it.id} className="text-[13px] leading-snug text-text">
-                      {it.content}
+                      <HighlightedText text={it.content} />
                     </li>
                   ))}
                 </ul>

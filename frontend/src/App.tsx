@@ -5,9 +5,11 @@ import {
   MessagesSquare,
   Pin,
   PinOff,
+  Search,
   Settings as SettingsIcon,
   Square,
   Trash2,
+  X,
 } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -43,6 +45,7 @@ import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { api, apiErrorMessage } from "./lib/api";
+import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
@@ -295,6 +298,18 @@ export default function App() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => parseAppRoute().mode);
   // The root path `/` shows the home launcher instead of any mode's content.
   const [atHome, setAtHome] = useState<boolean>(() => isHomePath());
+  // Active "find" term for the open conversation, seeded from the ?q= URL param
+  // and set when a content-search hit is opened. Highlights matches in message
+  // bodies; empty means no highlighting.
+  const [searchHighlight, setSearchHighlight] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("q") ?? "",
+  );
+  // The conversation the current highlight belongs to (a `${mode}:${id}` key),
+  // so we can auto-clear the highlight when the user navigates to a *different*
+  // conversation. `pendingHighlightKeyRef` holds the target of an in-flight
+  // search-open so the transition to it isn't mistaken for a navigation-away.
+  const highlightKeyRef = useRef<string | null>(null);
+  const pendingHighlightKeyRef = useRef<string | null>(null);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
@@ -610,6 +625,15 @@ export default function App() {
   // when the active item changes. Equality checks break the feedback loop.
   useEffect(() => {
     const syncFromUrl = (): void => {
+      // Keep the highlight term in step with the URL for reloads / back-forward.
+      // Reset the ownership refs so the highlight adopts whichever conversation
+      // the URL resolves to (rather than clearing on that first resolution).
+      const urlTerm = new URLSearchParams(window.location.search).get("q") ?? "";
+      setSearchHighlight(urlTerm);
+      if (urlTerm) {
+        highlightKeyRef.current = null;
+        pendingHighlightKeyRef.current = null;
+      }
       if (isHomePath()) {
         setAtHome(true);
         setWsRoute({ open: false, slug: null, path: null });
@@ -784,8 +808,91 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeAgentId, sidebarMode, agents, atHome]);
 
-  // Deep-link from an "agent exchange" message badge (posted into a topic/chat)
-  // back to its Agents-mode session.
+  // Auto-clear the search highlight when the user navigates to a *different*
+  // conversation than the one it was opened for. The highlight is tied to a
+  // single conversation (`${mode}:${id}`): while a search-open is in flight we
+  // wait until the selection lands on its target; a URL-loaded term adopts the
+  // first conversation it resolves to; any later switch to a different one
+  // clears it. Transitional states with no complete selection are ignored.
+  useEffect(() => {
+    if (!searchHighlight.trim()) return;
+    let key: string | null = null;
+    if (sidebarMode === "topics") key = activeTopic ? `topics:${activeTopic.id}` : null;
+    else if (sidebarMode === "chats") key = activeChat ? `chats:${activeChat.id}` : null;
+    else if (sidebarMode === "agents")
+      key = activeAgentId != null ? `agents:${activeAgentId}` : null;
+    else if (sidebarMode === "live")
+      key = activeSessionId != null ? `live:${activeSessionId}` : null;
+    if (key == null) return; // mid-transition — wait for a complete selection
+    const pending = pendingHighlightKeyRef.current;
+    if (pending != null) {
+      // Still travelling to the just-opened search target; adopt once we arrive.
+      if (key === pending) {
+        highlightKeyRef.current = pending;
+        pendingHighlightKeyRef.current = null;
+      }
+      return;
+    }
+    if (highlightKeyRef.current == null) {
+      highlightKeyRef.current = key; // first resolved conversation owns the term
+      return;
+    }
+    if (key !== highlightKeyRef.current) {
+      setSearchHighlight("");
+      highlightKeyRef.current = null;
+    }
+  }, [searchHighlight, sidebarMode, activeTopic, activeChat, activeAgentId, activeSessionId]);
+
+  // Mirror the highlight term into `?q=` on the current path so a reloaded or
+  // shared link re-highlights. Runs after the pathname effects above (which
+  // pushState a path without a query), re-appending `q` via replaceState.
+  // Depends on the selection state so it re-fires after each navigation. The
+  // query is dropped at home, where there's no conversation to highlight.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cur = params.get("q") ?? "";
+    const want = atHome ? "" : searchHighlight.trim();
+    if (cur === want) return;
+    if (want) params.set("q", want);
+    else params.delete("q");
+    const qs = params.toString();
+    history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }, [
+    searchHighlight,
+    atHome,
+    sidebarMode,
+    activeTopic,
+    activeChat,
+    activeAgentId,
+    activeSessionId,
+  ]);
+
+  // Bring the first highlighted match into view once the opened conversation has
+  // rendered. Messages load asynchronously, so poll briefly until a match
+  // appears (or give up after ~2.5s).
+  useEffect(() => {
+    if (!searchHighlight.trim() || atHome) return;
+    let tries = 0;
+    const id = window.setInterval(() => {
+      const el = document.querySelector(".search-hl");
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        window.clearInterval(id);
+      } else if (++tries > 20) {
+        window.clearInterval(id);
+      }
+    }, 120);
+    return () => window.clearInterval(id);
+  }, [
+    searchHighlight,
+    atHome,
+    activeTopic,
+    activeChat,
+    activeAgentId,
+    activeSessionId,
+  ]);
+
+
   useEffect(() => {
     function onOpenAgent(e: Event): void {
       const detail = (e as CustomEvent<{ id: number | null; topicId?: number }>).detail;
@@ -1264,8 +1371,15 @@ export default function App() {
   // Open a content-search hit from the command palette. Mirrors the per-section
   // deep-link resolution: leave home, switch mode, and reveal the entity by its
   // stable id (topic/chat/live-session row id, or agent internal id).
-  async function openSearchResult(result: SearchResult): Promise<void> {
+  async function openSearchResult(result: SearchResult, query: string): Promise<void> {
     setAtHome(false);
+    // Carry the matched term into the opened view so its bodies get highlighted;
+    // the ?q= URL sync effect mirrors it for shareable/reloadable links. Record
+    // the target conversation so the navigation-away auto-clear waits until we
+    // actually land on it instead of clearing during the transition.
+    pendingHighlightKeyRef.current = `${result.section}:${result.entity_id}`;
+    highlightKeyRef.current = null;
+    setSearchHighlight(query.trim());
     try {
       if (result.section === "topics") {
         setSidebarMode("topics");
@@ -1892,7 +2006,28 @@ export default function App() {
 
         <McpAuthBanner />
 
+        {searchHighlight.trim() && !atHome && (
+          <div className="flex items-center justify-center gap-2 border-b border-border bg-accent/5 px-3 py-1 text-[11px] text-muted">
+            <Search size={12} className="shrink-0" />
+            <span>
+              Highlighting{" "}
+              <span className="font-medium text-text">“{searchHighlight.trim()}”</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setSearchHighlight("")}
+              className="ml-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:text-red-500"
+              aria-label="Clear highlight"
+              data-tooltip="Clear highlight"
+            >
+              <X size={12} />
+              Clear
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 min-h-0">
+          <SearchHighlightProvider term={atHome ? "" : searchHighlight.trim()}>
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
@@ -2074,6 +2209,7 @@ export default function App() {
               draftTopicId={agentDraftTopicId}
             />
           )}
+          </SearchHighlightProvider>
         </div>
       </main>
 

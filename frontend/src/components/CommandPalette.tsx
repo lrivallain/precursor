@@ -47,7 +47,7 @@ interface Props {
   /** Jump to the home launcher. */
   onGoHome: () => void;
   /** Open a specific content hit (topic/chat/agent/live session). */
-  onOpenResult: (result: SearchResult) => void;
+  onOpenResult: (result: SearchResult, query: string) => void;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
 }
@@ -267,13 +267,13 @@ export function CommandPalette({
   const rowRuns = useMemo<(() => void)[]>(() => {
     const runs: (() => void)[] = sections.map((it) => it.run);
     const open = (r: SearchResult) => () => {
-      onOpenResult(r);
+      onOpenResult(r, query);
       onClose();
     };
     for (const r of titleHits) runs.push(open(r));
     for (const r of bodyHits) runs.push(open(r));
     return runs;
-  }, [sections, titleHits, bodyHits, onOpenResult, onClose]);
+  }, [sections, titleHits, bodyHits, onOpenResult, onClose, query]);
 
   const sectionCount = sections.length;
   const titleBase = sectionCount;

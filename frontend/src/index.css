@@ -107,6 +107,17 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+/* Search-term highlight: injected as <mark class="search-hl"> by the highlight
+   rehype pass when a content-search hit is opened. Tinted with the app accent
+   and left color-neutral so it reads in both themes without recoloring text. */
+.search-hl {
+  background-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 3px;
+  padding: 0 0.1em;
+  color: inherit;
+}
 .markdown a {
   overflow-wrap: anywhere;
   word-break: break-word;
