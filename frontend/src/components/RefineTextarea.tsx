@@ -70,7 +70,9 @@ export const RefineTextarea = forwardRef<HTMLTextAreaElement, RefineTextareaProp
             onValueChange(e.target.value);
           }}
           onKeyDown={onKeyDown}
-          className={className}
+          // `block` removes the inline-block baseline gap below the textarea so
+          // the overlay button's bottom offset aligns with the visible border.
+          className={`block ${className ?? ""}`}
           {...rest}
         />
         <RefineButton

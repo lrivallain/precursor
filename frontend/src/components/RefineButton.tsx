@@ -40,8 +40,8 @@ export function RefineButton({
       disabled={disabled || busy}
       data-tooltip={label}
       aria-label={label}
-      className={`absolute right-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-surface/80 text-muted backdrop-blur-sm transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40 ${
-        avoidResizeGrip ? "bottom-6" : "bottom-2"
+      className={`absolute bottom-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-surface/80 text-muted backdrop-blur-sm transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40 ${
+        avoidResizeGrip ? "right-5" : "right-2"
       } ${error ? "border-red-500/50 text-red-500" : ""} ${className ?? ""}`}
     >
       {busy ? (
