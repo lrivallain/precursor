@@ -6,6 +6,8 @@ export interface RefineButtonProps {
   disabled?: boolean;
   error?: string | null;
   onClick: () => void;
+  /** Shift left of the bottom-right resize grip on resizable textareas. */
+  avoidResizeGrip?: boolean;
   /** Extra classes to tweak placement (defaults to bottom-right overlay). */
   className?: string;
 }
@@ -21,6 +23,7 @@ export function RefineButton({
   disabled,
   error,
   onClick,
+  avoidResizeGrip,
   className,
 }: RefineButtonProps) {
   const label = error
@@ -37,9 +40,9 @@ export function RefineButton({
       disabled={disabled || busy}
       data-tooltip={label}
       aria-label={label}
-      className={`absolute bottom-2 left-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-surface/80 text-muted backdrop-blur-sm transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40 ${
-        error ? "border-red-500/50 text-red-500" : ""
-      } ${className ?? ""}`}
+      className={`absolute bottom-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-surface/80 text-muted backdrop-blur-sm transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40 ${
+        avoidResizeGrip ? "right-5" : "right-2"
+      } ${error ? "border-red-500/50 text-red-500" : ""} ${className ?? ""}`}
     >
       {busy ? (
         <Loader2 size={13} className="animate-spin" />

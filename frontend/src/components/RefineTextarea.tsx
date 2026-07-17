@@ -54,6 +54,10 @@ export const RefineTextarea = forwardRef<HTMLTextAreaElement, RefineTextareaProp
       if (next !== null) onValueChange(next);
     };
 
+    // A textarea shows a bottom-right resize grip unless resizing is disabled
+    // (the browser default is `resize: both`), so keep the icon clear of it.
+    const avoidResizeGrip = !/\bresize-none\b/.test(className ?? "");
+
     return (
       <div className={`relative ${containerClassName ?? ""}`}>
         <textarea
@@ -73,6 +77,7 @@ export const RefineTextarea = forwardRef<HTMLTextAreaElement, RefineTextareaProp
           busy={busy}
           canRevert={canRevert}
           error={error}
+          avoidResizeGrip={avoidResizeGrip}
           disabled={disabled || (!canRevert && !value.trim())}
           onClick={handleClick}
         />
