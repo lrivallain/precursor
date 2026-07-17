@@ -1640,6 +1640,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     hint: "List, create, pause and trigger recurring automations.",
     danger: true,
   },
+  {
+    key: "reminders",
+    label: "Reminders",
+    hint: "List, set and cancel one-shot topic reminders.",
+    danger: true,
+  },
 ];
 
 // Per-section enablement for the built-in "precursor" MCP server, which serves
@@ -1663,7 +1669,8 @@ function McpExposeCard({
 }) {
   const [open, setOpen] = useState(false);
   const anyOn = EXPOSE_SECTIONS.some((s) => expose[s.key]);
-  const anyWriteOn = expose.memory_write || expose.post_message || expose.schedules;
+  const anyWriteOn =
+    expose.memory_write || expose.post_message || expose.schedules || expose.reminders;
   return (
     <div className="border border-border rounded mb-4">
       <button

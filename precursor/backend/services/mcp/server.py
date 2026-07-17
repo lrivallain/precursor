@@ -35,6 +35,12 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "set_schedule_enabled",
         "run_schedule_now",
     ],
+    "reminders": [
+        "list_reminders",
+        "get_reminder",
+        "set_reminder",
+        "cancel_reminder",
+    ],
 }
 
 

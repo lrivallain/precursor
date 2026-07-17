@@ -213,7 +213,7 @@ rebuilds with the fresh token.
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,
 memory (read + `memory_write` to store/edit entries), `post_message` (runs a full
-turn), and schedules. Every tool is gated by
+turn), schedules, and reminders (one-shot topic reminders). Every tool is gated by
 a per-section `mcp_expose` toggle (default **off** — exposing conversation
 history outbound is opt-in). Two transports, same tools:
 
