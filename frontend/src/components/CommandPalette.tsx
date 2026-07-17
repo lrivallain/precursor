@@ -5,6 +5,7 @@ import {
   AudioLines,
   Bot,
   FolderGit2,
+  Gauge,
   Home,
   Lightbulb,
   MessageSquare,
@@ -225,6 +226,15 @@ export function CommandPalette({
             },
           ]
         : []),
+      {
+        id: "cockpits",
+        label: "Cockpits",
+        hint: "Local web apps & URLs",
+        keywords: "cockpits dashboards webapps localhost url embed iframe",
+        icon: Gauge,
+        mode: "cockpits",
+        run: nav("cockpits"),
+      },
     ];
     return all;
   }, [liveEnabled, kanbanEnabled, onNavigate, onGoHome, onClose]);
