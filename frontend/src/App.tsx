@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   ChevronRight,
+  ExternalLink,
+  FileText,
   MessagesSquare,
   Pin,
   PinOff,
@@ -12,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { Sidebar, type SidebarMode } from "./components/Sidebar";
+import { GithubIcon as Github } from "./components/icons/GithubIcon";
 import { CommandPalette } from "./components/CommandPalette";
 import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
@@ -298,6 +301,17 @@ function findTitle(nodes: TopicNode[], topicId: number): string | null {
     if (node.id === topicId) return node.title;
     if (node.children?.length) {
       const hit = findTitle(node.children, topicId);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+function findNode(nodes: TopicNode[], topicId: number): TopicNode | null {
+  for (const node of nodes) {
+    if (node.id === topicId) return node;
+    if (node.children?.length) {
+      const hit = findNode(node.children, topicId);
       if (hit) return hit;
     }
   }
@@ -1955,12 +1969,55 @@ export default function App() {
             </span>
           ) : sidebarMode === "live" ? (
             activeSession ? (
-              <InlineTitle
-                title={activeSession.title}
-                onRename={(t) => handleRenameSession(activeSession, t)}
-                className="truncate font-medium min-w-0 flex-1"
-                inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
-              />
+              (() => {
+                const liveTopic =
+                  activeSession.topic_id != null
+                    ? findNode(tree, activeSession.topic_id)
+                    : null;
+                const liveIssueNumber = liveTopic?.github_issue_number ?? null;
+                const liveIssueRepo =
+                  liveTopic?.github_repo || globalGithubRepo || "";
+                return (
+                  <>
+                    <InlineTitle
+                      title={activeSession.title}
+                      onRename={(t) => handleRenameSession(activeSession, t)}
+                      className="truncate font-medium min-w-0 flex-1"
+                      inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
+                    />
+                    {liveTopic && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          changeMode("topics");
+                          void handleSelect(liveTopic.id);
+                        }}
+                        className="p-2 rounded hover:bg-surface shrink-0"
+                        aria-label={`Open topic: ${liveTopic.title}`}
+                        data-tooltip={`Open topic: ${liveTopic.title}`}
+                      >
+                        <FileText size={18} />
+                      </button>
+                    )}
+                    {liveIssueNumber != null && liveIssueRepo && (
+                      <a
+                        href={`https://github.com/${liveIssueRepo}/issues/${liveIssueNumber}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group inline-flex items-center gap-1 p-2 rounded hover:bg-surface shrink-0"
+                        aria-label={`Open issue #${liveIssueNumber} on GitHub`}
+                        data-tooltip={`Open issue #${liveIssueNumber} on GitHub`}
+                      >
+                        <Github size={18} />
+                        <ExternalLink
+                          size={11}
+                          className="opacity-60 transition group-hover:opacity-100"
+                        />
+                      </a>
+                    )}
+                  </>
+                );
+              })()
             ) : (
               <span className="truncate font-medium min-w-0 flex-1">Live</span>
             )
@@ -2206,11 +2263,6 @@ export default function App() {
                   history.pushState(null, "", liveUrl(null));
                 }}
                 onRecordingChange={setLiveRecordingId}
-                onOpenTopic={async (topicId) => {
-                  setAtHome(false);
-                  setSidebarMode("topics");
-                  setActiveTopic(await api.topics.get(topicId));
-                }}
               />
             ) : (
               <LiveStartHero
