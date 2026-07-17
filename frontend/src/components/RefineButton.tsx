@@ -28,16 +28,16 @@ export function RefineButton({
     : busy
       ? "Refining…"
       : canRevert
-        ? "Revert to your text"
+        ? "Restore your original text"
         : "Refine with AI";
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled || busy}
-      title={label}
+      data-tooltip={label}
       aria-label={label}
-      className={`absolute bottom-1.5 right-1.5 z-10 inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-surface/80 text-muted backdrop-blur-sm transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40 ${
+      className={`absolute bottom-2 left-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-surface/80 text-muted backdrop-blur-sm transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40 ${
         error ? "border-red-500/50 text-red-500" : ""
       } ${className ?? ""}`}
     >

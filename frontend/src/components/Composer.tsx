@@ -394,9 +394,10 @@ export function Composer({
                   ? "text-red-500 hover:bg-bg"
                   : "text-muted hover:text-text hover:bg-bg"
               }`}
-              aria-label={canRevert ? "Revert to your text" : "Refine with AI"}
+              aria-label={canRevert ? "Restore your original text" : "Refine with AI"}
               data-tooltip={
-                refineError ?? (canRevert ? "Revert to your text" : "Refine with AI")
+                refineError ??
+                (canRevert ? "Restore your original text" : "Refine with AI")
               }
             >
               {refining ? (
