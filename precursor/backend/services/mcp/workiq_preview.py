@@ -16,19 +16,21 @@ interactive browser login only happens once per machine.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
 import webbrowser
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from mcp import ClientSession
 from mcp.client.auth import OAuthClientProvider, TokenStorage
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
+from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AppSetting
 from precursor.backend.services.events import publish_mcp_auth_url
@@ -50,6 +52,18 @@ class WorkIQAuthRequiredError(RuntimeError):
 
 class WorkIQAuthInProgressError(RuntimeError):
     """An interactive WorkIQ sign-in is already running (single-flight guard)."""
+
+
+class WorkIQInteractionRequiredError(RuntimeError):
+    """A silent (``prompt=none``) WorkIQ authorization needs user interaction.
+
+    Entra answers ``prompt=none`` with ``interaction_required`` /
+    ``login_required`` / ``consent_required`` / ``account_selection_required``
+    when it can't complete the sign-in without showing UI (no live SSO session,
+    MFA or consent due, ambiguous account, …). The loopback callback raises this
+    so :func:`reauthenticate_workiq` can fall back to the visible interactive
+    prompt instead of treating it as a hard failure.
+    """
 
 
 class _SuppressExpectedAuthError(logging.Filter):
@@ -75,7 +89,7 @@ class _SuppressExpectedAuthError(logging.Filter):
             if node is None or id(node) in seen:
                 continue
             seen.add(id(node))
-            if isinstance(node, WorkIQAuthRequiredError):
+            if isinstance(node, WorkIQAuthRequiredError | WorkIQInteractionRequiredError):
                 return False
             if isinstance(node, BaseExceptionGroup):
                 stack.extend(node.exceptions)
@@ -105,6 +119,22 @@ OAUTH_TOKENS_KEY = "workiq_oauth_tokens"
 # without an absolute expiry, so we stamp the write time here and combine it
 # with the token's relative ``expires_in`` to recover a real expiry instant.
 OAUTH_ISSUED_AT_KEY = "workiq_oauth_issued_at"
+# The last signed-in account name (UPN/email), captured from the access-token
+# JWT. Used purely as an Entra ``login_hint`` to pre-select the account on
+# re-auth — never a security decision — so it deliberately survives
+# ``clear_workiq_oauth_tokens`` (which only forgets the tokens themselves).
+OAUTH_LOGIN_HINT_KEY = "workiq_oauth_login_hint"
+
+# Entra ``prompt=none`` error codes that mean "can't sign in silently, ask the
+# user". Anything else from the callback is a genuine failure.
+_INTERACTION_REQUIRED_ERRORS = frozenset(
+    {
+        "interaction_required",
+        "login_required",
+        "consent_required",
+        "account_selection_required",
+    }
+)
 
 _CALLBACK_TIMEOUT_SECONDS = 300.0
 
@@ -167,6 +197,8 @@ class DbTokenStorage(TokenStorage):
         # JSON-encoded so it satisfies the all-JSON ``AppSetting.value`` contract
         # the settings router relies on (a raw ISO string isn't valid JSON).
         issued_at = json.dumps(datetime.now(UTC).isoformat())
+        # Best-effort: remember the account so we can pre-select it on re-auth.
+        login_hint = _login_hint_from_access_token(tokens.access_token)
         async with SessionLocal() as session:
             row = await session.get(AppSetting, OAUTH_TOKENS_KEY)
             if row is None:
@@ -178,6 +210,13 @@ class DbTokenStorage(TokenStorage):
                 session.add(AppSetting(key=OAUTH_ISSUED_AT_KEY, value=issued_at))
             else:
                 issued_row.value = issued_at
+            if login_hint:
+                encoded_hint = json.dumps(login_hint)
+                hint_row = await session.get(AppSetting, OAUTH_LOGIN_HINT_KEY)
+                if hint_row is None:
+                    session.add(AppSetting(key=OAUTH_LOGIN_HINT_KEY, value=encoded_hint))
+                else:
+                    hint_row.value = encoded_hint
             await session.commit()
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
@@ -189,13 +228,57 @@ class DbTokenStorage(TokenStorage):
 
 
 async def clear_workiq_oauth_tokens() -> None:
-    """Forget any stored tokens so the next connect re-runs the browser login."""
+    """Forget any stored tokens so the next connect re-runs the browser login.
+
+    The captured ``login_hint`` (last account) deliberately survives: it isn't a
+    credential, and keeping it lets the next re-auth pre-select the same account.
+    """
     async with SessionLocal() as session:
         for key in (OAUTH_TOKENS_KEY, OAUTH_ISSUED_AT_KEY):
             row = await session.get(AppSetting, key)
             if row is not None:
                 await session.delete(row)
         await session.commit()
+
+
+def _login_hint_from_access_token(access_token: str) -> str | None:
+    """Best-effort extract the signed-in user's account name from an Entra JWT.
+
+    The WorkIQ access token is an Entra-issued JWT whose payload carries the
+    user's principal name (``preferred_username`` / ``upn`` / …). We decode it
+    **unverified** — the value is only ever used as a UX ``login_hint`` to
+    pre-fill the account picker, never for authorization — and return ``None``
+    for an opaque or malformed token.
+    """
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)  # restore stripped base64 padding
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+    for claim in ("preferred_username", "upn", "unique_name", "email"):
+        value = claims.get(claim)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+async def get_workiq_login_hint() -> str | None:
+    """The last signed-in WorkIQ account name, or ``None`` if never captured."""
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, OAUTH_LOGIN_HINT_KEY)
+    if row is None or not row.value:
+        return None
+    try:
+        hint = json.loads(row.value)
+    except (ValueError, TypeError):
+        return None
+    return hint if isinstance(hint, str) and hint else None
 
 
 async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
@@ -224,7 +307,33 @@ async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
     return issued + timedelta(seconds=token.expires_in)
 
 
-async def _redirect_handler(authorization_url: str, *, open_system_browser: bool) -> None:
+def _augment_authorization_url(url: str, *, login_hint: str | None, prompt: str | None) -> str:
+    """Splice ``login_hint``/``prompt`` into the SDK-built Entra auth URL.
+
+    The MCP SDK constructs the authorization URL itself and doesn't expose these
+    OAuth parameters, so we add them to the finished URL before it's opened.
+    Existing query params are never clobbered — if the SDK ever sets one, it
+    wins — and empty values are skipped. ``login_hint`` pre-selects the account;
+    ``prompt=none`` requests a silent (no-UI) authorization.
+    """
+    if not login_hint and not prompt:
+        return url
+    split = urlsplit(url)
+    params = dict(parse_qsl(split.query, keep_blank_values=True))
+    if login_hint and "login_hint" not in params:
+        params["login_hint"] = login_hint
+    if prompt and "prompt" not in params:
+        params["prompt"] = prompt
+    return urlunsplit(split._replace(query=urlencode(params)))
+
+
+async def _redirect_handler(
+    authorization_url: str,
+    *,
+    open_system_browser: bool,
+    login_hint: str | None = None,
+    prompt: str | None = None,
+) -> None:
     """Surface the WorkIQ authorization URL for sign-in.
 
     Always publishes the URL over the event bus so the window that started the
@@ -232,7 +341,12 @@ async def _redirect_handler(authorization_url: str, *, open_system_browser: bool
     callback can then close itself — a tab opened out-of-band can't).
     ``open_system_browser`` *additionally* opens the OS default browser as a
     fallback, used when the SPA couldn't open a popup (blocked / no live window).
+    ``login_hint``/``prompt`` are spliced into the URL to pre-select the account
+    and (for the silent pass) request a no-UI authorization.
     """
+    authorization_url = _augment_authorization_url(
+        authorization_url, login_hint=login_hint, prompt=prompt
+    )
     logger.info("WorkIQ preview: authorization URL ready; surfacing sign-in")
     with contextlib.suppress(Exception):
         await publish_mcp_auth_url("workiq", authorization_url)
@@ -245,7 +359,11 @@ async def _redirect_handler(authorization_url: str, *, open_system_browser: bool
 
 
 def _make_redirect_handler(
-    interactive: bool, *, open_system_browser: bool = True
+    interactive: bool,
+    *,
+    open_system_browser: bool = True,
+    login_hint: str | None = None,
+    prompt: str | None = None,
 ) -> Callable[[str], Awaitable[None]]:
     """Build the SDK ``redirect_handler`` for an interactive or background provider.
 
@@ -255,12 +373,18 @@ def _make_redirect_handler(
     so the connect fails fast instead of blocking on a sign-in nobody is driving.
     ``open_system_browser`` (interactive only) toggles the OS-browser fallback:
     the SPA sets it off once it has opened its own script-openable popup.
+    ``login_hint``/``prompt`` are forwarded to :func:`_redirect_handler`.
     """
 
     async def _handler(authorization_url: str) -> None:
         if not interactive:
             raise WorkIQAuthRequiredError("WorkIQ needs you to sign in again to continue.")
-        await _redirect_handler(authorization_url, open_system_browser=open_system_browser)
+        await _redirect_handler(
+            authorization_url,
+            open_system_browser=open_system_browser,
+            login_hint=login_hint,
+            prompt=prompt,
+        )
 
     return _handler
 
@@ -324,6 +448,7 @@ def _render_callback_page(*, status: str, title: str, message: str) -> str:
   .badge svg {{ width: 30px; height: 30px; }}
   .badge.success svg {{ color: var(--ok); }}
   .badge.error svg {{ color: var(--err); }}
+  .badge.pending svg {{ color: var(--accent); }}
   .brand {{
     font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase;
     color: var(--muted); margin-bottom: 6px;
@@ -347,9 +472,13 @@ def _render_callback_page(*, status: str, title: str, message: str) -> str:
   <script>
     (function () {{
       var autoClose = {str(auto_close).lower()};
+      var pending = {str(status == "pending").lower()};
       var el = document.getElementById("countdown");
       if (!autoClose) {{
-        if (el) el.textContent = "You can close this tab.";
+        // ``pending`` means a silent attempt fell through and Precursor is about
+        // to re-drive this window to the interactive prompt — don't tell the
+        // user to close it.
+        if (el) el.textContent = pending ? "" : "You can close this tab.";
         return;
       }}
       var remaining = {_CALLBACK_AUTOCLOSE_SECONDS};
@@ -385,6 +514,11 @@ _CALLBACK_ICONS = {
         '<circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" />'
         '<path d="m9 9 6 6" /></svg>'
     ),
+    "pending": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+        '<circle cx="12" cy="12" r="10" /><path d="M12 7v5l3 2" /></svg>'
+    ),
 }
 
 
@@ -409,8 +543,17 @@ async def _callback_handler() -> tuple[str, str | None]:
             code = query.get("code", [""])[0]
             state = query.get("state", [None])[0]
             error = query.get("error", [None])[0]
+            interaction_required = error in _INTERACTION_REQUIRED_ERRORS
 
-            if error:
+            if interaction_required:
+                # A silent ``prompt=none`` pass Precursor will retry with a
+                # visible prompt — show a calm "one moment" page, not a failure.
+                body = _render_callback_page(
+                    status="pending",
+                    title="Finishing sign-in…",
+                    message="Completing your WorkIQ sign-in — one moment.",
+                )
+            elif error:
                 body = _render_callback_page(
                     status="error",
                     title="Sign-in failed",
@@ -442,6 +585,8 @@ async def _callback_handler() -> tuple[str, str | None]:
             if not result.done():
                 if code:
                     result.set_result((code, state))
+                elif interaction_required:
+                    result.set_exception(WorkIQInteractionRequiredError(error))
                 else:
                     result.set_exception(
                         RuntimeError(error or "No authorization code in OAuth callback")
@@ -464,7 +609,11 @@ async def _callback_handler() -> tuple[str, str | None]:
 
 
 def build_oauth_provider(
-    *, interactive: bool = False, open_system_browser: bool = True
+    *,
+    interactive: bool = False,
+    open_system_browser: bool = True,
+    login_hint: str | None = None,
+    prompt: str | None = None,
 ) -> OAuthClientProvider:
     """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
 
@@ -475,6 +624,8 @@ def build_oauth_provider(
     explicit user action — surfaces the authorization URL and waits for the
     loopback callback. ``open_system_browser`` (interactive only) toggles the
     OS-browser fallback; the SPA turns it off when it drives its own popup.
+    ``login_hint`` pre-selects the Entra account and ``prompt`` (e.g. ``"none"``
+    for the silent pass) is forwarded onto the authorization request.
     """
     client_metadata = OAuthClientMetadata(
         redirect_uris=[WORKIQ_OAUTH_REDIRECT_URI],
@@ -488,7 +639,10 @@ def build_oauth_provider(
         client_metadata=client_metadata,
         storage=DbTokenStorage(),
         redirect_handler=_make_redirect_handler(
-            interactive, open_system_browser=open_system_browser
+            interactive,
+            open_system_browser=open_system_browser,
+            login_hint=login_hint,
+            prompt=prompt,
         ),
         callback_handler=_callback_handler,
     )
@@ -540,14 +694,55 @@ async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
     return tokens.access_token, await _stored_token_expiry(tokens)
 
 
-async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
-    """Run the interactive browser OAuth flow and persist fresh WorkIQ tokens.
+async def _run_signin(provider: OAuthClientProvider) -> None:
+    """Open a throwaway hosted WorkIQ session purely to drive the OAuth grant."""
+    async with (
+        streamablehttp_client(WORKIQ_PREVIEW_URL, auth=provider) as (read, write, _),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
 
-    Forgets any stored tokens, then opens a throwaway hosted session with an
-    *interactive* provider purely to drive the authorization-code grant. The
-    issued tokens land in ``AppSetting``, so the next background WorkIQ connect
-    picks them up. Serialized via :data:`_reauth_lock` so two triggers can't open
-    competing browser flows on the same redirect port.
+
+async def _try_silent_reauth(*, login_hint: str | None, open_system_browser: bool) -> bool:
+    """Attempt a no-UI (``prompt=none``) authorization.
+
+    Returns ``True`` when it completed without a visible prompt (the browser
+    still held a live Entra SSO session), or ``False`` when Entra reported that
+    interaction is required so the caller should fall back to the visible prompt.
+    Any other failure propagates.
+    """
+    provider = build_oauth_provider(
+        interactive=True,
+        open_system_browser=open_system_browser,
+        login_hint=login_hint,
+        prompt="none",
+    )
+    try:
+        await _run_signin(provider)
+    except Exception as exc:
+        # The streamable-http transport wraps callback errors in a
+        # ``BaseExceptionGroup``; unwrap to spot the deliberate "needs UI" signal.
+        from precursor.backend.services.mcp.client import _find_in_exception
+
+        if _find_in_exception(exc, WorkIQInteractionRequiredError) is not None:
+            logger.info("WorkIQ silent re-auth needs interaction; prompting.")
+            return False
+        raise
+    logger.info("WorkIQ silent re-auth succeeded without a prompt.")
+    return True
+
+
+async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
+    """Run the browser OAuth flow and persist fresh WorkIQ tokens.
+
+    Forgets any stored tokens, then drives a throwaway hosted session to obtain
+    new ones. To minimize interruption we first pre-select the last account via
+    ``login_hint`` and — when :attr:`Settings.workiq_silent_reauth_enabled` is on
+    — attempt a silent ``prompt=none`` pass that completes with no clicks if the
+    browser still holds a live Entra SSO session; only if Entra reports that
+    interaction is required do we fall back to the visible interactive prompt.
+    The same script-opened popup is reused for both passes. Serialized via
+    :data:`_reauth_lock` so two triggers can't fight over the redirect port.
 
     ``open_system_browser`` toggles the OS-browser fallback: the SPA passes it
     off once it has opened its own script-openable popup (so we don't double up
@@ -558,12 +753,20 @@ async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
     if _reauth_lock.locked():
         raise WorkIQAuthInProgressError("A WorkIQ sign-in is already in progress.")
     async with _reauth_lock:
-        # Drop stale tokens so the flow always re-prompts (also lets the user
-        # switch accounts) rather than silently reusing a still-valid session.
+        # Pre-select the last account, but read it before clearing tokens.
+        login_hint = await get_workiq_login_hint()
+        # Drop stale tokens so the flow always re-runs the grant (the retained
+        # login_hint still lets the user pick another account in the prompt).
         await clear_workiq_oauth_tokens()
-        provider = build_oauth_provider(interactive=True, open_system_browser=open_system_browser)
-        async with (
-            streamablehttp_client(WORKIQ_PREVIEW_URL, auth=provider) as (read, write, _),
-            ClientSession(read, write) as session,
+
+        if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
+            login_hint=login_hint, open_system_browser=open_system_browser
         ):
-            await session.initialize()
+            return
+
+        provider = build_oauth_provider(
+            interactive=True,
+            open_system_browser=open_system_browser,
+            login_hint=login_hint,
+        )
+        await _run_signin(provider)

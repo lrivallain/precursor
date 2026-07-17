@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     # Refresh once the access token is within this many seconds of expiring.
     workiq_keepalive_refresh_margin_seconds: int = 300
 
+    # WorkIQ interactive re-auth UX (services/mcp/workiq_preview.py). We always
+    # pre-fill the Entra account picker with the last signed-in user
+    # (``login_hint``) so re-auth skips account selection. When this is on we
+    # additionally attempt a non-interactive ``prompt=none`` authorization first:
+    # it completes with zero clicks if the browser still holds a live Entra SSO
+    # session, and only falls back to the visible prompt when Entra reports
+    # interaction is required. Turn off to always show the interactive prompt.
+    workiq_silent_reauth_enabled: bool = True
+
     # Command runner (cmd-runner MCP) — runs bash/python/node either inside a
     # throwaway Docker "jail" (default) or, when the jail is disabled, directly
     # on the host with full local disk access. See services/cmd_runner.py.
