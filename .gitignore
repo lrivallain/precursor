@@ -53,3 +53,8 @@ precursor/backend/alembic/versions/__pycache__/
 
 # Playwright test artifacts
 .playwright-mcp/
+
+# Website (VitePress showcase + docs)
+website/node_modules/
+website/.vitepress/dist/
+website/.vitepress/cache/

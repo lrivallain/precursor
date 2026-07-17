@@ -1,0 +1,14 @@
+{
+  "name": "precursor-website",
+  "private": true,
+  "type": "module",
+  "description": "Precursor showcase site + documentation (VitePress, published to GitHub Pages).",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}
