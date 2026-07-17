@@ -869,7 +869,9 @@ export function LiveView({
                         {displayName(seg.speaker_label)}
                       </button>
                     ))}
-                  <span className="text-text">{seg.text}</span>
+                  <span className="text-text">
+                    <HighlightedText text={seg.text} />
+                  </span>
                 </div>
               </div>
             </div>

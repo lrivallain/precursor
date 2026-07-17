@@ -304,6 +304,12 @@ export default function App() {
   const [searchHighlight, setSearchHighlight] = useState<string>(
     () => new URLSearchParams(window.location.search).get("q") ?? "",
   );
+  // The conversation the current highlight belongs to (a `${mode}:${id}` key),
+  // so we can auto-clear the highlight when the user navigates to a *different*
+  // conversation. `pendingHighlightKeyRef` holds the target of an in-flight
+  // search-open so the transition to it isn't mistaken for a navigation-away.
+  const highlightKeyRef = useRef<string | null>(null);
+  const pendingHighlightKeyRef = useRef<string | null>(null);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
@@ -620,7 +626,14 @@ export default function App() {
   useEffect(() => {
     const syncFromUrl = (): void => {
       // Keep the highlight term in step with the URL for reloads / back-forward.
-      setSearchHighlight(new URLSearchParams(window.location.search).get("q") ?? "");
+      // Reset the ownership refs so the highlight adopts whichever conversation
+      // the URL resolves to (rather than clearing on that first resolution).
+      const urlTerm = new URLSearchParams(window.location.search).get("q") ?? "";
+      setSearchHighlight(urlTerm);
+      if (urlTerm) {
+        highlightKeyRef.current = null;
+        pendingHighlightKeyRef.current = null;
+      }
       if (isHomePath()) {
         setAtHome(true);
         setWsRoute({ open: false, slug: null, path: null });
@@ -794,6 +807,41 @@ export default function App() {
     const target = agentUrl(activeAgentId, agents);
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeAgentId, sidebarMode, agents, atHome]);
+
+  // Auto-clear the search highlight when the user navigates to a *different*
+  // conversation than the one it was opened for. The highlight is tied to a
+  // single conversation (`${mode}:${id}`): while a search-open is in flight we
+  // wait until the selection lands on its target; a URL-loaded term adopts the
+  // first conversation it resolves to; any later switch to a different one
+  // clears it. Transitional states with no complete selection are ignored.
+  useEffect(() => {
+    if (!searchHighlight.trim()) return;
+    let key: string | null = null;
+    if (sidebarMode === "topics") key = activeTopic ? `topics:${activeTopic.id}` : null;
+    else if (sidebarMode === "chats") key = activeChat ? `chats:${activeChat.id}` : null;
+    else if (sidebarMode === "agents")
+      key = activeAgentId != null ? `agents:${activeAgentId}` : null;
+    else if (sidebarMode === "live")
+      key = activeSessionId != null ? `live:${activeSessionId}` : null;
+    if (key == null) return; // mid-transition — wait for a complete selection
+    const pending = pendingHighlightKeyRef.current;
+    if (pending != null) {
+      // Still travelling to the just-opened search target; adopt once we arrive.
+      if (key === pending) {
+        highlightKeyRef.current = pending;
+        pendingHighlightKeyRef.current = null;
+      }
+      return;
+    }
+    if (highlightKeyRef.current == null) {
+      highlightKeyRef.current = key; // first resolved conversation owns the term
+      return;
+    }
+    if (key !== highlightKeyRef.current) {
+      setSearchHighlight("");
+      highlightKeyRef.current = null;
+    }
+  }, [searchHighlight, sidebarMode, activeTopic, activeChat, activeAgentId, activeSessionId]);
 
   // Mirror the highlight term into `?q=` on the current path so a reloaded or
   // shared link re-highlights. Runs after the pathname effects above (which
@@ -1326,7 +1374,11 @@ export default function App() {
   async function openSearchResult(result: SearchResult, query: string): Promise<void> {
     setAtHome(false);
     // Carry the matched term into the opened view so its bodies get highlighted;
-    // the ?q= URL sync effect mirrors it for shareable/reloadable links.
+    // the ?q= URL sync effect mirrors it for shareable/reloadable links. Record
+    // the target conversation so the navigation-away auto-clear waits until we
+    // actually land on it instead of clearing during the transition.
+    pendingHighlightKeyRef.current = `${result.section}:${result.entity_id}`;
+    highlightKeyRef.current = null;
     setSearchHighlight(query.trim());
     try {
       if (result.section === "topics") {
