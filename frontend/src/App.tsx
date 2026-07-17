@@ -100,6 +100,19 @@ interface AppRoute {
   // title slug) when on the kanban route. Resolved to the opaque node id once
   // the project list loads.
   kanbanProjectRef: string | null;
+  // The issue/PR number from the URL hash (e.g. "#94") on the kanban route,
+  // selecting which card's detail preview to open. null when the hash is absent
+  // or not a positive integer.
+  kanbanItemRef: number | null;
+}
+
+// Parse a "#<number>" URL fragment into an issue/PR number. Anything that isn't
+// a positive integer is ignored so a stray hash can't select a phantom card.
+function parseHashNumber(hash: string): number | null {
+  const raw = hash.replace(/^#/, "").trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 function parseAppRoute(): AppRoute {
@@ -111,6 +124,7 @@ function parseAppRoute(): AppRoute {
     liveSlug: null,
     agentRef: null,
     kanbanProjectRef: null,
+    kanbanItemRef: null,
   };
   if (segs[0] === "ws") return { ...base, mode: "workspaces" };
   if (segs[0] === "agents") {
@@ -127,6 +141,7 @@ function parseAppRoute(): AppRoute {
       ...base,
       mode: "kanban",
       kanbanProjectRef: segs[1] ? decodeURIComponent(segs[1]) : null,
+      kanbanItemRef: parseHashNumber(window.location.hash),
     };
   }
   if (segs[0] === "topics") {
@@ -335,6 +350,12 @@ export default function App() {
   // A kanban URL ref (project number/slug) awaiting resolution against the
   // loaded project list. Initialised from the entry URL, cleared once resolved.
   const pendingProjectRef = useRef<string | null>(parseAppRoute().kanbanProjectRef);
+  // The issue/PR number selected via the URL hash (e.g. /kanban/4-work-ms#94).
+  // Drives the board's detail preview and is kept in sync with the hash both
+  // ways: the URL opens the preview, and opening/closing a card rewrites it.
+  const [kanbanItemNumber, setKanbanItemNumber] = useState<number | null>(
+    parseAppRoute().kanbanItemRef,
+  );
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
@@ -649,6 +670,9 @@ export default function App() {
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
       if (r.mode === "kanban") {
+        // Keep the hash-driven preview selection in step with the URL (initial
+        // load + back/forward).
+        setKanbanItemNumber(r.kanbanItemRef);
         if (r.kanbanProjectRef == null) {
           pendingProjectRef.current = null;
           setActiveProjectId(null);
@@ -793,6 +817,21 @@ export default function App() {
     const target = kanbanUrl(active);
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeProjectId, projects, sidebarMode, atHome]);
+
+  // kanbanItemNumber -> URL hash ("#<number>"), so an open card is bookmarkable
+  // and back/forward toggles the preview. Only the hash is touched here; the
+  // pathname effect above owns the /kanban/<project> segment. Waits for the
+  // active project to resolve so a deep-linked "#94" survives until the board
+  // is ready to open it.
+  useEffect(() => {
+    if (atHome) return;
+    if (sidebarMode !== "kanban") return;
+    if (activeProjectId == null) return;
+    const desired = kanbanItemNumber != null ? `#${kanbanItemNumber}` : "";
+    if (window.location.hash === desired) return;
+    const target = window.location.pathname + window.location.search + desired;
+    history.pushState(null, "", target);
+  }, [kanbanItemNumber, activeProjectId, sidebarMode, atHome]);
 
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
@@ -1770,6 +1809,8 @@ export default function App() {
             error={projectsError}
             onSelect={(p) => {
               pendingProjectRef.current = null;
+              // Switching boards drops any hash-selected card from the old one.
+              setKanbanItemNumber(null);
               setActiveProjectId(p.id);
             }}
           />
@@ -2186,6 +2227,8 @@ export default function App() {
                 key={activeProjectId}
                 projectId={activeProjectId}
                 fallbackRepo={globalGithubRepo}
+                selectedNumber={kanbanItemNumber}
+                onSelectedNumberChange={setKanbanItemNumber}
                 onOpenTopic={(topicId) => {
                   changeMode("topics");
                   void handleSelect(topicId);

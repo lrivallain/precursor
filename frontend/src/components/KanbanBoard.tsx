@@ -9,6 +9,13 @@ interface KanbanBoardProps {
   projectId: string;
   /** Configured repo, used to preview cards that don't carry their own repo. */
   fallbackRepo: string;
+  /**
+   * Issue/PR number to auto-open as a detail preview, sourced from the URL hash
+   * (e.g. /kanban/4-work-ms#94). Only numbered cards are addressable this way.
+   */
+  selectedNumber?: number | null;
+  /** Report the previewed card's number so the URL hash can track it. */
+  onSelectedNumberChange?: (n: number | null) => void;
   /** Open the Precursor topic linked to an issue (from the preview modal). */
   onOpenTopic?: (topicId: number) => void;
 }
@@ -34,7 +41,13 @@ interface Column {
  * onto a column optimistically updates local state and calls the backend; a
  * failed update rolls the board back and surfaces the error.
  */
-export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoardProps) {
+export function KanbanBoard({
+  projectId,
+  fallbackRepo,
+  selectedNumber,
+  onSelectedNumberChange,
+  onOpenTopic,
+}: KanbanBoardProps) {
   const [board, setBoard] = useState<ProjectBoard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +102,23 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
     const id = window.setInterval(() => void silentRefresh(), AUTO_REFRESH_MS);
     return () => window.clearInterval(id);
   }, [silentRefresh]);
+
+  // Open (or close) the detail preview to match the URL-driven selection. Only
+  // numbered cards are addressable this way; draft items (number null) are
+  // opened locally via onOpen and don't participate in the hash. Runs once the
+  // board loads so a deep link like "#94" opens as soon as the card exists.
+  useEffect(() => {
+    if (!board) return;
+    if (selectedNumber == null) {
+      setPreviewCard((cur) => (cur && cur.number != null ? null : cur));
+      return;
+    }
+    setPreviewCard((cur) => {
+      if (cur && cur.number === selectedNumber) return cur;
+      const found = board.items.find((c) => c.number === selectedNumber);
+      return found ?? cur;
+    });
+  }, [selectedNumber, board]);
 
   const columns = useMemo<Column[]>(() => {
     if (!board) return [];
@@ -341,7 +371,10 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
                       setDrag(null);
                       setOverCol(null);
                     }}
-                    onOpen={() => setPreviewCard(card)}
+                    onOpen={() => {
+                      setPreviewCard(card);
+                      onSelectedNumberChange?.(card.number ?? null);
+                    }}
                   />
                 ))}
                 {col.cards.length === 0 && (
@@ -358,7 +391,10 @@ export function KanbanBoard({ projectId, fallbackRepo, onOpenTopic }: KanbanBoar
           card={previewCard}
           fallbackRepo={fallbackRepo}
           onOpenTopic={onOpenTopic}
-          onClose={() => setPreviewCard(null)}
+          onClose={() => {
+            setPreviewCard(null);
+            onSelectedNumberChange?.(null);
+          }}
           onLabelsChanged={(itemId, labels) => {
             setBoard((b) =>
               b
