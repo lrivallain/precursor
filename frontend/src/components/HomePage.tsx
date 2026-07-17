@@ -300,12 +300,11 @@ export function HomePage({
           empty states; top-align them here so they sit right below the cards. */}
       {selected && (
         <div className={`min-h-0 flex-1 overflow-y-auto section-${selected}`}>
-          <div className="mx-auto w-full max-w-5xl px-8 pb-8">
-            <div
-              key={selected}
-              className="wizard-panel [&>*]:!h-auto [&>*]:!justify-start [&>*]:!py-6"
-            >
-              {surfaces[selected]}
+          <div className="mx-auto w-full max-w-2xl px-8 pb-8">
+            <div key={selected} className="wizard-reveal">
+              <div className="wizard-panel [&>*]:!h-auto [&>*]:!justify-start [&>*]:!py-6">
+                {surfaces[selected]}
+              </div>
             </div>
           </div>
         </div>
