@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   ChevronRight,
   ExternalLink,
-  FileText,
   MessagesSquare,
   Pin,
   PinOff,
@@ -1992,11 +1991,11 @@ export default function App() {
                           changeMode("topics");
                           void handleSelect(liveTopic.id);
                         }}
-                        className="p-2 rounded hover:bg-surface shrink-0"
+                        className="p-2 rounded text-sky-600 hover:bg-surface shrink-0 dark:text-sky-400"
                         aria-label={`Open topic: ${liveTopic.title}`}
                         data-tooltip={`Open topic: ${liveTopic.title}`}
                       >
-                        <FileText size={18} />
+                        <MessagesSquare size={18} />
                       </button>
                     )}
                     {liveIssueNumber != null && liveIssueRepo && (
