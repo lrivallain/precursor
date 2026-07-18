@@ -71,7 +71,33 @@ no work says so, while automatic ticks stay silent to avoid posting every poll.
 
 ## Reminders
 
-Set a **one-shot reminder** on a topic and it resurfaces at the chosen time with a
-posted system message — a lightweight "come back to this" without a full
-recurring schedule. Reminders are also exposed through the built-in `precursor`
-[MCP server](/features/mcp).
+Set a **one-shot reminder** on a topic or chat and it resurfaces at the chosen
+time with a posted system message — a lightweight "come back to this" without a
+full recurring schedule.
+
+### The `/reminder` command
+
+Type **`/reminder`** in the composer (on a **topic** or **chat**) to open a
+date-and-time picker and schedule the reminder. You can add an optional note that
+rides along with it:
+
+```
+/reminder ping the vendor about the SLA
+```
+
+- **One per conversation** — setting a new `/reminder` **replaces** the existing
+  one.
+- When the time comes, the conversation resurfaces with a posted system message
+  (and a browser notification when those are enabled), and the reminder appears
+  in the **Reminders** banner at the top of the sidebar until you deal with it.
+
+Two companion commands manage the lifecycle:
+
+- **`/reminder-cancel`** — cancel the pending reminder on this conversation
+  before it fires.
+- **`/done`** — mark a **fired** reminder as handled, removing it from the
+  Reminders section.
+
+Reminders are also exposed through the built-in `precursor`
+[MCP server](/features/mcp), so the model (or another MCP host) can set, list,
+and cancel them too.
