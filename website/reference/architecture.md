@@ -15,25 +15,25 @@ flowchart LR
       SPA[React SPA]
     end
 
-    subgraph Process[uvicorn worker]
+    subgraph Process ["uvicorn worker"]
       FAPI[FastAPI app]
       DB[(SQLite / Postgres)]
-      LLM["LLM provider<br/>(Copilot / GH Models / mock)"]
-      SCHED["Scheduler<br/>(recurring topics + agents)"]
-      BUS["Event bus<br/>(SSE pub/sub)"]
-      MCPS["MCP server 'precursor'<br/>(stdio + HTTP /mcp)"]
-      MCPC["MCP client manager<br/>(built-in + user tool servers)"]
+      LLM["LLM provider<br/>Copilot · GH Models · mock"]
+      SCHED["Scheduler<br/>recurring topics + agents"]
+      BUS["Event bus<br/>SSE pub/sub"]
+      MCPS["MCP server 'precursor'<br/>stdio + HTTP /mcp"]
+      MCPC["MCP client manager<br/>built-in + user tool servers"]
       PLG[Plugin registry]
     end
 
     GH[GitHub REST API]
-    WS["Workspaces<br/>(git clones / local dirs)"]
-    JAIL["Docker jail<br/>(cmd-runner)"]
+    WS["Workspaces<br/>git clones / local dirs"]
+    JAIL["Docker jail<br/>cmd-runner"]
     EXT_MCP[External MCP servers]
-    HOST["MCP hosts<br/>(VS Code, CLI agents)"]
+    HOST["MCP hosts<br/>VS Code, CLI agents"]
 
-    SPA -- "/api/*" --> FAPI
-    SPA <-- "SSE /api/events" --- BUS
+    SPA -->|"/api/*"| FAPI
+    BUS -->|"SSE /api/events"| SPA
     FAPI --> DB
     FAPI --> LLM
     FAPI --> GH
