@@ -49,6 +49,14 @@
 .pc-hero-showcase .frame img {
   cursor: zoom-in;
 }
+
+/* Swap the light/dark screenshot variant to match the active theme. */
+html:not(.dark) .pc-shot .dark-only {
+  display: none;
+}
+html.dark .pc-shot .light-only {
+  display: none;
+}
 .medium-zoom-image {
   cursor: zoom-out;
 }
