@@ -52,6 +52,14 @@ Plugins live in their own packages and register via
 
 ## Documentation
 
+**Documentation is part of every change.** When you add or change a user-facing
+feature, update the docs in the *same* PR — don't defer it. Use the decision
+checklist in
+[`.github/copilot-instructions.md`](https://github.com/lrivallain/precursor/blob/main/.github/copilot-instructions.md#documentation)
+to decide what to touch (a feature page, the landing grid, configuration
+reference, `CHANGELOG.md`, screenshots, …), and keep the `[Unreleased]` section
+of `CHANGELOG.md` current.
+
 - In-repo docs live under `docs/` and the top-level markdown files
   (`README.md`, `CONTRIBUTING.md`, …).
 - This showcase + docs **site** lives under `website/` (VitePress) and is
@@ -66,3 +74,13 @@ npm install
 npm run docs:dev        # live-reload dev server
 npm run docs:build      # production build → website/.vitepress/dist
 ```
+
+### Screenshots
+
+Screenshots in `website/public/screenshots/` are **theme-aware** — each has a
+light file (`foo.png`) and a dark file (`foo-dark.png`), and the `<Screenshot>`
+component swaps them by site theme. If a UI change alters a screenshotted screen,
+**retake both variants** from a seeded demo instance **with the account hidden**
+(no resolvable token → "Guest") and **no config warnings** (fake missing config
+rather than using real secrets). Capture light + dark at 2× and clip out the
+persona footer when it would leak the account.
