@@ -9,7 +9,7 @@ export default defineConfig({
   lang: "en-US",
   title: "Precursor",
   description:
-    "Opinionated AI assistant chat for work follow-up — topics linked to GitHub issues, live meetings, autonomous agents, MCP, and more, in a single local-first app.",
+    "My opinionated approach to work follow-up, built as an AI assistant — topics linked to GitHub issues, live meetings, autonomous agents, MCP, and more, in a single local-first app.",
   cleanUrls: true,
   lastUpdated: true,
   ignoreDeadLinks: true,
@@ -24,7 +24,7 @@ export default defineConfig({
       {
         property: "og:description",
         content:
-          "Opinionated AI assistant chat for work follow-up — topics linked to the GitHub issues they belong to, in a single local-first app.",
+          "My opinionated approach to work follow-up, built as an AI assistant — topics linked to the GitHub issues they belong to, in a single local-first app.",
       },
     ],
   ],

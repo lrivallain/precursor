@@ -1,9 +1,10 @@
 # Precursor
 
-> Opinionated AI assistant chat for work follow-up.
+> My opinionated approach to work follow-up, built as an AI assistant.
 
-Precursor is a small, opinionated assistant for tracking work-in-progress
-conversations alongside the issues they belong to. Every chat is scoped to a
+Precursor is a small AI assistant, built with an opinionated approach to tracking
+work-in-progress conversations alongside the issues they belong to. Every chat is
+scoped to a
 **topic** that can be linked to (or create) a GitHub issue; the assistant uses
 the issue body, comments, and labels as live context so newer updates outweigh
 older ones.
