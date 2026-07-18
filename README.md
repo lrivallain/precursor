@@ -1,6 +1,6 @@
 # Precursor
 
-> Per-topic AI chat interface for work follow-up, where each topic maps to a GitHub issue.
+> Opinionated AI assistant chat for work follow-up.
 
 Precursor is a small, opinionated assistant for tracking work-in-progress
 conversations alongside the issues they belong to. Every chat is scoped to a

@@ -4,9 +4,11 @@ title: Introduction
 
 # What is Precursor?
 
-Precursor is a **per-topic AI chat interface for work follow-up**, where each
-topic maps to a GitHub issue. It's a small, opinionated assistant for tracking
-work-in-progress conversations alongside the issues they belong to.
+> **Opinionated AI assistant chat for work follow-up.**
+
+Precursor is an AI assistant that keeps each thread of work in its own **topic**,
+where every topic maps to a GitHub issue. It's a small, opinionated tool for
+tracking work-in-progress conversations alongside the issues they belong to.
 
 Every chat is scoped to a **topic** that can be linked to (or create) a GitHub
 issue. The assistant uses that issue's body, comments, and labels as **live

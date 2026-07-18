@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: Precursor
-  text: Work follow-up, one topic at a time
+  text: Opinionated AI assistant chat for work follow-up
   tagline: >-
     A single, local-first app that keeps your AI conversations next to the GitHub
     issues they belong to — with live meetings, autonomous agents, MCP tools, and
