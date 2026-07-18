@@ -7,10 +7,12 @@ title: Plugin reference
 This is the detailed contract for extending Precursor. For a friendly overview,
 see the [Plugins feature guide](/features/plugins).
 
-::: info Evolving contract
-The contract is stable, but not every slot and dynamic renderer mount is wired in
-core yet — the rendering call sites land as the first plugins ship. Breakage
-before 1.0 will be kept to a minimum and called out in release notes.
+::: warning Work in progress — not yet tested
+The plugin system is **experimental and unverified**. The entry-point loader and
+frontend extension registry exist in the codebase, but the flow has **not been
+validated end-to-end** with a real plugin, and not every slot or dynamic renderer
+mount is wired in core yet. The contract may change without notice before 1.0 —
+don't rely on it for production plugins yet.
 :::
 
 ## Design principle

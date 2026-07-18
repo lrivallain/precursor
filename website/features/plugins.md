@@ -4,6 +4,13 @@ title: Plugins
 
 # Plugins
 
+::: warning Work in progress — not yet tested
+The plugin system is **experimental and unverified**. The contract below is
+implemented in the codebase but has **not been exercised end-to-end** by a real
+plugin yet, so expect rough edges and breaking changes. Treat it as a design
+preview rather than a stable extension point for now.
+:::
+
 Precursor is intentionally small. Anything that isn't part of "topics, chat,
 GitHub" is meant to live in a **plugin**. Plugins extend both halves of the app —
 the FastAPI backend and the React SPA — without forking core.

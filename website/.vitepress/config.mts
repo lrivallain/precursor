@@ -1,10 +1,12 @@
 import { defineConfig } from "vitepress";
+import { withMermaid } from "vitepress-plugin-mermaid";
 
 // Published as a GitHub *project* page at https://lrivallain.github.io/precursor/
 // so every absolute asset/link must sit under this base.
 const base = "/precursor/";
 
-export default defineConfig({
+export default withMermaid(
+  defineConfig({
   base,
   lang: "en-US",
   title: "Precursor",
@@ -130,4 +132,5 @@ export default defineConfig({
       copyright: "Copyright © 2026 Precursor contributors",
     },
   },
-});
+  }),
+);
