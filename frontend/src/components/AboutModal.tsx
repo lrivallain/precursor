@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import type { AppVersion } from "../lib/types";
 
 const REPO_URL = "https://github.com/lrivallain/precursor";
-const TAGLINE = "My opinionated approach to work follow-up, built as an AI assistant.";
+const TAGLINE = "Opinionated approach to work follow-up, built as an AI assistant.";
 
 interface Props {
   onClose: () => void;

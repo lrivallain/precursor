@@ -1,6 +1,6 @@
 # Precursor
 
-> My opinionated approach to work follow-up, built as an AI assistant.
+> Opinionated approach to work follow-up, built as an AI assistant.
 
 Precursor is a small AI assistant, built with an opinionated approach to tracking
 work-in-progress conversations alongside the issues they belong to. Every chat is
