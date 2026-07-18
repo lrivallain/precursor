@@ -8,7 +8,7 @@ title: Agents
 attached to a topic or chat, and lets you follow its progress in a workflow-style
 timeline. It's **opt-in and off by default**.
 
-<Screenshot src="/screenshots/agents.png" alt="An agent session timeline showing the task, streamed steps, and tool calls" caption="An agent session — the task at the top, then a workflow-style timeline of the agent's steps and tool calls." />
+<Screenshot src="/screenshots/agents.png" alt="An agent session timeline showing the task, a reasoning step, and the assistant's answer with suggested replies" caption="An agent session — the task at the top, then a workflow-style timeline: reasoning, tool calls, and the assistant's answer with suggested follow-ups." />
 
 ## Enabling agents
 
