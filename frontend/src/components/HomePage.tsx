@@ -7,7 +7,6 @@ import {
   MessageSquarePlus,
   MessagesSquare,
   Radio,
-  Sparkles,
   SquareKanban,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -263,9 +262,16 @@ export function HomePage({
       <div className="flex w-full shrink-0 flex-col">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-8">
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-accent">
-              <Sparkles size={18} />
-              <span className="text-xs font-medium uppercase tracking-wide">
+            <div className="flex items-center gap-2.5 text-accent">
+              <img
+                src="/logo.svg"
+                alt=""
+                aria-hidden="true"
+                width={32}
+                height={32}
+                className="rounded-md"
+              />
+              <span className="text-sm font-semibold uppercase tracking-wide">
                 Precursor
               </span>
             </div>

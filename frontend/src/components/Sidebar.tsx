@@ -233,6 +233,7 @@ export function Sidebar({
           <SectionRailButtons
             mode={mode}
             atHome={atHome}
+            onGoHome={onGoHome}
             onModeChange={onModeChange}
             onNew={onNew}
             unreadByMode={unreadByMode}
@@ -680,12 +681,13 @@ const MODES: {
 // Vertical section rail: an always-visible column of section icons (Home +
 // every enabled mode, and — in the collapsed sidebar — the "New" action).
 // Shared by the collapsed sidebar and the expanded "rail" navigation style so
-// both stay in lockstep. Home is only rendered when `onGoHome` is passed — the
-// expanded layout already exposes Home via its "Precursor" header button, so it
-// omits it. `showNew` controls the trailing "New" button (kept in the collapsed
-// rail, which has no header; the expanded rail relies on the header "+").
-// `labelOnHover` reveals the full section name as a flyout pill next to each
-// icon (expanded rail) instead of the collapsed rail's hover tooltip.
+// both stay in lockstep. Home is rendered whenever `onGoHome` is passed — both
+// the collapsed sidebar and the expanded rail pass it so Home is always one
+// click away from the vertical navigation. `showNew` controls the trailing
+// "New" button (kept in the collapsed rail, which has no header; the expanded
+// rail relies on the header "+"). `labelOnHover` reveals the full section name
+// as a flyout pill next to each icon (expanded rail) instead of the collapsed
+// rail's hover tooltip.
 function SectionRailButtons({
   mode,
   atHome = false,
