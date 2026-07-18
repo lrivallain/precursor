@@ -5,8 +5,7 @@ import { api } from "../lib/api";
 import type { AppVersion } from "../lib/types";
 
 const REPO_URL = "https://github.com/lrivallain/precursor";
-const TAGLINE =
-  "Per-topic AI chat for work follow-up — one topic per GitHub issue.";
+const TAGLINE = "Opinionated AI assistant chat for work follow-up.";
 
 interface Props {
   onClose: () => void;
