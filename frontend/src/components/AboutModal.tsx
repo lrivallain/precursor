@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Bug, Check, Copy, Globe } from "lucide-react";
+import { ArrowUpRight, BookOpen, Bug, Check, Copy, Globe } from "lucide-react";
 import { Modal } from "./Modal";
 import { api } from "../lib/api";
 import type { AppVersion } from "../lib/types";
 
 const REPO_URL = "https://github.com/lrivallain/precursor";
 const WEBSITE_URL = "https://precursor.vuptime.io/";
+// Documentation link target: the local in-app docs (VitePress dev server with
+// HMR, proxied at /docs) when running the dev build, and the public docs guide
+// in a production build — distinct from the WEBSITE_URL homepage link above.
+// `import.meta.env.DEV` reflects how the SPA was served: Vite dev
+// (`precursor --dev`) vs the bundled prod build (`precursor`).
+const DOCS_URL = import.meta.env.DEV
+  ? "/docs/"
+  : "https://precursor.vuptime.io/guide/introduction";
 const TAGLINE = "Opinionated approach to work follow-up, built as an AI assistant.";
 
 interface Props {
@@ -103,6 +111,12 @@ export function AboutModal({ onClose }: Props) {
 
       {/* Quick links */}
       <div className="flex flex-col gap-2 px-5 py-4">
+        <LinkRow
+          href={DOCS_URL}
+          label="Documentation"
+          sub="Guides, features & reference"
+          icon={<BookOpen size={16} className="text-muted" />}
+        />
         <LinkRow
           href={WEBSITE_URL}
           label="Website"

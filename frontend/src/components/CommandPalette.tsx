@@ -3,6 +3,7 @@ import type { ComponentType, ReactNode } from "react";
 import {
   AlignLeft,
   AudioLines,
+  BookOpen,
   Bot,
   FolderGit2,
   Home,
@@ -225,6 +226,17 @@ export function CommandPalette({
             },
           ]
         : []),
+      {
+        id: "docs",
+        label: "Documentation",
+        hint: "Open the docs (new tab)",
+        keywords: "docs documentation help guide manual website",
+        icon: BookOpen,
+        run: () => {
+          window.open("/docs/", "_blank", "noopener,noreferrer");
+          onClose();
+        },
+      },
     ];
     return all;
   }, [liveEnabled, kanbanEnabled, onNavigate, onGoHome, onClose]);

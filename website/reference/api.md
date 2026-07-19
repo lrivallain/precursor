@@ -17,11 +17,33 @@ that FastAPI serves for a running instance.
 
 With Precursor running locally, open:
 
-- **Swagger UI** — [`/docs`](http://127.0.0.1:8000/docs)
-- **ReDoc** — [`/redoc`](http://127.0.0.1:8000/redoc)
-- **OpenAPI schema (JSON)** — [`/openapi.json`](http://127.0.0.1:8000/openapi.json)
+- **Swagger UI** — [`/api/docs`](http://127.0.0.1:8000/api/docs)
+- **ReDoc** — [`/api/redoc`](http://127.0.0.1:8000/api/redoc)
+- **OpenAPI schema (JSON)** — [`/api/openapi.json`](http://127.0.0.1:8000/api/openapi.json)
 
 (Adjust the port to match your `--port`.)
+
+::: tip
+FastAPI's interactive docs live under `/api/*` so the root `/docs` path can
+serve this documentation site **in-app** — see
+[Serving the docs in-app](#serving-the-docs-in-app) below.
+:::
+
+## Serving the docs in-app
+
+This documentation site (the VitePress project in `website/`) is also served by
+the app itself at **[`/docs/`](http://127.0.0.1:8000/docs/)**, so you can read it
+without leaving Precursor (there's a **Documentation** entry in the command
+palette and the About dialog).
+
+- **Production / one-port `precursor`** — the site is pre-built with base
+  `/docs/` (`make docs`) and bundled into the wheel; the backend serves it
+  statically at `/docs/*`, resolving VitePress clean URLs.
+- **`precursor --dev`** — a live VitePress dev server runs on a hidden port and
+  the SPA's Vite proxies `/docs` to it, so editing any `website/**` markdown
+  **hot-reloads** in the browser.
+- **GitHub Pages** is unaffected: it builds the same source with the default
+  base `/` in its own workflow.
 
 ## Surface at a glance
 

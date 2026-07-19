@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import (
+    FileResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 
 if TYPE_CHECKING:
@@ -196,6 +201,28 @@ def _frontend_dist_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
+def _website_dist_dir() -> Path | None:
+    """Locate the built VitePress docs, expected to be built with base ``/docs/``.
+
+    Mirrors :func:`_frontend_dist_dir`: an installed wheel bundles the site as
+    ``precursor/website_dist``; a source checkout falls back to VitePress's
+    default output at ``website/.vitepress/dist``. Returns ``None`` when the docs
+    have not been built (``precursor --dev`` serves them via a live VitePress
+    server instead, so this static path is unused there).
+    """
+    try:
+        resource = files("precursor").joinpath("website_dist")
+        with as_file(resource) as path:
+            if path.is_dir():
+                return path
+    except (ModuleNotFoundError, FileNotFoundError):
+        pass
+
+    repo_root = Path(__file__).resolve().parents[2]
+    candidate = repo_root / "website" / ".vitepress" / "dist"
+    return candidate if candidate.is_dir() else None
+
+
 def create_app() -> FastAPI:
     cfg = get_settings()
     app = FastAPI(
@@ -203,6 +230,13 @@ def create_app() -> FastAPI:
         version=__version__,
         description="Per-topic AI chat for work follow-up.",
         lifespan=lifespan,
+        # Free the ``/docs`` path for the in-app documentation site (mounted
+        # below). FastAPI's interactive API docs move under the ``/api``
+        # namespace instead: Swagger UI at ``/api/docs``, ReDoc at
+        # ``/api/redoc``, and the OpenAPI schema at ``/api/openapi.json``.
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
     )
 
     if cfg.cors_origins:
@@ -303,6 +337,41 @@ def create_app() -> FastAPI:
         )
     mcp_route.app = _McpHttpGate(mcp_route.app, cfg.host)
     app.router.routes.append(mcp_route)
+
+    # In-app documentation (VitePress). In production the site is pre-built with
+    # base ``/docs/`` and served statically here; in ``precursor --dev`` a live
+    # VitePress dev server handles ``/docs`` (via the Vite proxy) for HMR, so
+    # these routes are the single-port/production path. Registered *before* the
+    # SPA catch-all below so ``/docs/*`` wins over it. GitHub Pages builds the
+    # same source with base ``/`` and is entirely independent of this.
+    docs_dist = _website_dist_dir()
+    docs_root = docs_dist.resolve() if docs_dist is not None else None
+
+    @app.get("/docs", include_in_schema=False)
+    async def docs_index_redirect() -> RedirectResponse:
+        # VitePress base is ``/docs/`` (trailing slash); normalise the bare path.
+        return RedirectResponse("/docs/")
+
+    @app.get("/docs/{full_path:path}", include_in_schema=False)
+    async def docs_static(full_path: str) -> Response:
+        if docs_root is None:
+            return PlainTextResponse(
+                "Docs are not built. Run `make docs` to build them, or use "
+                "`precursor --dev` for live docs with hot reload.",
+                status_code=404,
+            )
+        # Resolve VitePress cleanUrls: try the exact file, then ``<path>.html``,
+        # then ``<path>/index.html``; fall back to the site's 404 page. The
+        # containment check guards against path traversal (``../``).
+        rel = full_path or "index.html"
+        for candidate_rel in (rel, f"{rel}.html", f"{rel}/index.html"):
+            candidate = (docs_root / candidate_rel).resolve()
+            if candidate.is_relative_to(docs_root) and candidate.is_file():
+                return FileResponse(candidate)
+        not_found = docs_root / "404.html"
+        if not_found.is_file():
+            return FileResponse(not_found, status_code=404)
+        return PlainTextResponse("Not Found", status_code=404)
 
     # SPA
     dist = _frontend_dist_dir()

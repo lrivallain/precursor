@@ -75,6 +75,13 @@ npm run docs:dev        # live-reload dev server
 npm run docs:build      # production build → website/.vitepress/dist
 ```
 
+The site is also served **in-app** at `/docs/`. `precursor --dev` starts a live
+VitePress server automatically (the SPA proxies `/docs` to it, so edits
+hot-reload); for the one-port build, `make docs` builds it with base `/docs/` and
+`make wheel` bundles it into the wheel. The base is set via the `DOCS_BASE` env
+var (`/docs/` in-app; default `/` for GitHub Pages), so the public site is
+unaffected. See [Serving the docs in-app](/reference/api#serving-the-docs-in-app).
+
 ### Screenshots
 
 Screenshots in `website/public/screenshots/` are **theme-aware** — each has a
