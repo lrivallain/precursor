@@ -31,8 +31,7 @@ post comments — from the composer's GitHub actions and the shared draft panel.
 ## Tree organization
 
 Topics form a **self-referencing tree**: nest a topic under a parent to group
-related threads. The sidebar is collapsible and searchable, so a large tree stays
-navigable.
+related threads.
 
 ## Scheduling & reminders
 

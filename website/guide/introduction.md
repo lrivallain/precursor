@@ -4,20 +4,19 @@ title: Introduction
 
 # What is Precursor?
 
-> **Opinionated AI assistant chat for work follow-up.**
+> **Opinionated approach to work follow-up, built as an AI assistant.**
 
 Precursor is an AI assistant that keeps each thread of work in its own **topic**,
-where every topic maps to a GitHub issue. It's a small, opinionated tool for
+where topic may map to a GitHub issue. It's a small, opinionated tool for
 tracking work-in-progress conversations alongside the issues they belong to.
 
 Every chat is scoped to a **topic** that can be linked to (or create) a GitHub
 issue. The assistant uses that issue's body, comments, and labels as **live
 context** — rebuilt on every turn, so newer updates outweigh older ones.
 
-Under the hood Precursor is deliberately compact: in production it is a **single
+Under the hood Precursor is deliberately compact: normal runtime is a **single
 `uvicorn` worker** that serves a JSON API and the pre-built React SPA from the
-same process. There is **no Node.js runtime in production** and no orchestration
-to stand up.
+same process.
 
 ## Why it exists
 
@@ -37,17 +36,15 @@ tools in both directions.
 
 - **Topic-scoped, tree-organized** conversations, each optionally linked to a
   GitHub issue whose labels tag the chat.
-- **Streaming chat** over Server-Sent Events with markdown, mermaid, and code
-  highlighting.
+- **Streaming chat** over Server-Sent Events (sse) with markdown, mermaid, and
+  code highlighting.
 - **Bring your own model** — GitHub Copilot (default), GitHub Models, Azure AI
-  Foundry, or any OpenAI-compatible gateway, with a mock provider for offline
-  work.
-- **MCP both ways** — Precursor exposes its conversations as an MCP server *and*
-  attaches external MCP tool servers per topic.
-- **Live meeting assistant** — browser transcription via Azure Speech, live
+  Foundry, or any OpenAI-compatible gateway.
+- **MCP both ways** — Precursor exposes its conversations and features as an MCP
+  server *and* attaches external MCP tool servers to extend its capabilities.
+- **Live meeting assistant** — Meeting transcription via Azure Speech, live
   insights, Q&A, and an editable summary.
-- **Agents mode** (opt-in) — hand a task to an autonomous Copilot SDK agent and
-  follow it in a workflow-style timeline.
+- **Agents mode** (opt-in) — hand a complex task to an autonomous Copilot SDK agent and follow it in a workflow-style timeline.
 - **Skills & memory**, a **scheduler** with recurrence and guards, **reminders**,
   **workspaces** the assistant can edit, and a **Kanban** board over your issues.
 - **Plugin-ready** — backend entry points plus a frontend extension registry.

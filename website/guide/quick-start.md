@@ -18,16 +18,9 @@ uvx precursor-ai              # single-process, zero setup
 
 Open the URL printed in the startup banner. You'll land on the **home** launcher:
 a greeting and a grid of section cards (Topics, Chats, Live, Agents, Files, and —
-when enabled — Kanban).
+when configured — Kanban).
 
 <Screenshot src="/screenshots/home.png" alt="The Precursor home launcher with section cards" />
-
-::: tip No credentials? No problem.
-With no model credentials configured, Precursor automatically falls back to a
-**mock provider** that streams a deterministic reply — so the whole flow stays
-usable offline while you explore. Wire up a real model when you're ready in
-[Configuration](/guide/configuration).
-:::
 
 ## 2. Create a topic
 
@@ -62,7 +55,7 @@ Useful things to try in the composer:
 - **Nest topics** into a tree to group related threads.
 - **Put a topic on a schedule** so a prompt runs on a cadence — see the
   [scheduler](/features/scheduler).
-- **Set a reminder** to resurface a topic at a specific time.
+- **Set a reminder** to resurface a topic at a specific time with `/reminder`.
 - Spin up a quick **[chat](/features/chats)** when you just need a fast answer
   without the ceremony of a topic.
 
