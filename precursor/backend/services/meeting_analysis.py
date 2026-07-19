@@ -38,6 +38,7 @@ def role_persona_instruction(role_prompt: str) -> str:
         return ""
     return f"Active assistant role — adopt this persona for every reply:\n{role_prompt.strip()}"
 
+
 # Characters of transcript / topic context fed to the model. Kept modest so the
 # analysis stays fast; the snapshot is re-derived each run so older context that
 # has fallen out of the window is still reflected in prior insights.
