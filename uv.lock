@@ -944,7 +944,7 @@ wheels = [
 ]
 
 [[package]]
-name = "precursor"
+name = "precursor-ai"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

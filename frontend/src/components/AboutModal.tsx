@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Bug, Check, Copy } from "lucide-react";
+import { ArrowUpRight, Bug, Check, Copy, Globe } from "lucide-react";
 import { Modal } from "./Modal";
 import { api } from "../lib/api";
 import type { AppVersion } from "../lib/types";
 
 const REPO_URL = "https://github.com/lrivallain/precursor";
+const WEBSITE_URL = "https://precursor.vuptime.io/";
 const TAGLINE = "Opinionated approach to work follow-up, built as an AI assistant.";
 
 interface Props {
@@ -102,6 +103,12 @@ export function AboutModal({ onClose }: Props) {
 
       {/* Quick links */}
       <div className="flex flex-col gap-2 px-5 py-4">
+        <LinkRow
+          href={WEBSITE_URL}
+          label="Website"
+          sub="precursor.vuptime.io"
+          icon={<Globe size={16} className="text-muted" />}
+        />
         <LinkRow
           href={REPO_URL}
           label="Source code"
