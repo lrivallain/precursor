@@ -13,9 +13,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 - **In-app documentation**: the documentation site (the VitePress project in
   `website/`) is now served by the app itself at `/docs/`, reachable from a
-  **Documentation** entry in the command palette and the About dialog. In
-  production it's pre-built with base `/docs/` (`make docs`), bundled into the
-  wheel, and served statically with VitePress clean-URL resolution; in
+  **Documentation** entry in the command palette and the About dialog (the About
+  link opens the local `/docs/` in dev and the public site in a production
+  build). In production it's pre-built with base `/docs/` (`make docs`), bundled
+  into the wheel, and served statically with VitePress clean-URL resolution; in
   `precursor --dev` a live VitePress dev server runs on a hidden port that the
   SPA's Vite proxies `/docs` to, so editing any `website/**` markdown
   hot-reloads in the browser. GitHub Pages hosting is unchanged — it builds the
