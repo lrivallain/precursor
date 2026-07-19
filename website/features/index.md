@@ -22,6 +22,11 @@ of working:
 | 🗂️ **[Workspaces & files](/features/workspaces)** | Git clones / local dirs the assistant can browse and edit. |
 | 📋 **[Kanban](/features/kanban)** | A board over the GitHub issues linked to your topics. |
 
+**Rearrange them to taste.** Drag any section in the sidebar — whether you use
+the vertical icon rail or the horizontal tab switcher — to reorder it. The
+arrangement is remembered across reloads and shared between both navigation
+styles.
+
 ## Cross-cutting capabilities
 
 These work across the sections above:
