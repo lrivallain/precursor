@@ -49,8 +49,26 @@ Untagged/dev builds get a suffix, e.g. `2026.6.1.dev3+g0f3ad9f.d20260615`.
 5. The **Release** workflow (`.github/workflows/release.yml`) then:
    - builds the frontend and bundles it into the wheel,
    - runs `uv build` (hatch-vcs stamps the version from the tag),
-   - verifies the built version matches the tag, and
-   - creates a GitHub Release with the wheel + sdist and auto-generated notes.
+   - verifies the built version matches the tag,
+   - creates a GitHub Release with the wheel + sdist and auto-generated notes, and
+   - **publishes the wheel + sdist to [PyPI](https://pypi.org/project/precursor/)**
+     via Trusted Publishing (OIDC — no API token).
+
+## PyPI Trusted Publishing (one-time setup)
+
+Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
+(OpenID Connect), so there is **no API token** to store or rotate. Configure it
+once:
+
+1. On PyPI, create a trusted publisher for the `precursor` project — **Owner**
+   `lrivallain`, **Repository** `precursor`, **Workflow** `release.yml`,
+   **Environment** `pypi`.
+2. In this repo, add a GitHub **Environment** named `pypi`
+   (**Settings → Environments**); optionally require a reviewer to approve each
+   publish.
+
+The `pypi-publish` job runs in the `pypi` environment and requests an
+`id-token` — both must match the publisher registered on PyPI.
 
 ## Verifying a build locally
 
@@ -74,5 +92,6 @@ uv tool install precursor     # or install the `precursor` command
 
 - **Commit messages** follow Conventional Commits — the GitHub Release notes are
   generated from them.
-- **No PyPI publish** is wired yet — releases ship the wheel as a GitHub Release
-  asset.
+- **PyPI**: each tagged release publishes the wheel + sdist to PyPI via Trusted
+  Publishing (OIDC) — see the one-time setup above. The GitHub Release ships the
+  same artifacts as attached assets.

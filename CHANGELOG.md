@@ -11,6 +11,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **PyPI publishing on release**: the **Release** workflow now publishes the
+  wheel + sdist to [PyPI](https://pypi.org/project/precursor/) on every `v*` tag,
+  in addition to the GitHub Release. Publishing uses **Trusted Publishing** (OIDC)
+  via a dedicated `pypi` environment — no API token to store or rotate. The
+  workflow is split into `build` → (`github-release`, `pypi-publish`) jobs that
+  share a single built artifact. See [RELEASING.md](RELEASING.md) for the one-time
+  PyPI/GitHub environment setup.
+
 - **Tool-result retention**: a new **Settings → System → Storage / retention**
   option (`tool_result_retention_days`, default `0` = keep forever) bounds
   long-term DB growth from large persisted tool outputs. Past the configured age,
