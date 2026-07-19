@@ -9,6 +9,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Added
+
+- **Reorderable sidebar sections**: drag any section (Topics, Chats, Live,
+  Agents, Files, Kanban) in the sidebar to rearrange it. Works in both the
+  vertical icon rail and the horizontal tab switcher, with an insertion line
+  showing exactly where the section will land (drop on either side of a
+  neighbour, including the ends). The order is persisted in the browser
+  (`precursor:sidebar:sectionOrder`) and shared between the two navigation
+  styles; newly-shipped sections append to the end without disturbing an
+  existing arrangement.
+
 ## [2026.7.0] - 2026-07-19
 
 ### Added

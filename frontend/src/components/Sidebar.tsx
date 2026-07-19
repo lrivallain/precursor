@@ -30,6 +30,8 @@ import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
+import { useSectionOrder } from "../lib/useSectionOrder";
+import type { DropSide } from "../lib/useSectionOrder";
 
 export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
 
@@ -153,6 +155,14 @@ export function Sidebar({
     window.localStorage.setItem("precursor:sidebar:navStyle", navStyle);
   }, [navStyle]);
 
+  // User-reorderable section arrangement, shared by the vertical rail and the
+  // horizontal tabs (both drive the same persisted order via drag & drop).
+  const { order: sectionOrder, reorder: reorderSections } = useSectionOrder(ALL_MODES);
+  const orderedModes = useMemo(
+    () => sectionOrder.map((key) => MODE_BY_KEY[key]),
+    [sectionOrder],
+  );
+
   const filtered = useMemo(() => filterTree(tree, query.trim().toLowerCase()), [tree, query]);
   // Pinned topics surface as a flat list at the top of the sidebar so they
   // are always one click away regardless of where they sit in the tree.
@@ -206,6 +216,8 @@ export function Sidebar({
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
+          orderedModes={orderedModes}
+          onReorder={reorderSections}
         />
         <div className="flex-1" />
         <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
@@ -239,6 +251,8 @@ export function Sidebar({
             unreadByMode={unreadByMode}
             liveEnabled={liveEnabled}
             kanbanEnabled={kanbanEnabled}
+            orderedModes={orderedModes}
+            onReorder={reorderSections}
             showNew={false}
             labelOnHover
           />
@@ -310,6 +324,8 @@ export function Sidebar({
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
           onOpenPalette={onOpenPalette}
+          orderedModes={orderedModes}
+          onReorder={reorderSections}
         />
       )}
 
@@ -665,11 +681,13 @@ function collectPinned(tree: TopicNode[]): TopicNode[] {
   return out;
 }
 
-const MODES: {
+type ModeDef = {
   mode: SidebarMode;
   label: string;
   Icon: ComponentType<{ size?: number; className?: string }>;
-}[] = [
+};
+
+const MODES: ModeDef[] = [
   { mode: "topics", label: "Topics", Icon: MessagesSquare },
   { mode: "chats", label: "Chats", Icon: MessageSquare },
   { mode: "live", label: "Live", Icon: Radio },
@@ -677,6 +695,15 @@ const MODES: {
   { mode: "agents", label: "Agents", Icon: Bot },
   { mode: "kanban", label: "Kanban", Icon: SquareKanban },
 ];
+
+// Canonical, stable references for the section-order hook. ALL_MODES is the
+// default arrangement; MODE_BY_KEY resolves a persisted order back to its
+// label/icon definition.
+const ALL_MODES: readonly SidebarMode[] = MODES.map((m) => m.mode);
+const MODE_BY_KEY: Record<SidebarMode, ModeDef> = Object.fromEntries(
+  MODES.map((m) => [m.mode, m]),
+) as Record<SidebarMode, ModeDef>;
+
 
 // Vertical section rail: an always-visible column of section icons (Home +
 // every enabled mode, and — in the collapsed sidebar — the "New" action).
@@ -687,7 +714,8 @@ const MODES: {
 // "New" button (kept in the collapsed rail, which has no header; the expanded
 // rail relies on the header "+"). `labelOnHover` reveals the full section name
 // as a flyout pill next to each icon (expanded rail) instead of the collapsed
-// rail's hover tooltip.
+// rail's hover tooltip. Section buttons are draggable: dropping one before
+// another persists a new section order via `onReorder`.
 function SectionRailButtons({
   mode,
   atHome = false,
@@ -697,6 +725,8 @@ function SectionRailButtons({
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
+  orderedModes,
+  onReorder,
   showNew = true,
   labelOnHover = false,
 }: {
@@ -708,12 +738,16 @@ function SectionRailButtons({
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
+  orderedModes: ModeDef[];
+  onReorder: (dragged: SidebarMode, target: SidebarMode, side: DropSide) => void;
   showNew?: boolean;
   labelOnHover?: boolean;
 }) {
-  const modes = MODES.filter(
+  const modes = orderedModes.filter(
     (m) => (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
   );
+  const [dragMode, setDragMode] = useState<SidebarMode | null>(null);
+  const [over, setOver] = useState<{ mode: SidebarMode; side: DropSide } | null>(null);
   // Hover label rendered as a flush continuation of the icon: same section
   // tint, no gap/border, squared seam — so it reads as the icon extending into
   // a pill rather than a detached bubble. An opaque base (bg-bg) under the tint
@@ -745,14 +779,46 @@ function SectionRailButtons({
       )}
       {modes.map((m) => {
         const isActive = !atHome && mode === m.mode;
+        const isDragging = dragMode === m.mode;
+        const dropSide =
+          over?.mode === m.mode && dragMode !== null && dragMode !== m.mode ? over.side : null;
         return (
           <button
             key={m.mode}
-            className={`group relative p-2 rounded ${labelOnHover ? "hover:rounded-r-none" : ""} ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab}`}
+            draggable
+            className={`group relative p-2 rounded ${labelOnHover ? "hover:rounded-r-none" : ""} ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab} ${isDragging ? "opacity-40" : ""}`}
             aria-label={m.label}
             data-tooltip={labelOnHover ? undefined : m.label}
             onClick={() => onModeChange(m.mode)}
+            onDragStart={(e) => {
+              setDragMode(m.mode);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(e) => {
+              if (dragMode === null || dragMode === m.mode) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              const rect = e.currentTarget.getBoundingClientRect();
+              const side: DropSide = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+              setOver((o) => (o?.mode === m.mode && o.side === side ? o : { mode: m.mode, side }));
+            }}
+            onDragLeave={() => setOver((o) => (o?.mode === m.mode ? null : o))}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragMode !== null) onReorder(dragMode, m.mode, over?.side ?? "before");
+              setDragMode(null);
+              setOver(null);
+            }}
+            onDragEnd={() => {
+              setDragMode(null);
+              setOver(null);
+            }}
           >
+            {dropSide && (
+              <span
+                className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent ${dropSide === "before" ? "-top-1" : "-bottom-1"}`}
+              />
+            )}
             <m.Icon size={18} />
             <ModeUnreadDot count={unreadByMode?.[m.mode] ?? 0} />
             {flyout(m.label, SECTION_COLORS[m.mode].icon)}
@@ -789,6 +855,8 @@ function ModeSwitcher({
   liveEnabled = true,
   kanbanEnabled = false,
   onOpenPalette,
+  orderedModes,
+  onReorder,
 }: {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
@@ -797,15 +865,19 @@ function ModeSwitcher({
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
   onOpenPalette?: () => void;
+  orderedModes: ModeDef[];
+  onReorder: (dragged: SidebarMode, target: SidebarMode, side: DropSide) => void;
 }) {
   const modes = useMemo(
     () =>
-      MODES.filter(
+      orderedModes.filter(
         (m) =>
           (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
       ),
-    [liveEnabled, kanbanEnabled],
+    [orderedModes, liveEnabled, kanbanEnabled],
   );
+  const [dragMode, setDragMode] = useState<SidebarMode | null>(null);
+  const [over, setOver] = useState<{ mode: SidebarMode; side: DropSide } | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -930,17 +1002,49 @@ function ModeSwitcher({
         {modes.map((m) => {
           const unread = unreadByMode?.[m.mode] ?? 0;
           const isActive = !atHome && mode === m.mode;
+          const isDragging = dragMode === m.mode;
+          const dropSide =
+            over?.mode === m.mode && dragMode !== null && dragMode !== m.mode ? over.side : null;
           return (
             <button
               key={m.mode}
               ref={isActive ? activeRef : undefined}
-              className={`flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
+              draggable
+              className={`relative flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
                 isActive
                   ? SECTION_COLORS[m.mode].activeTab
                   : `text-muted ${SECTION_COLORS[m.mode].hoverTab}`
-              }`}
+              } ${isDragging ? "opacity-40" : ""}`}
               onClick={() => onModeChange(m.mode)}
+              onDragStart={(e) => {
+                setDragMode(m.mode);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (dragMode === null || dragMode === m.mode) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                const rect = e.currentTarget.getBoundingClientRect();
+                const side: DropSide = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                setOver((o) => (o?.mode === m.mode && o.side === side ? o : { mode: m.mode, side }));
+              }}
+              onDragLeave={() => setOver((o) => (o?.mode === m.mode ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragMode !== null) onReorder(dragMode, m.mode, over?.side ?? "before");
+                setDragMode(null);
+                setOver(null);
+              }}
+              onDragEnd={() => {
+                setDragMode(null);
+                setOver(null);
+              }}
             >
+              {dropSide && (
+                <span
+                  className={`pointer-events-none absolute inset-y-1 w-0.5 rounded-full bg-accent ${dropSide === "before" ? "-left-0.5" : "-right-0.5"}`}
+                />
+              )}
               <m.Icon size={14} /> <span className="whitespace-nowrap">{m.label}</span>
               {unread > 0 && !isActive && <UnreadBadge count={unread} />}
             </button>
