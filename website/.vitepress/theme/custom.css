@@ -1,0 +1,109 @@
+/**
+ * Precursor brand tokens for the VitePress default theme. The sky/cyan accent
+ * mirrors the app's "topics" section color (#0ea5e9), and the hero uses a soft
+ * multi-hue gradient that echoes the per-section palette (sky · emerald · rose ·
+ * violet · amber) used across the product.
+ */
+
+:root {
+  --vp-c-brand-1: #0284c7;
+  --vp-c-brand-2: #0ea5e9;
+  --vp-c-brand-3: #38bdf8;
+  --vp-c-brand-soft: rgba(14, 165, 233, 0.14);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #38bdf8 30%, #7c3aed);
+
+  --vp-home-hero-image-background-image: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.5),
+    rgba(124, 58, 237, 0.5) 45%,
+    rgba(244, 63, 94, 0.35)
+  );
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.dark {
+  --vp-c-brand-1: #38bdf8;
+  --vp-c-brand-2: #0ea5e9;
+  --vp-c-brand-3: #0284c7;
+}
+
+/* Tint the feature-card icons per position so the grid reads like the app's
+   color-coded sections rather than a monochrome wall. */
+.VPFeature .icon {
+  background-color: var(--vp-c-brand-soft) !important;
+}
+
+/* Framed product screenshots throughout the docs. */
+.pc-shot {
+  border-radius: 12px;
+  border: 1px solid var(--vp-c-divider);
+  box-shadow: 0 12px 32px rgba(2, 8, 20, 0.18);
+  margin: 1.25rem 0;
+  overflow: hidden;
+}
+
+/* Click-to-zoom affordance on screenshots. */
+.vp-doc .pc-shot img,
+.pc-hero-showcase .frame img {
+  cursor: zoom-in;
+}
+
+/* Swap the light/dark screenshot variant to match the active theme. */
+html:not(.dark) .pc-shot .dark-only {
+  display: none;
+}
+html.dark .pc-shot .light-only {
+  display: none;
+}
+.medium-zoom-image {
+  cursor: zoom-out;
+}
+.medium-zoom-overlay {
+  z-index: 40;
+}
+.medium-zoom-image--opened {
+  z-index: 41;
+  border-radius: 8px;
+}
+
+.pc-shot img {
+  display: block;
+  width: 100%;
+}
+
+/* Hero showcase screenshot rendered under the landing hero (theme-mapped). */
+.pc-hero-showcase {
+  max-width: 1152px;
+  margin: 1rem auto 0;
+  padding: 0 24px;
+}
+
+.pc-hero-showcase .frame {
+  border-radius: 14px;
+  border: 1px solid var(--vp-c-divider);
+  box-shadow: 0 24px 64px rgba(2, 8, 20, 0.22);
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+}
+
+.pc-hero-showcase img {
+  display: block;
+  width: 100%;
+}
+
+.pc-hero-showcase .caption {
+  margin: 0.75rem 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--vp-c-text-2);
+}
+
+/* Swap the light/dark screenshot to match the active theme. */
+html:not(.dark) .pc-hero-showcase .dark-only {
+  display: none;
+}
+html.dark .pc-hero-showcase .light-only {
+  display: none;
+}

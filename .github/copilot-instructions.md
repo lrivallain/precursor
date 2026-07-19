@@ -64,7 +64,85 @@ plus a frontend extension registry.
    prod alike — there is no `create_all` or hand-written dev backfill.
 3. Keep comments to "why", not "what". Don't add docstrings to code you didn't
    touch.
-4. Run the quality gates (`make check`, listed in `CONTRIBUTING.md`).
+4. **Assess documentation impact** — every user-facing change must update the
+   docs in the same PR (see [Documentation](#documentation) below). Treat "docs
+   updated" as part of the definition of done, not a follow-up.
+5. Run the quality gates (`make check`, listed in `CONTRIBUTING.md`).
+
+## Documentation
+
+**Documentation is part of every change, not an afterthought.** Before you call
+a change complete, explicitly assess what documentation it affects and update it
+in the *same* PR. If you conclude nothing needs changing, say so in the PR
+description so the assessment is visible.
+
+### Where documentation lives
+
+- **`README.md`** — the project's front door (motto, quick start, highlights).
+- **`docs/`** — in-repo deep dives (`architecture.md`, `plugins.md`, …).
+- **`website/`** — the VitePress showcase + docs site published to GitHub Pages
+  (`.github/workflows/pages.yml`, base path `/precursor/`):
+  - `website/index.md` — landing page hero + **feature grid**.
+  - `website/guide/` — getting started (installation, quick start, configuration).
+  - `website/features/` — **one page per feature**.
+  - `website/reference/` — stack, architecture, configuration, API, plugins.
+  - `website/contributing/` — contribution, workflow, releasing.
+  - `website/.vitepress/config.mts` — nav + sidebar registration.
+  - `website/public/screenshots/` — product screenshots (see below).
+- **`CHANGELOG.md`** — keep the `[Unreleased]` section current for any
+  user-facing change.
+
+### Decision checklist — what triggers a doc update
+
+| If your change… | …then update |
+| --- | --- |
+| Adds or changes a **user-facing feature** | the relevant `website/features/*.md` page (+ landing feature grid in `index.md` if it's a headline capability), and `CHANGELOG.md` `[Unreleased]` |
+| Adds a **new sidebar section / cockpit** | a new `website/features/<section>.md` **and** its sidebar entry in `config.mts` **and** the landing grid — mirroring the in-app wiring (`Sidebar.tsx`, `sections.ts`, and the **command palette**) |
+| Adds/renames/removes a **setting or env var** | `website/guide/configuration.md` and `website/reference/configuration.md` (and `.env.example` if env-level) |
+| Adds/changes a **slash command** | the surface's feature page (e.g. `/reminder` on `features/scheduler.md`) and `frontend/src/lib/commands.ts` stays the source of truth |
+| Changes the **API** (routes, schemas, SSE events) | `website/reference/api.md` and the architecture request-flow notes |
+| Adds a **built-in MCP server / provider** | `website/features/mcp.md` / `website/reference/architecture.md` |
+| Changes **installation / run** steps | `README.md`, `website/guide/installation.md`, `CONTRIBUTING.md` |
+| Is **experimental / untested** | mark it clearly as WIP (e.g. a `::: warning` admonition), don't present it as stable |
+
+### Exposing a new feature on the site
+
+1. Write `website/features/<feature>.md` (mirror the tone of the existing pages:
+   a one-line intent, a `<Screenshot>` if it has UI, then how it works).
+2. Register it in the sidebar (`website/.vitepress/config.mts`) and, for a
+   headline capability, add a card to the feature grid in `website/index.md`.
+3. Cross-link from related pages (e.g. a scheduler feature links to MCP guards).
+4. Add a `CHANGELOG.md` `[Unreleased]` entry.
+
+### Screenshots
+
+Screenshots live in `website/public/screenshots/` and are **theme-aware**: each
+has a light file (`foo.png`) and a dark file (`foo-dark.png`); the `<Screenshot>`
+component derives the `-dark` variant and swaps by site theme. **When a UI change
+alters a screenshotted screen, retake both variants.**
+
+Capture rules (keep them consistent and privacy-safe):
+
+- Run a **seeded demo instance** with the **account hidden** — no resolvable
+  GitHub token, so the persona shows "Guest / Not connected" (never a real
+  account/avatar). Reuse the demo fixtures (the `precursor-demo` repo + Project
+  board) rather than real data.
+- **Fake missing config** (e.g. a dummy Speech key, disabled remote MCP servers)
+  so shots have **no error/warning banners** — never use real secrets.
+- Capture **both** `colorScheme: light` and `dark` at `deviceScaleFactor: 2`,
+  writing `foo.png` and `foo-dark.png`.
+- **Clip** to the relevant pane when the sidebar/persona footer would leak the
+  account.
+- Reference the new file from a page via
+  `<Screenshot src="/screenshots/foo.png" alt="…" caption="…" />` (light path
+  only — the component finds the dark one).
+
+### Verify before you finish
+
+- Build the site: `cd website && npm run docs:build` — it must pass (checks
+  broken component usage and, effectively, that referenced pages exist).
+- Sanity-check new nav/sidebar links resolve and every referenced screenshot
+  (both variants) exists.
 
 ## What *not* to do
 

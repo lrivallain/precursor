@@ -1,0 +1,19 @@
+{
+  "name": "precursor-website",
+  "private": true,
+  "type": "module",
+  "description": "Precursor showcase site + documentation (VitePress, published to GitHub Pages).",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "mermaid": "^11.16.0",
+    "vitepress": "^1.6.3",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  },
+  "dependencies": {
+    "medium-zoom": "^1.1.0"
+  }
+}
