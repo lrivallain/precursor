@@ -51,7 +51,7 @@ Untagged/dev builds get a suffix, e.g. `2026.6.1.dev3+g0f3ad9f.d20260615`.
    - runs `uv build` (hatch-vcs stamps the version from the tag),
    - verifies the built version matches the tag,
    - creates a GitHub Release with the wheel + sdist and auto-generated notes, and
-   - **publishes the wheel + sdist to [PyPI](https://pypi.org/project/precursor/)**
+   - **publishes the wheel + sdist to [PyPI](https://pypi.org/project/precursor-ai/)**
      via Trusted Publishing (OIDC — no API token).
 
 ## PyPI Trusted Publishing (one-time setup)
@@ -60,8 +60,9 @@ Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishe
 (OpenID Connect), so there is **no API token** to store or rotate. Configure it
 once:
 
-1. On PyPI, create a trusted publisher for the `precursor` project — **Owner**
-   `lrivallain`, **Repository** `precursor`, **Workflow** `release.yml`,
+1. On PyPI, create a trusted publisher for the **`precursor-ai`** project (the
+   plain `precursor` name is already taken) — **PyPI Project Name** `precursor-ai`,
+   **Owner** `lrivallain`, **Repository** `precursor`, **Workflow** `release.yml`,
    **Environment** `pypi`.
 2. In this repo, add a GitHub **Environment** named `pypi`
    (**Settings → Environments**); optionally require a reviewer to approve each
@@ -79,13 +80,14 @@ cd frontend && npm ci && npm run build && cd ..
 uv build
 ```
 
-The built filename encodes the resolved version. The wheel is **self-contained**:
+The built filename encodes the resolved version (the `precursor-ai` distribution
+normalises to `precursor_ai` in the filename). The wheel is **self-contained**:
 the SPA is bundled inside the package (`precursor/frontend_dist/`), so an installed
 build serves the UI with no extra files:
 
 ```bash
-uvx precursor                 # run the published wheel directly
-uv tool install precursor     # or install the `precursor` command
+uvx --from precursor-ai precursor    # run the published wheel directly
+uv tool install precursor-ai         # or install the `precursor` command
 ```
 
 ## Notes
@@ -95,3 +97,6 @@ uv tool install precursor     # or install the `precursor` command
 - **PyPI**: each tagged release publishes the wheel + sdist to PyPI via Trusted
   Publishing (OIDC) — see the one-time setup above. The GitHub Release ships the
   same artifacts as attached assets.
+- **Distribution name**: the PyPI project is `precursor-ai`; the import package and
+  the `precursor` CLI command are unchanged, so installs use `precursor-ai` but the
+  command stays `precursor`.

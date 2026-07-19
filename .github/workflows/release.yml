@@ -47,7 +47,9 @@ jobs:
       - name: Verify built version matches the tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          built=$(ls dist/precursor-*.whl | sed -E 's#.*/precursor-([^-]+)-.*#\1#')
+          # Distribution name is `precursor-ai`; the wheel normalises it to
+          # `precursor_ai` in the filename.
+          built=$(ls dist/precursor_ai-*.whl | sed -E 's#.*/precursor_ai-([^-]+)-.*#\1#')
           echo "tag=$tag built=$built"
           # Normalise PEP 440 (CalVer maps 1:1, so they should match exactly).
           if [ "$tag" != "$built" ]; then
@@ -94,7 +96,7 @@ jobs:
     # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
     environment:
       name: pypi
-      url: https://pypi.org/p/precursor
+      url: https://pypi.org/p/precursor-ai
     permissions:
       id-token: write # OIDC token for PyPI Trusted Publishing (no API token needed)
     steps:
