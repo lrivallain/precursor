@@ -3,11 +3,9 @@ layout: home
 
 hero:
   name: Precursor
-  text: Opinionated AI assistant chat for work follow-up
+  text: Opinionated approach to work follow-up, built as an AI assistant
   tagline: >-
-    A single, local-first app that keeps your AI conversations next to the GitHub
-    issues they belong to — with live meetings, autonomous agents, MCP tools, and
-    a scheduler, all in one uvicorn process.
+    A single, local-first app that keeps track of your work and/or personal topics with AI conversations enhancement, links them to GitHub issues — with live meetings, autonomous agents, MCP tools, and a scheduler, and more.
   actions:
     - theme: brand
       text: Get started
@@ -24,8 +22,8 @@ features:
     title: Topic-scoped conversations
     details: >-
       Long-lived, tree-organized threads that each carry their own history and
-      context. Link a topic to a GitHub issue and its body, comments, and labels
-      become live context — newer updates outweigh older ones.
+      context. Optionally link a topic to a GitHub issue and its body, comments,
+      and labels become live context — newer updates outweigh older ones.
     link: /features/topics
     linkText: About topics
   - icon: 💬
@@ -46,9 +44,7 @@ features:
   - icon: 🤖
     title: Autonomous agents
     details: >-
-      Hand a long-running task to a Copilot SDK agent attached to a topic or
-      chat, and follow its progress in a workflow-style timeline. Opt-in and off
-      by default.
+      Hand complex and/or long-running tasks to a Copilot SDK agent, and follow its progress in a workflow-style timeline.
     link: /features/agents
     linkText: About agents
   - icon: 🗂️
@@ -83,14 +79,13 @@ features:
   - icon: ⏰
     title: Scheduler & reminders
     details: >-
-      Put any topic or agent on a cadence, gate a run behind a cheap MCP probe
-      with /guard, or set a one-shot reminder that resurfaces the thread.
+      Put any topic or agent on a cadence or set a one-shot reminder that resurfaces the thread on a specified date/time.
     link: /features/scheduler
     linkText: About the scheduler
   - icon: 🧩
     title: Extensible by design
     details: >-
-      A backend entry-point plugin contract plus a frontend extension registry
+      (WIP) A backend entry-point plugin contract plus a frontend extension registry
       let third parties add routers, panels, and MCP tools without forking core.
     link: /features/plugins
     linkText: About plugins
@@ -104,21 +99,19 @@ features:
   - icon: 🔒
     title: Local-first & private
     details: >-
-      A single-user app that binds to 127.0.0.1 by default. Secrets live in the
-      local DB and are never echoed back by the API. No Node.js runtime in
-      production.
+      A single-user app that binds to localhost by default. Secrets live in the
+      local DB and are never echoed back by the API.
     link: /reference/architecture
     linkText: How it works
 ---
 
 <div style="max-width: 1152px; margin: 4rem auto 0; padding: 0 24px;">
 
-## One process, everything included
+## Let's go!
 
-Precursor is a small, opinionated assistant for tracking work-in-progress
-conversations alongside the issues they belong to. In production it is a **single
-uvicorn worker**: FastAPI serves the JSON API and mounts the pre-built React SPA
-from the same process — no separate Node.js runtime, no orchestration.
+Precursor is a small AI assistant, built with an opinionated approach to
+tracking work-in-progress conversations alongside the GitHub issues they may
+belong to.
 
 ```bash
 # Run the latest published build with zero setup:
