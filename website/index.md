@@ -122,7 +122,7 @@ from the same process — no separate Node.js runtime, no orchestration.
 
 ```bash
 # Run the latest published build with zero setup:
-uvx --from precursor-ai precursor
+uvx precursor-ai
 ```
 
 Prefer to hack on it? The whole dev stack — backend hot-reload plus Vite HMR —

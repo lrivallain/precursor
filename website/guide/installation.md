@@ -15,23 +15,23 @@ completely self-contained. If you have `uv` installed, you can run the latest
 release without cloning anything:
 
 ```bash
-uvx --from precursor-ai precursor    # run the latest published wheel, nothing to set up
+uvx precursor-ai         # run the latest published wheel, nothing to set up
 ```
 
 Prefer to keep it around as a tool?
 
 ```bash
 uv tool install precursor-ai
-precursor
+precursor-ai
 ```
 
 On startup Precursor prints a banner with the URL to open in your browser.
 
-::: info Package vs. command name
-The PyPI distribution is **`precursor-ai`** (the plain `precursor` name was already
-taken), but the command it installs is still **`precursor`**. That's why `uvx`
-needs `--from precursor-ai precursor`, while `pip install precursor-ai` /
-`uv tool install precursor-ai` then give you a `precursor` command.
+::: info Package & command names
+The PyPI distribution is **`precursor-ai`** (the plain `precursor` name was
+already taken). It installs a matching **`precursor-ai`** command — so
+`uvx precursor-ai` needs no `--from` — plus a shorter **`precursor`** alias. The
+import package is `precursor`.
 :::
 
 ::: info Requirements

@@ -89,8 +89,8 @@ the SPA is bundled inside the package (`precursor/frontend_dist/`), so an
 installed build serves the UI with no extra files:
 
 ```bash
-uvx --from precursor-ai precursor    # run the published wheel directly
-uv tool install precursor-ai         # or install the `precursor` command
+uvx precursor-ai              # run the published wheel directly
+uv tool install precursor-ai  # or install the `precursor-ai` command
 ```
 
 ## Notes & known follow-ups
@@ -100,6 +100,6 @@ uv tool install precursor-ai         # or install the `precursor` command
 - **PyPI**: each tagged release publishes the wheel + sdist to PyPI via Trusted
   Publishing (OIDC) — see [the setup above](#pypi-trusted-publishing-one-time-setup).
   The GitHub Release ships the same artifacts as attached assets.
-- **Distribution name**: the PyPI project is **`precursor-ai`** (plain `precursor`
-  is taken); the import package and the `precursor` CLI command are unchanged, so
-  installs use `precursor-ai` but the command stays `precursor`.
+- **Distribution name**: the PyPI project is `precursor-ai` (plain `precursor` is
+  taken). It ships a matching `precursor-ai` command — so `uvx precursor-ai` needs
+  no `--from` — plus a `precursor` alias; the import package is unchanged.

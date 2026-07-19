@@ -20,10 +20,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   PyPI/GitHub environment setup.
 
 - **PyPI distribution name is `precursor-ai`**: the plain `precursor` name was
-  already taken on PyPI, so the published distribution is **`precursor-ai`**. The
-  import package and the `precursor` CLI command are unchanged — install with
-  `uv tool install precursor-ai` / `pip install precursor-ai` (or
-  `uvx --from precursor-ai precursor`), and the command is still `precursor`.
+  already taken on PyPI, so the published distribution is **`precursor-ai`**. It
+  ships a matching **`precursor-ai`** command (so `uvx precursor-ai` needs no
+  `--from`) plus a shorter **`precursor`** alias; the import package is unchanged.
+  Install with `uv tool install precursor-ai` / `pip install precursor-ai`, or run
+  it ad-hoc with `uvx precursor-ai`.
+
+- **Website link in the About dialog**: the **About Precursor** dialog (persona
+  menu) now links out to the project website at
+  [precursor.vuptime.io](https://precursor.vuptime.io/), alongside the source-code
+  and report-an-issue links.
 
 - **Tool-result retention**: a new **Settings → System → Storage / retention**
   option (`tool_result_retention_days`, default `0` = keep forever) bounds

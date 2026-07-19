@@ -13,7 +13,7 @@ the [installation guide](/guide/installation).
 ```bash
 uv run precursor --dev        # dev stack (hot reload + Vite HMR)
 # or, from a published build:
-uvx --from precursor-ai precursor    # single-process, zero setup
+uvx precursor-ai              # single-process, zero setup
 ```
 
 Open the URL printed in the startup banner. You'll land on the **home** launcher:

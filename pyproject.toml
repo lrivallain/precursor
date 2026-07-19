@@ -4,8 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 # Distribution name published to PyPI. The plain `precursor` name is already
-# taken on PyPI, so the distribution is `precursor-ai`; the import package and
-# the CLI command are still `precursor` (install with `--from precursor-ai`).
+# taken on PyPI, so the distribution is `precursor-ai`. It ships a matching
+# `precursor-ai` command (so `uvx precursor-ai` needs no `--from`) plus a
+# `precursor` alias; the import package stays `precursor`.
 name = "precursor-ai"
 # Version is CalVer (YYYY.M.MICRO), derived from the latest git tag (v<version>)
 # by hatch-vcs — see [tool.hatch.version]. Tag a release with e.g. `v2026.6.0`.
@@ -72,6 +73,10 @@ dev = [
 ]
 
 [project.scripts]
+# The distribution is `precursor-ai`, so expose a matching `precursor-ai`
+# command — that lets `uvx precursor-ai` work without `--from`. `precursor`
+# stays as a shorter alias (used throughout the dev docs and the Makefile).
+precursor-ai = "precursor.backend.__main__:main"
 precursor = "precursor.backend.__main__:main"
 
 # Plugin discovery — third-party packages register entry points under this group.
@@ -89,13 +94,13 @@ Changelog = "https://github.com/lrivallain/precursor/blob/main/CHANGELOG.md"
 packages = ["precursor"]
 
 # The built SPA (frontend/dist) is bundled inside the package as
-# precursor/frontend_dist so an installed wheel is self-contained — `uvx --from
-# precursor-ai precursor` / `uv tool install precursor-ai` then serve the UI with
-# no extra files. This is done by a *conditional* build hook (hatch_build.py)
-# rather than a static force-include: editable installs (`uv sync`, dev, CI)
-# don't build the frontend, and a static force-include would fail on the missing
-# directory. The hook only bundles for non-editable wheels when frontend/dist
-# exists; at runtime the source tree's frontend/dist is the fallback.
+# precursor/frontend_dist so an installed wheel is self-contained — `uvx
+# precursor-ai` / `uv tool install precursor-ai` then serve the UI with no extra
+# files. This is done by a *conditional* build hook (hatch_build.py) rather than
+# a static force-include: editable installs (`uv sync`, dev, CI) don't build the
+# frontend, and a static force-include would fail on the missing directory. The
+# hook only bundles for non-editable wheels when frontend/dist exists; at
+# runtime the source tree's frontend/dist is the fallback.
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
