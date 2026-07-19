@@ -25,6 +25,48 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `/api/redoc`, and `/api/openapi.json` so the root `/docs` path is free for the
   product docs.
 
+- **Reorderable sidebar sections**: drag any section (Topics, Chats, Live,
+  Agents, Files, Kanban) in the sidebar to rearrange it. Works in both the
+  vertical icon rail and the horizontal tab switcher, with an insertion line
+  showing exactly where the section will land (drop on either side of a
+  neighbour, including the ends). The order is persisted in the browser
+  (`precursor:sidebar:sectionOrder`) and shared between the two navigation
+  styles; newly-shipped sections append to the end without disturbing an
+  existing arrangement.
+
+### Fixed
+
+- **In-app version showed a stale dev build after the `precursor-ai` rename**:
+  version resolution still queried the old `precursor` distribution name, which
+  raised `PackageNotFoundError` and silently fell back to the build-time
+  `_version.py` — so the **About** modal could report a stale version (e.g.
+  `0.0.1.dev…`) instead of the installed/tagged one. It now resolves the
+  `precursor-ai` distribution.
+
+## [2026.7.0] - 2026-07-19
+
+### Added
+
+- **PyPI publishing on release**: the **Release** workflow now publishes the
+  wheel + sdist to [PyPI](https://pypi.org/project/precursor-ai/) on every `v*`
+  tag, in addition to the GitHub Release. Publishing uses **Trusted Publishing**
+  (OIDC) via a dedicated `pypi` environment — no API token to store or rotate. The
+  workflow is split into `build` → (`github-release`, `pypi-publish`) jobs that
+  share a single built artifact. See [RELEASING.md](RELEASING.md) for the one-time
+  PyPI/GitHub environment setup.
+
+- **PyPI distribution name is `precursor-ai`**: the plain `precursor` name was
+  already taken on PyPI, so the published distribution is **`precursor-ai`**. It
+  ships a matching **`precursor-ai`** command (so `uvx precursor-ai` needs no
+  `--from`) plus a shorter **`precursor`** alias; the import package is unchanged.
+  Install with `uv tool install precursor-ai` / `pip install precursor-ai`, or run
+  it ad-hoc with `uvx precursor-ai`.
+
+- **Website link in the About dialog**: the **About Precursor** dialog (persona
+  menu) now links out to the project website at
+  [precursor.vuptime.io](https://precursor.vuptime.io/), alongside the source-code
+  and report-an-issue links.
+
 - **Tool-result retention**: a new **Settings → System → Storage / retention**
   option (`tool_result_retention_days`, default `0` = keep forever) bounds
   long-term DB growth from large persisted tool outputs. Past the configured age,

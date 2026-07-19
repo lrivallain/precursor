@@ -15,17 +15,24 @@ completely self-contained. If you have `uv` installed, you can run the latest
 release without cloning anything:
 
 ```bash
-uvx precursor            # run the latest published wheel, nothing to set up
+uvx precursor-ai         # run the latest published wheel, nothing to set up
 ```
 
 Prefer to keep it around as a tool?
 
 ```bash
-uv tool install precursor
-precursor
+uv tool install precursor-ai
+precursor-ai
 ```
 
 On startup Precursor prints a banner with the URL to open in your browser.
+
+::: info Package & command names
+The PyPI distribution is **`precursor-ai`** (the plain `precursor` name was
+already taken). It installs a matching **`precursor-ai`** command — so
+`uvx precursor-ai` needs no `--from` — plus a shorter **`precursor`** alias. The
+import package is `precursor`.
+:::
 
 ::: info Requirements
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (it manages

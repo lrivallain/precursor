@@ -7,15 +7,15 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # create the GitHub Release + upload assets
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build wheel + GitHub Release
+  build:
+    name: Build wheel + sdist
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -47,13 +47,35 @@ jobs:
       - name: Verify built version matches the tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          built=$(ls dist/precursor-*.whl | sed -E 's#.*/precursor-([^-]+)-.*#\1#')
+          # Distribution name is `precursor-ai`; the wheel normalises it to
+          # `precursor_ai` in the filename.
+          built=$(ls dist/precursor_ai-*.whl | sed -E 's#.*/precursor_ai-([^-]+)-.*#\1#')
           echo "tag=$tag built=$built"
           # Normalise PEP 440 (CalVer maps 1:1, so they should match exactly).
           if [ "$tag" != "$built" ]; then
             echo "::error::Tag ($tag) does not match built version ($built)"
             exit 1
           fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release + upload assets
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -64,3 +86,25 @@ jobs:
           files: |
             dist/*.whl
             dist/*.tar.gz
+
+  pypi-publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # A dedicated environment lets you scope the trusted publisher (and optional
+    # required reviewers) to releases. Configure the matching publisher on PyPI:
+    # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
+    environment:
+      name: pypi
+      url: https://pypi.org/p/precursor-ai
+    permissions:
+      id-token: write # OIDC token for PyPI Trusted Publishing (no API token needed)
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -6,6 +6,10 @@ import importlib
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
+# PyPI distribution name (renamed from "precursor" in v2026.7.0). This differs
+# from the import package name, which intentionally stays "precursor".
+_DIST_NAME = "precursor-ai"
+
 
 def _resolve_version() -> str:
     """Best-effort version: installed metadata → built _version.py → unknown.
@@ -14,7 +18,7 @@ def _resolve_version() -> str:
     build/install time (see pyproject ``[tool.hatch.version]``).
     """
     try:
-        return _pkg_version("precursor")
+        return _pkg_version(_DIST_NAME)
     except PackageNotFoundError:
         pass
     try:

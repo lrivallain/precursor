@@ -3,7 +3,11 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "precursor"
+# Distribution name published to PyPI. The plain `precursor` name is already
+# taken on PyPI, so the distribution is `precursor-ai`. It ships a matching
+# `precursor-ai` command (so `uvx precursor-ai` needs no `--from`) plus a
+# `precursor` alias; the import package stays `precursor`.
+name = "precursor-ai"
 # Version is CalVer (YYYY.M.MICRO), derived from the latest git tag (v<version>)
 # by hatch-vcs — see [tool.hatch.version]. Tag a release with e.g. `v2026.6.0`.
 dynamic = ["version"]
@@ -56,7 +60,7 @@ agents = ["github-copilot-sdk>=1.0"]
 # includes it by DEFAULT on every `uv run` / `uv sync` (no `--extra dev` to
 # remember, and a bare `uv run <cmd>` never prunes ruff/pytest/mypy). Dependency
 # groups are dev-only — they are not part of the published wheel's requirements,
-# so `pip install precursor` is unaffected.
+# so `pip install precursor-ai` is unaffected.
 [dependency-groups]
 dev = [
     "ruff>=0.15",
@@ -69,6 +73,10 @@ dev = [
 ]
 
 [project.scripts]
+# The distribution is `precursor-ai`, so expose a matching `precursor-ai`
+# command — that lets `uvx precursor-ai` work without `--from`. `precursor`
+# stays as a shorter alias (used throughout the dev docs and the Makefile).
+precursor-ai = "precursor.backend.__main__:main"
 precursor = "precursor.backend.__main__:main"
 
 # Plugin discovery — third-party packages register entry points under this group.
@@ -87,7 +95,7 @@ packages = ["precursor"]
 
 # The built SPA (frontend/dist) is bundled inside the package as
 # precursor/frontend_dist so an installed wheel is self-contained — `uvx
-# precursor` / `uv tool install precursor` then serve the UI with no extra
+# precursor-ai` / `uv tool install precursor-ai` then serve the UI with no extra
 # files. This is done by a *conditional* build hook (hatch_build.py) rather than
 # a static force-include: editable installs (`uv sync`, dev, CI) don't build the
 # frontend, and a static force-include would fail on the missing directory. The
