@@ -96,12 +96,13 @@ packages = ["precursor"]
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
-# frontend/dist is gitignored (a build product), so it's excluded from the sdist
-# by default. `uv build` builds the wheel *from the sdist*, so the SPA must ride
-# along in the sdist. `artifacts` overrides gitignore; the sdist force-include
-# is only consulted when a frontend build is present (release builds).
+# frontend/dist and website/.vitepress/dist are gitignored (build products), so
+# they're excluded from the sdist by default. `uv build` builds the wheel *from
+# the sdist*, so both must ride along in the sdist. `artifacts` overrides
+# gitignore; the sdist force-include is only consulted when a build is present
+# (release builds).
 [tool.hatch.build]
-artifacts = ["frontend/dist/**"]
+artifacts = ["frontend/dist/**", "website/.vitepress/dist/**"]
 
 [tool.hatch.build.targets.sdist.hooks.custom]
 path = "hatch_build.py"

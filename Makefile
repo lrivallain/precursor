@@ -1,4 +1,4 @@
-.PHONY: help sync dev backend frontend build wheel check test migration migrate
+.PHONY: help sync dev backend frontend docs build wheel check test migration migrate
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -10,6 +10,7 @@ help:  ## Show available targets
 sync:  ## Install/refresh the dev environment (uv + npm)
 	uv sync
 	npm --prefix frontend install
+	npm --prefix website install
 
 # Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). `--extra
 # agents` pulls the Copilot SDK so Agents mode is live (opt-in payload, kept out
@@ -29,8 +30,13 @@ frontend:  ## Run the Vite dev server only
 build:  ## Build the SPA into frontend/dist
 	npm --prefix frontend run build
 
-# Build the self-contained wheel + sdist (SPA bundled inside the package).
-wheel: build  ## Build the distributable wheel + sdist (uv)
+# Build the docs with base /docs/ so the app serves them in-app at /docs/.
+# (GitHub Pages builds the same source with the default base "/" separately.)
+docs:  ## Build the VitePress docs for in-app serving (base /docs/)
+	DOCS_BASE=/docs/ npm --prefix website run docs:build
+
+# Build the self-contained wheel + sdist (SPA + docs bundled inside the package).
+wheel: build docs  ## Build the distributable wheel + sdist (uv)
 	uv build
 
 # Quality gates — mirrors CI (.github/workflows/ci.yml).

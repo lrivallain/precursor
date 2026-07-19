@@ -6,11 +6,13 @@ Two modes:
   pre-built SPA on one port. No Node.js runtime required; this is what runs
   from an installed wheel (e.g. ``uvx precursor``).
 * ``precursor --dev`` — development stack: uvicorn with ``--reload`` plus the
-  Vite dev server (HMR), which proxies ``/api`` back to uvicorn. ``--port`` is
+  Vite dev server (HMR), which proxies ``/api`` back to uvicorn, and a live
+  VitePress docs server (HMR) that Vite proxies ``/docs`` to. ``--port`` is
   the URL you open (the Vite UI), exactly like normal mode; the backend runs on
-  a separate, normally hidden port (``--api-port``, default ``--port`` + 1).
-  Both processes are managed together and shut down on Ctrl-C. Requires a
-  source checkout (``uv run precursor --dev``).
+  a separate, normally hidden port (``--api-port``, default ``--port`` + 1) and
+  the docs on another (``--docs-port``, default ``--port`` + 2). All processes
+  are managed together and shut down on Ctrl-C. Requires a source checkout
+  (``uv run precursor --dev``).
 """
 
 from __future__ import annotations
@@ -383,7 +385,9 @@ def _run_dev(
     log_level: str,
     *,
     api_port: int | None,
+    docs_port: int | None,
     frontend: bool,
+    docs: bool,
     strict_port: bool,
     open_browser: bool,
 ) -> None:
@@ -392,6 +396,8 @@ def _run_dev(
 
     vite: subprocess.Popen[bytes] | None = None
     vite_lock = threading.Lock()
+    docs_proc: subprocess.Popen[bytes] | None = None
+    docs_lock = threading.Lock()
     stop = threading.Event()
     threads: list[threading.Thread] = []
     ui_port: int | None = None
@@ -417,6 +423,63 @@ def _run_dev(
         )
         _ensure_frontend_built()
         _inject_dev_cors(ui_port)
+
+        # In-app docs with hot reload: run a VitePress dev server (base /docs/)
+        # on its own hidden port and let the SPA's Vite proxy /docs to it (see
+        # frontend/vite.config.ts, which reads PRECURSOR_DOCS_PORT). Its HMR
+        # client is pointed back at the UI port so websocket updates ride through
+        # the single origin the user opened. Best-effort: a missing website/ or
+        # uninstalled deps just disables live docs, never the whole stack.
+        website_dir = _repo_root() / "website"
+        resolved_docs_port: int | None = None
+        if docs and not (website_dir / "package.json").is_file():
+            docs = False
+        elif docs and not (website_dir / "node_modules").is_dir():
+            logger.warning(
+                "website/node_modules missing — skipping live docs. "
+                "Run `npm --prefix website install` (or `make sync`) to enable them.",
+            )
+            docs = False
+        if docs:
+            preferred_docs = docs_port if docs_port is not None else ui_port + 2
+            resolved_docs_port = _resolve_port(
+                host, preferred_docs, strict=strict_port, avoid=frozenset({ui_port, backend_port})
+            )
+            os.environ["PRECURSOR_DOCS_PORT"] = str(resolved_docs_port)
+
+            def _start_docs() -> None:
+                nonlocal docs_proc
+                with docs_lock:
+                    if stop.is_set():
+                        return
+                    logger.info("Starting VitePress docs (HMR) on :%s", resolved_docs_port)
+                    docs_proc = subprocess.Popen(
+                        [
+                            "npm",
+                            "--prefix",
+                            str(website_dir),
+                            "run",
+                            "docs:dev",
+                            "--",
+                            "--host",
+                            "127.0.0.1",
+                            "--port",
+                            str(resolved_docs_port),
+                        ],
+                        env={
+                            **os.environ,
+                            # Serve under the same subpath the app mounts docs at.
+                            "DOCS_BASE": "/docs/",
+                            # Point HMR at the UI origin so websocket reloads ride
+                            # through the SPA's /docs proxy (ws: true).
+                            "PRECURSOR_DOCS_HMR_PORT": str(ui_port),
+                        },
+                        **_new_process_group_kwargs(),
+                    )
+
+            docs_thread = threading.Thread(target=_start_docs, daemon=True)
+            docs_thread.start()
+            threads.append(docs_thread)
 
         def _start_vite_when_ready() -> None:
             nonlocal vite
@@ -490,6 +553,9 @@ def _run_dev(
         with vite_lock:
             if vite is not None:
                 _terminate_process_tree(vite)
+        with docs_lock:
+            if docs_proc is not None:
+                _terminate_process_tree(docs_proc)
 
     try:
         uvicorn.run(
@@ -536,6 +602,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--docs-port",
+        type=int,
+        default=None,
+        help=(
+            "In --dev mode, the port for the live VitePress docs server the UI "
+            "proxies /docs to (default: the --port value + 2). Rarely needed."
+        ),
+    )
+    parser.add_argument(
         "--strict-port",
         action="store_true",
         help="Fail if the requested port is busy instead of auto-selecting another.",
@@ -551,6 +626,11 @@ def main() -> None:
         action="store_true",
         help="In --dev mode, skip the Vite server and run the backend only.",
     )
+    parser.add_argument(
+        "--no-docs",
+        action="store_true",
+        help="In --dev mode, skip the live VitePress docs server.",
+    )
     parser.add_argument("--log-level", default=cfg.log_level, help="uvicorn log level.")
     args = parser.parse_args()
 
@@ -560,7 +640,9 @@ def main() -> None:
             args.port,
             args.log_level,
             api_port=args.api_port,
+            docs_port=args.docs_port,
             frontend=not args.no_frontend,
+            docs=not args.no_docs,
             strict_port=args.strict_port,
             open_browser=args.open_browser,
         )

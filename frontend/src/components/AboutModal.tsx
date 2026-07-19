@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Bug, Check, Copy } from "lucide-react";
+import { ArrowUpRight, BookOpen, Bug, Check, Copy } from "lucide-react";
 import { Modal } from "./Modal";
 import { api } from "../lib/api";
 import type { AppVersion } from "../lib/types";
@@ -102,6 +102,12 @@ export function AboutModal({ onClose }: Props) {
 
       {/* Quick links */}
       <div className="flex flex-col gap-2 px-5 py-4">
+        <LinkRow
+          href="/docs/"
+          label="Documentation"
+          sub="Guides, features & reference"
+          icon={<BookOpen size={16} className="text-muted" />}
+        />
         <LinkRow
           href={REPO_URL}
           label="Source code"

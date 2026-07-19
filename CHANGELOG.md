@@ -11,6 +11,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **In-app documentation**: the documentation site (the VitePress project in
+  `website/`) is now served by the app itself at `/docs/`, reachable from a
+  **Documentation** entry in the command palette and the About dialog. In
+  production it's pre-built with base `/docs/` (`make docs`), bundled into the
+  wheel, and served statically with VitePress clean-URL resolution; in
+  `precursor --dev` a live VitePress dev server runs on a hidden port that the
+  SPA's Vite proxies `/docs` to, so editing any `website/**` markdown
+  hot-reloads in the browser. GitHub Pages hosting is unchanged — it builds the
+  same source with the default base `/` in its own workflow (`DOCS_BASE`
+  selects the base). FastAPI's interactive API docs moved to `/api/docs`,
+  `/api/redoc`, and `/api/openapi.json` so the root `/docs` path is free for the
+  product docs.
+
 - **Tool-result retention**: a new **Settings → System → Storage / retention**
   option (`tool_result_retention_days`, default `0` = keep forever) bounds
   long-term DB growth from large persisted tool outputs. Past the configured age,

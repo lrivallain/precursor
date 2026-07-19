@@ -49,8 +49,11 @@ flowchart LR
 
 A single `uvicorn` worker hosts everything (`precursor/backend/main.py`):
 
-- **FastAPI app** — the JSON API under `/api/*`, the built SPA at `/`, and the MCP
-  server's streamable-HTTP endpoint at `/mcp` (gated, loopback-only).
+- **FastAPI app** — the JSON API under `/api/*`, the built SPA at `/`, the
+  bundled documentation site at `/docs/`, and the MCP server's streamable-HTTP
+  endpoint at `/mcp` (gated, loopback-only). FastAPI's own interactive API docs
+  move under `/api/*` (`/api/docs`, `/api/redoc`, `/api/openapi.json`) so `/docs`
+  is free for the product docs — see [Serving the docs in-app](/reference/api#serving-the-docs-in-app).
 - **Scheduler** (`services/scheduler.py`) — an async ticker + bounded worker pool
   that runs due scheduled topics and agents; started/stopped in the app lifespan.
 - **Event bus** (`services/events.py`) — in-process pub/sub so multiple browser

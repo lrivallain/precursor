@@ -2,12 +2,24 @@ import { defineConfig } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
 // Served from a dedicated custom domain (precursor.vuptime.io) at its root, so
-// the base is "/". Overridable via DOCS_BASE for a different host/subpath.
+// the base is "/". Overridable via DOCS_BASE for a different host/subpath — the
+// Precursor app builds/serves the same source with DOCS_BASE=/docs/ to mount
+// the docs in-app under /docs/ (see precursor/backend/main.py). GitHub Pages is
+// unaffected: it keeps the default "/".
 const base = process.env.DOCS_BASE || "/";
+
+// In `precursor --dev` the docs run as a live server behind the SPA's Vite
+// proxy (/docs, ws:true). Point Vite's HMR websocket at the UI origin the user
+// opened so hot reloads ride through that single origin instead of the hidden
+// docs port. Unset (GitHub Pages / standalone `docs:dev`) → Vite's defaults.
+const hmrClientPort = process.env.PRECURSOR_DOCS_HMR_PORT
+  ? Number(process.env.PRECURSOR_DOCS_HMR_PORT)
+  : undefined;
 
 export default withMermaid(
   defineConfig({
   base,
+  vite: hmrClientPort ? { server: { hmr: { clientPort: hmrClientPort } } } : undefined,
   lang: "en-US",
   title: "Precursor",
   description:
