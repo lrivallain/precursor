@@ -4,7 +4,7 @@ The public showcase + documentation site for Precursor, built with
 [VitePress](https://vitepress.dev) and published to **GitHub Pages** on every
 push to `main` via [`.github/workflows/pages.yml`](../.github/workflows/pages.yml).
 
-Live at **https://lrivallain.github.io/precursor/**.
+Live at **https://precursor.vuptime.io/**.
 
 ## Develop locally
 

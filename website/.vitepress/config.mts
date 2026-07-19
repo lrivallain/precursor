@@ -1,9 +1,9 @@
 import { defineConfig } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
-// Published as a GitHub *project* page at https://lrivallain.github.io/precursor/
-// so every absolute asset/link must sit under this base.
-const base = "/precursor/";
+// Served from a dedicated custom domain (precursor.vuptime.io) at its root, so
+// the base is "/". Overridable via DOCS_BASE for a different host/subpath.
+const base = process.env.DOCS_BASE || "/";
 
 export default withMermaid(
   defineConfig({
