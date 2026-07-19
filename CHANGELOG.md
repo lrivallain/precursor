@@ -9,6 +9,8 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+## [2026.7.0] - 2026-07-19
+
 ### Added
 
 - **PyPI publishing on release**: the **Release** workflow now publishes the
