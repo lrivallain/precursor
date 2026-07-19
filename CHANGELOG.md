@@ -9,6 +9,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Fixed
+
+- **In-app version showed a stale dev build after the `precursor-ai` rename**:
+  version resolution still queried the old `precursor` distribution name, which
+  raised `PackageNotFoundError` and silently fell back to the build-time
+  `_version.py` — so the **About** modal could report a stale version (e.g.
+  `0.0.1.dev…`) instead of the installed/tagged one. It now resolves the
+  `precursor-ai` distribution.
+
 ## [2026.7.0] - 2026-07-19
 
 ### Added
