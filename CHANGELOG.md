@@ -13,10 +13,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 - **Reorderable sidebar sections**: drag any section (Topics, Chats, Live,
   Agents, Files, Kanban) in the sidebar to rearrange it. Works in both the
-  vertical icon rail and the horizontal tab switcher, and the order is persisted
-  in the browser (`precursor:sidebar:sectionOrder`) and shared between the two
-  navigation styles. Newly-shipped sections append to the end without disturbing
-  an existing arrangement.
+  vertical icon rail and the horizontal tab switcher, with an insertion line
+  showing exactly where the section will land (drop on either side of a
+  neighbour, including the ends). The order is persisted in the browser
+  (`precursor:sidebar:sectionOrder`) and shared between the two navigation
+  styles; newly-shipped sections append to the end without disturbing an
+  existing arrangement.
 
 - **Tool-result retention**: a new **Settings → System → Storage / retention**
   option (`tool_result_retention_days`, default `0` = keep forever) bounds

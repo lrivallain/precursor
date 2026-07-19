@@ -18,12 +18,15 @@ function sameOrder(a: SidebarMode[], b: SidebarMode[]): boolean {
   return a.length === b.length && a.every((m, i) => m === b[i]);
 }
 
+/** Which side of the target section the dragged one is dropped on. */
+export type DropSide = "before" | "after";
+
 /**
  * Persisted, user-reorderable ordering of sidebar sections. `all` must be a
  * stable reference (a module-level constant) — it is the canonical list of
  * every section, enabled or not, so a section keeps its slot when toggled off
  * and back on. Returns the reconciled order plus a `reorder` mover that drops
- * the dragged section immediately before the target.
+ * the dragged section on either side of the target.
  */
 export function useSectionOrder(all: readonly SidebarMode[]) {
   const [order, setOrder] = useState<SidebarMode[]>(() => {
@@ -54,18 +57,19 @@ export function useSectionOrder(all: readonly SidebarMode[]) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
   }, [order]);
 
-  const reorder = useCallback((dragged: SidebarMode, target: SidebarMode) => {
-    setOrder((prev) => {
-      if (dragged === target) return prev;
-      const from = prev.indexOf(dragged);
-      const to = prev.indexOf(target);
-      if (from === -1 || to === -1) return prev;
-      const next = [...prev];
-      next.splice(from, 1);
-      next.splice(next.indexOf(target), 0, dragged);
-      return next;
-    });
-  }, []);
+  const reorder = useCallback(
+    (dragged: SidebarMode, target: SidebarMode, side: DropSide = "before") => {
+      setOrder((prev) => {
+        if (dragged === target) return prev;
+        if (prev.indexOf(dragged) === -1 || prev.indexOf(target) === -1) return prev;
+        const next = prev.filter((m) => m !== dragged);
+        const ti = next.indexOf(target);
+        next.splice(side === "after" ? ti + 1 : ti, 0, dragged);
+        return sameOrder(next, prev) ? prev : next;
+      });
+    },
+    [],
+  );
 
   return { order, reorder };
 }
