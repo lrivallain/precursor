@@ -44,6 +44,15 @@ turns pause and stream an auth prompt rather than failing. A background keep-ali
 ticker refreshes the token before it expires so the hosted session survives
 without frequent re-sign-in.
 
+When the refresh token itself ages out, Precursor first tries a **hands-free
+re-auth**: it runs the silent `prompt=none` authorization in an invisible iframe,
+so if the browser still holds a live Entra SSO session the session is renewed
+with **zero clicks** and the banner never appears. Only when a silent pass can't
+complete — Entra genuinely needs interaction, or iframe framing / third-party
+cookies block it — does the `McpAuthBanner` surface for a manual **Sign in**
+(which reuses the same silent-first flow in a real popup). Turn the automatic
+attempt off with `workiq_auto_reauth_enabled=false` to always require the click.
+
 ## As a server — exposing your conversations
 
 Precursor runs a `FastMCP` server named **`precursor`** that exposes its own

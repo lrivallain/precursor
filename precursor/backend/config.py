@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     # interaction is required. Turn off to always show the interactive prompt.
     workiq_silent_reauth_enabled: bool = True
 
+    # WorkIQ hands-free auto re-auth (services/mcp/workiq_preview.py +
+    # frontend McpAuthBanner). When a background tick / turn parks WorkIQ in
+    # needs_auth, the SPA first attempts the silent ``prompt=none`` pass in an
+    # invisible iframe with no clicks — if the browser still holds a live Entra
+    # SSO session the banner never appears. Only when a silent pass can't
+    # complete (interaction genuinely required, or framing/cookies block it) does
+    # the visible "Sign in" banner take over. Turn off to always require the
+    # manual click.
+    workiq_auto_reauth_enabled: bool = True
+
     # Command runner (cmd-runner MCP) — runs bash/python/node either inside a
     # throwaway Docker "jail" (default) or, when the jail is disabled, directly
     # on the host with full local disk access. See services/cmd_runner.py.

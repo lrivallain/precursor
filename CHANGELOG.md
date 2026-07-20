@@ -11,6 +11,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Hands-free WorkIQ re-auth**: when a WorkIQ preview session's refresh token
+  ages out, Precursor now attempts the silent `prompt=none` authorization in an
+  invisible iframe before showing anything. If the browser still holds a live
+  Entra SSO session the session is renewed with **zero clicks** and the
+  `McpAuthBanner` never appears; the manual **Sign in** banner only surfaces when
+  a silent pass genuinely needs interaction (or iframe framing / third-party
+  cookies block it). Gated by the new `workiq_auto_reauth_enabled` setting
+  (default on); turn it off to always require the manual click.
+
 - **In-app documentation**: the documentation site (the VitePress project in
   `website/`) is now served by the app itself at `/docs/`, reachable from a
   **Documentation** entry in the command palette and the About dialog (the About
