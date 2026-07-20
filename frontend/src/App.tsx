@@ -963,12 +963,30 @@ export default function App() {
     return () => window.removeEventListener("precursor:open-agent", onOpenAgent);
   }, []);
 
+  // While a live session is recording, confirm before any in-app navigation
+  // that would unmount the LiveView and stop the capture. Resolves immediately
+  // when nothing is recording, so guarded handlers are unchanged off the happy
+  // path. Page-unload (reload/close/quit) is guarded separately in LiveView via
+  // a native beforeunload prompt.
+  async function confirmLeaveRecording(): Promise<boolean> {
+    if (liveRecordingId == null) return true;
+    return confirmAction({
+      title: "Recording in progress",
+      message:
+        "You're recording a live session. Leaving this screen stops the recording. Leave anyway?",
+      confirmLabel: "Leave & stop recording",
+      cancelLabel: "Keep recording",
+      variant: "warning",
+    });
+  }
+
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
-  function changeMode(next: SidebarMode): void {
+  async function changeMode(next: SidebarMode): Promise<void> {
     // Clicking the active mode's tab while on the home launcher still needs to
     // leave home, so only short-circuit when we're already showing that mode.
     if (next === sidebarMode && !atHome) return;
+    if (!(await confirmLeaveRecording())) return;
     setAtHome(false);
     let target = "/topics";
     if (next === "topics") {
@@ -998,7 +1016,8 @@ export default function App() {
   }
 
   // Navigate to the root home launcher.
-  function goHome(): void {
+  async function goHome(): Promise<void> {
+    if (!(await confirmLeaveRecording())) return;
     if (window.location.pathname !== "/") history.pushState(null, "", "/");
     setWsRoute({ open: false, slug: null, path: null });
     setAtHome(true);
@@ -1428,6 +1447,7 @@ export default function App() {
   // deep-link resolution: leave home, switch mode, and reveal the entity by its
   // stable id (topic/chat/live-session row id, or agent internal id).
   async function openSearchResult(result: SearchResult, query: string): Promise<void> {
+    if (!(await confirmLeaveRecording())) return;
     setAtHome(false);
     // Carry the matched term into the opened view so its bodies get highlighted;
     // the ?q= URL sync effect mirrors it for shareable/reloadable links. Record
@@ -1667,7 +1687,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarMode]);
 
-  function handleSelectSession(session: MeetingSession): void {
+  async function handleSelectSession(session: MeetingSession): Promise<void> {
+    // Switching to a different session unmounts the recording LiveView; confirm
+    // first so an accidental click doesn't drop an in-progress capture.
+    if (session.id !== activeSessionId && !(await confirmLeaveRecording())) return;
     setActiveSessionId(session.id);
     history.pushState(null, "", liveUrl(session));
   }

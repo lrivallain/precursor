@@ -35,6 +35,21 @@ has step-by-step, OS-specific instructions:
 For **hybrid** meetings, tick **+ mic** to also capture your local microphone
 alongside the virtual device — both streams are mixed and transcribed together.
 
+## Starting and protecting a recording
+
+Connecting to Azure takes a moment — minting a token, loading the Speech SDK, and
+opening the capture device — so the **Record** button first shows a transient
+**Starting…** state, then flips to a red **Stop** button with a **Recording**
+indicator once capture is live. That way a click is never ambiguous.
+
+While a recording is live, Precursor guards against losing it by accident:
+
+- Leaving the screen in-app — switching cockpit, going Home, opening another live
+  session, or jumping via search — asks you to confirm first (**Keep recording**
+  or **Leave & stop recording**).
+- Reloading, closing the tab, or quitting the app triggers the browser's native
+  "leave site?" prompt.
+
 ## Language
 
 Pick the meeting language when creating the session or from the Live toolbar.

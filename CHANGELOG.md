@@ -36,6 +36,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Live recording is clearer to start and harder to lose**: the **Record**
+  button now shows a transient **Starting…** state while it connects to Azure
+  (token, SDK, capture device) instead of looking unresponsive for the couple of
+  seconds before it turns red. While a recording is live, leaving the screen —
+  switching cockpit, going Home, opening another live session, or jumping via
+  search — now asks you to confirm (**Keep recording** / **Leave & stop
+  recording**), and reloading or closing the tab triggers the browser's native
+  leave prompt, so an accidental navigation no longer silently drops the capture.
+
 - **Vertical navigation rail on the home launcher**: when the sidebar uses the
   vertical icon rail (not the horizontal tabs), that rail now also shows on the
   home launcher, so switching sections is always one click away. Home and the
