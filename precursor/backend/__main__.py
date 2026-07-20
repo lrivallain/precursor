@@ -207,6 +207,52 @@ def _ensure_frontend_built(*, rebuild_if_stale: bool = False) -> bool:
         return False
 
 
+def _ensure_website_deps() -> bool:
+    """Ensure ``website/node_modules`` exists so the live docs server can run.
+
+    Installs the VitePress dependencies when they're missing (mirroring the
+    frontend auto-build). Returns True when the deps are present or were
+    installed successfully, False when they're missing and couldn't be installed
+    — the caller degrades to disabling live docs, never failing the whole stack.
+    """
+    website_dir = _repo_root() / "website"
+    if not (website_dir / "package.json").is_file():
+        return False
+    if (website_dir / "node_modules").is_dir():
+        return True
+
+    logger.info("website/node_modules missing — installing docs dependencies...")
+    try:
+        result = subprocess.run(
+            ["npm", "--prefix", str(website_dir), "install"],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+    except FileNotFoundError:
+        logger.warning(
+            "npm not found — skipping live docs. Install Node.js and npm, "
+            "or run `npm --prefix website install` (or `make sync`) to enable them.",
+        )
+        return False
+    except subprocess.TimeoutExpired:
+        logger.warning("Docs dependency install timed out after 5 minutes — skipping live docs.")
+        return False
+    except Exception as exc:  # pragma: no cover - catch-all for unexpected errors
+        logger.warning("Docs dependency install failed (%s) — skipping live docs.", exc)
+        return False
+
+    if result.returncode != 0:
+        logger.warning(
+            "Docs dependency install failed — skipping live docs. "
+            "Run `npm --prefix website install` (or `make sync`) manually.\n%s",
+            result.stderr,
+        )
+        return False
+    logger.info("Docs dependencies installed.")
+    return True
+
+
 def _resolve_port(
     host: str, preferred: int, *, strict: bool, avoid: frozenset[int] = frozenset()
 ) -> int:
@@ -429,16 +475,11 @@ def _run_dev(
         # frontend/vite.config.ts, which reads PRECURSOR_DOCS_PORT). Its HMR
         # client is pointed back at the UI port so websocket updates ride through
         # the single origin the user opened. Best-effort: a missing website/ or
-        # uninstalled deps just disables live docs, never the whole stack.
+        # deps that can't be installed just disables live docs, never the whole
+        # stack.
         website_dir = _repo_root() / "website"
         resolved_docs_port: int | None = None
-        if docs and not (website_dir / "package.json").is_file():
-            docs = False
-        elif docs and not (website_dir / "node_modules").is_dir():
-            logger.warning(
-                "website/node_modules missing — skipping live docs. "
-                "Run `npm --prefix website install` (or `make sync`) to enable them.",
-            )
+        if docs and not _ensure_website_deps():
             docs = False
         if docs:
             preferred_docs = docs_port if docs_port is not None else ui_port + 2

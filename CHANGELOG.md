@@ -63,6 +63,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **In-app docs (`/docs/`) were silently unavailable in `precursor --dev`**:
+  the live VitePress docs server only starts when `website/node_modules` is
+  present, and a fresh checkout that ran `precursor --dev` without `make sync`
+  first would skip it with just a log warning. The **Documentation** link then
+  fell through to the SPA (or the backend's "Docs are not built" message on the
+  API port). `--dev` now auto-installs the docs dependencies on first run
+  (mirroring the frontend auto-build), so `/docs/` works out of the box; it
+  still degrades to disabling live docs (never failing the stack) when npm is
+  unavailable.
+
+- **About dialog had two links to the same site**: the **Documentation** and
+  **Website** rows in the About modal both pointed at
+  `precursor.vuptime.io`. The redundant **Website** row is gone — a single
+  **Documentation** link (local `/docs/` in dev, the public site in a
+  production build) now covers it.
+
 - **In-app version showed a stale dev build after the `precursor-ai` rename**:
   version resolution still queried the old `precursor` distribution name, which
   raised `PackageNotFoundError` and silently fell back to the build-time
