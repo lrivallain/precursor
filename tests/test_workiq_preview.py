@@ -439,6 +439,36 @@ def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:
         assert calls == [True, False]
 
 
+def test_reauthenticate_surfaces_real_cause_on_group_failure(monkeypatch) -> None:
+    """A 502 must show the underlying error, not anyio's opaque group wrapper.
+
+    The MCP SDK's streamable-http transport raises inside a task group, so a
+    failed sign-in reaches the route as a ``BaseExceptionGroup`` whose ``str()``
+    is "unhandled errors in a TaskGroup (1 sub-exception)". The endpoint must
+    unwrap it so the SPA's error banner names the real reason.
+    """
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+        raise BaseExceptionGroup(
+            "unhandled errors in a TaskGroup (1 sub-exception)",
+            [RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")],
+        )
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate")
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail == (
+            "WorkIQ sign-in failed: Timed out waiting for the WorkIQ sign-in to complete."
+        )
+        assert "TaskGroup" not in detail
+
+
 def test_reauthenticate_silent_only_success(monkeypatch) -> None:
     """A hands-free silent pass that authenticates returns a normal status."""
     from precursor.backend.services.mcp import workiq_preview as wp
