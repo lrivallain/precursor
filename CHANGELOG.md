@@ -34,6 +34,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   styles; newly-shipped sections append to the end without disturbing an
   existing arrangement.
 
+### Changed
+
+- **Vertical navigation rail on the home launcher**: when the sidebar uses the
+  vertical icon rail (not the horizontal tabs), that rail now also shows on the
+  home launcher, so switching sections is always one click away. Home and the
+  ⌘K search launcher are grouped together at the top of the rail — Home, then
+  Search, then a separator, then the sections — consistent across the home rail,
+  the expanded rail, and the collapsed sidebar.
+
 ### Fixed
 
 - **In-app version showed a stale dev build after the `precursor-ai` rename**:

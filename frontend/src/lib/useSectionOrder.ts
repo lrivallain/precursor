@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 import type { SidebarMode } from "../components/Sidebar";
 
@@ -21,6 +21,57 @@ function sameOrder(a: SidebarMode[], b: SidebarMode[]): boolean {
 /** Which side of the target section the dragged one is dropped on. */
 export type DropSide = "before" | "after";
 
+// Module-level store so the rail, the tabs, the collapsed rail and the home
+// rail all share one live order — a drag-reorder in any of them is reflected
+// everywhere immediately, not just after a remount re-reads localStorage.
+let order: SidebarMode[] | null = null;
+const listeners = new Set<() => void>();
+
+function loadInitial(all: readonly SidebarMode[]): SidebarMode[] {
+  const fallback = [...all];
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    return reconcile(parsed as SidebarMode[], all);
+  } catch {
+    return fallback;
+  }
+}
+
+function ensureInit(all: readonly SidebarMode[]): void {
+  if (order === null) order = loadInitial(all);
+}
+
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => listeners.delete(cb);
+}
+
+function persist(next: SidebarMode[]): void {
+  order = next;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota / privacy-mode failures */
+    }
+  }
+  listeners.forEach((cb) => cb());
+}
+
+function reorderStore(dragged: SidebarMode, target: SidebarMode, side: DropSide): void {
+  const prev = order ?? [];
+  if (dragged === target) return;
+  if (prev.indexOf(dragged) === -1 || prev.indexOf(target) === -1) return;
+  const next = prev.filter((m) => m !== dragged);
+  const ti = next.indexOf(target);
+  next.splice(side === "after" ? ti + 1 : ti, 0, dragged);
+  if (!sameOrder(next, prev)) persist(next);
+}
+
 /**
  * Persisted, user-reorderable ordering of sidebar sections. `all` must be a
  * stable reference (a module-level constant) — it is the canonical list of
@@ -29,47 +80,17 @@ export type DropSide = "before" | "after";
  * the dragged section on either side of the target.
  */
 export function useSectionOrder(all: readonly SidebarMode[]) {
-  const [order, setOrder] = useState<SidebarMode[]>(() => {
-    const fallback = [...all];
-    if (typeof window === "undefined") return fallback;
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) return fallback;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return fallback;
-      return reconcile(parsed as SidebarMode[], all);
-    } catch {
-      return fallback;
-    }
-  });
-
-  // Reconcile if the canonical set changes (a section is added or removed in a
-  // later build) so the persisted order never drifts out of sync.
-  useEffect(() => {
-    setOrder((prev) => {
-      const next = reconcile(prev, all);
-      return sameOrder(next, prev) ? prev : next;
-    });
-  }, [all]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
-  }, [order]);
-
+  ensureInit(all);
+  const value = useSyncExternalStore(
+    subscribe,
+    () => order as SidebarMode[],
+    () => order as SidebarMode[],
+  );
   const reorder = useCallback(
     (dragged: SidebarMode, target: SidebarMode, side: DropSide = "before") => {
-      setOrder((prev) => {
-        if (dragged === target) return prev;
-        if (prev.indexOf(dragged) === -1 || prev.indexOf(target) === -1) return prev;
-        const next = prev.filter((m) => m !== dragged);
-        const ti = next.indexOf(target);
-        next.splice(side === "after" ? ti + 1 : ti, 0, dragged);
-        return sameOrder(next, prev) ? prev : next;
-      });
+      reorderStore(dragged, target, side);
     },
     [],
   );
-
-  return { order, reorder };
+  return { order: value, reorder };
 }

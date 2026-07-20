@@ -25,7 +25,9 @@ of working:
 **Rearrange them to taste.** Drag any section in the sidebar — whether you use
 the vertical icon rail or the horizontal tab switcher — to reorder it. The
 arrangement is remembered across reloads and shared between both navigation
-styles.
+styles. When you pick the vertical rail, it also stays on the **home launcher**
+so you're never more than a click from any section; **Home** and the ⌘K search
+launcher sit together at the top of the rail, above the sections.
 
 ## Cross-cutting capabilities
 

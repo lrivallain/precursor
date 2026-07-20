@@ -32,6 +32,7 @@ import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useSectionOrder } from "../lib/useSectionOrder";
 import type { DropSide } from "../lib/useSectionOrder";
+import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
 
 export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
 
@@ -142,18 +143,10 @@ export function Sidebar({
   });
   // Expanded-sidebar section navigation style. "rail" shows an always-visible
   // vertical icon rail (no section is hidden by width); "tabs" keeps the
-  // horizontal, scrollable switcher. Persisted so the choice sticks. Only
-  // affects the expanded layout — the collapsed sidebar is always a rail.
-  const [navStyle, setNavStyle] = useState<"rail" | "tabs">(() => {
-    if (typeof window === "undefined") return "rail";
-    return window.localStorage.getItem("precursor:sidebar:navStyle") === "tabs"
-      ? "tabs"
-      : "rail";
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("precursor:sidebar:navStyle", navStyle);
-  }, [navStyle]);
+  // horizontal, scrollable switcher. Persisted (and shared with the home rail)
+  // so the choice sticks. Only affects the expanded layout — the collapsed
+  // sidebar is always a rail.
+  const [navStyle, setNavStyle] = useSidebarNavStyle();
 
   // User-reorderable section arrangement, shared by the vertical rail and the
   // horizontal tabs (both drive the same persisted order via drag & drop).
@@ -188,29 +181,11 @@ export function Sidebar({
           <PanelLeftOpen size={18} />
         </button>
         <div className="my-1 h-px w-6 bg-border" />
-        {onOpenPalette && (
-          <button
-            className="p-2 rounded hover:bg-surface"
-            aria-label="Jump to section"
-            data-tooltip="Jump to section (⌘K)"
-            onClick={onOpenPalette}
-          >
-            <Search size={18} />
-          </button>
-        )}
-        {onGoHome && (
-          <button
-            className={`relative p-2 rounded ${atHome ? "bg-accent/15 text-accent" : "hover:bg-surface"}`}
-            aria-label="Home"
-            data-tooltip="Home"
-            onClick={onGoHome}
-          >
-            <Home size={18} />
-          </button>
-        )}
         <SectionRailButtons
           mode={mode}
           atHome={atHome}
+          onGoHome={onGoHome}
+          onOpenPalette={onOpenPalette}
           onModeChange={onModeChange}
           onNew={onNew}
           unreadByMode={unreadByMode}
@@ -228,35 +203,17 @@ export function Sidebar({
   return (
     <div className="flex h-full shrink-0">
       {navStyle === "rail" && (
-        <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
-          {onOpenPalette && (
-            <>
-              <button
-                className="p-2 rounded hover:bg-surface"
-                aria-label="Jump to section"
-                data-tooltip="Jump to section (⌘K)"
-                onClick={onOpenPalette}
-              >
-                <Search size={18} />
-              </button>
-              <div className="my-1 h-px w-6 bg-border" />
-            </>
-          )}
-          <SectionRailButtons
-            mode={mode}
-            atHome={atHome}
-            onGoHome={onGoHome}
-            onModeChange={onModeChange}
-            onNew={onNew}
-            unreadByMode={unreadByMode}
-            liveEnabled={liveEnabled}
-            kanbanEnabled={kanbanEnabled}
-            orderedModes={orderedModes}
-            onReorder={reorderSections}
-            showNew={false}
-            labelOnHover
-          />
-        </nav>
+        <SectionRail
+          mode={mode}
+          atHome={atHome}
+          onGoHome={onGoHome}
+          onOpenPalette={onOpenPalette}
+          onModeChange={onModeChange}
+          onNew={onNew}
+          unreadByMode={unreadByMode}
+          liveEnabled={liveEnabled}
+          kanbanEnabled={kanbanEnabled}
+        />
       )}
       <aside
         className="relative border-r border-border flex flex-col shrink-0 min-w-0"
@@ -287,7 +244,7 @@ export function Sidebar({
           className="p-1.5 rounded hover:bg-surface"
           aria-label={navStyle === "rail" ? "Use tab navigation" : "Use rail navigation"}
           data-tooltip={navStyle === "rail" ? "Switch to tabs" : "Switch to rail"}
-          onClick={() => setNavStyle((s) => (s === "rail" ? "tabs" : "rail"))}
+          onClick={() => setNavStyle(navStyle === "rail" ? "tabs" : "rail")}
         >
           {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
         </button>
@@ -705,21 +662,22 @@ const MODE_BY_KEY: Record<SidebarMode, ModeDef> = Object.fromEntries(
 ) as Record<SidebarMode, ModeDef>;
 
 
-// Vertical section rail: an always-visible column of section icons (Home +
-// every enabled mode, and — in the collapsed sidebar — the "New" action).
-// Shared by the collapsed sidebar and the expanded "rail" navigation style so
-// both stay in lockstep. Home is rendered whenever `onGoHome` is passed — both
-// the collapsed sidebar and the expanded rail pass it so Home is always one
-// click away from the vertical navigation. `showNew` controls the trailing
-// "New" button (kept in the collapsed rail, which has no header; the expanded
-// rail relies on the header "+"). `labelOnHover` reveals the full section name
-// as a flyout pill next to each icon (expanded rail) instead of the collapsed
-// rail's hover tooltip. Section buttons are draggable: dropping one before
-// another persists a new section order via `onReorder`.
+// Vertical section rail contents: Home, the ⌘K search launcher, a separator,
+// then every enabled section (and — in the collapsed sidebar — the "New"
+// action). Shared by the collapsed sidebar, the expanded "rail" navigation
+// style, and the home rail so they stay in lockstep. Home is rendered whenever
+// `onGoHome` is passed and Search whenever `onOpenPalette` is passed; both sit
+// in the same leading group above the separator. `showNew` controls the
+// trailing "New" button (kept in the collapsed rail, which has no header; the
+// expanded rail relies on the header "+"). `labelOnHover` reveals the full
+// section name as a flyout pill next to each icon (expanded rail) instead of
+// the collapsed rail's hover tooltip. Section buttons are draggable: dropping
+// one before another persists a new section order via `onReorder`.
 function SectionRailButtons({
   mode,
   atHome = false,
   onGoHome,
+  onOpenPalette,
   onModeChange,
   onNew,
   unreadByMode,
@@ -733,6 +691,7 @@ function SectionRailButtons({
   mode: SidebarMode;
   atHome?: boolean;
   onGoHome?: () => void;
+  onOpenPalette?: () => void;
   onModeChange: (mode: SidebarMode) => void;
   onNew: () => void;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
@@ -777,6 +736,18 @@ function SectionRailButtons({
           {flyout("Home", "bg-surface text-text")}
         </button>
       )}
+      {onOpenPalette && (
+        <button
+          className="group relative p-2 rounded hover:bg-surface"
+          aria-label="Jump to section"
+          data-tooltip={labelOnHover ? undefined : "Jump to section (⌘K)"}
+          onClick={onOpenPalette}
+        >
+          <Search size={18} />
+          {flyout("Jump to section", "bg-surface text-text")}
+        </button>
+      )}
+      {(onGoHome || onOpenPalette) && <div className="my-1 h-px w-6 bg-border" />}
       {modes.map((m) => {
         const isActive = !atHome && mode === m.mode;
         const isDragging = dragMode === m.mode;
@@ -840,6 +811,55 @@ function SectionRailButtons({
         </>
       )}
     </>
+  );
+}
+
+// Standalone vertical navigation rail — the bordered column that hosts
+// `SectionRailButtons`. Rendered by the expanded sidebar's "rail" style and,
+// independently, on the home launcher so the vertical navigation stays visible
+// there too (the horizontal "tabs" style has no such standalone form). Owns the
+// shared section order so a drag-reorder here syncs with the sidebar live.
+export function SectionRail({
+  mode,
+  atHome = false,
+  onGoHome,
+  onOpenPalette,
+  onModeChange,
+  onNew,
+  unreadByMode,
+  liveEnabled = true,
+  kanbanEnabled = false,
+}: {
+  mode: SidebarMode;
+  atHome?: boolean;
+  onGoHome?: () => void;
+  onOpenPalette?: () => void;
+  onModeChange: (mode: SidebarMode) => void;
+  onNew: () => void;
+  unreadByMode?: Partial<Record<SidebarMode, number>>;
+  liveEnabled?: boolean;
+  kanbanEnabled?: boolean;
+}) {
+  const { order, reorder } = useSectionOrder(ALL_MODES);
+  const orderedModes = useMemo(() => order.map((key) => MODE_BY_KEY[key]), [order]);
+  return (
+    <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
+      <SectionRailButtons
+        mode={mode}
+        atHome={atHome}
+        onGoHome={onGoHome}
+        onOpenPalette={onOpenPalette}
+        onModeChange={onModeChange}
+        onNew={onNew}
+        unreadByMode={unreadByMode}
+        liveEnabled={liveEnabled}
+        kanbanEnabled={kanbanEnabled}
+        orderedModes={orderedModes}
+        onReorder={reorder}
+        showNew={false}
+        labelOnHover
+      />
+    </nav>
   );
 }
 
