@@ -10,6 +10,13 @@
  * popup blockers) at ``about:blank``, then navigated to the authorization URL
  * the backend surfaces over the ``/api/events`` SSE bus. The callback page can
  * then close that popup for real.
+ *
+ * A second, hands-free path re-authenticates with *zero* clicks: when the
+ * browser still holds a live Entra SSO session the backend's silent
+ * ``prompt=none`` pass completes without any UI, so we can drive its
+ * authorization URL through an **invisible iframe** instead of a popup — no
+ * gesture, no visible window. Only when a silent pass genuinely needs
+ * interaction (or framing/cookies block it) do we fall back to the popup flow.
  */
 
 import { api } from "./api";
@@ -18,26 +25,40 @@ import type { MCPServerStatus } from "./types";
 const POPUP_WIDTH = 520;
 const POPUP_HEIGHT = 680;
 
+// How long to leave the invisible iframe attached after the silent attempt
+// resolves, so a just-completed loopback redirect can finish loading before we
+// tear the frame down.
+const SILENT_FRAME_CLEANUP_MS = 1000;
+
 // The popup awaiting the authorization URL for the in-flight sign-in, if any.
 let pendingPopup: Window | null = null;
 // Set once we've navigated the popup, so a later failure doesn't close a window
 // that's mid-sign-in.
 let pendingNavigated = false;
+// The invisible iframe awaiting the authorization URL for an in-flight silent
+// (hands-free) re-auth, if any.
+let pendingFrame: HTMLIFrameElement | null = null;
 
 /**
- * Feed the authorization URL (delivered over SSE) to the waiting popup.
+ * Feed the authorization URL (delivered over SSE) to the waiting sign-in target.
  *
- * A no-op when this window has no pending popup — only the window that started
- * the sign-in opened one, even though the event is broadcast to all of them.
+ * A no-op when this window started neither a popup nor a silent frame — only the
+ * window that kicked off the sign-in has one, even though the event is broadcast
+ * to all of them. The popup (interactive) wins over the frame if somehow both
+ * exist.
  *
  * This may fire more than once for a single sign-in: the backend first tries a
  * silent ``prompt=none`` pass and, if Entra needs interaction, re-surfaces the
- * interactive URL — we simply re-navigate the same popup to whichever URL comes.
+ * interactive URL — we simply re-navigate the same target to whichever URL comes.
  */
 export function emitWorkiqAuthUrl(url: string): void {
   if (pendingPopup && !pendingPopup.closed) {
     pendingPopup.location.href = url;
     pendingNavigated = true;
+    return;
+  }
+  if (pendingFrame) {
+    pendingFrame.src = url;
   }
 }
 
@@ -83,5 +104,47 @@ export async function signInWorkiq(): Promise<MCPServerStatus> {
     throw err;
   } finally {
     if (pendingPopup === popup) pendingPopup = null;
+  }
+}
+
+function openSilentFrame(): HTMLIFrameElement {
+  const frame = document.createElement("iframe");
+  frame.title = "WorkIQ silent sign-in";
+  frame.setAttribute("aria-hidden", "true");
+  // Fully off-screen and inert so the silent Entra round-trip is invisible.
+  frame.style.cssText =
+    "position:fixed;width:0;height:0;border:0;left:-9999px;top:-9999px;visibility:hidden;";
+  document.body.appendChild(frame);
+  return frame;
+}
+
+/**
+ * Attempt the hands-free silent WorkIQ re-auth with no user gesture.
+ *
+ * Drives the backend's ``prompt=none`` pass through an invisible iframe: if the
+ * browser still holds a live Entra SSO session it completes with zero clicks and
+ * we resolve ``true`` (the caller can drop the sign-in banner). When a silent
+ * pass can't complete — Entra reports interaction is required, the auto re-auth
+ * setting is off, or framing/cookies block it — the backend answers with
+ * ``interaction_required`` and we resolve ``false`` so the caller keeps the
+ * manual banner. Never throws for an ordinary "needs a human" outcome.
+ *
+ * At most one silent attempt runs at a time (a second call is a no-op that
+ * resolves ``false``).
+ */
+export async function signInWorkiqSilent(): Promise<boolean> {
+  if (pendingFrame) return false;
+  const frame = openSilentFrame();
+  pendingFrame = frame;
+  try {
+    const status = await api.mcp.reauthenticateWorkiq({ silentOnly: true });
+    return status.interaction_required !== true;
+  } catch {
+    // Any failure (409 in-progress, transport, 502) just means "fall back to the
+    // manual banner" — never surface an error for a background attempt.
+    return false;
+  } finally {
+    if (pendingFrame === frame) pendingFrame = null;
+    window.setTimeout(() => frame.remove(), SILENT_FRAME_CLEANUP_MS);
   }
 }

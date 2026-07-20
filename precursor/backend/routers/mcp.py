@@ -281,6 +281,7 @@ async def set_workiq_preview_mode(
 @router.post("/servers/workiq/reauthenticate")
 async def reauthenticate_workiq_server(
     use_popup: bool = False,
+    silent_only: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Restart the WorkIQ OAuth sign-in on an explicit user action.
@@ -293,7 +294,15 @@ async def reauthenticate_workiq_server(
     ``use_popup`` is set by the SPA when it has already opened a script-openable
     popup for the sign-in: we then skip the OS-browser fallback and only surface
     the authorization URL over SSE for that popup to navigate to.
+
+    ``silent_only`` runs the hands-free auto re-auth (gated by
+    :attr:`Settings.workiq_auto_reauth_enabled`): it attempts only the invisible
+    ``prompt=none`` pass — the SPA drives the authorization URL through a hidden
+    iframe — and, when that can't complete silently, returns the server status
+    with ``interaction_required=true`` (leaving the warm worker parked in
+    ``needs_auth``) so the SPA falls back to the manual "Sign in" banner.
     """
+    from precursor.backend.config import get_settings
     from precursor.backend.services.mcp.workiq_preview import (
         WorkIQAuthInProgressError,
         build_oauth_provider,
@@ -310,20 +319,41 @@ async def reauthenticate_workiq_server(
             "Enable WorkIQ preview mode before signing in.",
         )
 
+    enabled = await _load_enabled(session)
+    is_enabled = enabled.get("workiq", False)
+
+    # Hands-free auto re-auth turned off → don't attempt a silent pass; report
+    # interaction required so the SPA shows the manual banner straight away.
+    if silent_only and not get_settings().workiq_auto_reauth_enabled:
+        entry = manager.get("workiq")
+        assert entry is not None
+        base = manager.status_dict(entry, enabled=is_enabled)
+        return {**_enrich_with_user_meta(base, None), "interaction_required": True}
+
     try:
-        await reauthenticate_workiq(open_system_browser=not use_popup)
+        if silent_only:
+            authenticated = await reauthenticate_workiq(silent_only=True)
+        else:
+            await reauthenticate_workiq(open_system_browser=not use_popup)
+            authenticated = True
     except WorkIQAuthInProgressError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"WorkIQ sign-in failed: {exc}") from exc
+
+    # A silent pass that needs a human: leave the warm worker parked in
+    # ``needs_auth`` and tell the SPA to surface the manual sign-in banner.
+    if not authenticated:
+        entry = manager.get("workiq")
+        assert entry is not None
+        base = manager.status_dict(entry, enabled=is_enabled)
+        return {**_enrich_with_user_meta(base, None), "interaction_required": True}
 
     # Swap in a fresh background (non-interactive) provider so it reads the newly
     # persisted tokens, drop the stale warm worker, then refresh the catalog.
     manager.configure_workiq_preview(True, auth_provider=build_oauth_provider())
     await manager.retire_worker("workiq")
 
-    enabled = await _load_enabled(session)
-    is_enabled = enabled.get("workiq", False)
     if is_enabled:
         await manager.probe("workiq", github_token=await resolve_github_token(session))
 

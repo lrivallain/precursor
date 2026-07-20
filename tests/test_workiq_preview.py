@@ -341,6 +341,59 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
     assert events == ["clear", "interactive"]
 
 
+async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
+    """The hands-free silent pass returns its outcome and never prompts."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    events: list[str] = []
+
+    async def _noop_clear() -> None:
+        events.append("clear")
+
+    async def _hint() -> str | None:
+        return "u@contoso.com"
+
+    async def _run_signin(_provider) -> None:  # pragma: no cover - must never run
+        events.append("interactive")
+
+    monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
+    monkeypatch.setattr(wp, "get_workiq_login_hint", _hint)
+    monkeypatch.setattr(wp, "_run_signin", _run_signin)
+
+    # Silent success → authenticated, no OS browser, no interactive fallback.
+    async def _silent_ok(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+        events.append(f"silent(browser={open_system_browser},timeout={callback_timeout})")
+        return True
+
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_ok)
+    events.clear()
+    assert await wp.reauthenticate_workiq(silent_only=True) is True
+    assert events == [
+        "clear",
+        f"silent(browser=False,timeout={wp._SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS})",
+    ]
+
+    # Silent needs interaction → False, and the interactive prompt never runs.
+    async def _silent_needs_ui(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+        events.append("silent")
+        return False
+
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_needs_ui)
+    events.clear()
+    assert await wp.reauthenticate_workiq(silent_only=True) is False
+    assert events == ["clear", "silent"]
+
+    # Any failure (timeout / framing blocked) is swallowed as "needs a human".
+    async def _silent_boom(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+        events.append("silent")
+        raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")
+
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_boom)
+    events.clear()
+    assert await wp.reauthenticate_workiq(silent_only=True) is False
+    assert events == ["clear", "silent"]
+
+
 def test_callback_page_pending_status_is_neutral() -> None:
     """The interaction-required loopback page is calm and doesn't auto-close."""
     from precursor.backend.services.mcp import workiq_preview as wp
@@ -384,3 +437,72 @@ def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:
         resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
         assert resp.status_code == 200
         assert calls == [True, False]
+
+
+def test_reauthenticate_silent_only_success(monkeypatch) -> None:
+    """A hands-free silent pass that authenticates returns a normal status."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    calls: list[dict] = []
+
+    async def _fake_flow(*, open_system_browser: bool = True, silent_only: bool = False) -> bool:
+        calls.append({"open_system_browser": open_system_browser, "silent_only": silent_only})
+        return True
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?silent_only=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["preview"] is True
+        assert body.get("interaction_required") is not True
+        # The endpoint drives the silent-only flow (which itself never opens an
+        # OS browser tab); it doesn't pass open_system_browser through.
+        assert len(calls) == 1
+        assert calls[0]["silent_only"] is True
+
+
+def test_reauthenticate_silent_only_needs_interaction(monkeypatch) -> None:
+    """When the silent pass can't complete, the endpoint flags interaction_required."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _fake_flow(*, open_system_browser: bool = True, silent_only: bool = False) -> bool:
+        return False
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?silent_only=true")
+        assert resp.status_code == 200
+        assert resp.json()["interaction_required"] is True
+
+
+def test_reauthenticate_silent_only_disabled_skips_flow(monkeypatch) -> None:
+    """With auto re-auth off the endpoint reports interaction_required without a flow."""
+    from precursor.backend import config as cfg
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    disabled = cfg.get_settings().model_copy(update={"workiq_auto_reauth_enabled": False})
+    monkeypatch.setattr(cfg, "get_settings", lambda: disabled)
+
+    called = False
+
+    async def _fake_flow(*, open_system_browser: bool = True, silent_only: bool = False) -> bool:
+        nonlocal called
+        called = True  # pragma: no cover - must never run
+        return True
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?silent_only=true")
+        assert resp.status_code == 200
+        assert resp.json()["interaction_required"] is True
+        assert called is False

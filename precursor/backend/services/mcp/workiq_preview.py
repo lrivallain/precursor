@@ -138,6 +138,13 @@ _INTERACTION_REQUIRED_ERRORS = frozenset(
 
 _CALLBACK_TIMEOUT_SECONDS = 300.0
 
+# The hands-free silent (``prompt=none``) auto re-auth runs in an invisible SPA
+# iframe with nobody watching, so it must not hold the loopback open for the full
+# interactive window. A live Entra SSO session redirects the frame back near
+# instantly; if framing or third-party cookies block it we want to give up fast
+# and let the visible banner take over. Keep this comfortably short.
+_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS = 20.0
+
 # Serializes interactive sign-ins so two triggers can't open competing browser
 # flows fighting over the single loopback redirect port.
 _reauth_lock = asyncio.Lock()
@@ -522,90 +529,103 @@ _CALLBACK_ICONS = {
 }
 
 
-async def _callback_handler() -> tuple[str, str | None]:
-    """Run a one-shot loopback server and return ``(auth_code, state)``.
+def _make_callback_handler(
+    timeout: float = _CALLBACK_TIMEOUT_SECONDS,
+) -> Callable[[], Awaitable[tuple[str, str | None]]]:
+    """Build the SDK ``callback_handler`` bound to a specific wait ``timeout``.
 
-    Listens on ``127.0.0.1:WORKIQ_OAUTH_REDIRECT_PORT`` for the single OAuth
-    redirect, parses ``code``/``state`` off the query string, replies with a
-    styled success page that auto-closes the tab, and resolves.
+    The silent auto re-auth uses a much shorter timeout than the interactive
+    flow (see :data:`_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS`) so a frame that
+    can't complete silently falls back to the visible prompt quickly instead of
+    parking the loopback for minutes.
     """
-    loop = asyncio.get_running_loop()
-    result: asyncio.Future[tuple[str, str | None]] = loop.create_future()
 
-    async def _on_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        try:
-            request_line = await reader.readline()
-            target = ""
-            parts = request_line.decode("latin-1").split(" ")
-            if len(parts) >= 2:
-                target = parts[1]
-            query = parse_qs(urlsplit(target).query)
-            code = query.get("code", [""])[0]
-            state = query.get("state", [None])[0]
-            error = query.get("error", [None])[0]
-            interaction_required = error in _INTERACTION_REQUIRED_ERRORS
+    async def _callback_handler() -> tuple[str, str | None]:
+        """Run a one-shot loopback server and return ``(auth_code, state)``.
 
-            if interaction_required:
-                # A silent ``prompt=none`` pass Precursor will retry with a
-                # visible prompt — show a calm "one moment" page, not a failure.
-                body = _render_callback_page(
-                    status="pending",
-                    title="Finishing sign-in…",
-                    message="Completing your WorkIQ sign-in — one moment.",
-                )
-            elif error:
-                body = _render_callback_page(
-                    status="error",
-                    title="Sign-in failed",
-                    message=f"WorkIQ couldn't complete the sign-in ({error}).",
-                )
-            elif code:
-                body = _render_callback_page(
-                    status="success",
-                    title="You're connected",
-                    message="WorkIQ sign-in is complete.",
-                )
-            else:
-                body = _render_callback_page(
-                    status="error",
-                    title="Sign-in incomplete",
-                    message="No authorization code was received from WorkIQ.",
-                )
+        Listens on ``127.0.0.1:WORKIQ_OAUTH_REDIRECT_PORT`` for the single OAuth
+        redirect, parses ``code``/``state`` off the query string, replies with a
+        styled success page that auto-closes the tab, and resolves.
+        """
+        loop = asyncio.get_running_loop()
+        result: asyncio.Future[tuple[str, str | None]] = loop.create_future()
 
-            payload = (
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/html; charset=utf-8\r\n"
-                f"Content-Length: {len(body.encode('utf-8'))}\r\n"
-                "Connection: close\r\n\r\n"
-                f"{body}"
-            )
-            writer.write(payload.encode("utf-8"))
-            await writer.drain()
+        async def _on_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                request_line = await reader.readline()
+                target = ""
+                parts = request_line.decode("latin-1").split(" ")
+                if len(parts) >= 2:
+                    target = parts[1]
+                query = parse_qs(urlsplit(target).query)
+                code = query.get("code", [""])[0]
+                state = query.get("state", [None])[0]
+                error = query.get("error", [None])[0]
+                interaction_required = error in _INTERACTION_REQUIRED_ERRORS
 
-            if not result.done():
-                if code:
-                    result.set_result((code, state))
-                elif interaction_required:
-                    result.set_exception(WorkIQInteractionRequiredError(error))
-                else:
-                    result.set_exception(
-                        RuntimeError(error or "No authorization code in OAuth callback")
+                if interaction_required:
+                    # A silent ``prompt=none`` pass Precursor will retry with a
+                    # visible prompt — show a calm "one moment" page, not a failure.
+                    body = _render_callback_page(
+                        status="pending",
+                        title="Finishing sign-in…",
+                        message="Completing your WorkIQ sign-in — one moment.",
                     )
-        except Exception as exc:  # pragma: no cover - defensive
-            if not result.done():
-                result.set_exception(exc)
-        finally:
-            with contextlib.suppress(Exception):
-                writer.close()
+                elif error:
+                    body = _render_callback_page(
+                        status="error",
+                        title="Sign-in failed",
+                        message=f"WorkIQ couldn't complete the sign-in ({error}).",
+                    )
+                elif code:
+                    body = _render_callback_page(
+                        status="success",
+                        title="You're connected",
+                        message="WorkIQ sign-in is complete.",
+                    )
+                else:
+                    body = _render_callback_page(
+                        status="error",
+                        title="Sign-in incomplete",
+                        message="No authorization code was received from WorkIQ.",
+                    )
 
-    server = await asyncio.start_server(
-        _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
-    )
-    try:
-        async with server:
-            return await asyncio.wait_for(result, timeout=_CALLBACK_TIMEOUT_SECONDS)
-    except TimeoutError as exc:
-        raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
+                payload = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html; charset=utf-8\r\n"
+                    f"Content-Length: {len(body.encode('utf-8'))}\r\n"
+                    "Connection: close\r\n\r\n"
+                    f"{body}"
+                )
+                writer.write(payload.encode("utf-8"))
+                await writer.drain()
+
+                if not result.done():
+                    if code:
+                        result.set_result((code, state))
+                    elif interaction_required:
+                        result.set_exception(WorkIQInteractionRequiredError(error))
+                    else:
+                        result.set_exception(
+                            RuntimeError(error or "No authorization code in OAuth callback")
+                        )
+            except Exception as exc:  # pragma: no cover - defensive
+                if not result.done():
+                    result.set_exception(exc)
+            finally:
+                with contextlib.suppress(Exception):
+                    writer.close()
+
+            server = await asyncio.start_server(
+                _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
+            )
+            try:
+                async with server:
+                    return await asyncio.wait_for(result, timeout=timeout)
+            except TimeoutError as exc:
+                raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
+
+    return _callback_handler
 
 
 def build_oauth_provider(
@@ -614,6 +634,7 @@ def build_oauth_provider(
     open_system_browser: bool = True,
     login_hint: str | None = None,
     prompt: str | None = None,
+    callback_timeout: float | None = None,
 ) -> OAuthClientProvider:
     """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
 
@@ -626,6 +647,8 @@ def build_oauth_provider(
     OS-browser fallback; the SPA turns it off when it drives its own popup.
     ``login_hint`` pre-selects the Entra account and ``prompt`` (e.g. ``"none"``
     for the silent pass) is forwarded onto the authorization request.
+    ``callback_timeout`` caps how long the loopback waits for the redirect —
+    short for the hands-free silent auto re-auth, long for interactive.
     """
     client_metadata = OAuthClientMetadata(
         redirect_uris=[WORKIQ_OAUTH_REDIRECT_URI],
@@ -644,7 +667,9 @@ def build_oauth_provider(
             login_hint=login_hint,
             prompt=prompt,
         ),
-        callback_handler=_callback_handler,
+        callback_handler=_make_callback_handler(
+            callback_timeout if callback_timeout is not None else _CALLBACK_TIMEOUT_SECONDS
+        ),
     )
 
 
@@ -703,19 +728,27 @@ async def _run_signin(provider: OAuthClientProvider) -> None:
         await session.initialize()
 
 
-async def _try_silent_reauth(*, login_hint: str | None, open_system_browser: bool) -> bool:
+async def _try_silent_reauth(
+    *,
+    login_hint: str | None,
+    open_system_browser: bool,
+    callback_timeout: float | None = None,
+) -> bool:
     """Attempt a no-UI (``prompt=none``) authorization.
 
     Returns ``True`` when it completed without a visible prompt (the browser
     still held a live Entra SSO session), or ``False`` when Entra reported that
     interaction is required so the caller should fall back to the visible prompt.
-    Any other failure propagates.
+    Any other failure propagates. ``callback_timeout`` bounds the loopback wait —
+    the hands-free auto re-auth passes a short one so a frame that can't complete
+    silently gives up quickly.
     """
     provider = build_oauth_provider(
         interactive=True,
         open_system_browser=open_system_browser,
         login_hint=login_hint,
         prompt="none",
+        callback_timeout=callback_timeout,
     )
     try:
         await _run_signin(provider)
@@ -732,7 +765,9 @@ async def _try_silent_reauth(*, login_hint: str | None, open_system_browser: boo
     return True
 
 
-async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
+async def reauthenticate_workiq(
+    *, open_system_browser: bool = True, silent_only: bool = False
+) -> bool:
     """Run the browser OAuth flow and persist fresh WorkIQ tokens.
 
     Forgets any stored tokens, then drives a throwaway hosted session to obtain
@@ -748,6 +783,13 @@ async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
     off once it has opened its own script-openable popup (so we don't double up
     with a stray tab), on when it couldn't (popup blocked / no live window).
 
+    ``silent_only`` runs the hands-free auto re-auth: it attempts *only* the
+    no-UI ``prompt=none`` pass (on a short timeout, never opening an OS browser)
+    and never falls back to a visible prompt — the SPA drives the authorization
+    URL through an invisible iframe. Returns ``True`` when the session is now
+    authenticated, ``False`` when a silent pass couldn't complete and the caller
+    should surface the manual sign-in banner instead.
+
     Raises :class:`WorkIQAuthInProgressError` if a sign-in is already running.
     """
     if _reauth_lock.locked():
@@ -759,10 +801,25 @@ async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
         # login_hint still lets the user pick another account in the prompt).
         await clear_workiq_oauth_tokens()
 
+        if silent_only:
+            # Hands-free: only the no-UI pass, on a short timeout, with no OS
+            # browser fallback (the SPA drives an invisible iframe). Any failure
+            # — interaction required, framing/cookies blocked, or timeout — just
+            # means "fall back to the manual banner", never a hard error.
+            try:
+                return await _try_silent_reauth(
+                    login_hint=login_hint,
+                    open_system_browser=False,
+                    callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                logger.info("WorkIQ silent auto re-auth could not complete: %s", exc)
+                return False
+
         if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
             login_hint=login_hint, open_system_browser=open_system_browser
         ):
-            return
+            return True
 
         provider = build_oauth_provider(
             interactive=True,
@@ -770,3 +827,4 @@ async def reauthenticate_workiq(*, open_system_browser: bool = True) -> None:
             login_hint=login_hint,
         )
         await _run_signin(provider)
+        return True
