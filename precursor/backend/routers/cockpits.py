@@ -170,6 +170,8 @@ async def create_cockpit(
         port=0 if is_url else payload.port,
         env=None if is_url else payload.env,
         url=(payload.url or "").strip() if is_url else None,
+        # Only command cockpits have a process to autostart.
+        autostart=False if is_url else payload.autostart,
     )
     session.add(cockpit)
     await session.commit()
@@ -204,6 +206,9 @@ async def update_cockpit(
         cockpit.env = data["env"]
     if "url" in data:
         cockpit.url = (data["url"] or "").strip() or None
+    if "autostart" in data and data["autostart"] is not None:
+        # Autostart only applies to command cockpits.
+        cockpit.autostart = bool(data["autostart"]) and cockpit.kind == "command"
     await session.commit()
     await session.refresh(cockpit)
     return _to_read(cockpit)

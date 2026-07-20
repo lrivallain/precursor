@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import signal
@@ -336,3 +337,59 @@ def get_cockpit_manager() -> CockpitManager:
     if _manager is None:
         _manager = CockpitManager()
     return _manager
+
+
+async def autostart_cockpits() -> int:
+    """Start every command cockpit flagged ``autostart`` on app startup.
+
+    Best-effort and intentionally low priority: called last in the lifespan so a
+    slow-booting cockpit can't delay the rest of startup (``start`` spawns and
+    schedules readiness polling in the background, so it returns quickly). Gated
+    on ``cockpits_enabled`` + a loopback bind, mirroring the router. Returns the
+    number of cockpits started.
+    """
+    from sqlalchemy import select
+
+    from precursor.backend.config import get_settings
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Cockpit
+    from precursor.backend.services.mcp.precursor_server import is_loopback_host
+
+    cfg = get_settings()
+    if not cfg.cockpits_enabled or not is_loopback_host(cfg.host):
+        return 0
+
+    manager = get_cockpit_manager()
+    started = 0
+    async with SessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Cockpit).where(Cockpit.autostart.is_(True), Cockpit.kind == "command")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Read everything we need while the session is open.
+        specs = [(c.id, c.command, c.port, c.cwd, _parse_env(c.env)) for c in rows]
+
+    for cockpit_id, command, port, cwd, env in specs:
+        try:
+            await manager.start(cockpit_id=cockpit_id, command=command, port=port, cwd=cwd, env=env)
+            started += 1
+        except Exception:  # pragma: no cover - best-effort, never blocks startup
+            logger.warning("Autostart failed for cockpit %s", cockpit_id, exc_info=True)
+    if started:
+        logger.info("Autostarted %d cockpit(s)", started)
+    return started
+
+
+def _parse_env(env: str | None) -> dict[str, str]:
+    if not env:
+        return {}
+    try:
+        parsed = json.loads(env)
+    except json.JSONDecodeError:
+        return {}
+    return {str(k): str(v) for k, v in parsed.items()} if isinstance(parsed, dict) else {}

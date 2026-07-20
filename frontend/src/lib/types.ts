@@ -833,6 +833,7 @@ export interface Cockpit {
   port: number | null;
   env: string | null;
   url: string | null;
+  autostart: boolean;
   created_at: string;
   updated_at: string;
   status: CockpitStatus;
@@ -847,6 +848,7 @@ export interface CockpitCreate {
   cwd?: string | null;
   env?: string | null;
   url?: string | null;
+  autostart?: boolean;
   slug?: string | null;
 }
 
@@ -859,6 +861,7 @@ export interface CockpitUpdate {
   cwd?: string | null;
   env?: string | null;
   url?: string | null;
+  autostart?: boolean;
 }
 
 

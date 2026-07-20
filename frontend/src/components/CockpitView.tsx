@@ -256,6 +256,12 @@ export function CockpitView({
               <span>{STATE_LABEL[status.state]}</span>
               <span className="opacity-50">·</span>
               <span className="font-mono">:{cockpit.port}</span>
+              {cockpit.autostart && (
+                <>
+                  <span className="opacity-50">·</span>
+                  <span title="Starts automatically on app startup">autostart</span>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -522,6 +528,7 @@ export function CockpitFormModal({
   const [url, setUrl] = useState(cockpit?.url ?? "");
   const [description, setDescription] = useState(cockpit?.description ?? "");
   const [env, setEnv] = useState(envJsonToLines(cockpit?.env ?? null));
+  const [autostart, setAutostart] = useState(cockpit?.autostart ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -553,6 +560,7 @@ export function CockpitFormModal({
             cwd: cwd.trim() || null,
             description: description.trim() || null,
             env: envLinesToJson(env),
+            autostart,
           };
       const saved = isEdit
         ? await api.cockpits.update(cockpit.id, payload)
@@ -692,6 +700,23 @@ export function CockpitFormModal({
               onChange={(e) => setEnv(e.target.value)}
               placeholder={"NODE_ENV=development\nAPI_URL=http://localhost:3000"}
             />
+          </label>
+        )}
+
+        {!isUrl && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-accent"
+              checked={autostart}
+              onChange={(e) => setAutostart(e.target.checked)}
+            />
+            <span>
+              Start automatically on app startup
+              <span className="block text-xs text-muted">
+                Launched last in the startup order, best-effort.
+              </span>
+            </span>
           </label>
         )}
 

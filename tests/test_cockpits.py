@@ -298,3 +298,86 @@ async def test_manager_start_is_idempotent() -> None:
     second = await mgr.start(cockpit_id=3, command="echo other", port=port)
     assert second.pid == first_pid
     await mgr.stop_all()
+
+
+# --------------------------------------------------------------------------
+# Autostart
+# --------------------------------------------------------------------------
+
+
+def test_autostart_flag_persists_for_command_cockpits() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/cockpits",
+            json={"name": "Auto", "command": "echo", "port": 7001, "autostart": True},
+        ).json()
+        assert created["autostart"] is True
+        # Toggle it off via PATCH.
+        patched = client.patch(f"/api/cockpits/{created['id']}", json={"autostart": False}).json()
+        assert patched["autostart"] is False
+
+
+def test_autostart_ignored_for_url_cockpits() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        # Even if requested, a url cockpit never autostarts (no process).
+        created = client.post(
+            "/api/cockpits",
+            json={
+                "name": "URL",
+                "kind": "url",
+                "url": "https://example.com",
+                "autostart": True,
+            },
+        ).json()
+        assert created["autostart"] is False
+
+
+async def test_autostart_cockpits_starts_flagged_command_cockpits() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Cockpit
+    from precursor.backend.services.cockpits import autostart_cockpits, get_cockpit_manager
+
+    port = _free_port()
+    prog = (
+        "import socket,time;"
+        "s=socket.socket();"
+        f"s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);"
+        f"s.bind(('127.0.0.1',{port}));"
+        "s.listen();"
+        "time.sleep(30)"
+    )
+    # Seed one autostart command cockpit, one non-autostart, one autostart url.
+    async with SessionLocal() as session:
+        auto = Cockpit(
+            name="Auto",
+            slug="auto-seed",
+            kind="command",
+            command=f'{sys.executable} -c "{prog}"',
+            port=port,
+            autostart=True,
+        )
+        off = Cockpit(
+            name="Off",
+            slug="off-seed",
+            kind="command",
+            command="echo nope",
+            port=_free_port(),
+            autostart=False,
+        )
+        session.add_all([auto, off])
+        await session.commit()
+        await session.refresh(auto)
+        await session.refresh(off)
+        auto_id, off_id = auto.id, off.id
+
+    mgr = get_cockpit_manager()
+    try:
+        started = await autostart_cockpits()
+        assert started == 1
+        assert await _wait_manager(mgr, auto_id, "running") == "running"
+        # The non-autostart cockpit was never spawned.
+        assert mgr.get_status(off_id).state == "stopped"
+    finally:
+        await mgr.stop_all()

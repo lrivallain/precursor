@@ -14,7 +14,7 @@ Only the *definition* is persisted here. For command cockpits, runtime state
 
 from __future__ import annotations
 
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -50,3 +50,9 @@ class Cockpit(Base, TimestampMixin):
     env: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The URL embedded directly for ``url`` cockpits. Null for ``command`` ones.
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When true, a ``command`` cockpit is (re)started automatically on app
+    # startup — best-effort and last in the startup order. Ignored for ``url``
+    # cockpits (they have no process).
+    autostart: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )

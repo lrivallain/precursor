@@ -69,6 +69,8 @@ class CockpitCreate(BaseModel):
     env: str | None = Field(default=None, max_length=MAX_ENV_LEN)
     # URL cockpits:
     url: str | None = Field(default=None, max_length=MAX_URL_LEN)
+    # Restart this command cockpit automatically on app startup.
+    autostart: bool = False
     # Optional explicit slug; derived from the name when omitted.
     slug: str | None = Field(default=None, min_length=1, max_length=64)
 
@@ -113,6 +115,7 @@ class CockpitUpdate(BaseModel):
     cwd: str | None = None
     env: str | None = Field(default=None, max_length=MAX_ENV_LEN)
     url: str | None = Field(default=None, max_length=MAX_URL_LEN)
+    autostart: bool | None = None
 
     @field_validator("env")
     @classmethod
@@ -152,6 +155,7 @@ class CockpitRead(BaseModel):
     port: int | None = None
     env: str | None = None
     url: str | None = None
+    autostart: bool = False
     created_at: datetime
     updated_at: datetime
     status: CockpitStatus = Field(default_factory=CockpitStatus)

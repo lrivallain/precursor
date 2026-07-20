@@ -118,6 +118,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     agent_manager = get_agent_manager()
     await agent_manager.start()
+    # Low priority: last startup step. Autostart flagged cockpits best-effort so
+    # a slow-booting local web app never delays the rest of startup.
+    from precursor.backend.services.cockpits import autostart_cockpits
+
+    try:
+        await autostart_cockpits()
+    except Exception:  # pragma: no cover - best-effort, never blocks startup
+        logger.warning("Cockpit autostart sweep failed", exc_info=True)
     try:
         # The mounted streamable-HTTP MCP app needs its session manager's task group
         # running for the lifetime of the server (the mount itself doesn't start it).
