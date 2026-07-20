@@ -63,6 +63,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ OAuth callback never returned the auth code**: the loopback
+  callback's `asyncio.start_server` block was mis-indented inside the
+  per-connection handler, so `_callback_handler` fell off the end and returned
+  `None`. The SDK's `auth_code, state = await callback_handler()` unpack then
+  crashed with `TypeError: cannot unpack non-iterable NoneType object`,
+  breaking every interactive and silent WorkIQ sign-in. The server now binds
+  and awaits the redirect in the handler body as intended.
+
 - **WorkIQ sign-in 502 hid the real error behind anyio's task-group wrapper**:
   a failed interactive re-auth reached the SPA as
   `WorkIQ sign-in failed: unhandled errors in a TaskGroup (1 sub-exception)` —
