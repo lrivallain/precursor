@@ -63,6 +63,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ sign-in 502 hid the real error behind anyio's task-group wrapper**:
+  a failed interactive re-auth reached the SPA as
+  `WorkIQ sign-in failed: unhandled errors in a TaskGroup (1 sub-exception)` —
+  the MCP SDK's streamable-http transport raises inside a task group, so the
+  actual cause (a sign-in timeout, a transport blip, a missing authorization
+  code) was buried in a `BaseExceptionGroup`. The `/api/mcp/servers/workiq/reauthenticate`
+  endpoint now unwraps the group (and the `__cause__`/`__context__` chain) to its
+  leaf exception(s), so the 502 detail names the real reason.
+
 - **In-app docs (`/docs/`) were silently unavailable in `precursor --dev`**:
   the live VitePress docs server only starts when `website/node_modules` is
   present, and a fresh checkout that ran `precursor --dev` without `make sync`

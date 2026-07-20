@@ -20,6 +20,7 @@ import time
 from precursor.backend.services.mcp.client import (
     MCPClientManager,
     MCPServerEntry,
+    _describe_exception,
     _find_in_exception,
 )
 from precursor.backend.services.mcp.workiq_preview import (
@@ -63,6 +64,50 @@ def test_find_in_exception_handles_cycles() -> None:
     err = RuntimeError("a")
     err.__context__ = err  # self-referential chain must not loop forever
     assert _find_in_exception(err, WorkIQAuthRequiredError) is None
+
+
+def test_describe_exception_unwraps_task_group() -> None:
+    # The reported symptom: a real error hidden behind anyio's group wrapper,
+    # whose own ``str()`` is the useless "unhandled errors in a TaskGroup".
+    group = BaseExceptionGroup(
+        "unhandled errors in a TaskGroup (1 sub-exception)",
+        [RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")],
+    )
+    assert (
+        _describe_exception(group)
+        == "Timed out waiting for the WorkIQ sign-in to complete."
+    )
+
+
+def test_describe_exception_joins_multiple_leaves() -> None:
+    group = BaseExceptionGroup(
+        "grp", [RuntimeError("first failure"), ValueError("second failure")]
+    )
+    assert _describe_exception(group) == "first failure; second failure"
+
+
+def test_describe_exception_follows_cause_chain() -> None:
+    inner = BaseExceptionGroup("inner", [RuntimeError("sign-in loopback closed")])
+    try:
+        try:
+            raise inner
+        except BaseException as ie:
+            raise RuntimeError("transport closed") from ie
+    except BaseException as chained:
+        outer = BaseExceptionGroup("outer", [chained])
+    assert _describe_exception(outer) == "transport closed; sign-in loopback closed"
+
+
+def test_describe_exception_bare_and_empty_message() -> None:
+    assert _describe_exception(RuntimeError("boom")) == "boom"
+    # A message-less exception degrades to its type name, never a blank string.
+    assert _describe_exception(ValueError()) == "ValueError"
+
+
+def test_describe_exception_handles_cycles() -> None:
+    err = RuntimeError("looping")
+    err.__context__ = err  # must not loop forever
+    assert _describe_exception(err) == "looping"
 
 
 def _entry(name: str, state: str) -> MCPServerEntry:

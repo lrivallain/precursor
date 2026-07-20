@@ -71,6 +71,41 @@ def _find_in_exception(exc: BaseException, exc_type: type[BaseException]) -> Bas
     return _walk(exc)
 
 
+def _describe_exception(exc: BaseException) -> str:
+    """Return a concise, human-readable summary of ``exc``.
+
+    The MCP SDK's streamable-http transport runs inside an anyio task group, so
+    a failed connect/sign-in surfaces as a ``BaseExceptionGroup`` whose ``str()``
+    is the opaque "unhandled errors in a TaskGroup (N sub-exceptions)". Flatten
+    the group into its leaf exceptions (following the ``__cause__``/``__context__``
+    chain) and join their messages so callers can surface the real reason instead
+    of the useless wrapper.
+    """
+    seen: set[int] = set()
+    leaves: list[str] = []
+
+    def _leaf_text(node: BaseException) -> str:
+        message = str(node).strip()
+        return message or type(node).__name__
+
+    def _walk(node: BaseException | None) -> None:
+        if node is None or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, BaseExceptionGroup):
+            for sub in node.exceptions:
+                _walk(sub)
+            return
+        text = _leaf_text(node)
+        if text not in leaves:
+            leaves.append(text)
+        for chained in (node.__cause__, node.__context__):
+            _walk(chained)
+
+    _walk(exc)
+    return "; ".join(leaves) if leaves else _leaf_text(exc)
+
+
 ConnectionState = Literal[
     "disconnected",
     "connecting",
