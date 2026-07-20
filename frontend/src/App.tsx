@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Sidebar, type SidebarMode } from "./components/Sidebar";
+import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
 import { GithubIcon as Github } from "./components/icons/GithubIcon";
 import { CommandPalette } from "./components/CommandPalette";
 import { ChatPanel } from "./components/ChatPanel";
@@ -55,6 +55,7 @@ import { rolesStore } from "./lib/rolesStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
+import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import type {
   AgentSession,
   Chat,
@@ -392,6 +393,9 @@ export default function App() {
     "settings",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Vertical-nav choice, shared with the sidebar. Drives whether the home
+  // launcher also shows the standalone rail ("tabs" has no standalone form).
+  const [navStyle] = useSidebarNavStyle();
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The parent topic preselected in the inline "new topic" form (set by the
   // sidebar "+" and the tree's per-node "+ child"). `null` means top level.
@@ -1777,6 +1781,19 @@ export default function App() {
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
           initialQuery={atHome ? "" : searchHighlight.trim()}
+        />
+      )}
+      {atHome && navStyle === "rail" && (
+        <SectionRail
+          mode={sidebarMode}
+          atHome
+          onGoHome={goHome}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onModeChange={changeMode}
+          onNew={handleNew}
+          unreadByMode={unreadByMode}
+          liveEnabled={liveEnabled}
+          kanbanEnabled={kanbanEnabled}
         />
       )}
       {!atHome && (
