@@ -70,6 +70,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `0.0.1.dev…`) instead of the installed/tagged one. It now resolves the
   `precursor-ai` distribution.
 
+- **Deprecated `uuid@9` warning on frontend install**: the Azure Speech SDK
+  (`microsoft-cognitiveservices-speech-sdk`) pins `uuid@^9.0.0`, which npm flags
+  as no-longer-supported. A frontend `overrides` entry now forces `uuid@^14`
+  (the version already resolved for the rest of the tree via mermaid), so the
+  install is deprecation-free and dedupes to a single `uuid`. The SDK only uses
+  `uuid.v4()`, which is unchanged across these majors.
+
 ## [2026.7.0] - 2026-07-19
 
 ### Added
