@@ -616,14 +616,14 @@ def _make_callback_handler(
                 with contextlib.suppress(Exception):
                     writer.close()
 
-            server = await asyncio.start_server(
-                _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
-            )
-            try:
-                async with server:
-                    return await asyncio.wait_for(result, timeout=timeout)
-            except TimeoutError as exc:
-                raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
+        server = await asyncio.start_server(
+            _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
+        )
+        try:
+            async with server:
+                return await asyncio.wait_for(result, timeout=timeout)
+        except TimeoutError as exc:
+            raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
 
     return _callback_handler
 

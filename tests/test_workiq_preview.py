@@ -102,6 +102,42 @@ async def test_interactive_handler_skips_browser_when_popup_drives(monkeypatch) 
     assert published == [("workiq", "https://login.example/authorize?x=1")]
 
 
+async def test_callback_handler_returns_code_and_state() -> None:
+    """The loopback callback must resolve ``(code, state)`` — not ``None``.
+
+    Regression: the ``asyncio.start_server`` block was mis-indented inside the
+    per-connection handler, so ``_callback_handler`` fell off the end and
+    returned ``None``, breaking the SDK's ``auth_code, state = await
+    callback_handler()`` unpack with a ``TypeError``.
+    """
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    handler = wp._make_callback_handler(timeout=5.0)
+    waiter = asyncio.ensure_future(handler())
+    await asyncio.sleep(0.1)  # let the loopback server bind
+
+    try:
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT
+        )
+        writer.write(
+            b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        )
+        await writer.drain()
+        await reader.read()  # drain the success page so the server closes cleanly
+        writer.close()
+
+        code, state = await asyncio.wait_for(waiter, timeout=5.0)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+
+    assert code == "abc123"
+    assert state == "xyz"
+
+
 async def test_reauthenticate_single_flight() -> None:
     """A second sign-in while one is running is rejected, not queued."""
     from precursor.backend.services.mcp import workiq_preview as wp
