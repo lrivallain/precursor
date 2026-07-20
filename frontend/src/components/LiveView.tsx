@@ -3,6 +3,7 @@ import {
   Archive,
   CircleHelp,
   Lightbulb,
+  Loader2,
   Mic,
   Radio,
   RefreshCw,
@@ -383,6 +384,20 @@ export function LiveView({
     onReconnect: handleReconnect,
   });
   const recording = transcriber.listening;
+  const starting = transcriber.starting;
+
+  // While recording, guard against a full page unload (reload, tab/window close,
+  // or app quit) silently dropping the capture. The browser shows its native
+  // "leave site?" prompt; in-app navigation is guarded separately in App.
+  useEffect(() => {
+    if (!recording) return;
+    function onBeforeUnload(e: BeforeUnloadEvent): void {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [recording]);
 
   // Report recording state to the sidebar (red dot) + clear on unmount.
   useEffect(() => {
@@ -1111,6 +1126,14 @@ export function LiveView({
             className="inline-flex items-center gap-1.5 rounded bg-red-600 px-2.5 py-1.5 text-sm text-white hover:bg-red-500"
           >
             <Square size={14} /> Stop
+          </button>
+        ) : starting ? (
+          <button
+            type="button"
+            disabled
+            className="inline-flex cursor-wait items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1.5 text-sm font-medium text-black"
+          >
+            <Loader2 size={14} className="animate-spin" /> Starting…
           </button>
         ) : (
           <button

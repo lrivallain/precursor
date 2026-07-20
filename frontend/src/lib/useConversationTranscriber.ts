@@ -40,6 +40,13 @@ interface Options {
 interface Result {
   supported: boolean;
   listening: boolean;
+  /**
+   * True from the moment start() is called until the session is live (or the
+   * attempt fails). Connecting takes a couple of seconds — token fetch, lazy SDK
+   * import, and device acquisition — so callers can show a transient "Starting…"
+   * state instead of an unresponsive-looking button.
+   */
+  starting: boolean;
   error: string | null;
   start: () => void;
   stop: () => void;
@@ -103,6 +110,7 @@ export function useConversationTranscriber({
   onReconnect,
 }: Options): Result {
   const [listening, setListening] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const transcriberRef = useRef<ConversationTranscriber | null>(null);
@@ -358,6 +366,7 @@ export function useConversationTranscriber({
   const start = useCallback(() => {
     if (!enabled || transcriberRef.current || startingRef.current || reconnectingRef.current) return;
     startingRef.current = true;
+    setStarting(true);
     setError(null);
     userStoppedRef.current = false;
     reconnectingRef.current = false;
@@ -371,12 +380,14 @@ export function useConversationTranscriber({
       })
       .finally(() => {
         // Latch released once transcriberRef is set (guarding further starts) or
-        // teardown cleared it after a failure, freeing a retry.
+        // teardown cleared it after a failure, freeing a retry. Either way the
+        // transient "starting" phase is over — we're now live or back to idle.
         startingRef.current = false;
+        setStarting(false);
       });
   }, [enabled, startSession, teardown]);
 
   const stop = useCallback(() => teardown(), [teardown]);
 
-  return { supported: enabled, listening, error, start, stop };
+  return { supported: enabled, listening, starting, error, start, stop };
 }
