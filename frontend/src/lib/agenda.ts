@@ -39,10 +39,14 @@ export interface PartitionedMeetings {
   upcoming: AgendaEvent[];
 }
 
-/** Split an agenda into past vs current/future, each sorted by start time. */
+/**
+ * Split an agenda into past vs current/future, each sorted by start time. The
+ * ``past`` group is capped to the ``maxPast`` most recent meetings (the ones
+ * closest to now) so a busy back-window stays scannable.
+ */
 export function partitionMeetings(
   events: AgendaEvent[],
-  now: number = Date.now(),
+  { now = Date.now(), maxPast = 10 }: { now?: number; maxPast?: number } = {},
 ): PartitionedMeetings {
   const past: AgendaEvent[] = [];
   const upcoming: AgendaEvent[] = [];
@@ -56,7 +60,8 @@ export function partitionMeetings(
   };
   past.sort(byStart);
   upcoming.sort(byStart);
-  return { past, upcoming };
+  // Keep only the most recent ``maxPast`` finished meetings.
+  return { past: maxPast >= 0 ? past.slice(-maxPast) : past, upcoming };
 }
 
 /**

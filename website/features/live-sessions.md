@@ -80,10 +80,11 @@ each with its own tab-strip and a draggable divider.
 - **Context** — an AI summary of the attached topic, and — via the
   [WorkIQ MCP](/features/mcp) (Microsoft 365) — the ability to **link a meeting
   from your agenda** so its invitees flow into the summary's attendees. The
-  agenda spans the **last few days through today**, split with a clear **Past**
-  vs **Current & upcoming** marker, so you can attach (or record from) a meeting
-  that already happened — the same picker appears on the **Start a live session**
-  screen.
+  agenda spans the **last few days through today**, split with a color-coded
+  **Past** (amber) vs **Current & upcoming** (emerald) marker that the list
+  **auto-scrolls to** (past meetings are capped to the 10 most recent), so you
+  can attach — or record from — a meeting that already happened. The same picker
+  appears on the **Start a live session** screen.
 
 ### Summarize from the Teams transcript (no local record)
 

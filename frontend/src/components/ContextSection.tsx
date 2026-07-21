@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookmarkPlus,
   CalendarClock,
@@ -59,6 +59,19 @@ export function ContextSection({
   const canPost = session.topic_id != null;
 
   const { past, upcoming } = useMemo(() => partitionMeetings(events ?? []), [events]);
+
+  // Auto-scroll the meeting list so the "Current & upcoming" boundary sits at the
+  // top — past meetings stay one scroll up, current/future ones are front-and-centre.
+  const listRef = useRef<HTMLDivElement>(null);
+  const boundaryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (past.length === 0 || upcoming.length === 0) return;
+    const box = listRef.current;
+    const marker = boundaryRef.current;
+    if (box && marker) {
+      box.scrollTop += marker.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    }
+  }, [past.length, upcoming.length]);
 
   // One agenda row → a "Link" button that attaches the meeting for context.
   // ``isPast`` renders it muted (a meeting that already happened, e.g. to
@@ -356,21 +369,24 @@ export function ContextSection({
             {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
 
             {(past.length > 0 || upcoming.length > 0) && (
-              <div className="space-y-1.5">
+              <div ref={listRef} className="max-h-72 space-y-1.5 overflow-y-auto">
                 {past.length > 0 && (
                   <>
-                    <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                    <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
                       <History size={11} /> Past
-                      <span className="h-px flex-1 bg-border" />
+                      <span className="h-px flex-1 bg-amber-500/30" />
                     </div>
                     <ul className="space-y-1.5">{past.map((ev) => renderRow(ev, true))}</ul>
                   </>
                 )}
                 {upcoming.length > 0 && (
                   <>
-                    <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                    <div
+                      ref={boundaryRef}
+                      className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
+                    >
                       <CalendarClock size={11} /> Current &amp; upcoming
-                      <span className="h-px flex-1 bg-border" />
+                      <span className="h-px flex-1 bg-emerald-500/30" />
                     </div>
                     <ul className="space-y-1.5">{upcoming.map((ev) => renderRow(ev, false))}</ul>
                   </>
