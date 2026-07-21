@@ -63,6 +63,39 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ OAuth callback never returned the auth code**: the loopback
+  callback's `asyncio.start_server` block was mis-indented inside the
+  per-connection handler, so `_callback_handler` fell off the end and returned
+  `None`. The SDK's `auth_code, state = await callback_handler()` unpack then
+  crashed with `TypeError: cannot unpack non-iterable NoneType object`,
+  breaking every interactive and silent WorkIQ sign-in. The server now binds
+  and awaits the redirect in the handler body as intended.
+
+- **WorkIQ sign-in 502 hid the real error behind anyio's task-group wrapper**:
+  a failed interactive re-auth reached the SPA as
+  `WorkIQ sign-in failed: unhandled errors in a TaskGroup (1 sub-exception)` —
+  the MCP SDK's streamable-http transport raises inside a task group, so the
+  actual cause (a sign-in timeout, a transport blip, a missing authorization
+  code) was buried in a `BaseExceptionGroup`. The `/api/mcp/servers/workiq/reauthenticate`
+  endpoint now unwraps the group (and the `__cause__`/`__context__` chain) to its
+  leaf exception(s), so the 502 detail names the real reason.
+
+- **In-app docs (`/docs/`) were silently unavailable in `precursor --dev`**:
+  the live VitePress docs server only starts when `website/node_modules` is
+  present, and a fresh checkout that ran `precursor --dev` without `make sync`
+  first would skip it with just a log warning. The **Documentation** link then
+  fell through to the SPA (or the backend's "Docs are not built" message on the
+  API port). `--dev` now auto-installs the docs dependencies on first run
+  (mirroring the frontend auto-build), so `/docs/` works out of the box; it
+  still degrades to disabling live docs (never failing the stack) when npm is
+  unavailable.
+
+- **About dialog had two links to the same site**: the **Documentation** and
+  **Website** rows in the About modal both pointed at
+  `precursor.vuptime.io`. The redundant **Website** row is gone — a single
+  **Documentation** link (local `/docs/` in dev, the public site in a
+  production build) now covers it.
+
 - **In-app version showed a stale dev build after the `precursor-ai` rename**:
   version resolution still queried the old `precursor` distribution name, which
   raised `PackageNotFoundError` and silently fell back to the build-time

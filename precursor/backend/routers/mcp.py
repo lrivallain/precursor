@@ -303,6 +303,7 @@ async def reauthenticate_workiq_server(
     ``needs_auth``) so the SPA falls back to the manual "Sign in" banner.
     """
     from precursor.backend.config import get_settings
+    from precursor.backend.services.mcp.client import _describe_exception
     from precursor.backend.services.mcp.workiq_preview import (
         WorkIQAuthInProgressError,
         build_oauth_provider,
@@ -339,7 +340,10 @@ async def reauthenticate_workiq_server(
     except WorkIQAuthInProgressError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"WorkIQ sign-in failed: {exc}") from exc
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"WorkIQ sign-in failed: {_describe_exception(exc)}",
+        ) from exc
 
     # A silent pass that needs a human: leave the warm worker parked in
     # ``needs_auth`` and tell the SPA to surface the manual sign-in banner.

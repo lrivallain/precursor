@@ -102,6 +102,42 @@ async def test_interactive_handler_skips_browser_when_popup_drives(monkeypatch) 
     assert published == [("workiq", "https://login.example/authorize?x=1")]
 
 
+async def test_callback_handler_returns_code_and_state() -> None:
+    """The loopback callback must resolve ``(code, state)`` — not ``None``.
+
+    Regression: the ``asyncio.start_server`` block was mis-indented inside the
+    per-connection handler, so ``_callback_handler`` fell off the end and
+    returned ``None``, breaking the SDK's ``auth_code, state = await
+    callback_handler()`` unpack with a ``TypeError``.
+    """
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    handler = wp._make_callback_handler(timeout=5.0)
+    waiter = asyncio.ensure_future(handler())
+    await asyncio.sleep(0.1)  # let the loopback server bind
+
+    try:
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT
+        )
+        writer.write(
+            b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        )
+        await writer.drain()
+        await reader.read()  # drain the success page so the server closes cleanly
+        writer.close()
+
+        code, state = await asyncio.wait_for(waiter, timeout=5.0)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+
+    assert code == "abc123"
+    assert state == "xyz"
+
+
 async def test_reauthenticate_single_flight() -> None:
     """A second sign-in while one is running is rejected, not queued."""
     from precursor.backend.services.mcp import workiq_preview as wp
@@ -437,6 +473,36 @@ def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:
         resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
         assert resp.status_code == 200
         assert calls == [True, False]
+
+
+def test_reauthenticate_surfaces_real_cause_on_group_failure(monkeypatch) -> None:
+    """A 502 must show the underlying error, not anyio's opaque group wrapper.
+
+    The MCP SDK's streamable-http transport raises inside a task group, so a
+    failed sign-in reaches the route as a ``BaseExceptionGroup`` whose ``str()``
+    is "unhandled errors in a TaskGroup (1 sub-exception)". The endpoint must
+    unwrap it so the SPA's error banner names the real reason.
+    """
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+        raise BaseExceptionGroup(
+            "unhandled errors in a TaskGroup (1 sub-exception)",
+            [RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")],
+        )
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate")
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail == (
+            "WorkIQ sign-in failed: Timed out waiting for the WorkIQ sign-in to complete."
+        )
+        assert "TaskGroup" not in detail
 
 
 def test_reauthenticate_silent_only_success(monkeypatch) -> None:
