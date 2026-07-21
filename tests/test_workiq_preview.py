@@ -119,12 +119,8 @@ async def test_callback_handler_returns_code_and_state() -> None:
     await asyncio.sleep(0.1)  # let the loopback server bind
 
     try:
-        reader, writer = await asyncio.open_connection(
-            "127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT
-        )
-        writer.write(
-            b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n"
-        )
+        reader, writer = await asyncio.open_connection("127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT)
+        writer.write(b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
         await writer.drain()
         await reader.read()  # drain the success page so the server closes cleanly
         writer.close()
