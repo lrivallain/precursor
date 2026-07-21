@@ -175,25 +175,28 @@ export function SummarySection({
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={generating || !canGenerate}
-          className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-        >
-          {generating ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <RefreshCw size={12} />
-          )}
-          {text ? "Refresh" : "Generate"}
-        </button>
+        {canGenerate && (
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={generating}
+            data-tooltip="Generate the summary from the recorded transcript"
+            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+          >
+            {generating ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            {text ? "Refresh" : "Generate"}
+          </button>
+        )}
         {canSummarizeFromTranscript && (
           <button
             type="button"
             onClick={onSummarizeFromTranscript}
             disabled={transcriptScraping || generating}
-            data-tooltip="Scrape the linked Teams meeting transcript and summarize it"
+            data-tooltip="Scrape the linked Teams meeting transcript and generate the summary from it"
             className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
           >
             {transcriptScraping ? (
@@ -201,7 +204,7 @@ export function SummarySection({
             ) : (
               <ScrollText size={12} />
             )}
-            From Teams transcript
+            Generate from Teams transcript
           </button>
         )}
         <div className="flex items-center gap-0.5 text-xs">
@@ -271,9 +274,10 @@ export function SummarySection({
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {generating && !text ? (
+        {(generating || transcriptScraping) && !text ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted">
-            <Loader2 size={16} className="animate-spin" /> Generating summary…
+            <Loader2 size={16} className="animate-spin" />{" "}
+            {transcriptScraping ? "Fetching the Teams transcript…" : "Generating summary…"}
           </div>
         ) : mode === "edit" ? (
           <RefineTextarea

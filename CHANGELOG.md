@@ -23,8 +23,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 - **Summarize a Live session from the Teams transcript ("no local record")**:
   when a Teams meeting is linked to a Live session and the **WorkIQ MCP** server
-  is enabled, the **Summary** tab gains a **From Teams transcript** button. It
-  scrapes the meeting's published transcript through WorkIQ (Microsoft Graph:
+  is enabled, the **Summary** tab gains a **Generate from Teams transcript**
+  button. It scrapes the meeting's published transcript through WorkIQ (Microsoft
+  Graph:
   `/me/onlineMeetings` → `/transcripts` → VTT `/content`) and generates
   Precursor's own structured recap — so you don't need to capture the meeting
   audio locally. Best-effort and fail-closed: it requires you to be the meeting
