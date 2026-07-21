@@ -115,6 +115,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Alarming WorkIQ "OAuth flow error" traceback on the silent sign-in
+  timeout**: the hands-free `prompt=none` auto re-auth runs in an invisible SPA
+  iframe; when framing or third-party cookies block it (or there's no live SSO
+  session) the loopback never fires and the pass times out. That timeout was a
+  plain `RuntimeError`, so the MCP SDK logged a full `ERROR OAuth flow error`
+  stack trace on startup even though the pass is a *handled* fallback to the
+  manual "Sign in" banner. A silent-pass timeout now raises the same
+  `WorkIQInteractionRequiredError` as Entra's `interaction_required` — kept out
+  of the logs by the existing suppression filter — while a genuine *interactive*
+  (user-driven) sign-in that times out still surfaces loudly.
+
 - **WorkIQ sign-in aborted by stray loopback probes**: the OAuth callback
   server resolved on the *first* inbound connection regardless of content, so a
   favicon fetch, browser/OS connectivity probe, or pre-connect that carried no

@@ -531,6 +531,8 @@ _CALLBACK_ICONS = {
 
 def _make_callback_handler(
     timeout: float = _CALLBACK_TIMEOUT_SECONDS,
+    *,
+    silent: bool = False,
 ) -> Callable[[], Awaitable[tuple[str, str | None]]]:
     """Build the SDK ``callback_handler`` bound to a specific wait ``timeout``.
 
@@ -538,6 +540,13 @@ def _make_callback_handler(
     flow (see :data:`_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS`) so a frame that
     can't complete silently falls back to the visible prompt quickly instead of
     parking the loopback for minutes.
+
+    ``silent`` marks a ``prompt=none`` pass: when its loopback never fires (the
+    invisible frame couldn't complete without UI — framing / third-party cookies
+    blocked, or no live SSO), the timeout is semantically "interaction required",
+    so we raise :class:`WorkIQInteractionRequiredError` (which the caller handles
+    by falling back to the visible prompt and which :class:`_SuppressExpectedAuthError`
+    keeps out of the logs) instead of a loud ``RuntimeError`` failure.
     """
 
     async def _callback_handler() -> tuple[str, str | None]:
@@ -637,6 +646,15 @@ def _make_callback_handler(
             async with server:
                 return await asyncio.wait_for(result, timeout=timeout)
         except TimeoutError as exc:
+            if silent:
+                # A silent (``prompt=none``) pass whose loopback never fired: the
+                # invisible frame couldn't complete the sign-in without UI. Treat
+                # it exactly like Entra's ``interaction_required`` so the caller
+                # falls back to the visible prompt — and so the SDK's ERROR
+                # traceback for it is dropped by ``_SuppressExpectedAuthError``.
+                raise WorkIQInteractionRequiredError(
+                    "WorkIQ silent sign-in timed out; interaction required."
+                ) from exc
             raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
 
     return _callback_handler
@@ -682,7 +700,8 @@ def build_oauth_provider(
             prompt=prompt,
         ),
         callback_handler=_make_callback_handler(
-            callback_timeout if callback_timeout is not None else _CALLBACK_TIMEOUT_SECONDS
+            callback_timeout if callback_timeout is not None else _CALLBACK_TIMEOUT_SECONDS,
+            silent=prompt == "none",
         ),
     )
 
