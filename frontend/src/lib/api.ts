@@ -95,27 +95,58 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    throw await httpError(res);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
-// FastAPI errors are thrown by `request` as "<status> <statusText>: <body>",
-// where the body is usually `{"detail": "..."}`. Surface just that detail so
-// UI error states read cleanly instead of echoing the raw HTTP prefix + JSON.
+// Pull a human-readable message out of an error response body. FastAPI wraps
+// errors as `{"detail": "..."}` (or, for validation errors, a list of
+// `{"msg", "loc"}` objects); return just that so the UI never shows the raw JSON
+// envelope. Returns null when the body carries no usable detail.
+function parseDetail(body: string): string | null {
+  if (!body) return null;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const detail = (parsed as { detail: unknown }).detail;
+      if (typeof detail === "string") return detail.trim() || null;
+      if (Array.isArray(detail)) {
+        const msgs = detail
+          .map((d) =>
+            d && typeof d === "object" && typeof (d as { msg?: unknown }).msg === "string"
+              ? (d as { msg: string }).msg
+              : null,
+          )
+          .filter((m): m is string => m !== null);
+        if (msgs.length) return msgs.join("; ");
+      }
+    }
+  } catch {
+    /* body isn't JSON — no detail to extract */
+  }
+  return null;
+}
+
+// Build an Error from a failed response: prefer the server's `detail` message
+// (clean, user-facing) and fall back to the HTTP status when there's none.
+async function httpError(res: Response): Promise<Error> {
+  const body = await res.text().catch(() => "");
+  const detail = parseDetail(body);
+  if (detail) return new Error(detail);
+  return new Error(body ? `${res.status} ${res.statusText}: ${body}` : `${res.status} ${res.statusText}`);
+}
+
+// FastAPI errors surface through `request`/`postForm` already reduced to their
+// `detail` message. This helper stays as a safety net for any Error whose
+// message still carries the "<status> <statusText>: <body>" envelope (e.g. from
+// other call sites): it strips the prefix and returns the JSON detail if present.
 export function apiErrorMessage(e: unknown, fallback = "Something went wrong"): string {
   if (!(e instanceof Error)) return fallback;
   const idx = e.message.indexOf(": ");
   const body = idx >= 0 ? e.message.slice(idx + 2) : e.message;
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed && typeof parsed.detail === "string") return parsed.detail;
-  } catch {
-    // Not JSON — fall through to the raw message.
-  }
-  return e.message || fallback;
+  return parseDetail(body) ?? (e.message || fallback);
 }
 
 // Multipart POST for single-file uploads. Shared by every attachment endpoint,
@@ -129,8 +160,7 @@ async function postForm<T>(path: string, file: File): Promise<T> {
     body: form,
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    throw await httpError(res);
   }
   return (await res.json()) as T;
 }
@@ -738,6 +768,11 @@ export const api = {
       request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
         method: "POST",
       }),
+    summarizeFromTranscript: (id: number) =>
+      request<{ summary: string; model: string }>(
+        `/api/live/${id}/summary/from-transcript`,
+        { method: "POST" },
+      ),
     postSummary: (id: number, summary: string) =>
       request<{
         topic_id: number;
@@ -756,11 +791,13 @@ export const api = {
       request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
         method: "POST",
       }),
-    getAgenda: () => {
-      // The user's *local* day window (local midnight → next local midnight),
-      // converted to UTC ISO so today's meetings match their calendar day.
+    getAgenda: (pastDays = 7) => {
+      // The agenda window: from local midnight ``pastDays`` ago through the next
+      // local midnight, so past meetings (for a "record from a past meeting"
+      // flow) show alongside today's — matched to the user's calendar day and
+      // converted to UTC ISO.
       const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - pastDays);
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
       const qs = `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
         end.toISOString(),
@@ -771,12 +808,14 @@ export const api = {
       request<MeetingSession>(`/api/live/${id}/meeting`, {
         method: "POST",
         body: JSON.stringify({
+          id: event.id,
           subject: event.subject,
           start: event.start,
           end: event.end,
           organizer: event.organizer,
           attendees: event.attendees,
           is_online: event.is_online,
+          join_url: event.join_url,
           body: event.body,
           body_preview: event.body_preview,
         }),

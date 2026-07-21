@@ -120,6 +120,17 @@ def _iso(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _join_url(raw: dict[str, Any]) -> str | None:
+    """The Teams join URL (``onlineMeeting.joinUrl``), used later to locate the
+    meeting's transcript via Graph. Null for non-Teams / non-online events."""
+    om = raw.get("onlineMeeting")
+    if isinstance(om, dict):
+        url = om.get("joinUrl") or om.get("joinWebUrl")
+        if isinstance(url, str) and url.strip():
+            return url.strip()
+    return None
+
+
 def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
     organizer_name, _ = _person_name(raw.get("organizer"))
     attendees: list[dict[str, Any]] = []
@@ -140,6 +151,7 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
         "organizer": organizer_name or None,
         "attendees": attendees,
         "is_online": bool(raw.get("isOnlineMeeting")),
+        "join_url": _join_url(raw),
         "body": body_html,
         "body_preview": (str(preview)[:4000] if isinstance(preview, str) else None),
     }
@@ -181,8 +193,9 @@ async def fetch_agenda(
             "/me/calendarView"
             f"?startDateTime={start}"
             f"&endDateTime={end}"
-            "&$select=subject,start,end,organizer,attendees,isOnlineMeeting,bodyPreview,body"
-            "&$orderby=start/dateTime&$top=50"
+            "&$select=subject,start,end,organizer,attendees,isOnlineMeeting,"
+            "onlineMeeting,bodyPreview,body"
+            "&$orderby=start/dateTime&$top=100"
         )
         try:
             if "fetch" in tool_names:

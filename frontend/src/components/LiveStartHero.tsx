@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Loader2, Radio, RefreshCw, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CalendarClock, History, Loader2, Radio, RefreshCw, Users } from "lucide-react";
 import type {
   AgendaEvent,
   MeetingSession,
@@ -8,6 +8,11 @@ import type {
 } from "../lib/types";
 import { useSettings } from "../lib/settingsStore";
 import { api } from "../lib/api";
+import {
+  formatMeetingWhen,
+  isOngoingMeeting,
+  partitionMeetings,
+} from "../lib/agenda";
 import { TopicPicker } from "./TopicPicker";
 import { Select } from "./Select";
 
@@ -36,40 +41,6 @@ function flattenTopicNodes(tree: TopicNode[]): TopicNode[] {
   };
   walk(tree);
   return out;
-}
-
-// Compact "when" label for an agenda entry: just the time for today's meetings,
-// or a short weekday+date prefix otherwise.
-function formatWhen(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const today = new Date();
-  const sameDay =
-    d.getFullYear() === today.getFullYear() &&
-    d.getMonth() === today.getMonth() &&
-    d.getDate() === today.getDate();
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  if (sameDay) return time;
-  const day = d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  return `${day} ${time}`;
-}
-
-// Keep only meetings that are ongoing or still to come (already-finished ones
-// are dropped), and flag the ones happening right now.
-function isCurrentOrUpcoming(ev: AgendaEvent, now: number): boolean {
-  const endMs = ev.end ? new Date(ev.end).getTime() : NaN;
-  const startMs = ev.start ? new Date(ev.start).getTime() : NaN;
-  if (!Number.isNaN(endMs)) return endMs >= now;
-  if (!Number.isNaN(startMs)) return startMs >= now;
-  return true;
-}
-
-function isOngoing(ev: AgendaEvent, now: number): boolean {
-  const startMs = ev.start ? new Date(ev.start).getTime() : NaN;
-  const endMs = ev.end ? new Date(ev.end).getTime() : NaN;
-  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return false;
-  return startMs <= now && now < endMs;
 }
 
 /**
@@ -112,11 +83,25 @@ export function LiveStartHero({
     [defaultLang],
   );
 
-  const upcoming = useMemo(() => {
-    if (!events) return null;
-    const now = Date.now();
-    return events.filter((ev) => isCurrentOrUpcoming(ev, now));
-  }, [events]);
+  const { past, upcoming } = useMemo(
+    () => partitionMeetings(events ?? []),
+    [events],
+  );
+  const hasMeetings = past.length > 0 || upcoming.length > 0;
+
+  // Auto-scroll the meeting list so the "Now" boundary (the Current & upcoming
+  // marker) sits at the top: past meetings stay one scroll up, current/future
+  // ones are immediately actionable.
+  const listRef = useRef<HTMLDivElement>(null);
+  const boundaryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (past.length === 0 || upcoming.length === 0) return;
+    const box = listRef.current;
+    const marker = boundaryRef.current;
+    if (box && marker) {
+      box.scrollTop += marker.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    }
+  }, [past.length, upcoming.length]);
 
   async function loadAgenda(): Promise<void> {
     setAgendaLoading(true);
@@ -191,6 +176,55 @@ export function LiveStartHero({
     }
   }
 
+  // One agenda row → a "Start" button that spins up a session linked to the
+  // meeting. ``past`` renders it muted (it's a finished meeting to record from).
+  function renderRow(ev: AgendaEvent, past: boolean): React.ReactNode {
+    const key = ev.id ?? ev.subject;
+    const ongoing = isOngoingMeeting(ev);
+    return (
+      <li
+        key={key}
+        className={`flex items-center gap-2 rounded border border-border bg-bg px-2.5 py-1.5 ${
+          past ? "opacity-80" : ""
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm">{ev.subject}</span>
+            {ongoing && (
+              <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                Now
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] text-muted">
+            {formatMeetingWhen(ev.start)}
+            {ev.end && ` – ${formatMeetingWhen(ev.end)}`}
+            {ev.attendees.length > 0 && (
+              <span className="ml-2 inline-flex items-center gap-0.5">
+                <Users size={10} /> {ev.attendees.length}
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void createFromMeeting(ev)}
+          disabled={busy || startingFrom !== null}
+          data-tooltip={past ? "Create a session from this past meeting" : undefined}
+          className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
+        >
+          {startingFrom === key ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            <Radio size={11} />
+          )}
+          Start
+        </button>
+      </li>
+    );
+  }
+
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-4 overflow-y-auto p-8">
       <div className="flex items-center gap-2">
@@ -210,13 +244,14 @@ export function LiveStartHero({
         </div>
       )}
 
-      {/* Current & upcoming meetings from the calendar — one click starts a
-          session already linked to the meeting for context. */}
-      {(agendaLoading || (upcoming && upcoming.length > 0) || agendaDetail) && (
+      {/* Calendar meetings — one click starts a session already linked to the
+          meeting for context. Past meetings are included (and clearly marked) so
+          you can record/summarize from a meeting that already happened. */}
+      {(agendaLoading || hasMeetings || agendaDetail) && (
         <section className="rounded border border-border bg-surface/40 p-3">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-              <CalendarClock size={12} /> Current &amp; upcoming meetings
+              <CalendarClock size={12} /> Your meetings
             </div>
             <button
               type="button"
@@ -239,56 +274,34 @@ export function LiveStartHero({
             </div>
           )}
 
-          {upcoming && upcoming.length > 0 ? (
-            <ul className="max-h-56 space-y-1.5 overflow-y-auto">
-              {upcoming.map((ev) => {
-                const key = ev.id ?? ev.subject;
-                const ongoing = isOngoing(ev, Date.now());
-                return (
-                  <li
-                    key={key}
-                    className="flex items-center gap-2 rounded border border-border bg-bg px-2.5 py-1.5"
+          {hasMeetings ? (
+            <div ref={listRef} className="max-h-64 space-y-1.5 overflow-y-auto">
+              {past.length > 0 && (
+                <>
+                  <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    <History size={11} /> Past
+                    <span className="h-px flex-1 bg-amber-500/30" />
+                  </div>
+                  <ul className="space-y-1.5">{past.map((ev) => renderRow(ev, true))}</ul>
+                </>
+              )}
+              {upcoming.length > 0 && (
+                <>
+                  <div
+                    ref={boundaryRef}
+                    className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-sm">{ev.subject}</span>
-                        {ongoing && (
-                          <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                            Now
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-muted">
-                        {formatWhen(ev.start)}
-                        {ev.end && ` – ${formatWhen(ev.end)}`}
-                        {ev.attendees.length > 0 && (
-                          <span className="ml-2 inline-flex items-center gap-0.5">
-                            <Users size={10} /> {ev.attendees.length}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void createFromMeeting(ev)}
-                      disabled={busy || startingFrom !== null}
-                      className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
-                    >
-                      {startingFrom === key ? (
-                        <Loader2 size={11} className="animate-spin" />
-                      ) : (
-                        <Radio size={11} />
-                      )}
-                      Start
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                    <Radio size={11} /> Current &amp; upcoming
+                    <span className="h-px flex-1 bg-emerald-500/30" />
+                  </div>
+                  <ul className="space-y-1.5">{upcoming.map((ev) => renderRow(ev, false))}</ul>
+                </>
+              )}
+            </div>
           ) : (
             !agendaLoading && (
               <p className="text-[12px] text-muted">
-                {agendaDetail ?? "No current or upcoming meetings on your calendar."}
+                {agendaDetail ?? "No meetings on your calendar."}
               </p>
             )
           )}

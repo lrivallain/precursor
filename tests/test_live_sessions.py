@@ -321,6 +321,168 @@ def test_meeting_summary_generate_and_post() -> None:
         assert after["summary"] == "## Summary\nAll good."
 
 
+def test_parse_vtt_speaker_attribution() -> None:
+    from precursor.backend.services.meeting_transcript import parse_vtt
+
+    vtt = (
+        "WEBVTT\n\n"
+        "0\n00:00:01.000 --> 00:00:03.000\n<v Alex Kim>Hello everyone.</v>\n\n"
+        "1\n00:00:03.000 --> 00:00:05.000\n<v Alex Kim>Let's begin.</v>\n\n"
+        "2\n00:00:05.000 --> 00:00:07.000\n<v Sam Lee>Sounds good.</v>\n"
+    )
+    out = parse_vtt(vtt)
+    # Same-speaker cues are merged into one turn; timing lines are dropped.
+    assert out == "Alex Kim: Hello everyone. Let's begin.\nSam Lee: Sounds good."
+
+
+def test_summarize_from_transcript(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    async def _fake_transcript(external_meeting):  # type: ignore[no-untyped-def]
+        return True, "Alex Kim: We agreed to ship on Friday.\nSam Lee: I'll own the release.", None
+
+    monkeypatch.setattr(live_router, "fetch_meeting_transcript", _fake_transcript)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Teams"}).json()["id"]
+
+        # No meeting linked yet → 400.
+        assert client.post(f"/api/live/{sid}/summary/from-transcript").status_code == 400
+
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "is_online": True,
+                "join_url": "https://teams.microsoft.com/l/meetup-join/xyz",
+            },
+        )
+        res = client.post(f"/api/live/{sid}/summary/from-transcript")
+        assert res.status_code == 200
+        assert isinstance(res.json()["summary"], str) and res.json()["summary"]
+
+        # The transcript-derived recap is persisted like the normal summary.
+        assert client.get(f"/api/live/{sid}").json()["summary"] == res.json()["summary"]
+
+
+def test_summarize_from_transcript_unavailable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    async def _fake_transcript(external_meeting):  # type: ignore[no-untyped-def]
+        return False, "", "No transcript is published for this meeting yet."
+
+    monkeypatch.setattr(live_router, "fetch_meeting_transcript", _fake_transcript)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Teams"}).json()["id"]
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={"subject": "Sprint review", "is_online": True, "join_url": "https://x"},
+        )
+        res = client.post(f"/api/live/{sid}/summary/from-transcript")
+        assert res.status_code == 400
+        assert "transcript" in res.json()["detail"].lower()
+
+
+def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Regression: the transcripts collection rejects ``$orderby`` (Graph 400),
+    so the service must list without it and sort client-side, picking the newest.
+    """
+    import asyncio
+
+    import precursor.backend.services.mcp.client as mcp_client
+    from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
+
+    class _Result:
+        def __init__(self, data: object) -> None:
+            self.structuredContent = data
+            self.content = None
+
+    class _Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.server = "workiq"
+
+    class _Bundle:
+        def __init__(self) -> None:
+            self.workers = {"workiq": object()}
+            self.tools = [_Tool("fetch")]
+            self.unavailable: list[tuple[str, str]] = []
+            self.ephemeral = False
+            self.paths: list[str] = []
+
+        async def call_tool(self, server: str, name: str, args: dict) -> object:  # type: ignore[type-arg]
+            path = args["entityUrls"][0]
+            self.paths.append(path)
+            # Simulate Graph rejecting $orderby on the transcripts collection.
+            if "$orderby" in path:
+                return _Result({"results": [{"data": None, "statusCode": 400}]})
+            if "/transcripts/" in path and "/content" in path:
+                spoken = "latest" if "/T2/" in path else "older"
+                vtt = f"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Alex>{spoken}</v>"
+                return _Result({"results": [{"data": vtt, "statusCode": 200}]})
+            if path.endswith("/transcripts"):
+                return _Result(
+                    {
+                        "results": [
+                            {
+                                "data": {
+                                    "value": [
+                                        {"id": "T1", "createdDateTime": "2026-01-01T00:00:00Z"},
+                                        {"id": "T2", "createdDateTime": "2026-01-02T00:00:00Z"},
+                                    ]
+                                },
+                                "statusCode": 200,
+                            }
+                        ]
+                    }
+                )
+            if "onlineMeetings?$filter" in path:
+                return _Result(
+                    {"results": [{"data": {"value": [{"id": "MID"}]}, "statusCode": 200}]}
+                )
+            return _Result({"results": [{"data": None, "statusCode": 404}]})
+
+        async def aclose(self) -> None:
+            return None
+
+    bundle = _Bundle()
+
+    class _Manager:
+        async def acquire(self, names, **kwargs):  # type: ignore[no-untyped-def]
+            return bundle
+
+    monkeypatch.setattr(mcp_client, "get_mcp_client_manager", lambda: _Manager())
+
+    available, text, detail = asyncio.run(
+        fetch_meeting_transcript({"join_url": "https://teams.microsoft.com/l/meetup-join/x"})
+    )
+    assert available is True, detail
+    # Sorted client-side → the newest transcript (T2) is used.
+    assert text == "Alex: latest"
+    # The transcripts listing must not carry an $orderby (Graph rejects it).
+    assert not any(p.endswith("/transcripts") and "$orderby" in p for p in bundle.paths)
+
+
+def test_link_meeting_persists_join_url() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Link"}).json()["id"]
+        r = client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "is_online": True,
+                "join_url": "https://teams.microsoft.com/l/meetup-join/abc",
+            },
+        )
+        assert r.status_code == 200
+        # The join URL rides along so the transcript can be located later.
+        assert r.json()["external_meeting"]["join_url"].endswith("/abc")
+
+
 def test_meeting_summary_post_requires_topic() -> None:
     app = create_app()
     with TestClient(app) as client:

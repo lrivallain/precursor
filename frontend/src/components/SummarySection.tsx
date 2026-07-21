@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Eye, Loader2, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
+import { Check, Eye, Loader2, Pencil, Plus, RefreshCw, ScrollText, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
 import { GithubIcon as Github } from "./icons/GithubIcon";
@@ -20,6 +20,13 @@ interface Props {
   /** Issue number linked to the attached topic; posting also comments there. */
   topicIssueNumber: number | null;
   canGenerate: boolean;
+  /**
+   * Show the "From Teams transcript" action: true only when WorkIQ is enabled
+   * and a Teams meeting is linked to the session.
+   */
+  canSummarizeFromTranscript: boolean;
+  onSummarizeFromTranscript: () => void;
+  transcriptScraping: boolean;
 }
 
 /**
@@ -39,6 +46,9 @@ export function SummarySection({
   topicTitle,
   topicIssueNumber,
   canGenerate,
+  canSummarizeFromTranscript,
+  onSummarizeFromTranscript,
+  transcriptScraping,
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [newAttendee, setNewAttendee] = useState("");
@@ -165,19 +175,38 @@ export function SummarySection({
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={generating || !canGenerate}
-          className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-        >
-          {generating ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <RefreshCw size={12} />
-          )}
-          {text ? "Refresh" : "Generate"}
-        </button>
+        {canGenerate && (
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={generating}
+            data-tooltip="Generate the summary from the recorded transcript"
+            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+          >
+            {generating ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            {text ? "Refresh" : "Generate"}
+          </button>
+        )}
+        {canSummarizeFromTranscript && (
+          <button
+            type="button"
+            onClick={onSummarizeFromTranscript}
+            disabled={transcriptScraping || generating}
+            data-tooltip="Scrape the linked Teams meeting transcript and generate the summary from it"
+            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+          >
+            {transcriptScraping ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <ScrollText size={12} />
+            )}
+            Generate from Teams transcript
+          </button>
+        )}
         <div className="flex items-center gap-0.5 text-xs">
           <button
             type="button"
@@ -245,9 +274,10 @@ export function SummarySection({
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {generating && !text ? (
+        {(generating || transcriptScraping) && !text ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted">
-            <Loader2 size={16} className="animate-spin" /> Generating summary…
+            <Loader2 size={16} className="animate-spin" />{" "}
+            {transcriptScraping ? "Fetching the Teams transcript…" : "Generating summary…"}
           </div>
         ) : mode === "edit" ? (
           <RefineTextarea
@@ -263,18 +293,28 @@ export function SummarySection({
         ) : (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
             <p className="mb-1 font-medium text-text">No summary yet</p>
-            <p className="max-w-sm">
-              Generate a recap of the meeting — attendees, decisions, action
-              items, open questions and risks
-              {canPost ? (
-                <>
-                  {" "}
-                  — then post it into <strong>{topicTitle ?? "the topic"}</strong>.
-                </>
-              ) : (
-                "."
-              )}
-            </p>
+            {canGenerate || canSummarizeFromTranscript ? (
+              <p className="max-w-sm">
+                Generate a recap of the meeting — attendees, decisions, action
+                items, open questions and risks
+                {canSummarizeFromTranscript && !canGenerate ? (
+                  <> from the linked Teams meeting&apos;s transcript</>
+                ) : null}
+                {canPost ? (
+                  <>
+                    {" "}
+                    — then post it into <strong>{topicTitle ?? "the topic"}</strong>.
+                  </>
+                ) : (
+                  "."
+                )}
+              </p>
+            ) : (
+              <p className="max-w-sm">
+                Record the meeting, or link a Teams meeting from the Context tab
+                (with the WorkIQ MCP enabled), to generate a recap here.
+              </p>
+            )}
           </div>
         )}
       </div>

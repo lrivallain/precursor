@@ -198,6 +198,72 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
     return text, model
 
 
+async def generate_summary_from_transcript(
+    session: AsyncSession, session_id: int, transcript: str
+) -> tuple[str, str]:
+    """Generate a markdown recap from an *external* (Teams) transcript.
+
+    A "no local record" counterpart to :func:`generate_summary`: instead of the
+    locally-captured segments and derived insights, it feeds a transcript scraped
+    from the linked Teams meeting, still folding in the attendees, the linked
+    meeting context, the attached topic and any pinned notes. Returns
+    ``(text, model)``; ``("", "")`` when the session is gone or the transcript is
+    empty.
+    """
+    ms = await session.get(MeetingSession, session_id)
+    if ms is None or not transcript.strip():
+        return "", ""
+
+    system = _SYSTEM_PROMPT
+    lang = language_name(ms.language)
+    if lang:
+        system += f"\n\nWrite the entire summary in {lang}."
+
+    user_parts = [f"Meeting title: {ms.title}"]
+    if ms.attendees:
+        user_parts.append("Attendees: " + ", ".join(ms.attendees))
+    user_parts.append(
+        "\nTeams meeting transcript (speaker-attributed):\n" + transcript[-_TRANSCRIPT_CHARS:]
+    )
+    if ms.notes.strip():
+        user_parts.append(f"\nThe user's live notes:\n{ms.notes.strip()[:8000]}")
+    meeting_ctx = meeting_context_text(ms.external_meeting)
+    if meeting_ctx:
+        user_parts.append(f"\nLinked meeting context:\n{meeting_ctx}")
+    topic_ctx = await _topic_context(session, ms.topic_id)
+    if topic_ctx:
+        user_parts.append(f"\nAttached topic context:\n{topic_ctx}")
+    notes_ctx = context_notes_text(ms.context_notes)
+    if notes_ctx:
+        user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
+
+    provider = await get_llm_provider(session)
+    model = await resolve_llm_model(session)
+    text, usage = await complete_text_with_usage(
+        provider,
+        model=model,
+        messages=[
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content="\n".join(user_parts)),
+        ],
+    )
+    if usage is not None:
+        await record_usage(
+            session,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            source="/live-summary-transcript",
+            model=model,
+            topic_id=ms.topic_id,
+        )
+        await session.commit()
+    attach_md = await _attachments_markdown(session, session_id, text)
+    if attach_md:
+        text = text.rstrip() + "\n\n" + attach_md
+    return text, model
+
+
 _TOPIC_SUMMARY_SYSTEM = (
     "You are briefing someone who is about to join a meeting about this topic. "
     "From the topic's conversation (and any linked GitHub issue summary), write a "

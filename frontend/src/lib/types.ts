@@ -916,6 +916,8 @@ export interface AgendaEvent {
   organizer: string | null;
   attendees: AgendaAttendee[];
   is_online: boolean;
+  // Teams join URL — used to locate the meeting transcript for summaries.
+  join_url?: string | null;
   body: string | null;
   body_preview: string | null;
 }
@@ -927,12 +929,14 @@ export interface AgendaResponse {
 }
 
 export interface ExternalMeeting {
+  id?: string | null;
   subject: string;
   start?: string | null;
   end?: string | null;
   organizer?: string | null;
   attendees?: AgendaAttendee[];
   is_online?: boolean;
+  join_url?: string | null;
   body?: string | null;
   body_preview?: string | null;
 }

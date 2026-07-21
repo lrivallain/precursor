@@ -20,6 +20,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   (`live_transcript_retention_days`); the sweep runs on startup and daily via a
   background ticker.
 
+- **Past meetings in the Live agenda picker**: the meeting lists used to *start*
+  a Live session (Start screen) and to *attach* one (Context tab) now include the
+  **last 7 days** of calendar meetings, not just today, so you can record or
+  summarize from a meeting that already happened. Entries are split by a
+  color-coded **Past** (amber) vs **Current & upcoming** (emerald) marker; the
+  list auto-scrolls to that boundary so today's meetings are front-and-centre,
+  and the past group is capped to the **10 most recent** meetings. Past meetings
+  still spin up a session linked to the meeting (handy with **From Teams
+  transcript**).
+
+- **Summarize a Live session from the Teams transcript ("no local record")**:
+  when a Teams meeting is linked to a Live session and the **WorkIQ MCP** server
+  is enabled, the **Summary** tab gains a **Generate from Teams transcript**
+  button. It scrapes the meeting's published transcript through WorkIQ (Microsoft
+  Graph:
+  `/me/onlineMeetings` → `/transcripts` → VTT `/content`) and generates
+  Precursor's own structured recap — so you don't need to capture the meeting
+  audio locally. Best-effort and fail-closed: it requires you to be the meeting
+  organizer, the delegated `OnlineMeetingTranscript.Read.All` permission, and a
+  transcript that Teams has already published (a few minutes after the meeting
+  ends). The **Summary** tab is always available; its actions light up based on
+  the data at hand — generate from the local recording and/or from the Teams
+  transcript. New endpoint `POST /api/live/{id}/summary/from-transcript`; the
+  linked meeting now also carries its Teams join URL.
+
 - **Hands-free WorkIQ re-auth**: when a WorkIQ preview session's refresh token
   ages out, Precursor now attempts the silent `prompt=none` authorization in an
   invisible iframe before showing anything. If the browser still holds a live
@@ -53,6 +78,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   existing arrangement.
 
 ### Changed
+
+- **Cleaner API error messages**: failed API calls now surface just the server's
+  human-readable `detail` text (e.g. *"The linked meeting has no Teams join
+  link…"*) instead of the raw `400 Bad Request: {"detail":"…"}` envelope. The
+  HTTP status is only shown as a fallback when the response carries no detail.
+
+- **Live record controls moved into the Transcript tab**: the **Record** button,
+  capture-device picker, **+ mic** mix-in and meeting **language** now live pinned
+  at the top of the **Transcript** tab (instead of the session toolbar), so they
+  stay visible even when the transcript grows to fill the height. Session-level
+  controls — topic, features, **End session**, archive and delete — remain in the
+  toolbar above the tabs.
 
 - **Sidebar auto-scrolls to the active item**: opening a topic, chat, agent,
   live session, workspace, or Kanban project from a deep link, the ⌘K command
