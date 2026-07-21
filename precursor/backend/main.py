@@ -84,6 +84,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Pruned %d expired tool result(s) on startup", pruned)
     except Exception:  # pragma: no cover - best-effort cleanup
         logger.warning("Tool-result retention sweep failed", exc_info=True)
+    from precursor.backend.services.live_transcript_retention import (
+        prune_expired_live_transcripts,
+    )
+
+    try:
+        removed_segments = await prune_expired_live_transcripts()
+        if removed_segments:
+            logger.info(
+                "Deleted %d expired Live transcript segment(s) on startup", removed_segments
+            )
+    except Exception:  # pragma: no cover - best-effort cleanup
+        logger.warning("Live-transcript retention sweep failed", exc_info=True)
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()
@@ -110,6 +122,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     tool_result_ticker = get_tool_result_ticker()
     await tool_result_ticker.start()
+    from precursor.backend.services.live_transcript_ticker import get_live_transcript_ticker
+
+    live_transcript_ticker = get_live_transcript_ticker()
+    await live_transcript_ticker.start()
     from precursor.backend.services.backup_ticker import get_backup_ticker
 
     backup_ticker = get_backup_ticker()
@@ -135,6 +151,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await scheduler.stop()
         await reminder_ticker.stop()
         await tool_result_ticker.stop()
+        await live_transcript_ticker.stop()
         await backup_ticker.stop()
         await workiq_keepalive.stop()
         await agent_manager.stop()

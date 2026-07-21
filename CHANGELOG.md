@@ -11,6 +11,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Live transcript auto-cleanup**: a Live session's raw transcript is now
+  automatically deleted a configurable number of days after the session ends
+  (**7 by default**; `0` keeps it forever), bounding database growth. Only the
+  transcript is removed — the session and its insights, notes and summary are
+  preserved — and only *ended* sessions are eligible, so an active or paused
+  recording is never touched. Configure it under **Settings → Live**
+  (`live_transcript_retention_days`); the sweep runs on startup and daily via a
+  background ticker.
+
 - **Past meetings in the Live agenda picker**: the meeting lists used to *start*
   a Live session (Start screen) and to *attach* one (Context tab) now include the
   **last 7 days** of calendar meetings, not just today, so you can record or
