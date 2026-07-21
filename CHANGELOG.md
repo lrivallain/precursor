@@ -68,6 +68,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Cleaner API error messages**: failed API calls now surface just the server's
+  human-readable `detail` text (e.g. *"The linked meeting has no Teams join
+  link…"*) instead of the raw `400 Bad Request: {"detail":"…"}` envelope. The
+  HTTP status is only shown as a fallback when the response carries no detail.
+
 - **Live record controls moved into the Transcript tab**: the **Record** button,
   capture-device picker, **+ mic** mix-in and meeting **language** now live pinned
   at the top of the **Transcript** tab (instead of the session toolbar), so they
