@@ -134,6 +134,50 @@ async def test_callback_handler_returns_code_and_state() -> None:
     assert state == "xyz"
 
 
+async def test_callback_handler_ignores_stray_probe_then_resolves() -> None:
+    """A stray loopback hit (no ``code``/``error``) must not abort the sign-in.
+
+    Regression: the per-connection handler resolved the future on the *first*
+    inbound connection regardless of content, so a favicon fetch, browser/OS
+    connectivity probe, or pre-connect that carried no OAuth params failed the
+    whole flow with ``RuntimeError: No authorization code in OAuth callback``.
+    The loopback must answer such probes benignly and keep waiting for the real
+    redirect.
+    """
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    handler = wp._make_callback_handler(timeout=5.0)
+    waiter = asyncio.ensure_future(handler())
+    await asyncio.sleep(0.1)  # let the loopback server bind
+
+    try:
+        # A stray probe with no OAuth params — e.g. a favicon fetch.
+        r1, w1 = await asyncio.open_connection("127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT)
+        w1.write(b"GET /favicon.ico HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await w1.drain()
+        await r1.read()  # 204 No Content
+        w1.close()
+
+        assert not waiter.done()  # the probe did not resolve or fail the flow
+
+        # The genuine OAuth redirect then completes the sign-in.
+        r2, w2 = await asyncio.open_connection("127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT)
+        w2.write(b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await w2.drain()
+        await r2.read()
+        w2.close()
+
+        code, state = await asyncio.wait_for(waiter, timeout=5.0)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+
+    assert code == "abc123"
+    assert state == "xyz"
+
+
 async def test_reauthenticate_single_flight() -> None:
     """A second sign-in while one is running is rejected, not queued."""
     from precursor.backend.services.mcp import workiq_preview as wp
