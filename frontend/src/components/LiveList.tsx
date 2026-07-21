@@ -3,6 +3,7 @@ import { Radio, Search } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { InlineTitle } from "./InlineTitle";
 import { useMultiSelect } from "../lib/useMultiSelect";
+import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
 
 interface LiveListProps {
@@ -29,6 +30,7 @@ export function LiveList({
   const [query, setQuery] = useState("");
   const sel = useMultiSelect();
   const [busy, setBusy] = useState(false);
+  const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
 
   const filtered = useMemo(() => {
     const list = sessions ?? [];
@@ -102,6 +104,7 @@ export function LiveList({
               return (
                 <li key={s.id}>
                   <div
+                    ref={isActive && !sel.active ? activeItemRef : undefined}
                     role="button"
                     tabIndex={0}
                     onClick={() => (sel.active ? sel.toggle(s.id) : onSelect(s))}

@@ -45,6 +45,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Sidebar auto-scrolls to the active item**: opening a topic, chat, agent,
+  live session, workspace, or Kanban project from a deep link, the ⌘K command
+  palette, or a search now scrolls its sidebar list so the selected row is
+  brought into view instead of being left off-screen. Rows already visible stay
+  put.
+
 - **Live recording is clearer to start and harder to lose**: the **Record**
   button now shows a transient **Starting…** state while it connects to Azure
   (token, SDK, capture device) instead of looking unresponsive for the couple of

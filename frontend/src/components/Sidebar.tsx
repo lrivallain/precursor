@@ -30,6 +30,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import { useResizableWidth } from "../lib/useResizableWidth";
+import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { useSectionOrder } from "../lib/useSectionOrder";
 import type { DropSide } from "../lib/useSectionOrder";
 import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
@@ -147,6 +148,10 @@ export function Sidebar({
   // so the choice sticks. Only affects the expanded layout — the collapsed
   // sidebar is always a rail.
   const [navStyle, setNavStyle] = useSidebarNavStyle();
+
+  // Scroll the active topic into view when it's reached from the URL, the
+  // command palette or a search — the ref is attached to the active row.
+  const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
 
   // User-reorderable section arrangement, shared by the vertical rail and the
   // horizontal tabs (both drive the same persisted order via drag & drop).
@@ -354,6 +359,7 @@ export function Sidebar({
                     key={`pinned-${node.id}`}
                     node={node}
                     activeId={activeId}
+                    activeItemRef={activeItemRef}
                     streamingTopicIds={streamingTopicIds}
                     onSelect={onSelect}
                     onRename={onRename}
@@ -375,6 +381,7 @@ export function Sidebar({
                 node={node}
                 depth={0}
                 activeId={activeId}
+                activeItemRef={activeItemRef}
                 streamingTopicIds={streamingTopicIds}
                 collapsedIds={collapsedIds}
                 onToggleCollapsed={toggleCollapsed}
@@ -402,6 +409,8 @@ interface ItemProps {
   node: TopicNode;
   depth: number;
   activeId: number | null;
+  /** Callback ref attached to the active row so it can be scrolled into view. */
+  activeItemRef: (el: HTMLDivElement | null) => void;
   streamingTopicIds: number[];
   collapsedIds: ReadonlySet<number>;
   onToggleCollapsed: (id: number) => void;
@@ -415,6 +424,7 @@ function TopicItem({
   node,
   depth,
   activeId,
+  activeItemRef,
   streamingTopicIds,
   collapsedIds,
   onToggleCollapsed,
@@ -434,6 +444,7 @@ function TopicItem({
   return (
     <li>
       <div
+        ref={isActive ? activeItemRef : undefined}
         className={`group flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer text-sm ${
           isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
@@ -525,6 +536,7 @@ function TopicItem({
               node={child}
               depth={depth + 1}
               activeId={activeId}
+              activeItemRef={activeItemRef}
               streamingTopicIds={streamingTopicIds}
               collapsedIds={collapsedIds}
               onToggleCollapsed={onToggleCollapsed}
@@ -1122,6 +1134,8 @@ function ReminderRow({ item, onSelect, onDone }: ReminderRowProps) {
 interface PinnedItemProps {
   node: TopicNode;
   activeId: number | null;
+  /** Callback ref attached to the active row so it can be scrolled into view. */
+  activeItemRef: (el: HTMLDivElement | null) => void;
   streamingTopicIds: number[];
   onSelect: (id: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
@@ -1130,6 +1144,7 @@ interface PinnedItemProps {
 function PinnedItem({
   node,
   activeId,
+  activeItemRef,
   streamingTopicIds,
   onSelect,
   onRename,
@@ -1140,6 +1155,7 @@ function PinnedItem({
   return (
     <li>
       <div
+        ref={isActive ? activeItemRef : undefined}
         className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm ${
           isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
