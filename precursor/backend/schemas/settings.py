@@ -63,6 +63,9 @@ class SettingsPayload(BaseModel):
     scheduled_run_timeout_seconds: int | None = None
     # Tool-result retention window in days (0 = keep forever / disabled).
     tool_result_retention_days: int | None = None
+    # Live transcript retention window in days (0 = keep forever). Deletes only
+    # transcript segments of ended sessions; insights/notes/summary are kept.
+    live_transcript_retention_days: int | None = None
     # Command runner ("jail").
     cmd_runner_jail: bool | None = None
     cmd_runner_image: str | None = None
@@ -133,6 +136,7 @@ class SettingsRead(BaseModel):
     llm_max_tool_result_tokens: int = 20_000
     scheduled_run_timeout_seconds: int = 600
     tool_result_retention_days: int = 0
+    live_transcript_retention_days: int = 7
     cmd_runner_jail: bool = True
     cmd_runner_image: str = "python:3.14-slim"
     cmd_runner_network: bool = False

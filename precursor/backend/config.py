@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     tool_result_retention_days: int = 0
     tool_result_retention_poll_seconds: int = 86_400
 
+    # Live transcript retention (services/live_transcript_retention.py) — how many
+    # days after a Live meeting session ends its raw transcript segments are kept
+    # before being deleted, to bound DB growth. 0 = keep forever. Only the
+    # transcript is removed; the session, its insights, notes and summary are
+    # preserved. The sweep runs on startup and periodically via a ticker gated by
+    # ``scheduler_enabled`` (poll interval below, default daily).
+    live_transcript_retention_days: int = 7
+    live_transcript_retention_poll_seconds: int = 86_400
+
     # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
     # ticker that silently refreshes the WorkIQ preview OAuth token before it
     # expires, so the hosted session survives without frequent interactive

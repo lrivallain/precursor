@@ -342,6 +342,10 @@ async def azure_stt_ready(session: AsyncSession) -> bool:
 # Retention window (in days) for full TOOL-result content. 0 disables pruning.
 DEFAULT_TOOL_RESULT_RETENTION_DAYS = 0
 
+# Retention window (in days) for Live meeting transcript segments, measured from
+# when the session ended. 0 disables cleanup (keep forever); 7 by default.
+DEFAULT_LIVE_TRANSCRIPT_RETENTION_DAYS = 7
+
 # Clamp bounds.
 _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
 _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
@@ -403,6 +407,18 @@ async def resolve_tool_result_retention_days(session: AsyncSession) -> int:
     )
 
 
+async def resolve_live_transcript_retention_days(session: AsyncSession) -> int:
+    """Return the Live transcript retention window in days (0 = keep forever)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "live_transcript_retention_days",
+            _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
+            default_factory=lambda: get_settings().live_transcript_retention_days,
+        ),
+    )
+
+
 async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
     """Effective cmd-runner config: env defaults with DB overrides applied."""
     settings = get_settings()
@@ -452,6 +468,7 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
         "llm_max_tool_result_tokens": await resolve_llm_max_tool_result_tokens(session),
         "scheduled_run_timeout_seconds": await resolve_scheduled_run_timeout_seconds(session),
         "tool_result_retention_days": await resolve_tool_result_retention_days(session),
+        "live_transcript_retention_days": await resolve_live_transcript_retention_days(session),
         "cmd_runner_jail": cfg.jail,
         "cmd_runner_image": cfg.image,
         "cmd_runner_network": cfg.network,

@@ -80,10 +80,24 @@ each with its own tab-strip and a draggable divider.
 
 ## Settings
 
-Configure the section under **Settings → Live**: enable/disable it, and choose
+Configure the section under **Settings → Live**: enable/disable it, choose
 the **fast model + reasoning effort** used for live insights and Q&A (summaries
-use your default chat model for quality). Speech credentials live under
-**Settings → Speech-to-text**.
+use your default chat model for quality), and set the **transcript retention**
+window. Speech credentials live under **Settings → Speech-to-text**.
+
+## Transcript retention
+
+To keep the database small, a session's raw transcript is **automatically
+deleted a configurable number of days after the session ends** — **7 days by
+default**. Set **Delete transcript after (days)** to `0` under **Settings →
+Live** to keep transcripts forever.
+
+Only the transcript is removed: the session and its **insights, notes and
+summary are preserved**, so a cleaned-up session still shows its recap. Only
+*ended* sessions are eligible — an active or paused recording is never touched.
+The sweep runs on startup and daily in the background. The window maps to the
+`live_transcript_retention_days` setting (see the
+[configuration reference](/reference/configuration#retention)).
 
 ## Privacy
 

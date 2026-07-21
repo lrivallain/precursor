@@ -67,7 +67,9 @@ Precursor's **Settings** panel is organized into tabs:
 - **Agents** — turn [Agents mode](/features/agents) on/off; reports whether the
   native runtime resolved on your platform.
 - **Live / Speech-to-text** — enable the section, pick the fast model + reasoning
-  effort for live insights, and set Azure Speech credentials.
+  effort for live insights, set how many days to keep a session's transcript
+  (`live_transcript_retention_days`, `7` by default; `0` keeps forever), and set
+  Azure Speech credentials.
 - **Backup** — periodic copy of the SQLite DB + attachment blobs into a plain
   (e.g. cloud-synced) folder, with snapshot retention.
 - **System** — theme (light / dark / system), storage & retention

@@ -57,6 +57,21 @@ knobs are env-level:
 | `PRECURSOR_BACKUP_INTERVAL_SECONDS` | `86400` | Minimum time between successful backups. |
 | `PRECURSOR_BACKUP_POLL_SECONDS` | `3600` | How often the ticker checks whether a backup is due. |
 
+## Retention
+
+Two independent sweeps bound long-term database growth. Each is set **at
+runtime** — the retention window lives in an `AppSetting` (with an env-level
+factory default and poll cadence), runs on startup, and repeats daily via a
+background ticker.
+
+| Setting | Default | Where | Description |
+| --- | --- | --- | --- |
+| `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder. |
+| `live_transcript_retention_days` | `7` | Settings → Live | Days after a [Live session](/features/live-sessions#transcript-retention) ends before its transcript segments are deleted. `0` keeps them forever. Insights, notes and summary are preserved. |
+
+Poll cadences (`PRECURSOR_TOOL_RESULT_RETENTION_POLL_SECONDS`,
+`PRECURSOR_LIVE_TRANSCRIPT_RETENTION_POLL_SECONDS`) default to `86400` (daily).
+
 ## Skills directory
 
 The [skills](/features/skills-memory) folder is resolved the way the Copilot CLI

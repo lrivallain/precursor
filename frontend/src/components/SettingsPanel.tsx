@@ -167,6 +167,7 @@ export function SettingsPanel({ onClose }: Props) {
   const [liveFastModel, setLiveFastModel] = useState("");
   const [liveReasoningEffort, setLiveReasoningEffort] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(true);
+  const [liveTranscriptRetentionDays, setLiveTranscriptRetentionDays] = useState(7);
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
   >({ state: "idle" });
@@ -273,6 +274,7 @@ export function SettingsPanel({ onClose }: Props) {
       setLiveFastModel(s.live_fast_model);
       setLiveReasoningEffort(s.live_reasoning_effort);
       setLiveEnabled(s.live_enabled);
+      setLiveTranscriptRetentionDays(s.live_transcript_retention_days);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -366,6 +368,7 @@ export function SettingsPanel({ onClose }: Props) {
         live_fast_model: liveFastModel,
         live_reasoning_effort: liveReasoningEffort,
         live_enabled: liveEnabled,
+        live_transcript_retention_days: liveTranscriptRetentionDays,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         backup_enabled: backupEnabled,
@@ -1063,6 +1066,25 @@ export function SettingsPanel({ onClose }: Props) {
                     Live analysis favours speed — keep this low. Only applies to
                     reasoning-capable models.
                   </p>
+                </div>
+
+                <div className="border-t border-border pt-4 mt-4">
+                  <h3 className="text-sm font-medium">Transcript retention</h3>
+                  <p className="text-[11px] text-muted mt-1 mb-3">
+                    Automatically delete a session's transcript this many days
+                    after it ends, to keep the database small. Only the
+                    transcript is removed — the session's insights, notes and
+                    summary are kept. 0 = keep forever.
+                  </p>
+                  <label className="block text-xs text-muted mb-1">
+                    Delete transcript after (days)
+                  </label>
+                  <NumberInput
+                    value={liveTranscriptRetentionDays}
+                    min={0}
+                    max={3650}
+                    onCommit={setLiveTranscriptRetentionDays}
+                  />
                 </div>
               </section>
             )}
