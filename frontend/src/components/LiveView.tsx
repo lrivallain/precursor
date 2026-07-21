@@ -199,6 +199,8 @@ export function LiveView({
   const [summaryText, setSummaryText] = useState(session.summary ?? "");
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  // Scraping + summarizing the linked Teams meeting transcript (WorkIQ path).
+  const [transcriptScraping, setTranscriptScraping] = useState(false);
   // Ask the panel to surface a tab (bump the nonce). Used after generating the
   // summary and after starting the assistant.
   const [panelFocus, setPanelFocus] = useState<{ id: string; nonce: number }>({
@@ -614,6 +616,26 @@ export function LiveView({
     }
   }
 
+  async function generateFromTranscript(): Promise<void> {
+    focusTab("summary");
+    if (genRef.current || transcriptScraping) return;
+    setTranscriptScraping(true);
+    setSummaryError(null);
+    try {
+      const res = await api.meetings.summarizeFromTranscript(session.id);
+      setSummaryText(res.summary);
+      onUpdated({ ...session, summary: res.summary || null });
+    } catch (e) {
+      setSummaryError(
+        e instanceof Error
+          ? e.message
+          : "Couldn't summarize the Teams transcript — it may not be published yet.",
+      );
+    } finally {
+      setTranscriptScraping(false);
+    }
+  }
+
   async function setStatus(next: "active" | "ended"): Promise<void> {
     if (busy) return;
     if (next === "ended" && transcriber.listening) transcriber.stop();
@@ -1011,6 +1033,11 @@ export function LiveView({
     </div>
   );
 
+  // A linked Teams meeting + WorkIQ lets the user build the recap from the
+  // meeting's own transcript — no local recording needed.
+  const canSummarizeFromTranscript =
+    (settings?.mcp_enabled?.workiq ?? false) && session.external_meeting != null;
+
   const summaryNode = (
     <SummarySection
       session={session}
@@ -1024,6 +1051,9 @@ export function LiveView({
       topicTitle={topicTitle}
       topicIssueNumber={topicIssueNumber}
       canGenerate={segments.length > 0}
+      canSummarizeFromTranscript={canSummarizeFromTranscript}
+      onSummarizeFromTranscript={() => void generateFromTranscript()}
+      transcriptScraping={transcriptScraping}
     />
   );
 
@@ -1076,7 +1106,8 @@ export function LiveView({
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
   // Optional tabs are gated by the session's enabled features; summary also
-  // requires the session to be ended, and the assistant its chat to exist.
+  // requires the session to be ended (or a Teams transcript source), and the
+  // assistant its chat to exist.
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
     ...(insightsOn
@@ -1091,7 +1122,9 @@ export function LiveView({
     ...(assistantOn && chat ? [{ id: "assistant", label: "Assistant" }] : []),
     ...(translationOn ? [{ id: "translation", label: "Translation" }] : []),
     ...(notesOn ? [{ id: "notes", label: notes.trim() ? "Notes ●" : "Notes" }] : []),
-    ...(isEnded ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }] : []),
+    ...(isEnded || canSummarizeFromTranscript
+      ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }]
+      : []),
     { id: "context", label: "Context" },
   ];
 

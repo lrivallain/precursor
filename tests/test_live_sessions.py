@@ -321,6 +321,88 @@ def test_meeting_summary_generate_and_post() -> None:
         assert after["summary"] == "## Summary\nAll good."
 
 
+def test_parse_vtt_speaker_attribution() -> None:
+    from precursor.backend.services.meeting_transcript import parse_vtt
+
+    vtt = (
+        "WEBVTT\n\n"
+        "0\n00:00:01.000 --> 00:00:03.000\n<v Alex Kim>Hello everyone.</v>\n\n"
+        "1\n00:00:03.000 --> 00:00:05.000\n<v Alex Kim>Let's begin.</v>\n\n"
+        "2\n00:00:05.000 --> 00:00:07.000\n<v Sam Lee>Sounds good.</v>\n"
+    )
+    out = parse_vtt(vtt)
+    # Same-speaker cues are merged into one turn; timing lines are dropped.
+    assert out == "Alex Kim: Hello everyone. Let's begin.\nSam Lee: Sounds good."
+
+
+def test_summarize_from_transcript(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    async def _fake_transcript(external_meeting):  # type: ignore[no-untyped-def]
+        return True, "Alex Kim: We agreed to ship on Friday.\nSam Lee: I'll own the release.", None
+
+    monkeypatch.setattr(live_router, "fetch_meeting_transcript", _fake_transcript)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Teams"}).json()["id"]
+
+        # No meeting linked yet → 400.
+        assert client.post(f"/api/live/{sid}/summary/from-transcript").status_code == 400
+
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "is_online": True,
+                "join_url": "https://teams.microsoft.com/l/meetup-join/xyz",
+            },
+        )
+        res = client.post(f"/api/live/{sid}/summary/from-transcript")
+        assert res.status_code == 200
+        assert isinstance(res.json()["summary"], str) and res.json()["summary"]
+
+        # The transcript-derived recap is persisted like the normal summary.
+        assert client.get(f"/api/live/{sid}").json()["summary"] == res.json()["summary"]
+
+
+def test_summarize_from_transcript_unavailable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    async def _fake_transcript(external_meeting):  # type: ignore[no-untyped-def]
+        return False, "", "No transcript is published for this meeting yet."
+
+    monkeypatch.setattr(live_router, "fetch_meeting_transcript", _fake_transcript)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Teams"}).json()["id"]
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={"subject": "Sprint review", "is_online": True, "join_url": "https://x"},
+        )
+        res = client.post(f"/api/live/{sid}/summary/from-transcript")
+        assert res.status_code == 400
+        assert "transcript" in res.json()["detail"].lower()
+
+
+def test_link_meeting_persists_join_url() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Link"}).json()["id"]
+        r = client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "is_online": True,
+                "join_url": "https://teams.microsoft.com/l/meetup-join/abc",
+            },
+        )
+        assert r.status_code == 200
+        # The join URL rides along so the transcript can be located later.
+        assert r.json()["external_meeting"]["join_url"].endswith("/abc")
+
+
 def test_meeting_summary_post_requires_topic() -> None:
     app = create_app()
     with TestClient(app) as client:

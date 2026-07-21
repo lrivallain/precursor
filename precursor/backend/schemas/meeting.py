@@ -191,6 +191,8 @@ class AgendaEvent(BaseModel):
     organizer: str | None = None
     attendees: list[AgendaAttendee] = Field(default_factory=list)
     is_online: bool = False
+    # Teams join URL, used to locate the meeting's transcript later.
+    join_url: str | None = None
     body: str | None = None
     body_preview: str | None = None
 
@@ -202,14 +204,22 @@ class AgendaResponse(BaseModel):
 
 
 class LinkMeetingRequest(BaseModel):
+    # Graph event id + Teams join URL are carried through so the summary can be
+    # rebuilt from the meeting's Teams transcript ("no local record" path).
+    id: str | None = None
     subject: str = Field(min_length=1, max_length=500)
     start: str | None = None
     end: str | None = None
     organizer: str | None = None
     attendees: list[AgendaAttendee] = Field(default_factory=list)
     is_online: bool = False
+    join_url: str | None = Field(default=None, max_length=2000)
     body: str | None = None
     body_preview: str | None = None
+
+
+class MeetingTranscriptSummaryResult(MeetingSummaryResult):
+    """A summary generated from the linked Teams meeting transcript."""
 
 
 class TopicSummaryResult(BaseModel):

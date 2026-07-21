@@ -738,6 +738,11 @@ export const api = {
       request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
         method: "POST",
       }),
+    summarizeFromTranscript: (id: number) =>
+      request<{ summary: string; model: string }>(
+        `/api/live/${id}/summary/from-transcript`,
+        { method: "POST" },
+      ),
     postSummary: (id: number, summary: string) =>
       request<{
         topic_id: number;
@@ -771,12 +776,14 @@ export const api = {
       request<MeetingSession>(`/api/live/${id}/meeting`, {
         method: "POST",
         body: JSON.stringify({
+          id: event.id,
           subject: event.subject,
           start: event.start,
           end: event.end,
           organizer: event.organizer,
           attendees: event.attendees,
           is_online: event.is_online,
+          join_url: event.join_url,
           body: event.body,
           body_preview: event.body_preview,
         }),

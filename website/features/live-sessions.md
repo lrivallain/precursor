@@ -73,10 +73,29 @@ each with its own tab-strip and a draggable divider.
   that voice.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
-  **post into the linked topic** as a message.
+  **post into the linked topic** as a message. When a Teams meeting is linked and
+  the [WorkIQ MCP](/features/mcp) is enabled, a **From Teams transcript** button
+  builds the recap from the meeting's own published transcript — a **"no local
+  record"** path that needs no local recording at all (see below).
 - **Context** — an AI summary of the attached topic, and — via the
   [WorkIQ MCP](/features/mcp) (Microsoft 365) — the ability to **link a meeting
   from your agenda** so its invitees flow into the summary's attendees.
+
+### Summarize from the Teams transcript (no local record)
+
+If you'd rather not capture audio locally, link the Teams meeting from your
+agenda in the **Context** tab, then open **Summary → From Teams transcript**.
+Precursor scrapes the meeting's published transcript through WorkIQ (Microsoft
+Graph) and summarizes it with **your** model — so you get Precursor's structured
+recap (decisions, action items, open questions, risks) instead of Teams' own
+summary.
+
+The button appears **only** when the WorkIQ MCP server is enabled **and** a Teams
+meeting is linked. It's best-effort and fail-closed: the transcript is only
+available to the meeting **organizer**, requires the delegated
+`OnlineMeetingTranscript.Read.All` permission, and is published by Teams a few
+minutes **after** the meeting ends (transcription must have been on). When any of
+those isn't met, the button reports why and leaves your summary untouched.
 
 ## Settings
 

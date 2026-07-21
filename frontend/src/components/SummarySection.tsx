@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Eye, Loader2, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
+import { Check, Eye, Loader2, Pencil, Plus, RefreshCw, ScrollText, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
 import { GithubIcon as Github } from "./icons/GithubIcon";
@@ -20,6 +20,13 @@ interface Props {
   /** Issue number linked to the attached topic; posting also comments there. */
   topicIssueNumber: number | null;
   canGenerate: boolean;
+  /**
+   * Show the "From Teams transcript" action: true only when WorkIQ is enabled
+   * and a Teams meeting is linked to the session.
+   */
+  canSummarizeFromTranscript: boolean;
+  onSummarizeFromTranscript: () => void;
+  transcriptScraping: boolean;
 }
 
 /**
@@ -39,6 +46,9 @@ export function SummarySection({
   topicTitle,
   topicIssueNumber,
   canGenerate,
+  canSummarizeFromTranscript,
+  onSummarizeFromTranscript,
+  transcriptScraping,
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [newAttendee, setNewAttendee] = useState("");
@@ -178,6 +188,22 @@ export function SummarySection({
           )}
           {text ? "Refresh" : "Generate"}
         </button>
+        {canSummarizeFromTranscript && (
+          <button
+            type="button"
+            onClick={onSummarizeFromTranscript}
+            disabled={transcriptScraping || generating}
+            data-tooltip="Scrape the linked Teams meeting transcript and summarize it"
+            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+          >
+            {transcriptScraping ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <ScrollText size={12} />
+            )}
+            From Teams transcript
+          </button>
+        )}
         <div className="flex items-center gap-0.5 text-xs">
           <button
             type="button"

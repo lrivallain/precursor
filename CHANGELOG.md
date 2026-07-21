@@ -11,6 +11,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Summarize a Live session from the Teams transcript ("no local record")**:
+  when a Teams meeting is linked to a Live session and the **WorkIQ MCP** server
+  is enabled, the **Summary** tab gains a **From Teams transcript** button. It
+  scrapes the meeting's published transcript through WorkIQ (Microsoft Graph:
+  `/me/onlineMeetings` → `/transcripts` → VTT `/content`) and generates
+  Precursor's own structured recap — so you don't need to capture the meeting
+  audio locally. Best-effort and fail-closed: it requires you to be the meeting
+  organizer, the delegated `OnlineMeetingTranscript.Read.All` permission, and a
+  transcript that Teams has already published (a few minutes after the meeting
+  ends). The Summary tab is now reachable in this case even while the session is
+  still active. New endpoint `POST /api/live/{id}/summary/from-transcript`; the
+  linked meeting now also carries its Teams join URL.
+
 - **Hands-free WorkIQ re-auth**: when a WorkIQ preview session's refresh token
   ages out, Precursor now attempts the silent `prompt=none` authorization in an
   invisible iframe before showing anything. If the browser still holds a live
