@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookmarkPlus,
   CalendarClock,
   Check,
   FileText,
+  History,
   Link2,
   Link2Off,
   Loader2,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import type { AgendaEvent, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
+import { formatMeetingWhen, partitionMeetings } from "../lib/agenda";
 import { CopyableMarkdown } from "./CopyableMarkdown";
 import { MeetingBody } from "./MeetingBody";
 
@@ -28,25 +30,12 @@ interface Props {
   onRefreshTopicSummary: () => void;
 }
 
-function formatWhen(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const today = new Date();
-  const sameDay =
-    d.getFullYear() === today.getFullYear() &&
-    d.getMonth() === today.getMonth() &&
-    d.getDate() === today.getDate();
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  if (sameDay) return time;
-  const day = d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  return `${day} ${time}`;
-}
-
 /**
  * Context tab: an AI summary of the attached topic's conversation (auto-generated
- * on link), plus today's M365 agenda (via WorkIQ) so the user can pick the
- * meeting for context — folding its invitees into the summary's attendees.
+ * on link), plus the user's M365 agenda (via WorkIQ) so the user can pick the
+ * meeting for context — folding its invitees into the summary's attendees. Past
+ * meetings are included (and clearly marked) so a session can be attached to a
+ * meeting that already happened.
  */
 export function ContextSection({
   session,
@@ -69,6 +58,62 @@ export function ContextSection({
   const linked = session.external_meeting;
   const canPost = session.topic_id != null;
 
+  const { past, upcoming } = useMemo(() => partitionMeetings(events ?? []), [events]);
+
+  // Auto-scroll the meeting list so the "Current & upcoming" boundary sits at the
+  // top — past meetings stay one scroll up, current/future ones are front-and-centre.
+  const listRef = useRef<HTMLDivElement>(null);
+  const boundaryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (past.length === 0 || upcoming.length === 0) return;
+    const box = listRef.current;
+    const marker = boundaryRef.current;
+    if (box && marker) {
+      box.scrollTop += marker.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    }
+  }, [past.length, upcoming.length]);
+
+  // One agenda row → a "Link" button that attaches the meeting for context.
+  // ``isPast`` renders it muted (a meeting that already happened, e.g. to
+  // summarize from its Teams transcript).
+  function renderRow(ev: AgendaEvent, isPast: boolean): React.ReactNode {
+    const key = ev.id ?? ev.subject;
+    return (
+      <li
+        key={key}
+        className={`flex items-center gap-2 rounded border border-border px-2.5 py-1.5 ${
+          isPast ? "opacity-80" : ""
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm">{ev.subject}</div>
+          <div className="text-[11px] text-muted">
+            {formatMeetingWhen(ev.start)}
+            {ev.attendees.length > 0 && (
+              <span className="ml-2 inline-flex items-center gap-0.5">
+                <Users size={10} /> {ev.attendees.length}
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void link(ev)}
+          disabled={linking === key}
+          data-tooltip={isPast ? "Attach this past meeting for context" : undefined}
+          className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
+        >
+          {linking === key ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            <Link2 size={11} />
+          )}
+          Link
+        </button>
+      </li>
+    );
+  }
+
   async function loadAgenda(): Promise<void> {
     setAgendaLoading(true);
     setAgendaDetail(null);
@@ -76,7 +121,7 @@ export function ContextSection({
       const res = await api.meetings.getAgenda();
       setEvents(res.events);
       if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
-      else if (res.events.length === 0) setAgendaDetail("No meetings on your calendar today.");
+      else if (res.events.length === 0) setAgendaDetail("No meetings on your calendar.");
     } catch (e) {
       setAgendaDetail(e instanceof Error ? e.message : "Couldn't load the agenda.");
       setEvents([]);
@@ -240,8 +285,8 @@ export function ContextSection({
               <div className="mt-1 space-y-0.5 text-[12px] text-muted">
                 {(linked.start || linked.end) && (
                   <div>
-                    {formatWhen(linked.start)}
-                    {linked.end && ` – ${formatWhen(linked.end)}`}
+                    {formatMeetingWhen(linked.start)}
+                    {linked.end && ` – ${formatMeetingWhen(linked.end)}`}
                   </div>
                 )}
                 {linked.organizer && <div>Organizer: {linked.organizer}</div>}
@@ -299,7 +344,7 @@ export function ContextSection({
           <>
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                <CalendarClock size={12} /> Today&apos;s meetings
+                <CalendarClock size={12} /> Your meetings
               </div>
               <button
                 type="button"
@@ -323,43 +368,30 @@ export function ContextSection({
             )}
             {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
 
-            {events && events.length > 0 && (
-              <ul className="space-y-1.5">
-                {events.map((ev) => {
-                  const key = ev.id ?? ev.subject;
-                  return (
-                    <li
-                      key={key}
-                      className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
+            {(past.length > 0 || upcoming.length > 0) && (
+              <div ref={listRef} className="max-h-72 space-y-1.5 overflow-y-auto">
+                {past.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                      <History size={11} /> Past
+                      <span className="h-px flex-1 bg-amber-500/30" />
+                    </div>
+                    <ul className="space-y-1.5">{past.map((ev) => renderRow(ev, true))}</ul>
+                  </>
+                )}
+                {upcoming.length > 0 && (
+                  <>
+                    <div
+                      ref={boundaryRef}
+                      className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{ev.subject}</div>
-                        <div className="text-[11px] text-muted">
-                          {formatWhen(ev.start)}
-                          {ev.attendees.length > 0 && (
-                            <span className="ml-2 inline-flex items-center gap-0.5">
-                              <Users size={10} /> {ev.attendees.length}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void link(ev)}
-                        disabled={linking === key}
-                        className="inline-flex shrink-0 items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
-                      >
-                        {linking === key ? (
-                          <Loader2 size={11} className="animate-spin" />
-                        ) : (
-                          <Link2 size={11} />
-                        )}
-                        Link
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                      <CalendarClock size={11} /> Current &amp; upcoming
+                      <span className="h-px flex-1 bg-emerald-500/30" />
+                    </div>
+                    <ul className="space-y-1.5">{upcoming.map((ev) => renderRow(ev, false))}</ul>
+                  </>
+                )}
+              </div>
             )}
           </>
         )}

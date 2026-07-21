@@ -53,6 +53,7 @@ from precursor.backend.schemas import (
     MeetingSummaryPost,
     MeetingSummaryPostResult,
     MeetingSummaryResult,
+    MeetingTranscriptSummaryResult,
     SpeakerRenameRequest,
     TopicSummaryResult,
     TranslateRequest,
@@ -85,8 +86,10 @@ from precursor.backend.services.meeting_analysis import (
 )
 from precursor.backend.services.meeting_summary import (
     generate_summary,
+    generate_summary_from_transcript,
     summarize_topic_conversation,
 )
+from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.usage_stats import record_usage
@@ -691,6 +694,49 @@ async def summarize(
     await session.commit()
     await publish_meeting_changed(ms.id)
     return MeetingSummaryResult(summary=text, model=model)
+
+
+@router.post(
+    "/{session_id}/summary/from-transcript",
+    response_model=MeetingTranscriptSummaryResult,
+)
+async def summarize_from_transcript(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingTranscriptSummaryResult:
+    """Build the recap from the linked Teams meeting transcript (via WorkIQ).
+
+    A "no local record" path: when a Teams meeting is linked and WorkIQ is
+    enabled, scrape the meeting's published transcript and summarise it with our
+    own model instead of a locally-captured recording. Persisted like the normal
+    summary so a reopened session shows it.
+    """
+    ms = await _get_session_or_404(session_id, session)
+    if ms.external_meeting is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Link a Teams meeting to this session first.",
+        )
+
+    available, transcript, detail = await fetch_meeting_transcript(ms.external_meeting)
+    if not available:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail or "The Teams transcript is unavailable.",
+        )
+
+    try:
+        text, model = await generate_summary_from_transcript(session, session_id, transcript)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
+    if not text:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "The transcript couldn't be summarised.",
+        )
+    ms.summary = text
+    await session.commit()
+    await publish_meeting_changed(ms.id)
+    return MeetingTranscriptSummaryResult(summary=text, model=model)
 
 
 @router.post(
