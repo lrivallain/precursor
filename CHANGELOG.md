@@ -63,6 +63,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ sign-in aborted by stray loopback probes**: the OAuth callback
+  server resolved on the *first* inbound connection regardless of content, so a
+  favicon fetch, browser/OS connectivity probe, or pre-connect that carried no
+  `code`/`error` failed the whole flow with `RuntimeError: No authorization code
+  in OAuth callback` (often right after a silent `prompt=none` pass timed out).
+  The loopback now answers such non-OAuth requests with `204 No Content` and
+  keeps listening for the genuine redirect (or the outer timeout).
+
 - **WorkIQ OAuth callback never returned the auth code**: the loopback
   callback's `asyncio.start_server` block was mis-indented inside the
   per-connection handler, so `_callback_handler` fell off the end and returned

@@ -561,6 +561,20 @@ def _make_callback_handler(
                 code = query.get("code", [""])[0]
                 state = query.get("state", [None])[0]
                 error = query.get("error", [None])[0]
+
+                # Ignore stray connections that aren't the OAuth redirect —
+                # favicon fetches, browser/OS connectivity probes, pre-connects,
+                # or a manual hit on the loopback. They carry neither ``code``
+                # nor ``error``; resolving the future on them would abort a
+                # sign-in that hasn't actually redirected back yet with a
+                # spurious "No authorization code" failure. Answer benignly and
+                # keep listening for the genuine redirect (or the outer timeout).
+                if not code and not error:
+                    with contextlib.suppress(Exception):
+                        writer.write(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                        await writer.drain()
+                    return
+
                 interaction_required = error in _INTERACTION_REQUIRED_ERRORS
 
                 if interaction_required:
