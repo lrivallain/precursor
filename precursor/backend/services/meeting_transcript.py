@@ -196,12 +196,10 @@ async def fetch_meeting_transcript(
                 "meeting organizer, and require OnlineMeetingTranscript.Read.All.",
             )
 
-        # 2) List transcripts, newest first.
-        transcripts = _rows_from(
-            await _fetch(
-                f"/me/onlineMeetings/{meeting_id}/transcripts?$orderby=createdDateTime desc"
-            )
-        )
+        # 2) List transcripts and pick the most recent. NB: the transcripts
+        # collection rejects ``$orderby`` (Graph returns 400), so sort here.
+        transcripts = _rows_from(await _fetch(f"/me/onlineMeetings/{meeting_id}/transcripts"))
+        transcripts.sort(key=lambda t: str(t.get("createdDateTime") or ""), reverse=True)
         transcript_id = next(
             (str(t["id"]) for t in transcripts if isinstance(t.get("id"), str) and t["id"]),
             None,

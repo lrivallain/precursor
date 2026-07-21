@@ -386,6 +386,86 @@ def test_summarize_from_transcript_unavailable(monkeypatch) -> None:  # type: ig
         assert "transcript" in res.json()["detail"].lower()
 
 
+def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Regression: the transcripts collection rejects ``$orderby`` (Graph 400),
+    so the service must list without it and sort client-side, picking the newest.
+    """
+    import asyncio
+
+    import precursor.backend.services.mcp.client as mcp_client
+    from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
+
+    class _Result:
+        def __init__(self, data: object) -> None:
+            self.structuredContent = data
+            self.content = None
+
+    class _Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.server = "workiq"
+
+    class _Bundle:
+        def __init__(self) -> None:
+            self.workers = {"workiq": object()}
+            self.tools = [_Tool("fetch")]
+            self.unavailable: list[tuple[str, str]] = []
+            self.ephemeral = False
+            self.paths: list[str] = []
+
+        async def call_tool(self, server: str, name: str, args: dict) -> object:  # type: ignore[type-arg]
+            path = args["entityUrls"][0]
+            self.paths.append(path)
+            # Simulate Graph rejecting $orderby on the transcripts collection.
+            if "$orderby" in path:
+                return _Result({"results": [{"data": None, "statusCode": 400}]})
+            if "/transcripts/" in path and "/content" in path:
+                spoken = "latest" if "/T2/" in path else "older"
+                vtt = f"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Alex>{spoken}</v>"
+                return _Result({"results": [{"data": vtt, "statusCode": 200}]})
+            if path.endswith("/transcripts"):
+                return _Result(
+                    {
+                        "results": [
+                            {
+                                "data": {
+                                    "value": [
+                                        {"id": "T1", "createdDateTime": "2026-01-01T00:00:00Z"},
+                                        {"id": "T2", "createdDateTime": "2026-01-02T00:00:00Z"},
+                                    ]
+                                },
+                                "statusCode": 200,
+                            }
+                        ]
+                    }
+                )
+            if "onlineMeetings?$filter" in path:
+                return _Result(
+                    {"results": [{"data": {"value": [{"id": "MID"}]}, "statusCode": 200}]}
+                )
+            return _Result({"results": [{"data": None, "statusCode": 404}]})
+
+        async def aclose(self) -> None:
+            return None
+
+    bundle = _Bundle()
+
+    class _Manager:
+        async def acquire(self, names, **kwargs):  # type: ignore[no-untyped-def]
+            return bundle
+
+    monkeypatch.setattr(mcp_client, "get_mcp_client_manager", lambda: _Manager())
+
+    available, text, detail = asyncio.run(
+        fetch_meeting_transcript({"join_url": "https://teams.microsoft.com/l/meetup-join/x"})
+    )
+    assert available is True, detail
+    # Sorted client-side → the newest transcript (T2) is used.
+    assert text == "Alex: latest"
+    # The transcripts listing must not carry an $orderby (Graph rejects it).
+    assert not any(p.endswith("/transcripts") and "$orderby" in p for p in bundle.paths)
+
+
 def test_link_meeting_persists_join_url() -> None:
     app = create_app()
     with TestClient(app) as client:
