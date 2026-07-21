@@ -37,6 +37,12 @@ alongside the virtual device — both streams are mixed and transcribed together
 
 ## Starting and protecting a recording
 
+The **record controls** — the **Record** button, capture-device picker, **+ mic**
+mix-in, and the meeting **language** — live pinned at the top of the
+**Transcript** tab, so they stay in reach even as the transcript grows and
+scrolls. (Session-level controls — topic, features, **End session**, archive and
+delete — stay in the toolbar above the tabs.)
+
 Connecting to Azure takes a moment — minting a token, loading the Speech SDK, and
 opening the capture device — so the **Record** button first shows a transient
 **Starting…** state, then flips to a red **Stop** button with a **Recording**
@@ -52,10 +58,10 @@ While a recording is live, Precursor guards against losing it by accident:
 
 ## Language
 
-Pick the meeting language when creating the session or from the Live toolbar.
-Changing it mid-session briefly restarts the recognizer (Azure can't switch a
-running recognizer's language in place). Live insights and Q&A answers are
-produced in the session's language.
+Pick the meeting language when creating the session or from the record controls
+at the top of the **Transcript** tab. Changing it mid-session briefly restarts
+the recognizer (Azure can't switch a running recognizer's language in place).
+Live insights and Q&A answers are produced in the session's language.
 
 ## Insights, Q&A, and summary
 

@@ -68,6 +68,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Live record controls moved into the Transcript tab**: the **Record** button,
+  capture-device picker, **+ mic** mix-in and meeting **language** now live pinned
+  at the top of the **Transcript** tab (instead of the session toolbar), so they
+  stay visible even when the transcript grows to fill the height. Session-level
+  controls — topic, features, **End session**, archive and delete — remain in the
+  toolbar above the tabs.
+
 - **Live recording is clearer to start and harder to lose**: the **Record**
   button now shows a transient **Starting…** state while it connects to Azure
   (token, SDK, capture device) instead of looking unresponsive for the couple of

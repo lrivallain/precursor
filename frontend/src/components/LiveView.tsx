@@ -872,8 +872,99 @@ export function LiveView({
     () => new Map(recordingBoundaries.map((b) => [b.index, b.kind])),
     [recordingBoundaries],
   );
+
+  // Record-related controls (capture button, device, mic mix-in, language).
+  // Rendered pinned at the top of the Transcript tab so they stay reachable
+  // even when the transcript fills the height.
+  const recordControls = (
+    <>
+      {recording ? (
+        <button
+          type="button"
+          onClick={() => transcriber.stop()}
+          className="inline-flex items-center gap-1.5 rounded bg-red-600 px-2.5 py-1.5 text-sm text-white hover:bg-red-500"
+        >
+          <Square size={14} /> Stop
+        </button>
+      ) : starting ? (
+        <button
+          type="button"
+          disabled
+          className="inline-flex cursor-wait items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1.5 text-sm font-medium text-black"
+        >
+          <Loader2 size={14} className="animate-spin" /> Starting…
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => transcriber.start()}
+          disabled={!sttReady || isEnded}
+          data-tooltip={
+            !sttReady
+              ? "Configure Azure Speech in Settings first"
+              : isEnded
+                ? "Reopen the session to record"
+                : undefined
+          }
+          className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-sm text-white disabled:opacity-50"
+        >
+          <Mic size={14} /> Record
+        </button>
+      )}
+
+      {recording && (
+        <span className="inline-flex items-center gap-1 text-[12px] font-medium text-red-500">
+          <span className="h-2 w-2 rounded-full bg-red-500" />
+          Recording
+        </span>
+      )}
+
+      <div className="flex items-center gap-1">
+        <DevicePicker
+          devices={devices}
+          value={deviceId}
+          onChange={setDeviceId}
+          disabled={recording || !sttReady}
+        />
+        <button
+          type="button"
+          onClick={() => setHelpOpen(true)}
+          aria-label="How to capture meeting audio"
+          data-tooltip="How to capture meeting audio"
+          className="rounded p-1 text-muted hover:bg-surface hover:text-accent"
+        >
+          <CircleHelp size={16} />
+        </button>
+      </div>
+
+      <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+        <input
+          type="checkbox"
+          checked={captureMic}
+          onChange={(e) => setCaptureMic(e.target.checked)}
+          disabled={recording || !deviceId}
+          className="accent-accent"
+        />
+        + mic
+      </label>
+
+      <Select
+        value={session.language ?? ""}
+        onChange={(v) => void applyLanguage(v)}
+        options={LANGUAGES}
+        ariaLabel="Meeting language"
+        size="sm"
+      />
+    </>
+  );
+
   const transcriptNode = (
-    <div ref={transcriptRef} className="h-full overflow-y-auto px-4 py-4">
+    <div className="flex h-full flex-col">
+      {/* Pinned record controls — stay visible as the transcript scrolls. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2">
+        {recordControls}
+      </div>
+      <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       {segments.length === 0 && !interim ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
           <Radio size={20} className="mb-2 opacity-70" aria-hidden="true" />
@@ -948,6 +1039,7 @@ export function LiveView({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 
@@ -1152,84 +1244,6 @@ export function LiveView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2">
-        {recording ? (
-          <button
-            type="button"
-            onClick={() => transcriber.stop()}
-            className="inline-flex items-center gap-1.5 rounded bg-red-600 px-2.5 py-1.5 text-sm text-white hover:bg-red-500"
-          >
-            <Square size={14} /> Stop
-          </button>
-        ) : starting ? (
-          <button
-            type="button"
-            disabled
-            className="inline-flex cursor-wait items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1.5 text-sm font-medium text-black"
-          >
-            <Loader2 size={14} className="animate-spin" /> Starting…
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => transcriber.start()}
-            disabled={!sttReady || isEnded}
-            data-tooltip={
-              !sttReady
-                ? "Configure Azure Speech in Settings first"
-                : isEnded
-                  ? "Reopen the session to record"
-                  : undefined
-            }
-            className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-sm text-white disabled:opacity-50"
-          >
-            <Mic size={14} /> Record
-          </button>
-        )}
-
-        {recording && (
-          <span className="inline-flex items-center gap-1 text-[12px] font-medium text-red-500">
-            <span className="h-2 w-2 rounded-full bg-red-500" />
-            Recording
-          </span>
-        )}
-
-        <div className="flex items-center gap-1">
-          <DevicePicker
-            devices={devices}
-            value={deviceId}
-            onChange={setDeviceId}
-            disabled={recording || !sttReady}
-          />
-          <button
-            type="button"
-            onClick={() => setHelpOpen(true)}
-            aria-label="How to capture meeting audio"
-            data-tooltip="How to capture meeting audio"
-            className="rounded p-1 text-muted hover:bg-surface hover:text-accent"
-          >
-            <CircleHelp size={16} />
-          </button>
-        </div>
-
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
-          <input
-            type="checkbox"
-            checked={captureMic}
-            onChange={(e) => setCaptureMic(e.target.checked)}
-            disabled={recording || !deviceId}
-            className="accent-accent"
-          />
-          + mic
-        </label>
-
-        <Select
-          value={session.language ?? ""}
-          onChange={(v) => void applyLanguage(v)}
-          options={LANGUAGES}
-          ariaLabel="Meeting language"
-          size="sm"
-        />
-
         <label className="inline-flex items-center gap-1 text-[11px] text-muted">
           Topic
           <TopicPicker
