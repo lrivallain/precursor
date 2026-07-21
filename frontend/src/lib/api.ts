@@ -761,11 +761,13 @@ export const api = {
       request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
         method: "POST",
       }),
-    getAgenda: () => {
-      // The user's *local* day window (local midnight → next local midnight),
-      // converted to UTC ISO so today's meetings match their calendar day.
+    getAgenda: (pastDays = 7) => {
+      // The agenda window: from local midnight ``pastDays`` ago through the next
+      // local midnight, so past meetings (for a "record from a past meeting"
+      // flow) show alongside today's — matched to the user's calendar day and
+      // converted to UTC ISO.
       const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - pastDays);
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
       const qs = `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
         end.toISOString(),

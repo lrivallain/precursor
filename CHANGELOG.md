@@ -11,6 +11,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Past meetings in the Live agenda picker**: the meeting lists used to *start*
+  a Live session (Start screen) and to *attach* one (Context tab) now include the
+  **last 7 days** of calendar meetings, not just today, so you can record or
+  summarize from a meeting that already happened. Entries are split by a clear
+  **Past** vs **Current & upcoming** marker, and past meetings still spin up a
+  session linked to the meeting (handy with **From Teams transcript**).
+
 - **Summarize a Live session from the Teams transcript ("no local record")**:
   when a Teams meeting is linked to a Live session and the **WorkIQ MCP** server
   is enabled, the **Summary** tab gains a **From Teams transcript** button. It

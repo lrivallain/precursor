@@ -195,7 +195,7 @@ async def fetch_agenda(
             f"&endDateTime={end}"
             "&$select=subject,start,end,organizer,attendees,isOnlineMeeting,"
             "onlineMeeting,bodyPreview,body"
-            "&$orderby=start/dateTime&$top=50"
+            "&$orderby=start/dateTime&$top=100"
         )
         try:
             if "fetch" in tool_names:
