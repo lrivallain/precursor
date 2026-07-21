@@ -5,6 +5,7 @@ import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
 import type { Chat } from "../lib/types";
 import { useMultiSelect } from "../lib/useMultiSelect";
+import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
 
 interface ChatListProps {
@@ -38,6 +39,7 @@ export function ChatList({
   const [query, setQuery] = useState("");
   const sel = useMultiSelect();
   const [busy, setBusy] = useState(false);
+  const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
   const { collapsed: collapsedSections, toggle: toggleSection } = useCollapsedSections(
     "precursor:chats:collapsedSections",
   );
@@ -99,6 +101,7 @@ export function ChatList({
     return (
       <li key={chat.id}>
         <div
+          ref={isActive && !sel.active ? activeItemRef : undefined}
           role="button"
           tabIndex={0}
           onClick={() => (sel.active ? sel.toggle(chat.id) : onSelect(chat))}

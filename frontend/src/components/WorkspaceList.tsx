@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FolderGit2, HardDrive, Search } from "lucide-react";
 import type { Workspace } from "../lib/types";
+import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 
 interface WorkspaceListProps {
   workspaces: Workspace[] | null;
@@ -10,6 +11,7 @@ interface WorkspaceListProps {
 
 export function WorkspaceList({ workspaces, activeId, onSelect }: WorkspaceListProps) {
   const [query, setQuery] = useState("");
+  const activeItemRef = useScrollActiveIntoView<HTMLButtonElement>(activeId);
 
   const filtered = useMemo(() => {
     const list = workspaces ?? [];
@@ -46,6 +48,7 @@ export function WorkspaceList({ workspaces, activeId, onSelect }: WorkspaceListP
                 <li key={w.id}>
                   <button
                     type="button"
+                    ref={isActive ? activeItemRef : undefined}
                     onClick={() => onSelect(w)}
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
                       isActive ? "section-selected" : "hover:bg-surface"
