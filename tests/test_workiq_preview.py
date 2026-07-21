@@ -178,6 +178,59 @@ async def test_callback_handler_ignores_stray_probe_then_resolves() -> None:
     assert state == "xyz"
 
 
+async def test_callback_handler_silent_timeout_raises_interaction_required() -> None:
+    """A silent (``prompt=none``) loopback that never fires means "needs UI".
+
+    The invisible re-auth frame can't complete without interaction (framing /
+    third-party cookies blocked, or no live SSO), so the loopback simply times
+    out. That must surface as :class:`WorkIQInteractionRequiredError` — which the
+    caller handles by falling back to the visible prompt and which the log filter
+    keeps quiet — not a loud generic ``RuntimeError``.
+    """
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    handler = wp._make_callback_handler(timeout=0.15, silent=True)
+    with pytest.raises(wp.WorkIQInteractionRequiredError):
+        await handler()
+
+
+async def test_callback_handler_interactive_timeout_raises_runtime_error() -> None:
+    """A user-driven interactive sign-in that times out is a real, loud failure."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    handler = wp._make_callback_handler(timeout=0.15, silent=False)
+    with pytest.raises(RuntimeError) as excinfo:
+        await handler()
+    assert not isinstance(excinfo.value, wp.WorkIQInteractionRequiredError)
+
+
+def test_suppress_filter_drops_silent_timeout_traceback() -> None:
+    """The log filter must strip the SDK's ERROR traceback for a silent timeout.
+
+    The silent-pass timeout is a handled fallback, so its
+    ``WorkIQInteractionRequiredError`` (even wrapped, ``raise ... from`` the
+    ``TimeoutError``) must be filtered out of ``mcp.client.auth.oauth2``.
+    """
+    import logging
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    filt = wp._SuppressExpectedAuthError()
+    try:
+        raise wp.WorkIQInteractionRequiredError("timed out") from TimeoutError()
+    except wp.WorkIQInteractionRequiredError as exc:
+        record = logging.LogRecord(
+            "mcp.client.auth.oauth2",
+            logging.ERROR,
+            __file__,
+            0,
+            "OAuth flow error",
+            None,
+            (type(exc), exc, exc.__traceback__),
+        )
+    assert filt.filter(record) is False
+
+
 async def test_reauthenticate_single_flight() -> None:
     """A second sign-in while one is running is rejected, not queued."""
     from precursor.backend.services.mcp import workiq_preview as wp
