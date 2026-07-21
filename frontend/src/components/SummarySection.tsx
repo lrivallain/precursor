@@ -293,18 +293,28 @@ export function SummarySection({
         ) : (
           <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
             <p className="mb-1 font-medium text-text">No summary yet</p>
-            <p className="max-w-sm">
-              Generate a recap of the meeting — attendees, decisions, action
-              items, open questions and risks
-              {canPost ? (
-                <>
-                  {" "}
-                  — then post it into <strong>{topicTitle ?? "the topic"}</strong>.
-                </>
-              ) : (
-                "."
-              )}
-            </p>
+            {canGenerate || canSummarizeFromTranscript ? (
+              <p className="max-w-sm">
+                Generate a recap of the meeting — attendees, decisions, action
+                items, open questions and risks
+                {canSummarizeFromTranscript && !canGenerate ? (
+                  <> from the linked Teams meeting&apos;s transcript</>
+                ) : null}
+                {canPost ? (
+                  <>
+                    {" "}
+                    — then post it into <strong>{topicTitle ?? "the topic"}</strong>.
+                  </>
+                ) : (
+                  "."
+                )}
+              </p>
+            ) : (
+              <p className="max-w-sm">
+                Record the meeting, or link a Teams meeting from the Context tab
+                (with the WorkIQ MCP enabled), to generate a recap here.
+              </p>
+            )}
           </div>
         )}
       </div>

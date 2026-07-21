@@ -31,8 +31,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   audio locally. Best-effort and fail-closed: it requires you to be the meeting
   organizer, the delegated `OnlineMeetingTranscript.Read.All` permission, and a
   transcript that Teams has already published (a few minutes after the meeting
-  ends). The Summary tab is now reachable in this case even while the session is
-  still active. New endpoint `POST /api/live/{id}/summary/from-transcript`; the
+  ends). The **Summary** tab is always available; its actions light up based on
+  the data at hand — generate from the local recording and/or from the Teams
+  transcript. New endpoint `POST /api/live/{id}/summary/from-transcript`; the
   linked meeting now also carries its Teams join URL.
 
 - **Hands-free WorkIQ re-auth**: when a WorkIQ preview session's refresh token

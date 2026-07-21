@@ -1197,9 +1197,10 @@ export function LiveView({
   );
 
   const hasSummary = summaryText.trim().length > 0 || summaryGenerating;
-  // Optional tabs are gated by the session's enabled features; summary also
-  // requires the session to be ended (or a Teams transcript source), and the
-  // assistant its chat to exist.
+  // Optional tabs are gated by the session's enabled features; the assistant
+  // also needs its chat to exist. Summary is always available — its actions
+  // (generate from the recording vs. from the Teams transcript) light up based
+  // on what data is available.
   const tabs: LiveTab[] = [
     { id: "transcript", label: "Transcript" },
     ...(insightsOn
@@ -1214,9 +1215,7 @@ export function LiveView({
     ...(assistantOn && chat ? [{ id: "assistant", label: "Assistant" }] : []),
     ...(translationOn ? [{ id: "translation", label: "Translation" }] : []),
     ...(notesOn ? [{ id: "notes", label: notes.trim() ? "Notes ●" : "Notes" }] : []),
-    ...(isEnded || canSummarizeFromTranscript
-      ? [{ id: "summary", label: hasSummary ? "Summary ●" : "Summary" }]
-      : []),
+    { id: "summary", label: hasSummary ? "Summary ●" : "Summary" },
     { id: "context", label: "Context" },
   ];
 
