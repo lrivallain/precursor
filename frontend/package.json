@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "dompurify": "3.4.11",
+    "dompurify": "3.4.12",
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.21.0",
     "mermaid": "^11.16.0",
@@ -29,7 +29,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "tailwindcss": "^4.1.18",
     "typescript": "^7.0.2",
-    "vite": "8.1.2"
+    "vite": "8.1.4"
   },
   "overrides": {
     "uuid": "^14.0.0"
