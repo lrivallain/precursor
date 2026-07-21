@@ -4,6 +4,7 @@ import type { AgentSession } from "../lib/types";
 import { AgentStatusBadge, agentRelativeTime } from "./AgentStatusBadge";
 import { InlineTitle } from "./InlineTitle";
 import { useMultiSelect } from "../lib/useMultiSelect";
+import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
 
 interface AgentListProps {
@@ -27,6 +28,7 @@ export function AgentList({
   const [query, setQuery] = useState("");
   const sel = useMultiSelect();
   const [busy, setBusy] = useState(false);
+  const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -107,6 +109,7 @@ export function AgentList({
               return (
                 <li key={a.id}>
                   <div
+                    ref={isActive && !sel.active ? activeItemRef : undefined}
                     role="button"
                     tabIndex={0}
                     onClick={() => (sel.active ? sel.toggle(a.id) : onSelect(a.id))}

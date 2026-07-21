@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Search, SquareKanban } from "lucide-react";
 import type { ProjectSummary } from "../lib/types";
+import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 
 interface ProjectListProps {
   projects: ProjectSummary[] | null;
@@ -12,6 +13,7 @@ interface ProjectListProps {
 /** Sidebar picker for GitHub Projects v2, mirroring WorkspaceList. */
 export function ProjectList({ projects, activeId, error, onSelect }: ProjectListProps) {
   const [query, setQuery] = useState("");
+  const activeItemRef = useScrollActiveIntoView<HTMLButtonElement>(activeId);
 
   const filtered = useMemo(() => {
     const list = projects ?? [];
@@ -52,6 +54,7 @@ export function ProjectList({ projects, activeId, error, onSelect }: ProjectList
                 <li key={p.id}>
                   <button
                     type="button"
+                    ref={isActive ? activeItemRef : undefined}
                     onClick={() => onSelect(p)}
                     title={p.short_description ?? p.title}
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
