@@ -73,16 +73,11 @@ def test_describe_exception_unwraps_task_group() -> None:
         "unhandled errors in a TaskGroup (1 sub-exception)",
         [RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")],
     )
-    assert (
-        _describe_exception(group)
-        == "Timed out waiting for the WorkIQ sign-in to complete."
-    )
+    assert _describe_exception(group) == "Timed out waiting for the WorkIQ sign-in to complete."
 
 
 def test_describe_exception_joins_multiple_leaves() -> None:
-    group = BaseExceptionGroup(
-        "grp", [RuntimeError("first failure"), ValueError("second failure")]
-    )
+    group = BaseExceptionGroup("grp", [RuntimeError("first failure"), ValueError("second failure")])
     assert _describe_exception(group) == "first failure; second failure"
 
 
