@@ -46,6 +46,7 @@ import type {
   MeetingInsight,
   MeetingSegment,
   MeetingSegmentCreate,
+  MeetingSegmentUpdate,
   MeetingSession,
   MeetingSessionCreate,
   MeetingSessionUpdate,
@@ -726,6 +727,11 @@ export const api = {
     appendSegment: (id: number, data: MeetingSegmentCreate) =>
       request<MeetingSegment>(`/api/live/${id}/segments`, {
         method: "POST",
+        body: JSON.stringify(data),
+      }),
+    updateSegment: (id: number, segmentId: number, data: MeetingSegmentUpdate) =>
+      request<MeetingSegment>(`/api/live/${id}/segments/${segmentId}`, {
+        method: "PATCH",
         body: JSON.stringify(data),
       }),
     renameSpeaker: (id: number, label: string, name: string) =>

@@ -1031,6 +1031,10 @@ export interface MeetingSegmentCreate {
   offset_ms?: number | null;
 }
 
+export interface MeetingSegmentUpdate {
+  text: string;
+}
+
 export interface MeetingInsight {
   id: number;
   session_id: number;

@@ -11,6 +11,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Edit transcript phrases inline**: in a Live session, **double-click any
+  phrase** in the transcript to correct misheard words in place — press
+  <kbd>Enter</kbd> (or blur) to save, <kbd>Esc</kbd> to cancel. The correction
+  persists to the session and feeds the insights and summary. Backed by a new
+  `PATCH /api/live/{id}/segments/{segment_id}` endpoint.
+
 - **Live transcript auto-cleanup**: a Live session's raw transcript is now
   automatically deleted a configurable number of days after the session ends
   (**7 by default**; `0` keeps it forever), bounding database growth. Only the

@@ -158,6 +158,57 @@ def test_meeting_segments_reject_unknown_session() -> None:
         assert client.post("/api/live/999999/segments", json={"text": "x"}).status_code == 404
 
 
+def test_meeting_segment_update_text() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Edit test"}).json()["id"]
+        seg = client.post(
+            f"/api/live/{sid}/segments",
+            json={"text": "Their going", "speaker_label": "Guest-1", "offset_ms": 0},
+        ).json()
+
+        # Correct the mistaken words; label and offset are preserved.
+        edited = client.patch(
+            f"/api/live/{sid}/segments/{seg['id']}",
+            json={"text": "  They're going  "},
+        )
+        assert edited.status_code == 200
+        body = edited.json()
+        assert body["text"] == "They're going"
+        assert body["speaker_label"] == "Guest-1"
+        assert body["offset_ms"] == 0
+
+        # Persisted on the session's transcript.
+        rows = client.get(f"/api/live/{sid}/segments").json()
+        assert [r["text"] for r in rows] == ["They're going"]
+
+        # Unknown segment / session and empty text are rejected.
+        assert (
+            client.patch(f"/api/live/{sid}/segments/999999", json={"text": "x"}).status_code == 404
+        )
+        assert (
+            client.patch(f"/api/live/999999/segments/{seg['id']}", json={"text": "x"}).status_code
+            == 404
+        )
+        assert (
+            client.patch(f"/api/live/{sid}/segments/{seg['id']}", json={"text": "   "}).status_code
+            == 400
+        )
+
+
+def test_meeting_segment_update_rejects_cross_session() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid_a = client.post("/api/live", json={"title": "A"}).json()["id"]
+        sid_b = client.post("/api/live", json={"title": "B"}).json()["id"]
+        seg = client.post(f"/api/live/{sid_a}/segments", json={"text": "hi"}).json()
+        # A segment can't be edited through a different session's path.
+        assert (
+            client.patch(f"/api/live/{sid_b}/segments/{seg['id']}", json={"text": "no"}).status_code
+            == 404
+        )
+
+
 def test_parse_insights_tolerates_fences_and_junk() -> None:
     from precursor.backend.services.meeting_analysis import _parse_insights
 
