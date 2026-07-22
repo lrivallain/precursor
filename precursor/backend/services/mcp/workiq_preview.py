@@ -25,6 +25,7 @@ import socket
 import webbrowser
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from mcp import ClientSession
@@ -207,6 +208,7 @@ def cancel_reauthenticate_workiq() -> bool:
     event.set()
     return True
 
+
 # Shown when the fixed loopback redirect port is already owned by another
 # process (typically a second Precursor window mid sign-in on the same machine).
 _PORT_BUSY_MESSAGE = (
@@ -239,7 +241,6 @@ def _assert_loopback_port_available() -> None:
         raise
     finally:
         probe.close()
-
 
 
 async def resolve_workiq_preview() -> bool:
@@ -752,8 +753,12 @@ def _make_callback_handler(
                     return await asyncio.wait_for(result, timeout=timeout)
                 cancel_wait = asyncio.ensure_future(cancel_event.wait())
                 try:
+                    waiters: set[asyncio.Future[Any]] = {
+                        cast("asyncio.Future[Any]", result),
+                        cast("asyncio.Future[Any]", cancel_wait),
+                    }
                     done, _pending = await asyncio.wait(
-                        {result, cancel_wait},
+                        waiters,
                         timeout=timeout,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
