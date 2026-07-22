@@ -47,6 +47,7 @@ from precursor.backend.schemas import (
     MeetingPostResult,
     MeetingSegmentCreate,
     MeetingSegmentRead,
+    MeetingSegmentUpdate,
     MeetingSessionCreate,
     MeetingSessionRead,
     MeetingSessionUpdate,
@@ -301,6 +302,34 @@ async def append_segment(
         offset_ms=payload.offset_ms,
     )
     session.add(segment)
+    await session.commit()
+    await session.refresh(segment)
+    return segment
+
+
+@router.patch(
+    "/{session_id}/segments/{segment_id}",
+    response_model=MeetingSegmentRead,
+)
+async def update_segment(
+    session_id: int,
+    segment_id: int,
+    payload: MeetingSegmentUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSegment:
+    """Correct the spoken text of a single transcript phrase.
+
+    Lets a user fix mistaken words in place (double-click to edit in the UI).
+    Only the text changes; the speaker label and offset are preserved.
+    """
+    await _get_session_or_404(session_id, session)
+    segment = await session.get(MeetingSegment, segment_id)
+    if segment is None or segment.session_id != session_id:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Segment text cannot be empty")
+    segment.text = text
     await session.commit()
     await session.refresh(segment)
     return segment

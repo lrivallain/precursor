@@ -77,6 +77,10 @@ each with its own tab-strip and a draggable divider.
 - **Speaker labels** — click a label in the transcript to rename it
   (`Guest-2` → `Thomas`); the name applies to every past and future phrase from
   that voice.
+- **Fix mistaken words** — **double-click any phrase** in the transcript to edit
+  its text in place, then press <kbd>Enter</kbd> (or click away) to save —
+  <kbd>Esc</kbd> cancels. Handy for correcting the odd misheard word before it
+  feeds the insights and summary.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
   **post into the linked topic** as a message. When a Teams meeting is linked and

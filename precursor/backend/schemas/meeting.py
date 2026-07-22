@@ -121,6 +121,11 @@ class MeetingSegmentCreate(BaseModel):
     offset_ms: int | None = Field(default=None, ge=0)
 
 
+class MeetingSegmentUpdate(BaseModel):
+    # Corrected spoken text — lets a user fix mistaken words in a phrase.
+    text: str = Field(min_length=1)
+
+
 class MeetingSegmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

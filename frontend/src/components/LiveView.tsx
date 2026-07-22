@@ -280,6 +280,11 @@ export function LiveView({
   // only the clicked occurrence shows the editor (the rename applies to all).
   const [editingSegId, setEditingSegId] = useState<number | null>(null);
 
+  // Segment whose spoken text is being corrected inline (double-click to edit),
+  // plus the working draft. Lets a user fix mistaken words in a phrase.
+  const [editingTextSegId, setEditingTextSegId] = useState<number | null>(null);
+  const [textDraft, setTextDraft] = useState("");
+
   // Segment indices where recording (re)started — draw a separator before them.
   // `resume` = user pressed Record again; `reconnect` = a transparent recovery
   // from an Azure ~20-min drop, which also starts a new speaker namespace.
@@ -730,6 +735,33 @@ export function LiveView({
     setEditingSegId(seg.id);
   }
 
+  function beginTextEdit(seg: MeetingSegment): void {
+    setEditingSegId(null);
+    setEditingTextSegId(seg.id);
+    setTextDraft(seg.text);
+  }
+
+  async function commitTextEdit(seg: MeetingSegment): Promise<void> {
+    const next = textDraft.trim();
+    setEditingTextSegId(null);
+    if (!next || next === seg.text) return;
+    // Optimistic — reflect the correction immediately, then persist.
+    setSegments((prev) =>
+      prev.map((s) => (s.id === seg.id ? { ...s, text: next } : s)),
+    );
+    try {
+      const updated = await api.meetings.updateSegment(session.id, seg.id, {
+        text: next,
+      });
+      setSegments((prev) => prev.map((s) => (s.id === seg.id ? updated : s)));
+    } catch {
+      // Roll back on failure — restore the original phrase.
+      setSegments((prev) =>
+        prev.map((s) => (s.id === seg.id ? { ...s, text: seg.text } : s)),
+      );
+    }
+  }
+
   async function commitRename(rawLabel: string, value: string): Promise<void> {
     setEditingSegId(null);
     try {
@@ -1024,7 +1056,33 @@ export function LiveView({
                       </button>
                     ))}
                   <span className="text-text">
-                    <HighlightedText text={seg.text} />
+                    {editingTextSegId === seg.id ? (
+                      <textarea
+                        autoFocus
+                        rows={1}
+                        value={textDraft}
+                        onChange={(e) => setTextDraft(e.target.value)}
+                        onBlur={() => void commitTextEdit(seg)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            void commitTextEdit(seg);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setEditingTextSegId(null);
+                          }
+                        }}
+                        className="w-full resize-none rounded border border-border bg-surface px-1.5 py-0.5 text-sm text-text focus:border-accent focus:outline-none"
+                      />
+                    ) : (
+                      <span
+                        onDoubleClick={() => beginTextEdit(seg)}
+                        data-tooltip="Double-click to fix words"
+                        className="cursor-text rounded hover:bg-surface"
+                      >
+                        <HighlightedText text={seg.text} />
+                      </span>
+                    )}
                   </span>
                 </div>
               </div>
