@@ -53,6 +53,16 @@ cookies block it — does the `McpAuthBanner` surface for a manual **Sign in**
 (which reuses the same silent-first flow in a real popup). Turn the automatic
 attempt off with `workiq_auto_reauth_enabled=false` to always require the click.
 
+::: warning One sign-in at a time per machine
+The OAuth callback uses a **fixed** loopback port (`127.0.0.1:12798`, matching
+the registered `redirect_uri`), so only one Precursor instance can run the
+sign-in at a time. If you have several windows open (e.g. multiple worktrees)
+and start a sign-in while another already owns the port, Precursor fails fast
+with a clear message ("port 12798 is already in use — another Precursor window
+or app is signing in…") **without** disturbing your existing session — finish or
+close that other sign-in, then retry.
+:::
+
 ## As a server — exposing your conversations
 
 Precursor runs a `FastMCP` server named **`precursor`** that exposes its own

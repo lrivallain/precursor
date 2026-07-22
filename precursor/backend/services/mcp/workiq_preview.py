@@ -18,8 +18,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import errno
 import json
 import logging
+import socket
 import webbrowser
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -63,6 +65,21 @@ class WorkIQInteractionRequiredError(RuntimeError):
     MFA or consent due, ambiguous account, …). The loopback callback raises this
     so :func:`reauthenticate_workiq` can fall back to the visible interactive
     prompt instead of treating it as a hard failure.
+    """
+
+
+class WorkIQAuthPortBusyError(RuntimeError):
+    """The fixed OAuth loopback port is already owned by another process.
+
+    The redirect port (:data:`WORKIQ_OAUTH_REDIRECT_PORT`) is fixed — it has to
+    match the ``redirect_uri`` registered for the WorkIQ OAuth client — so only
+    one process per machine can run the loopback callback at a time. When several
+    Precursor instances run side by side (e.g. multiple worktrees), a second
+    interactive sign-in can't bind the port; without this guard it would clear
+    the stored tokens and then strand the UI on "Signing in…" until the callback
+    times out, its browser redirect having been delivered to whichever instance
+    owns the port. We raise this up front so the caller can surface a clear,
+    actionable error instead.
     """
 
 
@@ -148,6 +165,40 @@ _SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS = 20.0
 # Serializes interactive sign-ins so two triggers can't open competing browser
 # flows fighting over the single loopback redirect port.
 _reauth_lock = asyncio.Lock()
+
+# Shown when the fixed loopback redirect port is already owned by another
+# process (typically a second Precursor window mid sign-in on the same machine).
+_PORT_BUSY_MESSAGE = (
+    f"The WorkIQ sign-in port {WORKIQ_OAUTH_REDIRECT_PORT} is already in use — "
+    "another Precursor window or app is signing in. Finish or close that sign-in, "
+    "then try again."
+)
+
+
+def _assert_loopback_port_available() -> None:
+    """Fail fast when another process already owns the OAuth loopback port.
+
+    The redirect port is fixed (it must match the registered ``redirect_uri``),
+    so only one process on the machine can run the loopback callback at a time.
+    Probing it before we clear tokens or drive the browser flow lets an
+    interactive sign-in surface a clear :class:`WorkIQAuthPortBusyError` instead
+    of stranding the UI on "Signing in…" until the callback times out — the
+    common failure when several Precursor instances run side by side.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # Mirror ``asyncio.start_server``'s default SO_REUSEADDR so the probe
+        # matches the real bind: it still raises EADDRINUSE against a live
+        # listener, but not against a socket merely lingering in TIME_WAIT.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(("127.0.0.1", WORKIQ_OAUTH_REDIRECT_PORT))
+    except OSError as exc:
+        if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.EACCES):
+            raise WorkIQAuthPortBusyError(_PORT_BUSY_MESSAGE) from exc
+        raise
+    finally:
+        probe.close()
+
 
 
 async def resolve_workiq_preview() -> bool:
@@ -639,9 +690,18 @@ def _make_callback_handler(
                 with contextlib.suppress(Exception):
                     writer.close()
 
-        server = await asyncio.start_server(
-            _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
-        )
+        try:
+            server = await asyncio.start_server(
+                _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
+            )
+        except OSError as exc:
+            # Lost a TOCTOU race with another process (or another Precursor
+            # window) for the fixed loopback port. Surface the same clear,
+            # typed error the up-front preflight raises rather than a generic
+            # transport failure.
+            if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.EACCES):
+                raise WorkIQAuthPortBusyError(_PORT_BUSY_MESSAGE) from exc
+            raise
         try:
             async with server:
                 return await asyncio.wait_for(result, timeout=timeout)
@@ -830,15 +890,22 @@ async def reauthenticate_workiq(
     async with _reauth_lock:
         # Pre-select the last account, but read it before clearing tokens.
         login_hint = await get_workiq_login_hint()
-        # Drop stale tokens so the flow always re-runs the grant (the retained
-        # login_hint still lets the user pick another account in the prompt).
-        await clear_workiq_oauth_tokens()
 
         if silent_only:
             # Hands-free: only the no-UI pass, on a short timeout, with no OS
             # browser fallback (the SPA drives an invisible iframe). Any failure
-            # — interaction required, framing/cookies blocked, or timeout — just
-            # means "fall back to the manual banner", never a hard error.
+            # — port busy, interaction required, framing/cookies blocked, or
+            # timeout — just means "fall back to the manual banner", never a hard
+            # error. Preflight the loopback port first so a busy port doesn't
+            # needlessly clear the still-usable stored tokens.
+            try:
+                _assert_loopback_port_available()
+            except WorkIQAuthPortBusyError as exc:
+                logger.info("WorkIQ silent auto re-auth skipped: %s", exc)
+                return False
+            # Drop stale tokens so the flow always re-runs the grant (the retained
+            # login_hint still lets the user pick another account in the prompt).
+            await clear_workiq_oauth_tokens()
             try:
                 return await _try_silent_reauth(
                     login_hint=login_hint,
@@ -848,6 +915,15 @@ async def reauthenticate_workiq(
             except Exception as exc:
                 logger.info("WorkIQ silent auto re-auth could not complete: %s", exc)
                 return False
+
+        # Interactive: fail fast — before clearing tokens or driving the browser
+        # flow — when another process already owns the fixed loopback port, so
+        # the UI shows a clear error instead of stranding "Signing in…" until the
+        # callback times out (and without destroying a still-usable session).
+        _assert_loopback_port_available()
+        # Drop stale tokens so the flow always re-runs the grant (the retained
+        # login_hint still lets the user pick another account in the prompt).
+        await clear_workiq_oauth_tokens()
 
         if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
             login_hint=login_hint, open_system_browser=open_system_browser

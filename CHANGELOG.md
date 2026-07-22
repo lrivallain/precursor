@@ -115,8 +115,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **Alarming WorkIQ "OAuth flow error" traceback on the silent sign-in
-  timeout**: the hands-free `prompt=none` auto re-auth runs in an invisible SPA
+- **WorkIQ sign-in stuck on "Signing in…" when another Precursor window is
+  open**: the OAuth callback uses a *fixed* loopback port
+  (`127.0.0.1:12798`, matching the registered `redirect_uri`), so only one
+  process per machine can run it. With several Precursor instances open (e.g.
+  multiple worktrees), a sign-in launched while another instance already owned
+  the port would clear the stored tokens and then hang on "Signing in…" until
+  the 300s callback timeout — its browser redirect delivered to whichever
+  instance held the port — leaving the server unauthenticated. The interactive
+  sign-in now **preflights the loopback port** and fails fast with a clear,
+  actionable **409** ("The WorkIQ sign-in port 12798 is already in use — another
+  Precursor window or app is signing in…") *before* touching the existing
+  tokens, so a still-usable session is preserved and the banner shows what to do
+  instead of stranding. The hands-free silent pass simply defers to the manual
+  banner when the port is busy.
+
+
   iframe; when framing or third-party cookies block it (or there's no live SSO
   session) the loopback never fires and the pass times out. That timeout was a
   plain `RuntimeError`, so the MCP SDK logged a full `ERROR OAuth flow error`

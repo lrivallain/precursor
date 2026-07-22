@@ -303,9 +303,10 @@ async def reauthenticate_workiq_server(
     ``needs_auth``) so the SPA falls back to the manual "Sign in" banner.
     """
     from precursor.backend.config import get_settings
-    from precursor.backend.services.mcp.client import _describe_exception
+    from precursor.backend.services.mcp.client import _describe_exception, _find_in_exception
     from precursor.backend.services.mcp.workiq_preview import (
         WorkIQAuthInProgressError,
+        WorkIQAuthPortBusyError,
         build_oauth_provider,
         reauthenticate_workiq,
         resolve_workiq_preview,
@@ -339,7 +340,17 @@ async def reauthenticate_workiq_server(
             authenticated = True
     except WorkIQAuthInProgressError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except WorkIQAuthPortBusyError as exc:
+        # Another Precursor window (or app) owns the fixed OAuth loopback port —
+        # a conflict the user resolves by finishing/closing that sign-in.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except Exception as exc:
+        # A port-busy raised from the real bind (lost a TOCTOU race) surfaces
+        # wrapped in the SDK's task-group ``BaseExceptionGroup`` — unwrap it so it
+        # still reads as a clear conflict rather than an opaque gateway failure.
+        busy = _find_in_exception(exc, WorkIQAuthPortBusyError)
+        if busy is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(busy)) from exc
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"WorkIQ sign-in failed: {_describe_exception(exc)}",
