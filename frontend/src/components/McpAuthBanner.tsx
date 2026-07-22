@@ -23,9 +23,10 @@ export function McpAuthBanner() {
     try {
       // Opens a script-openable popup synchronously, then blocks until the
       // browser sign-in completes; on success the stale notice is gone and the
-      // next turn reuses the fresh session.
-      await signInWorkiq();
-      mcpAuthStore.clear();
+      // next turn reuses the fresh session. Resolves null when the user abandons
+      // the sign-in (closes the popup) — leave the banner up, no error.
+      const status = await signInWorkiq();
+      if (status) mcpAuthStore.clear();
     } catch (err) {
       setError((err as Error).message);
     } finally {

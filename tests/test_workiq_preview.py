@@ -9,6 +9,9 @@ never trigger here (WorkIQ stays disabled).
 
 from __future__ import annotations
 
+import contextlib
+import socket
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -204,6 +207,44 @@ async def test_callback_handler_interactive_timeout_raises_runtime_error() -> No
     assert not isinstance(excinfo.value, wp.WorkIQInteractionRequiredError)
 
 
+async def test_callback_handler_cancel_aborts_and_frees_port() -> None:
+    """Cancelling an in-flight sign-in unblocks the loopback and releases the port.
+
+    The SPA cancels when its popup closes; the waiting callback must abort with
+    :class:`WorkIQAuthCancelledError` (not squat the fixed port until the
+    timeout) so another Precursor window can sign in immediately.
+    """
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    wp._active_signin_cancel = asyncio.Event()
+    try:
+        # A long timeout: only the cancel should end the wait.
+        handler = wp._make_callback_handler(timeout=30.0)
+        waiter = asyncio.ensure_future(handler())
+        await asyncio.sleep(0.1)  # let the loopback server bind
+
+        assert wp.cancel_reauthenticate_workiq() is True
+        with pytest.raises(wp.WorkIQAuthCancelledError):
+            await asyncio.wait_for(waiter, timeout=5.0)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+        wp._active_signin_cancel = None
+
+    # The loopback released the fixed port as soon as it unwound.
+    wp._assert_loopback_port_available()
+
+
+def test_cancel_reauthenticate_is_a_noop_when_idle() -> None:
+    """With no interactive sign-in in flight, cancelling reports it did nothing."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    assert wp._active_signin_cancel is None
+    assert wp.cancel_reauthenticate_workiq() is False
+
+
 def test_suppress_filter_drops_silent_timeout_traceback() -> None:
     """The log filter must strip the SDK's ERROR traceback for a silent timeout.
 
@@ -238,6 +279,101 @@ async def test_reauthenticate_single_flight() -> None:
     async with wp._reauth_lock:
         with pytest.raises(wp.WorkIQAuthInProgressError):
             await wp.reauthenticate_workiq()
+
+
+@contextlib.contextmanager
+def _hold_loopback_port():
+    """Bind a real listener on the fixed OAuth loopback port for the block.
+
+    Mimics another Precursor instance owning ``127.0.0.1:12798`` so the sign-in
+    preflight sees the port as busy.
+    """
+    from precursor.backend.services.mcp.workiq_preview import WORKIQ_OAUTH_REDIRECT_PORT
+
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    holder.bind(("127.0.0.1", WORKIQ_OAUTH_REDIRECT_PORT))
+    holder.listen(1)
+    try:
+        yield
+    finally:
+        holder.close()
+
+
+def test_assert_loopback_port_available_detects_busy_port() -> None:
+    """The preflight raises only while the fixed loopback port is owned."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    # Free → no raise.
+    wp._assert_loopback_port_available()
+
+    # Owned by "another instance" → a clear, typed conflict.
+    with _hold_loopback_port(), pytest.raises(wp.WorkIQAuthPortBusyError):
+        wp._assert_loopback_port_available()
+
+    # Released → available again.
+    wp._assert_loopback_port_available()
+
+
+async def test_reauthenticate_interactive_fails_fast_when_port_busy(monkeypatch) -> None:
+    """A busy loopback port must fail fast without clearing the live session.
+
+    Regression: when another Precursor window owned ``127.0.0.1:12798`` the
+    interactive sign-in cleared the stored tokens and then hung on "Signing in…"
+    until the 300s callback timeout, leaving the server unauthenticated. It must
+    instead raise immediately and preserve the existing tokens.
+    """
+    from mcp.shared.auth import OAuthToken
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens()
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="live-token", token_type="Bearer", expires_in=3600)
+    )
+
+    async def _must_not_run(*_args, **_kwargs) -> None:  # pragma: no cover - must never run
+        raise AssertionError("sign-in flow ran despite a busy loopback port")
+
+    monkeypatch.setattr(wp, "_run_signin", _must_not_run)
+    monkeypatch.setattr(wp, "_try_silent_reauth", _must_not_run)
+
+    with _hold_loopback_port(), pytest.raises(wp.WorkIQAuthPortBusyError):
+        await wp.reauthenticate_workiq(open_system_browser=False)
+
+    # The still-usable tokens survived the failed attempt.
+    tokens = await wp.DbTokenStorage().get_tokens()
+    assert tokens is not None and tokens.access_token == "live-token"
+
+
+async def test_reauthenticate_silent_only_returns_false_when_port_busy(monkeypatch) -> None:
+    """A busy port during the hands-free pass just defers to the manual banner."""
+    from mcp.shared.auth import OAuthToken
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens()
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="live-token", token_type="Bearer", expires_in=3600)
+    )
+
+    async def _must_not_run(*_args, **_kwargs) -> None:  # pragma: no cover - must never run
+        raise AssertionError("silent flow ran despite a busy loopback port")
+
+    monkeypatch.setattr(wp, "_try_silent_reauth", _must_not_run)
+
+    with _hold_loopback_port():
+        assert await wp.reauthenticate_workiq(silent_only=True) is False
+
+    # A hands-free deferral must not have destroyed the live session either.
+    tokens = await wp.DbTokenStorage().get_tokens()
+    assert tokens is not None and tokens.access_token == "live-token"
 
 
 async def test_resolve_bearer_returns_none_on_group_wrapped_auth_required(monkeypatch) -> None:
@@ -665,3 +801,74 @@ def test_reauthenticate_silent_only_disabled_skips_flow(monkeypatch) -> None:
         assert resp.status_code == 200
         assert resp.json()["interaction_required"] is True
         assert called is False
+
+
+def test_reauthenticate_endpoint_maps_port_busy_to_409(monkeypatch) -> None:
+    """A busy loopback port surfaces as a 409 conflict, direct or SDK-wrapped.
+
+    Regression: several Precursor windows share the fixed OAuth loopback port,
+    so a sign-in launched while another instance owns it must fail fast with a
+    clear conflict instead of stranding the banner on "Signing in…".
+    """
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _busy_direct(*, open_system_browser: bool = True) -> None:
+        raise wp.WorkIQAuthPortBusyError(wp._PORT_BUSY_MESSAGE)
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _busy_direct)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 409
+        assert "already in use" in resp.json()["detail"]
+
+        # The same conflict wrapped by the SDK's task group must still read as 409.
+        async def _busy_wrapped(*, open_system_browser: bool = True) -> None:
+            raise BaseExceptionGroup(
+                "unhandled errors in a TaskGroup (1 sub-exception)",
+                [wp.WorkIQAuthPortBusyError(wp._PORT_BUSY_MESSAGE)],
+            )
+
+        monkeypatch.setattr(wp, "reauthenticate_workiq", _busy_wrapped)
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 409
+        assert "already in use" in resp.json()["detail"]
+
+
+def test_reauthenticate_cancel_endpoint_noop_when_idle() -> None:
+    """The cancel endpoint returns cleanly (no-op) when nothing is signing in."""
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate/cancel")
+        assert resp.status_code == 200
+        assert resp.json() == {"cancelled": False}
+
+
+def test_reauthenticate_endpoint_maps_cancel_to_409(monkeypatch) -> None:
+    """A user-cancelled sign-in surfaces as a benign 409, direct or SDK-wrapped."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _cancelled(*, open_system_browser: bool = True) -> None:
+        raise wp.WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _cancelled)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 409
+        assert "cancelled" in resp.json()["detail"].lower()
+
+        async def _cancelled_wrapped(*, open_system_browser: bool = True) -> None:
+            raise BaseExceptionGroup(
+                "unhandled errors in a TaskGroup (1 sub-exception)",
+                [wp.WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")],
+            )
+
+        monkeypatch.setattr(wp, "reauthenticate_workiq", _cancelled_wrapped)
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 409
+        assert "cancelled" in resp.json()["detail"].lower()
