@@ -524,6 +524,14 @@ export function SettingsPanel({ onClose }: Props) {
     );
     try {
       const next = await signInWorkiq();
+      if (!next) {
+        // The user abandoned the sign-in (closed the popup) — restore the
+        // needs-auth state without an error.
+        setMcp((prev) =>
+          prev.map((s) => (s.name === name ? { ...s, state: "needs_auth" } : s)),
+        );
+        return;
+      }
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
       mcpAuthStore.clear();
     } catch (err) {

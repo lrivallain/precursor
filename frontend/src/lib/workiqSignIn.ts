@@ -30,6 +30,14 @@ const POPUP_HEIGHT = 680;
 // tear the frame down.
 const SILENT_FRAME_CLEANUP_MS = 1000;
 
+// How often to check whether the sign-in popup has been closed.
+const ABANDON_POLL_MS = 500;
+// Grace period after the popup closes before we treat the sign-in as abandoned.
+// On success the loopback callback page auto-closes the popup a couple of
+// seconds after the redirect, so we wait a touch longer than that for the fetch
+// to resolve on its own before proactively cancelling.
+const ABANDON_GRACE_MS = 3000;
+
 // The popup awaiting the authorization URL for the in-flight sign-in, if any.
 let pendingPopup: Window | null = null;
 // Set once we've navigated the popup, so a later failure doesn't close a window
@@ -88,23 +96,77 @@ function openSigninPopup(): Window | null {
  * MUST be called directly from a user gesture (click) with no ``await`` before
  * it, so the synchronous ``window.open`` isn't treated as a blocked popup.
  * Resolves with the refreshed server status; the popup self-closes on success.
+ *
+ * Returns ``null`` when the user abandons the sign-in by closing the popup
+ * before it completes: we proactively tell the backend to cancel (so it frees
+ * the fixed OAuth loopback port at once instead of squatting it until the
+ * callback times out) and resolve ``null`` so the caller can quietly drop its
+ * "Signing in…" state without surfacing an error.
  */
-export async function signInWorkiq(): Promise<MCPServerStatus> {
+export async function signInWorkiq(): Promise<MCPServerStatus | null> {
   const popup = openSigninPopup();
   pendingPopup = popup;
   pendingNavigated = false;
   const usePopup = popup !== null;
+  let settled = false;
+  const stopWatch = watchForAbandon(popup, () => settled);
   try {
     return await api.mcp.reauthenticateWorkiq({ usePopup });
   } catch (err) {
+    // The user closed the popup and we cancelled the sign-in — a quiet
+    // abandonment, not a failure to surface.
+    if (abandoned) return null;
     // The flow failed before we ever navigated the popup — tear down the blank
     // throwaway window rather than strand it. If it was already navigated the
     // user may be mid-sign-in, so leave it be.
     if (popup && !pendingNavigated && !popup.closed) popup.close();
     throw err;
   } finally {
+    settled = true;
+    stopWatch();
     if (pendingPopup === popup) pendingPopup = null;
   }
+}
+
+// Whether the last (or in-flight) interactive sign-in was cancelled by the user
+// closing its popup. Read in ``signInWorkiq``'s catch to distinguish a quiet
+// abandonment from a real error.
+let abandoned = false;
+
+/**
+ * Watch a sign-in popup and, if the user closes it before the flow finishes,
+ * ask the backend to cancel so it releases the fixed loopback port immediately.
+ *
+ * Only fires once the popup has been closed *and* the sign-in still hasn't
+ * settled after a short grace — long enough that the success path (whose
+ * callback page auto-closes the popup a beat after the redirect) resolves on its
+ * own first and is never mistaken for an abandonment. A no-op when no popup was
+ * opened. Returns a stopper to call once the flow resolves.
+ */
+function watchForAbandon(popup: Window | null, isSettled: () => boolean): () => void {
+  abandoned = false;
+  if (!popup) return () => {};
+  let graceTimer: number | undefined;
+  const poll = window.setInterval(() => {
+    if (isSettled()) {
+      window.clearInterval(poll);
+      return;
+    }
+    if (popup.closed && graceTimer === undefined) {
+      graceTimer = window.setTimeout(() => {
+        if (isSettled()) return;
+        abandoned = true;
+        // Best-effort: the backend releases the loopback port and the pending
+        // sign-in request then rejects (409), which the catch treats as a quiet
+        // abandonment.
+        void api.mcp.cancelReauthenticateWorkiq().catch(() => {});
+      }, ABANDON_GRACE_MS);
+    }
+  }, ABANDON_POLL_MS);
+  return () => {
+    window.clearInterval(poll);
+    if (graceTimer !== undefined) window.clearTimeout(graceTimer);
+  };
 }
 
 function openSilentFrame(): HTMLIFrameElement {

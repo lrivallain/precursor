@@ -83,6 +83,17 @@ class WorkIQAuthPortBusyError(RuntimeError):
     """
 
 
+class WorkIQAuthCancelledError(RuntimeError):
+    """An in-flight interactive WorkIQ sign-in was cancelled by the user.
+
+    The SPA cancels proactively when its sign-in popup is closed without
+    completing (:func:`cancel_reauthenticate_workiq`), so the loopback callback
+    stops waiting and frees the fixed redirect port immediately instead of
+    squatting it for the full timeout — which would otherwise block a sign-in
+    from any other Precursor window on the machine.
+    """
+
+
 class _SuppressExpectedAuthError(logging.Filter):
     """Drop the SDK's ERROR traceback for an *expected* WorkIQ sign-in prompt.
 
@@ -153,7 +164,14 @@ _INTERACTION_REQUIRED_ERRORS = frozenset(
     }
 )
 
-_CALLBACK_TIMEOUT_SECONDS = 300.0
+# How long the interactive loopback waits for the browser redirect. It has to
+# cover a *human* completing the Microsoft sign-in — password, account picker,
+# MFA push, Conditional Access — so it can't be aggressively short, but the fixed
+# loopback port is exclusive per machine, so an abandoned flow squatting it blocks
+# every other Precursor window. 3 minutes comfortably covers a real sign-in while
+# capping how long a walked-away flow holds the port (the SPA also cancels
+# proactively when its popup closes — see ``cancel_reauthenticate_workiq``).
+_CALLBACK_TIMEOUT_SECONDS = 180.0
 
 # The hands-free silent (``prompt=none``) auto re-auth runs in an invisible SPA
 # iframe with nobody watching, so it must not hold the loopback open for the full
@@ -165,6 +183,29 @@ _SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS = 20.0
 # Serializes interactive sign-ins so two triggers can't open competing browser
 # flows fighting over the single loopback redirect port.
 _reauth_lock = asyncio.Lock()
+
+# Set while an interactive sign-in is waiting on the loopback redirect; the SPA
+# signals it (via :func:`cancel_reauthenticate_workiq`) when its popup closes
+# without completing, so the callback stops waiting and frees the fixed port at
+# once instead of holding it for the full timeout. ``None`` when no interactive
+# sign-in is in flight. Only ever touched from the single event loop.
+_active_signin_cancel: asyncio.Event | None = None
+
+
+def cancel_reauthenticate_workiq() -> bool:
+    """Ask an in-flight interactive WorkIQ sign-in to abort, freeing the port.
+
+    Returns ``True`` when a waiting sign-in was signalled, ``False`` when none is
+    in flight (or one was already signalled). A no-op once the redirect has
+    arrived — a nearly-complete sign-in is allowed to finish rather than be torn
+    down. Safe to call at any time; the loopback releases the fixed redirect port
+    as soon as it unwinds.
+    """
+    event = _active_signin_cancel
+    if event is None or event.is_set():
+        return False
+    event.set()
+    return True
 
 # Shown when the fixed loopback redirect port is already owned by another
 # process (typically a second Precursor window mid sign-in on the same machine).
@@ -704,7 +745,29 @@ def _make_callback_handler(
             raise
         try:
             async with server:
-                return await asyncio.wait_for(result, timeout=timeout)
+                cancel_event = _active_signin_cancel
+                if cancel_event is None:
+                    # No cancel channel (e.g. a unit test drives the handler
+                    # directly) — preserve the plain timed wait.
+                    return await asyncio.wait_for(result, timeout=timeout)
+                cancel_wait = asyncio.ensure_future(cancel_event.wait())
+                try:
+                    done, _pending = await asyncio.wait(
+                        {result, cancel_wait},
+                        timeout=timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    cancel_wait.cancel()
+                if result.done():
+                    # A genuine redirect arrived (possibly alongside a cancel) —
+                    # honour it and let its stored value/exception surface.
+                    return result.result()
+                if not done:
+                    raise TimeoutError
+                # The user closed the popup before the redirect: abort cleanly so
+                # the loopback releases the fixed port instead of squatting it.
+                raise WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")
         except TimeoutError as exc:
             if silent:
                 # A silent (``prompt=none``) pass whose loopback never fired: the
@@ -925,15 +988,22 @@ async def reauthenticate_workiq(
         # login_hint still lets the user pick another account in the prompt).
         await clear_workiq_oauth_tokens()
 
-        if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
-            login_hint=login_hint, open_system_browser=open_system_browser
-        ):
-            return True
+        # Arm the cancel channel so the SPA can abort this sign-in (freeing the
+        # loopback port immediately) when its popup is closed without finishing.
+        global _active_signin_cancel
+        _active_signin_cancel = asyncio.Event()
+        try:
+            if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
+                login_hint=login_hint, open_system_browser=open_system_browser
+            ):
+                return True
 
-        provider = build_oauth_provider(
-            interactive=True,
-            open_system_browser=open_system_browser,
-            login_hint=login_hint,
-        )
-        await _run_signin(provider)
-        return True
+            provider = build_oauth_provider(
+                interactive=True,
+                open_system_browser=open_system_browser,
+                login_hint=login_hint,
+            )
+            await _run_signin(provider)
+            return True
+        finally:
+            _active_signin_cancel = None

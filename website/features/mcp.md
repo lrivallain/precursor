@@ -60,7 +60,9 @@ sign-in at a time. If you have several windows open (e.g. multiple worktrees)
 and start a sign-in while another already owns the port, Precursor fails fast
 with a clear message ("port 12798 is already in use — another Precursor window
 or app is signing in…") **without** disturbing your existing session — finish or
-close that other sign-in, then retry.
+close that other sign-in, then retry. Simply **closing the sign-in popup cancels
+the flow** and frees the port immediately, so an abandoned sign-in never blocks
+the next one.
 :::
 
 ## As a server — exposing your conversations

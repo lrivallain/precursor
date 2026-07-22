@@ -128,7 +128,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   Precursor window or app is signing in…") *before* touching the existing
   tokens, so a still-usable session is preserved and the banner shows what to do
   instead of stranding. The hands-free silent pass simply defers to the manual
-  banner when the port is busy.
+  banner when the port is busy. To further limit contention, **closing the
+  sign-in popup now cancels the flow** (the SPA calls a new
+  `POST /api/mcp/servers/workiq/reauthenticate/cancel`), so an abandoned sign-in
+  releases the port at once instead of squatting it, and the interactive
+  callback timeout is trimmed from 300s to 180s as a backstop.
 
 
   iframe; when framing or third-party cookies block it (or there's no live SSO

@@ -305,6 +305,7 @@ async def reauthenticate_workiq_server(
     from precursor.backend.config import get_settings
     from precursor.backend.services.mcp.client import _describe_exception, _find_in_exception
     from precursor.backend.services.mcp.workiq_preview import (
+        WorkIQAuthCancelledError,
         WorkIQAuthInProgressError,
         WorkIQAuthPortBusyError,
         build_oauth_provider,
@@ -344,13 +345,19 @@ async def reauthenticate_workiq_server(
         # Another Precursor window (or app) owns the fixed OAuth loopback port —
         # a conflict the user resolves by finishing/closing that sign-in.
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except WorkIQAuthCancelledError as exc:
+        # The SPA cancelled this sign-in (its popup was closed). Report a benign
+        # conflict; the SPA already knows and simply drops its "Signing in…".
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except Exception as exc:
-        # A port-busy raised from the real bind (lost a TOCTOU race) surfaces
-        # wrapped in the SDK's task-group ``BaseExceptionGroup`` — unwrap it so it
-        # still reads as a clear conflict rather than an opaque gateway failure.
-        busy = _find_in_exception(exc, WorkIQAuthPortBusyError)
-        if busy is not None:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(busy)) from exc
+        # A port-busy or user-cancel raised deep in the SDK's auth flow surfaces
+        # wrapped in its task-group ``BaseExceptionGroup`` — unwrap so it still
+        # reads as a clear conflict rather than an opaque gateway failure.
+        conflict = _find_in_exception(exc, WorkIQAuthPortBusyError) or _find_in_exception(
+            exc, WorkIQAuthCancelledError
+        )
+        if conflict is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(conflict)) from exc
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"WorkIQ sign-in failed: {_describe_exception(exc)}",
@@ -388,6 +395,21 @@ async def reauthenticate_workiq_server(
         logger.warning("Could not refresh agent sessions after WorkIQ sign-in", exc_info=True)
     base = manager.status_dict(entry, enabled=is_enabled)
     return _enrich_with_user_meta(base, None)
+
+
+@router.post("/servers/workiq/reauthenticate/cancel")
+async def cancel_reauthenticate_workiq_server() -> dict[str, bool]:
+    """Abort an in-flight interactive WorkIQ sign-in and free the loopback port.
+
+    The SPA calls this when its sign-in popup closes without completing, so the
+    loopback stops waiting and releases the fixed redirect port immediately —
+    otherwise a walked-away flow would squat it (blocking every other Precursor
+    window) until the callback times out. A no-op (``cancelled: false``) when no
+    interactive sign-in is waiting, or once the redirect has already arrived.
+    """
+    from precursor.backend.services.mcp.workiq_preview import cancel_reauthenticate_workiq
+
+    return {"cancelled": cancel_reauthenticate_workiq()}
 
 
 # --------- user-defined CRUD ---------

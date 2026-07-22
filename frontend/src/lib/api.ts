@@ -571,6 +571,12 @@ export const api = {
         { method: "POST" },
       );
     },
+    // Abort an in-flight interactive WorkIQ sign-in so the backend releases the
+    // fixed OAuth loopback port at once (see workiqSignIn.ts). Best-effort.
+    cancelReauthenticateWorkiq: () =>
+      request<{ cancelled: boolean }>(`/api/mcp/servers/workiq/reauthenticate/cancel`, {
+        method: "POST",
+      }),
     create: (data: MCPServerCreate) =>
       request<MCPServerStatus>(`/api/mcp/servers/user`, {
         method: "POST",

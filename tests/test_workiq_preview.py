@@ -207,6 +207,44 @@ async def test_callback_handler_interactive_timeout_raises_runtime_error() -> No
     assert not isinstance(excinfo.value, wp.WorkIQInteractionRequiredError)
 
 
+async def test_callback_handler_cancel_aborts_and_frees_port() -> None:
+    """Cancelling an in-flight sign-in unblocks the loopback and releases the port.
+
+    The SPA cancels when its popup closes; the waiting callback must abort with
+    :class:`WorkIQAuthCancelledError` (not squat the fixed port until the
+    timeout) so another Precursor window can sign in immediately.
+    """
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    wp._active_signin_cancel = asyncio.Event()
+    try:
+        # A long timeout: only the cancel should end the wait.
+        handler = wp._make_callback_handler(timeout=30.0)
+        waiter = asyncio.ensure_future(handler())
+        await asyncio.sleep(0.1)  # let the loopback server bind
+
+        assert wp.cancel_reauthenticate_workiq() is True
+        with pytest.raises(wp.WorkIQAuthCancelledError):
+            await asyncio.wait_for(waiter, timeout=5.0)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+        wp._active_signin_cancel = None
+
+    # The loopback released the fixed port as soon as it unwound.
+    wp._assert_loopback_port_available()
+
+
+def test_cancel_reauthenticate_is_a_noop_when_idle() -> None:
+    """With no interactive sign-in in flight, cancelling reports it did nothing."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    assert wp._active_signin_cancel is None
+    assert wp.cancel_reauthenticate_workiq() is False
+
+
 def test_suppress_filter_drops_silent_timeout_traceback() -> None:
     """The log filter must strip the SDK's ERROR traceback for a silent timeout.
 
@@ -797,3 +835,40 @@ def test_reauthenticate_endpoint_maps_port_busy_to_409(monkeypatch) -> None:
         resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
         assert resp.status_code == 409
         assert "already in use" in resp.json()["detail"]
+
+
+def test_reauthenticate_cancel_endpoint_noop_when_idle() -> None:
+    """The cancel endpoint returns cleanly (no-op) when nothing is signing in."""
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate/cancel")
+        assert resp.status_code == 200
+        assert resp.json() == {"cancelled": False}
+
+
+def test_reauthenticate_endpoint_maps_cancel_to_409(monkeypatch) -> None:
+    """A user-cancelled sign-in surfaces as a benign 409, direct or SDK-wrapped."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _cancelled(*, open_system_browser: bool = True) -> None:
+        raise wp.WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _cancelled)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 409
+        assert "cancelled" in resp.json()["detail"].lower()
+
+        async def _cancelled_wrapped(*, open_system_browser: bool = True) -> None:
+            raise BaseExceptionGroup(
+                "unhandled errors in a TaskGroup (1 sub-exception)",
+                [wp.WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")],
+            )
+
+        monkeypatch.setattr(wp, "reauthenticate_workiq", _cancelled_wrapped)
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
+        assert resp.status_code == 409
+        assert "cancelled" in resp.json()["detail"].lower()
