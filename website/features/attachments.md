@@ -15,9 +15,17 @@ stored efficiently on disk, not in the database.
 | **Images** (PNG, JPEG, …) | Passed to the model as **vision** content-parts. |
 | **PDF** | **Text-extracted** and included as context. |
 | **DOCX / PPTX** | **Text-extracted** and included as context. |
+| **Text & code files** (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.py`, `.ts`, `.sql`, …) | Read as **UTF-8 text** and included as context. |
 
 Drop a file into the composer, or use the attach button. The extracted text (or
 image) is included alongside your prompt for that turn.
+
+Text and code files cover the common plain-text and source formats — Markdown,
+CSV/TSV, JSON/YAML/TOML, XML/HTML, shell scripts, and most programming languages.
+Because browsers report inconsistent MIME types for source files, acceptance
+falls back to the file **extension**, and the stored type is normalized to a
+`text/*` MIME. Any `text/*` file is accepted even if its extension isn't in the
+list. Extracted text is capped at ~4,000 characters per attachment.
 
 ## How they're stored
 

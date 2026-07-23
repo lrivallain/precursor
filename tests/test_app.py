@@ -351,13 +351,39 @@ def test_topic_attachment_upload_accepts_additional_document_types() -> None:
             assert served.content == payload
 
 
+def test_topic_attachment_upload_accepts_text_and_code_files() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Text attachments"}).json()["id"]
+        cases = [
+            ("notes.txt", b"plain-text", "text/plain", "text/plain"),
+            ("readme.md", b"# Title", "text/markdown", "text/markdown"),
+            ("data.csv", b"a,b\n1,2", "text/csv", "text/csv"),
+            ("config.json", b'{"k": 1}', "application/json", "application/json"),
+            # Browsers report unreliable MIMEs for source files; normalize by extension.
+            ("script.py", b"print('hi')", "application/octet-stream", "text/x-python"),
+            ("app.ts", b"const x = 1;", "video/mp2t", "text/typescript"),
+        ]
+        for filename, payload, sent_mime, stored_mime in cases:
+            upload = client.post(
+                f"/api/topics/{tid}/attachments",
+                files={"file": (filename, payload, sent_mime)},
+            )
+            assert upload.status_code == 201, filename
+            att = upload.json()
+            assert att["mime"] == stored_mime, filename
+            served = client.get(f"/api/attachments/{att['id']}")
+            assert served.status_code == 200
+            assert served.content == payload
+
+
 def test_topic_attachment_upload_rejects_unsupported_type() -> None:
     app = create_app()
     with TestClient(app) as client:
         tid = client.post("/api/topics", json={"title": "Bad attachments"}).json()["id"]
         upload = client.post(
             f"/api/topics/{tid}/attachments",
-            files={"file": ("notes.txt", b"plain-text", "text/plain")},
+            files={"file": ("archive.zip", b"PK\x03\x04binary", "application/zip")},
         )
         assert upload.status_code == 415
         assert "Supported types" in upload.text
@@ -515,6 +541,62 @@ def test_topic_stream_extracts_ooxml_header_and_notes_text(monkeypatch) -> None:
         assistant = [m for m in msgs if m["role"] == "assistant"][-1]
         assert "header extracted" in assistant["content"]
         assert "speaker notes extracted" in assistant["content"]
+
+
+def test_topic_stream_passes_text_file_content_to_llm(monkeypatch) -> None:
+    class EchoUserPromptProvider:
+        name = "echo"
+
+        async def stream_chat(self, *, model, messages, reasoning_effort=None):
+            yield ""
+
+        async def stream_chat_with_tools(self, *, model, messages, tools, reasoning_effort=None):
+            _ = model, tools
+            last_user = next((m for m in reversed(messages) if m.role == "user"), None)
+            yield TextDeltaEvent(content=last_user.content if last_user else "")
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+            yield TurnDoneEvent(finish_reason="stop")
+
+        async def list_models(self):
+            return []
+
+    async def _fake_get_llm_provider(_session):
+        return EchoUserPromptProvider()
+
+    async def _fake_record_usage(*args, **kwargs):
+        _ = args, kwargs
+        return None
+
+    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(turn_engine_mod, "record_usage", _fake_record_usage)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Text context"}).json()["id"]
+        upload = client.post(
+            f"/api/topics/{tid}/attachments",
+            files={
+                "file": (
+                    "main.py",
+                    b"def greet():\n    return 'hi from python file'\n",
+                    "text/x-python",
+                )
+            },
+        )
+        assert upload.status_code == 201
+        aid = upload.json()["id"]
+
+        stream = client.post(
+            f"/api/topics/{tid}/messages/stream",
+            json={"content": "explain this file", "attachment_ids": [aid]},
+            headers={"Accept": "text/event-stream"},
+        )
+        assert stream.status_code == 200
+
+        msgs = client.get(f"/api/topics/{tid}/messages").json()
+        assistant = [m for m in msgs if m["role"] == "assistant"][-1]
+        assert "Attached documents:" in assistant["content"]
+        assert "hi from python file" in assistant["content"]
 
 
 def test_topic_stream_records_model_and_elapsed_on_answer(monkeypatch) -> None:

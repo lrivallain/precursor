@@ -44,7 +44,7 @@ These work across the sections above:
 - **[Command runner](/features/command-runner)** — execute bash / python / node
   inside a throwaway Docker jail.
 - **[Attachments](/features/attachments)** — images as vision input; PDF / DOCX /
-  PPTX text-extracted; content-addressed on disk, deduped.
+  PPTX and text/code files text-extracted; content-addressed on disk, deduped.
 - **[Plugins](/features/plugins)** — extend the backend and frontend without
   forking core.
 

@@ -18,6 +18,7 @@ from pypdf import PdfReader
 
 from precursor.backend.models import Attachment
 from precursor.backend.services.blob_store import read_blob
+from precursor.backend.services.image_uploads import is_text_attachment_mime
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,14 @@ def _extract_pptx_text(data: bytes) -> str:
     return "\n".join(chunks)
 
 
+def _extract_plain_text(data: bytes) -> str:
+    """Decode a text/code attachment as UTF-8 (lenient) for LLM context."""
+    text = data.decode("utf-8", errors="replace")
+    if len(text) > MAX_ATTACHMENT_CONTEXT_CHARS:
+        return text[:MAX_ATTACHMENT_CONTEXT_CHARS]
+    return text
+
+
 def _extract_non_image_text(att: Attachment) -> str:
     try:
         data = read_blob(att.sha256)
@@ -157,6 +166,8 @@ def _extract_non_image_text(att: Attachment) -> str:
             return _extract_pptx_text(data)
         except (zipfile.BadZipFile, KeyError, ET.ParseError):
             return ""
+    if is_text_attachment_mime(att.mime):
+        return _extract_plain_text(data)
     return ""
 
 

@@ -99,7 +99,7 @@ Scheduled topics run the *same* turn logic off the request path via
   invocation); content lives in a shared `SKILL.md` file (see Skills & memory).
 - `Memory` — long-term notes injected into the system prompt.
 - `Attachment` — file attachments bound to messages (images become vision
-  content-parts; PDF/DOCX/PPTX are text-extracted). Bytes are **not** stored in
+  content-parts; PDF/DOCX/PPTX and text/code files are text-extracted). Bytes are **not** stored in
   the DB: the row keeps only metadata plus a `sha256` pointer, and the content
   lives on disk as a content-addressed file under `settings.blobs_dir`
   (`.precursor/blobs/<aa>/<bb>/<sha256>`), so the database stays small. See

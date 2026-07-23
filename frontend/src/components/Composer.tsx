@@ -369,7 +369,7 @@ export function Composer({
                 onClick={() => fileInputRef.current?.click()}
                 className="p-2 rounded-lg text-muted hover:text-text hover:bg-bg"
                 aria-label="Attach file"
-                data-tooltip="Attach file (image/pdf/docx/pptx)"
+                data-tooltip="Attach file (image, pdf, docx, pptx, or text/code)"
               >
                 <Plus size={18} />
               </button>

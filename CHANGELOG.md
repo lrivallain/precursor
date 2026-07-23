@@ -11,6 +11,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Attach text & code files**: the message composer now accepts plain-text and
+  source files (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.toml`, `.xml`, `.py`,
+  `.ts`, `.js`, `.go`, `.rs`, `.sql`, `.sh`, and many more) in addition to images
+  and PDF/DOCX/PPTX. Their UTF-8 text is extracted and folded into the turn as
+  context. Because browsers report inconsistent MIME types for source files,
+  acceptance falls back to the file extension and the stored type is normalized
+  to a `text/*` MIME.
+
 - **Edit transcript phrases inline**: in a Live session, **double-click any
   phrase** in the transcript to correct misheard words in place — press
   <kbd>Enter</kbd> (or blur) to save, <kbd>Esc</kbd> to cancel. The correction
