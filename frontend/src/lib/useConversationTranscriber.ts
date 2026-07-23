@@ -213,23 +213,20 @@ export function useConversationTranscriber({
     clearTimers();
     const t = transcriberRef.current;
     transcriberRef.current = null;
+    // Release the captured tracks synchronously so the browser/OS capture
+    // indicator clears the instant the user stops. Gating this on the SDK's
+    // stop/close callbacks is unreliable — they may never fire when the socket
+    // is already gone, leaving the mic indicator stuck on until a page reload.
+    releaseMedia();
     if (t) {
       try {
         t.stopTranscribingAsync(
-          () => {
-            t.close();
-            releaseMedia();
-          },
-          () => {
-            t.close();
-            releaseMedia();
-          },
+          () => t.close(),
+          () => t.close(),
         );
       } catch {
-        releaseMedia();
+        /* already stopped */
       }
-    } else {
-      releaseMedia();
     }
     setListening(false);
   }, [clearTimers, releaseMedia]);
