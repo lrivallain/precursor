@@ -100,6 +100,17 @@ export async function listAudioInputDevices(): Promise<AudioInputDevice[]> {
  */
 const MAX_RECONNECT_ATTEMPTS = 6;
 
+// App-wide (per browser tab) singleton lock: only one live transcription may be
+// running at any instant. The per-instance `startingRef` latch below stops a
+// double-click within a single component, but capturing the same meeting audio
+// twice in parallel is never valid — two sessions duplicate every phrase in the
+// transcript, and stopping one leaves the other orphaned and still streaming.
+// A module-level owner token additionally refuses a *second* transcriber
+// instance (e.g. a re-mounted LiveView while a previous one is mid-teardown, or
+// two views racing to start) from acquiring capture while another already holds
+// it, guaranteeing the invariant regardless of how many hooks exist.
+let recordingLockOwner: object | null = null;
+
 export function useConversationTranscriber({
   onFinalSegment,
   onInterim,
@@ -114,6 +125,10 @@ export function useConversationTranscriber({
   const [error, setError] = useState<string | null>(null);
 
   const transcriberRef = useRef<ConversationTranscriber | null>(null);
+  // Stable identity for this hook instance, used as the owner token for the
+  // module-level `recordingLockOwner` singleton so we only ever release a lock
+  // we actually hold.
+  const lockOwnerRef = useRef<object>({});
   // Synchronous latch: transcriberRef is only assigned after several awaits
   // (token fetch, SDK import, getUserMedia), so a rapid double-click could pass
   // the transcriberRef guard twice and spin up two recordings. This flag is set
@@ -191,6 +206,10 @@ export function useConversationTranscriber({
   const teardown = useCallback((): void => {
     userStoppedRef.current = true;
     reconnectingRef.current = false;
+    // Free the app-wide recording lock immediately (if we hold it) so a fresh
+    // recording can start the moment the user stops, without waiting for the
+    // async device teardown below.
+    if (recordingLockOwner === lockOwnerRef.current) recordingLockOwner = null;
     clearTimers();
     const t = transcriberRef.current;
     transcriberRef.current = null;
@@ -365,6 +384,13 @@ export function useConversationTranscriber({
 
   const start = useCallback(() => {
     if (!enabled || transcriberRef.current || startingRef.current || reconnectingRef.current) return;
+    // App-wide guard: refuse if another transcriber instance already holds the
+    // recording lock, so we never capture the same audio in parallel.
+    if (recordingLockOwner && recordingLockOwner !== lockOwnerRef.current) {
+      setError("Another live recording is already running. Stop it before starting a new one.");
+      return;
+    }
+    recordingLockOwner = lockOwnerRef.current;
     startingRef.current = true;
     setStarting(true);
     setError(null);

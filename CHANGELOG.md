@@ -129,6 +129,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Double-started Live recording duplicating the transcript**: starting a Live
+  recording twice at nearly the same instant (e.g. a quick double-click on
+  **Record**, or a second view racing to start during a transition) could spin
+  up two capture sessions against the same meeting audio — every phrase was
+  transcribed twice, and stopping one left the other orphaned and still
+  streaming. A single **app-wide recording lock** now guarantees only one live
+  transcription runs at a time: a second start is refused (with a clear message)
+  until the active one is stopped. This complements the existing per-view
+  double-click latch by also covering distinct transcriber instances.
+
 - **WorkIQ sign-in stuck on "Signing in…" when another Precursor window is
   open**: the OAuth callback uses a *fixed* loopback port
   (`127.0.0.1:12798`, matching the registered `redirect_uri`), so only one
