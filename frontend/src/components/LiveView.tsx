@@ -1277,6 +1277,21 @@ export function LiveView({
     { id: "context", label: "Context" },
   ];
 
+  // The panel layout (incl. the active tab) is persisted globally, so a freshly
+  // created session would otherwise open on whatever tab was last active (e.g.
+  // Summary from a prior session). A new session has no recorded content yet —
+  // land it on the first tab so the user starts at the top, not mid-panel.
+  useEffect(() => {
+    const isFresh =
+      !session.summary &&
+      !session.started_at &&
+      !session.ended_at &&
+      !session.notes.trim();
+    if (isFresh) focusTab(tabs[0]?.id ?? "transcript");
+    // Runs once per session (LiveView is keyed by session.id).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function renderSection(id: string): React.ReactNode {
     switch (id) {
       case "transcript":

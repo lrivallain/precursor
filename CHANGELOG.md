@@ -129,6 +129,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Live session opened on the wrong tab**: because the split-panel layout
+  (including the active tab) is persisted globally, a freshly created Live
+  session would open on whatever tab was last active — typically **Summary**
+  from a previous session — instead of the transcript. New sessions now land on
+  the first tab so you start at the top of the panel.
+
+- **Microphone indicator stuck on after a Live recording**: stopping a recording
+  released the captured audio tracks only from inside the Speech SDK's
+  stop/close callbacks, which may never fire when the socket is already gone —
+  leaving the browser/OS capture indicator lit until a page reload. Teardown now
+  stops the tracks synchronously, so the indicator clears the instant you stop.
+
 - **Double-started Live recording duplicating the transcript**: starting a Live
   recording twice at nearly the same instant (e.g. a quick double-click on
   **Record**, or a second view racing to start during a transition) could spin
