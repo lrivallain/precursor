@@ -35,7 +35,15 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-_RESERVED_NAMES = {"github", "workiq", "fetch", "workspace-fs", "cmd-runner", "precursor"}
+_RESERVED_NAMES = {
+    "github",
+    "workiq",
+    "fetch",
+    "workspace-fs",
+    "cmd-runner",
+    "precursor",
+    "playwright",
+}
 
 
 async def _load_enabled(session: AsyncSession) -> dict[str, bool]:
@@ -67,6 +75,10 @@ async def _preflight_block(name: str, session: AsyncSession) -> str | None:
 
         config = await resolve_cmd_runner_config(session)
         return jail_preflight_error(config.jail)
+    if name == "playwright":
+        from precursor.backend.services.mcp.client import playwright_preflight_error
+
+        return playwright_preflight_error()
     return None
 
 

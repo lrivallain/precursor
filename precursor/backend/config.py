@@ -170,6 +170,16 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "cmd-runner" / "scratch")
 
+    # Persistent browser profile for the built-in ``playwright`` MCP server. Kept
+    # on disk (via ``--user-data-dir``) so an interactive Entra/SSO sign-in done
+    # once in the headed browser survives across turns and app restarts, letting
+    # the model reach authenticated pages without re-authenticating each time.
+    @cached_property
+    def playwright_profile_dir(self) -> str:
+        from pathlib import Path
+
+        return str(Path(self.data_dir).resolve() / "playwright" / "profile")
+
     # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
     # by default at the env level; the effective on/off lives in the DB app
     # settings (Settings → Agents) so it can be toggled at runtime. The SDK

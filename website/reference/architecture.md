@@ -133,9 +133,9 @@ mock when credentials are missing. Shipped providers: **GitHub Copilot**
 Precursor is both an MCP client and an MCP server.
 
 - **As client** (`services/mcp/client.py`) — an `MCPClientManager` holds the
-  tool-server registry: built-ins (`github`, `workiq`, `fetch`, `workspace-fs`,
-  `cmd-runner`, `precursor`) plus user-defined servers. Servers are toggled in
-  Settings; sessions open per chat turn.
+  tool-server registry: built-ins (`github`, `workiq`, `playwright`, `fetch`,
+  `workspace-fs`, `cmd-runner`, `precursor`) plus user-defined servers. Servers
+  are toggled in Settings; sessions open per chat turn.
 - **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server exposing
   Precursor's own data, gated per-section by `mcp_expose` (off by default), over
   **stdio** and an in-process **HTTP** transport at `/mcp` (off by default,
