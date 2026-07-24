@@ -783,8 +783,17 @@ class AgentManager:
         server = (event.data or {}).get("server_name")
         if server != "workiq":
             return None
-        from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
+        from precursor.backend.services.mcp.workiq_preview import (
+            resolve_workiq_bearer_token,
+            resolve_workiq_preview,
+        )
 
+        # Without preview mode WorkIQ runs as local stdio with no OAuth, so
+        # ``resolve_workiq_bearer_token`` is always ``None`` — a routine stdio
+        # tool error must not surface a sign-in prompt the user can't act on
+        # (re-auth 400s with "Enable WorkIQ preview mode before signing in").
+        if not await resolve_workiq_preview():
+            return None
         if await resolve_workiq_bearer_token() is not None:
             return None
         return "workiq"
