@@ -562,10 +562,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ enabled }),
       }),
-    reauthenticateWorkiq: (opts?: { usePopup?: boolean; silentOnly?: boolean }) => {
+    reauthenticateWorkiq: (opts?: { usePopup?: boolean; silentOnly?: boolean; auto?: boolean }) => {
       const params = new URLSearchParams();
       if (opts?.usePopup) params.set("use_popup", "true");
       if (opts?.silentOnly) params.set("silent_only", "true");
+      if (opts?.auto) params.set("auto", "true");
       const qs = params.toString();
       return request<MCPServerStatus & { interaction_required?: boolean }>(
         `/api/mcp/servers/workiq/reauthenticate${qs ? `?${qs}` : ""}`,

@@ -433,23 +433,29 @@ async def _redirect_handler(
     open_system_browser: bool,
     login_hint: str | None = None,
     prompt: str | None = None,
+    publish_url: bool = True,
 ) -> None:
     """Surface the WorkIQ authorization URL for sign-in.
 
-    Always publishes the URL over the event bus so the window that started the
-    sign-in can navigate a script-opened popup to it (that popup's loopback
-    callback can then close itself — a tab opened out-of-band can't).
-    ``open_system_browser`` *additionally* opens the OS default browser as a
-    fallback, used when the SPA couldn't open a popup (blocked / no live window).
-    ``login_hint``/``prompt`` are spliced into the URL to pre-select the account
-    and (for the silent pass) request a no-UI authorization.
+    By default publishes the URL over the event bus so the window that started
+    the sign-in can navigate a script-opened popup (or the invisible silent
+    frame) to it — that popup's loopback callback can then close itself, whereas
+    a tab opened out-of-band can't. ``open_system_browser`` *additionally* opens
+    the OS default browser, used both when the SPA couldn't open a popup and,
+    for the hands-free auto flow, to **self-trigger** the visible interactive
+    sign-in with no click. ``publish_url`` is turned off for that self-triggered
+    interactive pass so the still-attached silent frame isn't steered into the
+    interactive URL (which would race the OS browser for the single loopback
+    port). ``login_hint``/``prompt`` are spliced into the URL to pre-select the
+    account and (for the silent pass) request a no-UI authorization.
     """
     authorization_url = _augment_authorization_url(
         authorization_url, login_hint=login_hint, prompt=prompt
     )
     logger.info("WorkIQ preview: authorization URL ready; surfacing sign-in")
-    with contextlib.suppress(Exception):
-        await publish_mcp_auth_url("workiq", authorization_url)
+    if publish_url:
+        with contextlib.suppress(Exception):
+            await publish_mcp_auth_url("workiq", authorization_url)
     if not open_system_browser:
         return
     try:
@@ -464,6 +470,7 @@ def _make_redirect_handler(
     open_system_browser: bool = True,
     login_hint: str | None = None,
     prompt: str | None = None,
+    publish_url: bool = True,
 ) -> Callable[[str], Awaitable[None]]:
     """Build the SDK ``redirect_handler`` for an interactive or background provider.
 
@@ -472,8 +479,10 @@ def _make_redirect_handler(
     we refuse to open a browser there and raise :class:`WorkIQAuthRequiredError`
     so the connect fails fast instead of blocking on a sign-in nobody is driving.
     ``open_system_browser`` (interactive only) toggles the OS-browser fallback:
-    the SPA sets it off once it has opened its own script-openable popup.
-    ``login_hint``/``prompt`` are forwarded to :func:`_redirect_handler`.
+    the SPA sets it off once it has opened its own script-openable popup, and the
+    hands-free auto flow sets it on to self-trigger the visible interactive
+    prompt. ``publish_url``/``login_hint``/``prompt`` are forwarded to
+    :func:`_redirect_handler`.
     """
 
     async def _handler(authorization_url: str) -> None:
@@ -484,6 +493,7 @@ def _make_redirect_handler(
             open_system_browser=open_system_browser,
             login_hint=login_hint,
             prompt=prompt,
+            publish_url=publish_url,
         )
 
     return _handler
@@ -795,6 +805,7 @@ def build_oauth_provider(
     login_hint: str | None = None,
     prompt: str | None = None,
     callback_timeout: float | None = None,
+    publish_url: bool = True,
 ) -> OAuthClientProvider:
     """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
 
@@ -804,7 +815,10 @@ def build_oauth_provider(
     interactive variant — used only by :func:`reauthenticate_workiq` on an
     explicit user action — surfaces the authorization URL and waits for the
     loopback callback. ``open_system_browser`` (interactive only) toggles the
-    OS-browser fallback; the SPA turns it off when it drives its own popup.
+    OS-browser fallback; the SPA turns it off when it drives its own popup, and
+    the hands-free auto flow turns it on to self-trigger the visible interactive
+    prompt. ``publish_url`` (on by default) can be turned off so the interactive
+    URL isn't surfaced to a still-attached silent frame (auto flow).
     ``login_hint`` pre-selects the Entra account and ``prompt`` (e.g. ``"none"``
     for the silent pass) is forwarded onto the authorization request.
     ``callback_timeout`` caps how long the loopback waits for the redirect —
@@ -826,6 +840,7 @@ def build_oauth_provider(
             open_system_browser=open_system_browser,
             login_hint=login_hint,
             prompt=prompt,
+            publish_url=publish_url,
         ),
         callback_handler=_make_callback_handler(
             callback_timeout if callback_timeout is not None else _CALLBACK_TIMEOUT_SECONDS,
@@ -927,7 +942,7 @@ async def _try_silent_reauth(
 
 
 async def reauthenticate_workiq(
-    *, open_system_browser: bool = True, silent_only: bool = False
+    *, open_system_browser: bool = True, silent_only: bool = False, auto: bool = False
 ) -> bool:
     """Run the browser OAuth flow and persist fresh WorkIQ tokens.
 
@@ -944,12 +959,21 @@ async def reauthenticate_workiq(
     off once it has opened its own script-openable popup (so we don't double up
     with a stray tab), on when it couldn't (popup blocked / no live window).
 
-    ``silent_only`` runs the hands-free auto re-auth: it attempts *only* the
-    no-UI ``prompt=none`` pass (on a short timeout, never opening an OS browser)
-    and never falls back to a visible prompt — the SPA drives the authorization
-    URL through an invisible iframe. Returns ``True`` when the session is now
-    authenticated, ``False`` when a silent pass couldn't complete and the caller
-    should surface the manual sign-in banner instead.
+    ``silent_only`` runs a *silent-only* pass: it attempts *only* the no-UI
+    ``prompt=none`` pass (on a short timeout, never opening an OS browser) and
+    never falls back to a visible prompt — the SPA drives the authorization URL
+    through an invisible iframe. Returns ``True`` when authenticated, ``False``
+    when the silent pass couldn't complete.
+
+    ``auto`` runs the hands-free **self-triggering** re-auth: the silent
+    ``prompt=none`` pass first (invisible iframe, short timeout) and, when Entra
+    needs interaction, it *self-opens the OS browser* to the visible interactive
+    prompt with **no banner click** — the SPA never has to open a popup. The
+    interactive URL isn't surfaced over SSE (``publish_url=False``) so the still
+    attached silent frame isn't steered into it and made to race the OS browser
+    for the loopback port. Returns ``True`` once authenticated, ``False`` (never a
+    hard error) when it couldn't complete so the caller surfaces the manual
+    sign-in banner as a last resort.
 
     Raises :class:`WorkIQAuthInProgressError` if a sign-in is already running.
     """
@@ -960,12 +984,12 @@ async def reauthenticate_workiq(
         login_hint = await get_workiq_login_hint()
 
         if silent_only:
-            # Hands-free: only the no-UI pass, on a short timeout, with no OS
-            # browser fallback (the SPA drives an invisible iframe). Any failure
-            # — port busy, interaction required, framing/cookies blocked, or
-            # timeout — just means "fall back to the manual banner", never a hard
-            # error. Preflight the loopback port first so a busy port doesn't
-            # needlessly clear the still-usable stored tokens.
+            # Silent-only: the no-UI pass, on a short timeout, with no OS browser
+            # fallback (the SPA drives an invisible iframe). Any failure — port
+            # busy, interaction required, framing/cookies blocked, or timeout —
+            # just means "couldn't complete silently", never a hard error.
+            # Preflight the loopback port first so a busy port doesn't needlessly
+            # clear the still-usable stored tokens.
             try:
                 _assert_loopback_port_available()
             except WorkIQAuthPortBusyError as exc:
@@ -984,6 +1008,45 @@ async def reauthenticate_workiq(
                 logger.info("WorkIQ silent auto re-auth could not complete: %s", exc)
                 return False
 
+        if auto:
+            # Hands-free self-triggering re-auth: prefer the invisible silent pass,
+            # but when Entra needs a human, self-open the OS browser to the visible
+            # prompt (no banner click). Preflight the port first so a busy port
+            # (another window signing in) defers cleanly to the manual banner
+            # without destroying still-usable tokens.
+            try:
+                _assert_loopback_port_available()
+            except WorkIQAuthPortBusyError as exc:
+                logger.info("WorkIQ auto re-auth skipped: %s", exc)
+                return False
+            await clear_workiq_oauth_tokens()
+            global _active_signin_cancel
+            _active_signin_cancel = asyncio.Event()
+            try:
+                if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
+                    login_hint=login_hint,
+                    open_system_browser=False,
+                    callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
+                ):
+                    return True
+                # Silent pass needs a human — self-trigger the visible prompt via
+                # the OS browser (no popup gesture). Don't publish the URL: the
+                # silent frame is still attached and would otherwise race the OS
+                # browser for the single loopback port.
+                provider = build_oauth_provider(
+                    interactive=True,
+                    open_system_browser=True,
+                    login_hint=login_hint,
+                    publish_url=False,
+                )
+                await _run_signin(provider)
+                return True
+            except Exception as exc:
+                logger.info("WorkIQ auto re-auth could not complete: %s", exc)
+                return False
+            finally:
+                _active_signin_cancel = None
+
         # Interactive: fail fast — before clearing tokens or driving the browser
         # flow — when another process already owns the fixed loopback port, so
         # the UI shows a clear error instead of stranding "Signing in…" until the
@@ -995,7 +1058,6 @@ async def reauthenticate_workiq(
 
         # Arm the cancel channel so the SPA can abort this sign-in (freeing the
         # loopback port immediately) when its popup is closed without finishing.
-        global _active_signin_cancel
         _active_signin_cancel = asyncio.Event()
         try:
             if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(

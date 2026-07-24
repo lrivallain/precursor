@@ -93,6 +93,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **WorkIQ re-auth is now hands-free and self-triggering**: when the WorkIQ
+  refresh token ages out, Precursor prefers automation over interrupting you. It
+  runs the silent `prompt=none` pass in an invisible iframe first and, when that
+  needs interaction, **self-opens your OS browser** to a single visible sign-in —
+  no `McpAuthBanner` click and no redundant second prompt. The manual banner only
+  surfaces as a last resort (auto re-auth off, loopback port busy, or declined).
+  A new `auto=true` mode on `POST /api/mcp/servers/workiq/reauthenticate` drives
+  this; the interactive fallback opens the OS browser instead of the iframe so it
+  never races the loopback port.
+
 - **Cleaner API error messages**: failed API calls now surface just the server's
   human-readable `detail` text (e.g. *"The linked meeting has no Teams join
   link…"*) instead of the raw `400 Bad Request: {"detail":"…"}` envelope. The
