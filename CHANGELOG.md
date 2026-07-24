@@ -13,14 +13,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 - **Playwright MCP server (authenticated scraping)**: a new built-in `playwright`
   tool server wraps Microsoft's official `@playwright/mcp` (launched via `npx`,
-  like `workiq`) so agents, topics, and chats can drive a real Chromium —
-  navigate, read the rendered DOM/text, and screenshot. It runs **headed** and by
-  default reuses `@playwright/mcp`'s **shared, machine-wide persistent profile**,
-  so an Entra/SSO sign-in already onboarded there (including via other
-  Playwright-MCP tools) carries over and reaches **authenticated** pages that
-  `fetch` (raw HTTP, no browser/session) can't. Set
-  `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` to pin an isolated profile instead. Toggle it
-  in **Settings → MCP**; a host-dependency preflight requires Node.js (`npx`) on
+  like `workiq`) so agents, topics, and chats can drive a real browser —
+  navigate, read the rendered DOM/text, and screenshot. It runs **headed** and
+  defaults to **Microsoft Edge** (`--browser msedge`) so it can ride the
+  corporate Edge SSO/WAM broker for authenticated Entra scraping, reusing
+  `@playwright/mcp`'s **shared, machine-wide persistent profile** so a sign-in
+  already onboarded there (including via other Playwright-MCP tools) carries over
+  and reaches **authenticated** pages that `fetch` (raw HTTP, no browser/session)
+  can't. `PRECURSOR_PLAYWRIGHT_BROWSER` (default `msedge`) picks the channel and
+  `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` pins an isolated profile. Toggle it in
+  **Settings → MCP**; a host-dependency preflight requires Node.js (`npx`) on
   PATH.
 
 - **Attach text & code files**: the message composer now accepts plain-text and

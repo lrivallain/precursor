@@ -192,16 +192,14 @@ _WORKIQ_STDIO_COMMAND = "npx"
 _WORKIQ_STDIO_ARGS: tuple[str, ...] = ("-y", "@microsoft/workiq@latest", "mcp")
 
 # The npx launcher for the built-in Playwright server (Microsoft's official
-# ``@playwright/mcp``). ``--user-data-dir`` is appended lazily in
-# ``_register_builtins`` from ``Settings.playwright_profile_dir`` so an
-# interactive Entra/SSO sign-in persists across runs. Headed by default (no
-# ``--headless``) so the user can complete that first sign-in.
+# ``@playwright/mcp``). The ``--browser`` channel and an optional
+# ``--user-data-dir`` are appended lazily in ``_register_builtins`` from
+# settings. Headed by default (no ``--headless``) so the user can complete the
+# first interactive sign-in; the persistent profile then reuses it.
 _PLAYWRIGHT_STDIO_COMMAND = "npx"
 _PLAYWRIGHT_STDIO_ARGS: tuple[str, ...] = (
     "-y",
     "@playwright/mcp@latest",
-    "--browser",
-    "chromium",
 )
 
 
@@ -246,13 +244,12 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
     # interactive auth on first run.
     _BuiltinSpec("workiq", "stdio", command=_WORKIQ_STDIO_COMMAND, args=_WORKIQ_STDIO_ARGS),
     # Playwright MCP — Microsoft's official ``@playwright/mcp`` via npx (like
-    # workiq). Drives a real Chromium with a persistent profile so an interactive
-    # Entra/SSO sign-in survives across runs, letting the model reach
-    # authenticated pages (navigate, read text/DOM, screenshot). By default it
-    # reuses ``@playwright/mcp``'s own shared profile; set
-    # ``PRECURSOR_PLAYWRIGHT_PROFILE_DIR`` to pin an isolated one (appended as
-    # ``--user-data-dir`` in ``_register_builtins``). Enable-time npx availability
-    # is checked in the connect router.
+    # workiq). Drives a real browser (Microsoft Edge by default, for corporate
+    # SSO) with a persistent profile so an interactive Entra/SSO sign-in survives
+    # across runs, letting the model reach authenticated pages (navigate, read
+    # text/DOM, screenshot). ``--browser`` and an optional ``--user-data-dir`` are
+    # appended in ``_register_builtins``. Enable-time npx availability is checked
+    # in the connect router.
     _BuiltinSpec(
         "playwright",
         "stdio",
@@ -328,13 +325,19 @@ class MCPClientManager:
     def _register_builtins(self) -> None:
         for spec in BUILTIN_CATALOG:
             args = list(spec.args)
-            # Playwright: only pin ``--user-data-dir`` when an override is set.
-            # Left empty (default), ``@playwright/mcp`` uses its own shared
-            # machine-wide persistent profile, reusing any sign-in already
-            # onboarded there (incl. via other Playwright-MCP tools) instead of
-            # forcing a fresh sign-in into an app-specific directory.
             if spec.name == "playwright":
-                override = get_settings().playwright_profile_dir.strip()
+                settings = get_settings()
+                # Browser channel. Default ``msedge`` so the server drives
+                # Microsoft Edge and can ride the corporate Edge SSO/WAM broker —
+                # the way authenticated Entra scraping actually works on a managed
+                # machine. Override to ``chromium`` where Edge isn't installed.
+                channel = (settings.playwright_browser or "msedge").strip()
+                args += ["--browser", channel]
+                # Only pin ``--user-data-dir`` when an override is set. Left empty
+                # (default), ``@playwright/mcp`` uses its own shared machine-wide
+                # profile, reusing any sign-in already onboarded there (incl. via
+                # other Playwright-MCP tools) instead of forcing a fresh sign-in.
+                override = settings.playwright_profile_dir.strip()
                 if override:
                     os.makedirs(override, exist_ok=True)
                     args += ["--user-data-dir", override]
