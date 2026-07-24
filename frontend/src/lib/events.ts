@@ -123,6 +123,18 @@ function connect(): void {
       // Ignore malformed payloads.
     }
   });
+  // A sign-in completed in some window — drop a stale banner here so windows
+  // that only ever saw the needs-auth notice stop prompting for credentials that
+  // are now fresh. Not client-id filtered: the originating window already
+  // cleared locally, the rest are precisely who this is for.
+  source.addEventListener("mcp.auth_resolved", (e) => {
+    try {
+      const payload = JSON.parse((e as MessageEvent).data) as { server?: string };
+      mcpAuthStore.resolve(payload.server ?? "workiq");
+    } catch {
+      // Ignore malformed payloads.
+    }
+  });
   source.onerror = () => {
     source?.close();
     source = null;

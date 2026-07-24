@@ -404,6 +404,12 @@ async def reauthenticate_workiq_server(
     # Wake any chat turn paused waiting for this sign-in so it resumes with the
     # freshly authenticated tools instead of timing out.
     manager.signal_auth_resolved()
+    # Tell every *other* window the sign-in was renewed so its stale
+    # ``McpAuthBanner`` (and any "Signing in…" state) clears without a reload —
+    # the window that drove this sign-in already cleared locally.
+    from precursor.backend.services.events import publish_mcp_auth_resolved
+
+    await publish_mcp_auth_resolved("workiq")
     # Agents bake a static OAuth bearer into their SDK session at creation, so an
     # agent built before sign-in still lacks WorkIQ's tools. Drop idle sessions so
     # the next dispatch rebuilds with the new token (no-op when agents are off).

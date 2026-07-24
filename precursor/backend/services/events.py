@@ -26,8 +26,9 @@ class Event(TypedDict, total=False):
     chat_id: int | None
     agent_session_id: int | None
     meeting_session_id: int | None
-    # Carried only by ``mcp.auth_required`` — which MCP server needs an
-    # interactive sign-in and the human-readable reason to show.
+    # Carried by ``mcp.auth_required`` (which MCP server needs an interactive
+    # sign-in and the human-readable reason to show) and ``mcp.auth_resolved``
+    # (which server's sign-in was just renewed).
     server: str | None
     message: str | None
     # Carried only by ``mcp.auth_url`` — the interactive OAuth authorization URL
@@ -130,6 +131,21 @@ async def publish_mcp_auth_url(server: str, url: str) -> None:
     single-use PKCE ``state``, not a bearer secret, and this is a localhost app.
     """
     await _bus.publish({"type": "mcp.auth_url", "server": server, "url": url})
+
+
+async def publish_mcp_auth_resolved(server: str) -> None:
+    """Announce that an MCP server's interactive sign-in has been renewed.
+
+    A sign-in completed in *one* window (its script-opened popup, the OS-browser
+    tab the hands-free flow self-opens, or a silent pass) leaves every *other*
+    window still showing the stale ``McpAuthBanner`` — they never made the
+    request, so nothing tells them the credentials are fresh again. Broadcasting
+    this once the re-auth succeeds lets those windows drop the banner (and any
+    "Signing in…" state) without a page reload. Not client-id filtered: the
+    originating window has already cleared locally, and the rest are precisely
+    who this is for.
+    """
+    await _bus.publish({"type": "mcp.auth_resolved", "server": server})
 
 
 async def publish_message_changed_chat(chat_id: int) -> None:

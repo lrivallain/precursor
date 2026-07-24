@@ -1042,3 +1042,58 @@ def test_reauthenticate_endpoint_maps_cancel_to_409(monkeypatch) -> None:
         resp = client.post("/api/mcp/servers/workiq/reauthenticate?use_popup=true")
         assert resp.status_code == 409
         assert "cancelled" in resp.json()["detail"].lower()
+
+
+def test_reauthenticate_endpoint_publishes_resolved_on_success(monkeypatch) -> None:
+    """A completed sign-in broadcasts ``mcp.auth_resolved`` so *other* windows clear.
+
+    Windows that only ever saw the ``needs_auth`` notice never made this request,
+    so the renewal has to reach them over the event bus for their banner to drop.
+    """
+    from precursor.backend.services import events as events_mod
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    resolved: list[str] = []
+
+    async def _record(server: str) -> None:
+        resolved.append(server)
+
+    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+        return None
+
+    monkeypatch.setattr(events_mod, "publish_mcp_auth_resolved", _record)
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate")
+        assert resp.status_code == 200
+
+    assert resolved == ["workiq"]
+
+
+def test_reauthenticate_endpoint_skips_resolved_when_interaction_required(monkeypatch) -> None:
+    """A hands-free pass that still needs a human must not falsely announce a renewal."""
+    from precursor.backend.services import events as events_mod
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    resolved: list[str] = []
+
+    async def _record(server: str) -> None:
+        resolved.append(server)
+
+    async def _needs_interaction(*, auto: bool = False, **_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(events_mod, "publish_mcp_auth_resolved", _record)
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _needs_interaction)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate?auto=true")
+        assert resp.status_code == 200
+        assert resp.json().get("interaction_required") is True
+
+    assert resolved == []

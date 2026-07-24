@@ -58,6 +58,21 @@ class McpAuthStore {
   }
 
   /**
+   * Drop the banner because ``server``'s sign-in was renewed elsewhere.
+   *
+   * Broadcast over the event bus (``mcp.auth_resolved``) when any window
+   * completes an interactive re-auth — via its popup, the OS-browser tab the
+   * hands-free flow self-opens, or a silent pass. Windows that only ever saw the
+   * ``mcp_auth_required`` notice (and never drove the sign-in themselves) get
+   * told the credentials are fresh and clear their stale banner without a
+   * reload. A no-op when the current notice is for a different server.
+   */
+  resolve(server: string): void {
+    if (this.notice && this.notice.server !== server) return;
+    this.clear();
+  }
+
+  /**
    * Kick off the one-shot hands-free self-triggering WorkIQ re-auth for a fresh
    * notice.
    *
