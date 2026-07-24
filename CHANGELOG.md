@@ -153,6 +153,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Spurious WorkIQ sign-in prompt when preview mode is off**: an agent turn
+  whose `workiq` tool call errored would surface a "WorkIQ needs you to sign in"
+  banner even with preview mode disabled — where WorkIQ runs as local stdio with
+  no OAuth, so the sign-in couldn't proceed (clicking it returned "Enable WorkIQ
+  preview mode before signing in"). The failed-tool auth check now short-circuits
+  unless preview mode is on, so routine stdio tool errors no longer nag for an
+  impossible sign-in.
+
 - **Live session opened on the wrong tab**: because the split-panel layout
   (including the active tab) is persisted globally, a freshly created Live
   session would open on whatever tab was last active — typically **Summary**

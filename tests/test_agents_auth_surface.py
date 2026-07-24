@@ -117,7 +117,11 @@ async def test_auth_server_from_failed_tool(monkeypatch) -> None:
     async def _no_creds() -> None:
         return None
 
+    async def _preview_on() -> bool:
+        return True
+
     monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _no_creds)
+    monkeypatch.setattr(wp, "resolve_workiq_preview", _preview_on)
 
     def _tool(status: str, server: str | None) -> AgentEvent:
         data: dict[str, Any] | None = {"server_name": server} if server else None
@@ -130,7 +134,17 @@ async def test_auth_server_from_failed_tool(monkeypatch) -> None:
     # A different server's failure is not WorkIQ's problem.
     assert await mgr._auth_server_from_failed_tool(_tool("error", "github")) is None
 
+    # Preview off → WorkIQ is local stdio with no OAuth; a tool error must never
+    # surface a sign-in prompt the user can't act on.
+    async def _preview_off() -> bool:
+        return False
+
+    monkeypatch.setattr(wp, "resolve_workiq_preview", _preview_off)
+    assert await mgr._auth_server_from_failed_tool(_tool("error", "workiq")) is None
+
     # Creds are actually present → a workiq error is some other fault, no prompt.
+    monkeypatch.setattr(wp, "resolve_workiq_preview", _preview_on)
+
     async def _has_creds() -> tuple[str, None]:
         return "token", None
 
