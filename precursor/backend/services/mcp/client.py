@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import shutil
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -190,6 +191,43 @@ class _BuiltinSpec:
 _WORKIQ_STDIO_COMMAND = "npx"
 _WORKIQ_STDIO_ARGS: tuple[str, ...] = ("-y", "@microsoft/workiq@latest", "mcp")
 
+# The npx launcher for the built-in Playwright server (Microsoft's official
+# ``@playwright/mcp``). The ``--browser`` channel and an optional
+# ``--user-data-dir`` are appended lazily in ``_register_builtins`` from
+# settings. Headed by default (no ``--headless``) so the user can complete the
+# first interactive sign-in; the persistent profile then reuses it.
+_PLAYWRIGHT_STDIO_COMMAND = "npx"
+_PLAYWRIGHT_STDIO_ARGS: tuple[str, ...] = (
+    "-y",
+    "@playwright/mcp@latest",
+)
+
+
+def npx_available() -> tuple[bool, str]:
+    """Return ``(ok, detail)`` — whether the ``npx`` launcher is on PATH."""
+    path = shutil.which("npx")
+    if path is None:
+        return False, "npx not found on PATH"
+    return True, path
+
+
+def playwright_preflight_error() -> str | None:
+    """Reason the ``playwright`` server can't be enabled, or ``None`` if it can.
+
+    The server is launched via ``npx @playwright/mcp`` and therefore needs
+    Node.js (``npx``) on PATH. Browser binaries are fetched by the package on
+    first use.
+    """
+    ok, detail = npx_available()
+    if ok:
+        return None
+    return (
+        "Node.js is required to run the Playwright MCP server (launched via "
+        f"npx @playwright/mcp), but it is unavailable ({detail}). Install "
+        "Node.js so that `npx` is on PATH, then try again."
+    )
+
+
 # Built-in MCP servers registered on every manager. The chat/topics surface and
 # the agents surface both attach these by name when their ``mcp_enabled`` toggle
 # is on, so keep names/transports stable when editing.
@@ -205,6 +243,19 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
     # WorkIQ MCP — local stdio launcher. The npm package handles its own
     # interactive auth on first run.
     _BuiltinSpec("workiq", "stdio", command=_WORKIQ_STDIO_COMMAND, args=_WORKIQ_STDIO_ARGS),
+    # Playwright MCP — Microsoft's official ``@playwright/mcp`` via npx (like
+    # workiq). Drives a real browser (Microsoft Edge by default, for corporate
+    # SSO) with a persistent profile so an interactive Entra/SSO sign-in survives
+    # across runs, letting the model reach authenticated pages (navigate, read
+    # text/DOM, screenshot). ``--browser`` and an optional ``--user-data-dir`` are
+    # appended in ``_register_builtins``. Enable-time npx availability is checked
+    # in the connect router.
+    _BuiltinSpec(
+        "playwright",
+        "stdio",
+        command=_PLAYWRIGHT_STDIO_COMMAND,
+        args=_PLAYWRIGHT_STDIO_ARGS,
+    ),
     # Fetch MCP — in-tree stdio subprocess exposing curl-like HTTP tools
     # (http_get / http_request). Uses the same interpreter that runs the backend
     # so the package is always importable.
@@ -273,12 +324,29 @@ class MCPClientManager:
 
     def _register_builtins(self) -> None:
         for spec in BUILTIN_CATALOG:
+            args = list(spec.args)
+            if spec.name == "playwright":
+                settings = get_settings()
+                # Browser channel. Default ``msedge`` so the server drives
+                # Microsoft Edge and can ride the corporate Edge SSO/WAM broker —
+                # the way authenticated Entra scraping actually works on a managed
+                # machine. Override to ``chromium`` where Edge isn't installed.
+                channel = (settings.playwright_browser or "msedge").strip()
+                args += ["--browser", channel]
+                # Only pin ``--user-data-dir`` when an override is set. Left empty
+                # (default), ``@playwright/mcp`` uses its own shared machine-wide
+                # profile, reusing any sign-in already onboarded there (incl. via
+                # other Playwright-MCP tools) instead of forcing a fresh sign-in.
+                override = settings.playwright_profile_dir.strip()
+                if override:
+                    os.makedirs(override, exist_ok=True)
+                    args += ["--user-data-dir", override]
             self._servers[spec.name] = MCPServerEntry(
                 name=spec.name,
                 transport=spec.transport,
                 url=spec.url,
                 command=spec.command,
-                args=list(spec.args),
+                args=args,
                 env=dict(os.environ) if spec.forward_env else None,
                 headers_provider=spec.headers_provider,
                 builtin=True,

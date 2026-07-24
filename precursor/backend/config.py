@@ -170,6 +170,28 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "cmd-runner" / "scratch")
 
+    # Browser channel for the built-in ``playwright`` MCP server (``--browser``).
+    # One of ``msedge`` (default), ``chromium``, ``chrome``, ``firefox``,
+    # ``webkit``. Defaults to Microsoft Edge because authenticated Entra scraping
+    # relies on Edge's corporate SSO/WAM broker to establish the session (as in
+    # the reference CSU cockpit scrapers). Set ``chromium`` on machines without
+    # Edge installed.
+    playwright_browser: str = Field(
+        default="msedge", validation_alias="PRECURSOR_PLAYWRIGHT_BROWSER"
+    )
+
+    # Optional override for the built-in ``playwright`` MCP server's browser
+    # profile directory (passed as ``--user-data-dir``). Empty (the default)
+    # means *don't* pin a directory, so ``@playwright/mcp`` uses its own shared,
+    # machine-wide persistent profile (e.g. ``~/Library/Caches/ms-playwright/
+    # mcp-msedge-profile`` on macOS). That reuses any interactive Entra/SSO
+    # sign-in already onboarded there — including via other Playwright-MCP tools
+    # (the Copilot CLI, etc.) — instead of forcing a fresh sign-in into an
+    # app-specific profile. Set a path only to pin an isolated profile.
+    playwright_profile_dir: str = Field(
+        default="", validation_alias="PRECURSOR_PLAYWRIGHT_PROFILE_DIR"
+    )
+
     # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
     # by default at the env level; the effective on/off lives in the DB app
     # settings (Settings → Agents) so it can be toggled at runtime. The SDK

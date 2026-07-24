@@ -23,6 +23,7 @@ Built-in servers ship in-tree:
 | --- | --- |
 | `github` | GitHub issue/PR/repo operations. |
 | `fetch` | Fetch and read web content. |
+| `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
 | `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
 | `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
@@ -30,7 +31,50 @@ Built-in servers ship in-tree:
 
 You can also add **your own** servers (stdio or streamable-HTTP). A host-dependency
 **preflight** gates enabling a server — for example, `cmd-runner` needs Docker
-when its jail is on.
+when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
+
+### Playwright — authenticated scraping
+
+`playwright` wraps Microsoft's official
+[`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) (launched via
+`npx`, like `workiq`) to drive a real browser: the model can **navigate**,
+read the **rendered** DOM/text (not raw HTML), and take **screenshots**. This is
+what `fetch` can't do — it does raw HTTP with no browser and no session, so a
+JS-rendered or login-gated page comes back empty or as a sign-in redirect.
+
+Two things make **authenticated** endpoints (e.g. an internal
+`learningplayer.microsoft.com/activity/…/launch` behind Entra) reachable:
+
+**1. Microsoft Edge (the default).** Precursor launches the `msedge` channel, not
+bundled Chromium, so the browser can ride the **corporate Edge SSO / WAM broker** —
+the same mechanism that lets a managed machine sign in to Microsoft sites with
+little or no interaction. (This mirrors the internal CSU cockpit scrapers, which
+drive Edge for exactly this reason.) Set `PRECURSOR_PLAYWRIGHT_BROWSER=chromium`
+(or `chrome`, `firefox`, `webkit`) on machines without Edge installed.
+
+**2. A persistent browser profile.** By default Precursor pins **nothing**, so
+`@playwright/mcp` uses its **own shared, machine-wide profile** (e.g.
+`~/Library/Caches/ms-playwright/mcp-msedge-profile` on macOS) — the same one
+any other Playwright-MCP tool uses. So if you already onboarded a sign-in there
+(via the Copilot CLI's Playwright tool, an earlier run, …), it **carries over**
+and you don't sign in again. The browser opens **headed**, so the first time:
+
+1. Enable `playwright` in **Settings → MCP** and ask for the page. Edge opens; if
+   the SSO broker can't sign you in silently, the Entra sign-in appears.
+2. **Sign in once** — the cookies/session are written to the shared profile.
+3. Every later turn (in any chat, topic, or [agent](/features/agents)) reuses that
+   profile, so the model reaches the authenticated content without signing in
+   again — until the session naturally expires.
+
+Set `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` to a path only if you want to **pin an
+isolated profile** for Precursor instead of sharing the default one.
+
+::: warning Trusted, local use
+The persistent profile stores a live authenticated session on disk, and headed
+sign-in needs a real display. Treat it like the host-mode
+[command runner](/features/command-runner): a single-user, trusted-machine
+capability, not something to expose on a shared/headless server.
+:::
 
 ### WorkIQ preview & OAuth
 

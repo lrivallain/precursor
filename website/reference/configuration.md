@@ -78,6 +78,16 @@ The [skills](/features/skills-memory) folder is resolved the way the Copilot CLI
 resolves its home: `COPILOT_HOME` → `XDG_CONFIG_HOME/copilot` → `~/.copilot`, with
 a `PRECURSOR_SKILLS_DIR` override.
 
+## MCP tool servers
+
+Most [MCP](/features/mcp) built-ins are toggled **at runtime** (**Settings →
+MCP**). One env knob affects the `playwright` server:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_PLAYWRIGHT_BROWSER` | `msedge` | Browser channel the `playwright` server drives (`--browser`): one of `msedge`, `chromium`, `chrome`, `firefox`, `webkit`. Defaults to **Microsoft Edge** so it can ride the corporate SSO/WAM broker for authenticated Entra scraping. Set `chromium` on machines without Edge. |
+| `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` | *(empty)* | Browser profile the `playwright` server uses (`--user-data-dir`). Empty means **reuse `@playwright/mcp`'s own shared, machine-wide profile** — so any Entra/SSO sign-in already onboarded there (incl. via other Playwright-MCP tools) carries over. Set a path to pin an isolated profile for Precursor instead. |
+
 ::: tip Runtime settings win
 Runtime settings layer over env defaults: each setting resolves as "env / `.env`
 default, overridden by an `AppSetting` row if present, clamped to a sane range".
