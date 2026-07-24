@@ -170,15 +170,17 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "cmd-runner" / "scratch")
 
-    # Persistent browser profile for the built-in ``playwright`` MCP server. Kept
-    # on disk (via ``--user-data-dir``) so an interactive Entra/SSO sign-in done
-    # once in the headed browser survives across turns and app restarts, letting
-    # the model reach authenticated pages without re-authenticating each time.
-    @cached_property
-    def playwright_profile_dir(self) -> str:
-        from pathlib import Path
-
-        return str(Path(self.data_dir).resolve() / "playwright" / "profile")
+    # Optional override for the built-in ``playwright`` MCP server's browser
+    # profile directory (passed as ``--user-data-dir``). Empty (the default)
+    # means *don't* pin a directory, so ``@playwright/mcp`` uses its own shared,
+    # machine-wide persistent profile (e.g. ``~/Library/Caches/ms-playwright/
+    # mcp-chromium-profile`` on macOS). That reuses any interactive Entra/SSO
+    # sign-in already onboarded there — including via other Playwright-MCP tools
+    # (the Copilot CLI, etc.) — instead of forcing a fresh sign-in into an
+    # app-specific profile. Set a path only to pin an isolated profile.
+    playwright_profile_dir: str = Field(
+        default="", validation_alias="PRECURSOR_PLAYWRIGHT_PROFILE_DIR"
+    )
 
     # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
     # by default at the env level; the effective on/off lives in the DB app

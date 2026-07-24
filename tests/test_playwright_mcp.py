@@ -30,13 +30,28 @@ def test_playwright_registered_as_builtin() -> None:
         assert entry["builtin"] is True
 
 
-def test_playwright_uses_persistent_profile() -> None:
+def test_playwright_reuses_shared_profile_by_default() -> None:
     entry = mcp_client.get_mcp_client_manager().get("playwright")
     assert entry is not None
     assert entry.command == "npx"
-    # A persistent --user-data-dir is what keeps the authenticated session alive
-    # across runs, so it must be wired into the launch args.
+    # No override set → don't pin --user-data-dir, so @playwright/mcp reuses its
+    # own shared machine-wide profile (any prior sign-in carries over).
+    assert "--user-data-dir" not in entry.args
+
+
+def test_playwright_pins_profile_when_overridden(monkeypatch, tmp_path) -> None:
+    from types import SimpleNamespace
+
+    override = str(tmp_path / "profile")
+    monkeypatch.setattr(
+        mcp_client,
+        "get_settings",
+        lambda: SimpleNamespace(playwright_profile_dir=override),
+    )
+    entry = mcp_client.MCPClientManager().get("playwright")
+    assert entry is not None
     assert "--user-data-dir" in entry.args
+    assert override in entry.args
 
 
 def test_connect_refuses_when_npx_unavailable(monkeypatch) -> None:

@@ -247,10 +247,12 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
     _BuiltinSpec("workiq", "stdio", command=_WORKIQ_STDIO_COMMAND, args=_WORKIQ_STDIO_ARGS),
     # Playwright MCP — Microsoft's official ``@playwright/mcp`` via npx (like
     # workiq). Drives a real Chromium with a persistent profile so an interactive
-    # Entra/SSO sign-in done once survives across runs, letting the model reach
-    # authenticated pages (navigate, read text/DOM, screenshot). The
-    # ``--user-data-dir`` path is appended in ``_register_builtins``. Enable-time
-    # npx availability is checked in the connect router.
+    # Entra/SSO sign-in survives across runs, letting the model reach
+    # authenticated pages (navigate, read text/DOM, screenshot). By default it
+    # reuses ``@playwright/mcp``'s own shared profile; set
+    # ``PRECURSOR_PLAYWRIGHT_PROFILE_DIR`` to pin an isolated one (appended as
+    # ``--user-data-dir`` in ``_register_builtins``). Enable-time npx availability
+    # is checked in the connect router.
     _BuiltinSpec(
         "playwright",
         "stdio",
@@ -326,13 +328,16 @@ class MCPClientManager:
     def _register_builtins(self) -> None:
         for spec in BUILTIN_CATALOG:
             args = list(spec.args)
-            # Playwright needs a persistent profile so authenticated sessions
-            # survive across runs. Resolve it here (manager construction, after
-            # env is set) rather than baking it into the module-level catalog.
+            # Playwright: only pin ``--user-data-dir`` when an override is set.
+            # Left empty (default), ``@playwright/mcp`` uses its own shared
+            # machine-wide persistent profile, reusing any sign-in already
+            # onboarded there (incl. via other Playwright-MCP tools) instead of
+            # forcing a fresh sign-in into an app-specific directory.
             if spec.name == "playwright":
-                profile = get_settings().playwright_profile_dir
-                os.makedirs(profile, exist_ok=True)
-                args += ["--user-data-dir", profile]
+                override = get_settings().playwright_profile_dir.strip()
+                if override:
+                    os.makedirs(override, exist_ok=True)
+                    args += ["--user-data-dir", override]
             self._servers[spec.name] = MCPServerEntry(
                 name=spec.name,
                 transport=spec.transport,
