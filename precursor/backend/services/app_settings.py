@@ -51,6 +51,9 @@ DEFAULT_ISSUE_ASSOCIATIONS_ENABLED = True
 MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "topics",
     "messages",
+    "chats",
+    "agents",
+    "live",
     "search",
     "skills",
     "memory",

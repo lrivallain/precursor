@@ -1649,7 +1649,22 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
 }> = [
   { key: "topics", label: "Topics", hint: "List & read topic metadata." },
   { key: "messages", label: "Messages", hint: "Read a topic's conversation turns." },
-  { key: "search", label: "Search", hint: "Search topic titles & message content." },
+  { key: "chats", label: "Chats", hint: "List & read chats and their turns." },
+  {
+    key: "agents",
+    label: "Agents",
+    hint: "List & read agent sessions (task prompt & final answer).",
+  },
+  {
+    key: "live",
+    label: "Live sessions",
+    hint: "List & read meeting notes, summary, transcript & insights.",
+  },
+  {
+    key: "search",
+    label: "Search",
+    hint: "Search across topics, chats, agents & live sessions.",
+  },
   { key: "skills", label: "Skills", hint: "List skills & read their instructions." },
   { key: "memory", label: "Memory", hint: "Read long-term memory entries." },
   {

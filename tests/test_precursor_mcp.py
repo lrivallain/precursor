@@ -149,6 +149,117 @@ async def test_set_reminder_rejects_bad_datetime_and_missing_topic() -> None:
     assert "error" in missing and "not found" in missing["error"]
 
 
+# ---------------------------------------------------------------------------
+# chats / agents / live accessors + cross-entity search gating
+# ---------------------------------------------------------------------------
+async def _make_chat(title: str) -> int:
+    from precursor.backend.models import Chat
+    from precursor.backend.services.slugs import allocate_unique_slug, slugify
+
+    async with SessionLocal() as session:
+        chat = Chat(
+            title=title,
+            slug=await allocate_unique_slug(session, slugify(title) or "chat", Chat),
+        )
+        session.add(chat)
+        await session.commit()
+        return chat.id
+
+
+async def _make_agent(title: str, *, task_prompt: str = "", result_summary: str = "") -> int:
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        agent = AgentSession(
+            title=title, task_prompt=task_prompt, result_summary=result_summary, status="completed"
+        )
+        session.add(agent)
+        await session.commit()
+        return agent.id
+
+
+async def _make_live(title: str, *, notes: str = "", summary: str | None = None) -> int:
+    from precursor.backend.models import MeetingSession
+    from precursor.backend.services.slugs import allocate_unique_slug, slugify
+
+    async with SessionLocal() as session:
+        live = MeetingSession(
+            title=title,
+            slug=await allocate_unique_slug(session, slugify(title) or "live", MeetingSession),
+            notes=notes,
+            summary=summary,
+        )
+        session.add(live)
+        await session.commit()
+        return live.id
+
+
+async def test_new_sections_gated_when_off() -> None:
+    await _set_expose("{}")
+    for result in (
+        await ps.list_chats(),
+        await ps.get_chat(1),
+        await ps.list_chat_messages(1),
+        await ps.list_agents(),
+        await ps.get_agent(1),
+        await ps.list_live_sessions(),
+        await ps.get_live_session(1),
+    ):
+        assert "error" in result
+        assert "not exposed" in result["error"]
+
+
+async def test_chat_accessors() -> None:
+    await _set_expose('{"chats": true}')
+    chat_id = await _make_chat("MCP chat surface")
+    listed = await ps.list_chats(q="MCP chat surface")
+    assert any(c["id"] == chat_id for c in listed["chats"])
+    fetched = await ps.get_chat(chat_id)
+    assert fetched["id"] == chat_id
+    msgs = await ps.list_chat_messages(chat_id)
+    assert msgs["chat_id"] == chat_id and msgs["count"] == 0
+
+
+async def test_agent_accessors() -> None:
+    await _set_expose('{"agents": true}')
+    agent_id = await _make_agent(
+        "MCP agent task", task_prompt="do the thing", result_summary="did the thing"
+    )
+    listed = await ps.list_agents(q="MCP agent task")
+    assert any(a["id"] == agent_id for a in listed["agents"])
+    fetched = await ps.get_agent(agent_id)
+    assert fetched["task_prompt"] == "do the thing"
+    assert fetched["result_summary"] == "did the thing"
+
+
+async def test_live_accessor_returns_full_content() -> None:
+    await _set_expose('{"live": true}')
+    live_id = await _make_live("MCP live meeting", notes="my notes", summary="the recap")
+    listed = await ps.list_live_sessions(q="MCP live meeting")
+    assert any(s["id"] == live_id for s in listed["live_sessions"])
+    fetched = await ps.get_live_session(live_id)
+    assert fetched["notes"] == "my notes"
+    assert fetched["summary"] == "the recap"
+    assert fetched["transcript"] == []
+    assert fetched["insights"] == []
+
+
+async def test_search_includes_surface_only_when_section_exposed() -> None:
+    # Search on, but chats/agents/live off: a chat hit must not leak.
+    await _set_expose('{"search": true}')
+    await _make_chat("Zzquux searchable chat")
+    result = await ps.search("Zzquux")
+    assert "error" not in result
+    assert all(r["section"] != "chats" for r in result["results"])
+
+    # Expose chats too: now the chat hit appears with its accessor hint.
+    await _set_expose('{"search": true, "chats": true}')
+    result = await ps.search("Zzquux")
+    chat_hits = [r for r in result["results"] if r["section"] == "chats"]
+    assert chat_hits
+    assert chat_hits[0]["accessor"] == "get_chat / list_chat_messages"
+
+
 def _mcp_post(client: TestClient, body: dict, session_id: str | None = None) -> object:
     headers = {
         "Accept": "application/json, text/event-stream",

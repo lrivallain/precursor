@@ -120,8 +120,15 @@ the next one.
 ## As a server — exposing your conversations
 
 Precursor runs a `FastMCP` server named **`precursor`** that exposes its own
-data to MCP hosts (VS Code, CLI agents): topics, messages, search, skills, memory
-(read + write), `post_message` (runs a full turn), schedules, and reminders.
+data to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
+(meeting) sessions, cross-entity search, skills, memory (read + write),
+`post_message` (runs a full turn), schedules, and reminders.
+
+**Search spans every surface** — the same ⌘K palette engine — so a host can find
+a topic, chat, agent task or meeting by content and then follow the hit's
+`accessor` hint (`get_chat`, `get_agent`, `get_live_session`, …) to read the full
+matching record. Chat/agent/live hits (and their accessor tools) only appear when
+their own section is exposed, since their snippets disclose that content.
 
 Every tool is gated by a per-section **`mcp_expose`** toggle — **off by default**,
 because exposing conversation history outbound is opt-in.
