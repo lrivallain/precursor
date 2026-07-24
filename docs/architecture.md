@@ -214,9 +214,12 @@ ever saw the `needs_auth` notice and never drove this sign-in — clears its sta
 `McpAuthBanner` (and any "Signing in…" state) without a reload.
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
-`precursor` exposing Precursor's own data: topics, messages, search, skills,
-memory (read + `memory_write` to store/edit entries), `post_message` (runs a full
-turn), schedules, and reminders (one-shot topic reminders). Every tool is gated by
+`precursor` exposing Precursor's own data: topics, messages, chats, agents, live
+(meeting) sessions, cross-entity search, skills, memory (read + `memory_write` to
+store/edit entries), `post_message` (runs a full turn), schedules, and reminders
+(one-shot topic reminders). Search spans every surface (the same ⌘K engine) and
+returns accessor hints so a caller can open a hit; chat/agent/live hits appear
+only when their own section is also exposed. Every tool is gated by
 a per-section `mcp_expose` toggle (default **off** — exposing conversation
 history outbound is opt-in). Two transports, same tools:
 

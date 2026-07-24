@@ -15,7 +15,11 @@ conversation history / write actions outbound is a deliberate disclosure.
 Sections → tools:
 - ``topics``       → list_topics, get_topic
 - ``messages``     → list_messages
-- ``search``       → search
+- ``chats``        → list_chats, get_chat, list_chat_messages
+- ``agents``       → list_agents, get_agent
+- ``live``         → list_live_sessions, get_live_session
+- ``search``       → search (cross-entity; chats/agents/live hits are only
+                     included when their own section is also exposed)
 - ``skills``       → list_skills, get_skill
 - ``memory``       → list_memories
 - ``memory_write`` → store_memory, update_memory (write — edits long-term memory)
@@ -40,6 +44,11 @@ from sqlalchemy import select
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
+    AgentSession,
+    Chat,
+    MeetingInsight,
+    MeetingSegment,
+    MeetingSession,
     Memory,
     Message,
     MessageRole,
@@ -172,11 +181,62 @@ def _message_dict(m: Message) -> dict[str, Any]:
     return {
         "id": m.id,
         "topic_id": m.topic_id,
+        "chat_id": m.chat_id,
         "role": m.role.value if hasattr(m.role, "value") else str(m.role),
         "content": m.content,
         "prompt_tokens": m.prompt_tokens,
         "completion_tokens": m.completion_tokens,
         "created_at": _iso(m.created_at),
+    }
+
+
+def _chat_dict(c: Chat) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "slug": c.slug,
+        "title": c.title,
+        "description": c.description,
+        "pinned": c.pinned,
+        "archived": c.archived_at is not None,
+        "created_at": _iso(c.created_at),
+        "updated_at": _iso(c.updated_at),
+    }
+
+
+def _agent_dict(a: AgentSession) -> dict[str, Any]:
+    return {
+        "id": a.id,
+        "copilot_session_id": a.copilot_session_id,
+        "title": a.title,
+        "task_prompt": a.task_prompt,
+        "status": a.status,
+        "result_summary": a.result_summary,
+        "error": a.error,
+        "model": a.model,
+        "topic_id": a.topic_id,
+        "chat_id": a.chat_id,
+        "archived": a.archived_at is not None,
+        "last_activity_at": _iso(a.last_activity_at),
+        "created_at": _iso(a.created_at),
+        "updated_at": _iso(a.updated_at),
+    }
+
+
+def _live_dict(s: MeetingSession) -> dict[str, Any]:
+    return {
+        "id": s.id,
+        "slug": s.slug,
+        "title": s.title,
+        "status": s.status,
+        "language": s.language,
+        "topic_id": s.topic_id,
+        "attendees": s.attendees,
+        "features": s.features,
+        "archived": s.archived_at is not None,
+        "started_at": _iso(s.started_at),
+        "ended_at": _iso(s.ended_at),
+        "created_at": _iso(s.created_at),
+        "updated_at": _iso(s.updated_at),
     }
 
 
@@ -296,40 +356,57 @@ async def list_messages(topic_id: int, limit: int = 50) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# search
+# chats
 # --------------------------------------------------------------------------
 @mcp.tool()
-async def search(query: str, limit: int = 25) -> dict[str, Any]:
-    """Search across topic titles and message content for ``query``.
+async def list_chats(q: str | None = None, include_archived: bool = False) -> dict[str, Any]:
+    """List Precursor chats (id, slug, title), optionally filtered by ``q``.
 
-    Returns matching topics and message snippets (with their topic id) so a
-    caller can locate relevant conversations.
+    Chats are flat conversations (no topic tree / GitHub-issue link). ``q``
+    matches the title (case-insensitive); archived chats are excluded unless
+    ``include_archived`` is true.
     """
-    if not await _section_enabled("search"):
-        return {"error": _GATED.format(section="search")}
-    if not query.strip():
-        return {"error": "query must not be empty"}
-    limit = max(1, min(limit, _MAX_ROWS))
-    like = f"%{query.lower()}%"
+    if not await _section_enabled("chats"):
+        return {"error": _GATED.format(section="chats")}
     async with SessionLocal() as session:
-        topics = (
-            (
-                await session.execute(
-                    select(Topic)
-                    .where(Topic.archived_at.is_(None))
-                    .where(Topic.title.ilike(like))
-                    .order_by(Topic.updated_at.desc())
-                    .limit(limit)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        messages = (
+        stmt = select(Chat).order_by(Chat.updated_at.desc()).limit(_MAX_ROWS)
+        if not include_archived:
+            stmt = stmt.where(Chat.archived_at.is_(None))
+        if q:
+            stmt = stmt.where(Chat.title.ilike(f"%{q.lower()}%"))
+        rows = (await session.execute(stmt)).scalars().all()
+    return {"chats": [_chat_dict(c) for c in rows], "count": len(rows)}
+
+
+@mcp.tool()
+async def get_chat(chat_id: int) -> dict[str, Any]:
+    """Get a single chat's metadata by id. Use ``list_chat_messages`` for turns."""
+    if not await _section_enabled("chats"):
+        return {"error": _GATED.format(section="chats")}
+    async with SessionLocal() as session:
+        chat = await session.get(Chat, chat_id)
+    if chat is None:
+        return {"error": f"Chat {chat_id} not found"}
+    return _chat_dict(chat)
+
+
+@mcp.tool()
+async def list_chat_messages(chat_id: int, limit: int = 50) -> dict[str, Any]:
+    """List a chat's messages in chronological order (most recent ``limit``).
+
+    Returns user/assistant/system/tool turns with their content and token usage.
+    """
+    if not await _section_enabled("chats"):
+        return {"error": _GATED.format(section="chats")}
+    limit = max(1, min(limit, _MAX_ROWS))
+    async with SessionLocal() as session:
+        if await session.get(Chat, chat_id) is None:
+            return {"error": f"Chat {chat_id} not found"}
+        rows = (
             (
                 await session.execute(
                     select(Message)
-                    .where(Message.content.ilike(like))
+                    .where(Message.chat_id == chat_id)
                     .order_by(Message.created_at.desc())
                     .limit(limit)
                 )
@@ -337,19 +414,192 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
             .scalars()
             .all()
         )
-    return {
-        "topics": [_topic_dict(t) for t in topics],
-        "messages": [
-            {
-                "topic_id": m.topic_id,
-                "message_id": m.id,
-                "role": m.role.value if hasattr(m.role, "value") else str(m.role),
-                "snippet": (m.content or "")[:280],
-                "created_at": _iso(m.created_at),
-            }
-            for m in messages
-        ],
-    }
+    rows = list(reversed(rows))
+    return {"chat_id": chat_id, "messages": [_message_dict(m) for m in rows], "count": len(rows)}
+
+
+# --------------------------------------------------------------------------
+# agents
+# --------------------------------------------------------------------------
+@mcp.tool()
+async def list_agents(q: str | None = None, include_archived: bool = False) -> dict[str, Any]:
+    """List Precursor agent sessions (id, title, status, result summary).
+
+    Agents are long-running Copilot SDK tasks. ``q`` matches the title
+    (case-insensitive); archived sessions are excluded unless ``include_archived``
+    is true. The live event history is owned by the SDK and not returned here —
+    ``task_prompt`` and ``result_summary`` are the durable text on the row.
+    """
+    if not await _section_enabled("agents"):
+        return {"error": _GATED.format(section="agents")}
+    async with SessionLocal() as session:
+        stmt = select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(_MAX_ROWS)
+        if not include_archived:
+            stmt = stmt.where(AgentSession.archived_at.is_(None))
+        if q:
+            stmt = stmt.where(AgentSession.title.ilike(f"%{q.lower()}%"))
+        rows = (await session.execute(stmt)).scalars().all()
+    return {"agents": [_agent_dict(a) for a in rows], "count": len(rows)}
+
+
+@mcp.tool()
+async def get_agent(agent_id: int) -> dict[str, Any]:
+    """Get a single agent session by id: its task prompt, status and final answer.
+
+    ``agent_id`` is the numeric row id (from ``list_agents`` or a search hit's
+    ``entity_id``).
+    """
+    if not await _section_enabled("agents"):
+        return {"error": _GATED.format(section="agents")}
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+    if agent is None:
+        return {"error": f"Agent {agent_id} not found"}
+    return _agent_dict(agent)
+
+
+# --------------------------------------------------------------------------
+# live (meeting sessions)
+# --------------------------------------------------------------------------
+@mcp.tool()
+async def list_live_sessions(
+    q: str | None = None, include_archived: bool = False
+) -> dict[str, Any]:
+    """List Precursor Live (meeting) sessions (id, slug, title, status).
+
+    ``q`` matches the title (case-insensitive); archived sessions are excluded
+    unless ``include_archived`` is true. Use ``get_live_session`` for a session's
+    notes, summary, transcript and insights.
+    """
+    if not await _section_enabled("live"):
+        return {"error": _GATED.format(section="live")}
+    async with SessionLocal() as session:
+        stmt = select(MeetingSession).order_by(MeetingSession.updated_at.desc()).limit(_MAX_ROWS)
+        if not include_archived:
+            stmt = stmt.where(MeetingSession.archived_at.is_(None))
+        if q:
+            stmt = stmt.where(MeetingSession.title.ilike(f"%{q.lower()}%"))
+        rows = (await session.execute(stmt)).scalars().all()
+    return {"live_sessions": [_live_dict(s) for s in rows], "count": len(rows)}
+
+
+@mcp.tool()
+async def get_live_session(session_id: int, transcript_limit: int = 100) -> dict[str, Any]:
+    """Get a Live session's full content: notes, summary, transcript and insights.
+
+    Returns the session metadata plus its Markdown ``notes``, generated
+    ``summary``, the newest ``transcript_limit`` transcript segments (oldest-first),
+    and derived insights (action items, decisions, …). ``session_id`` is the
+    numeric row id (from ``list_live_sessions`` or a search hit's ``entity_id``).
+    """
+    if not await _section_enabled("live"):
+        return {"error": _GATED.format(section="live")}
+    transcript_limit = max(1, min(transcript_limit, _MAX_ROWS))
+    async with SessionLocal() as session:
+        live = await session.get(MeetingSession, session_id)
+        if live is None:
+            return {"error": f"Live session {session_id} not found"}
+        speaker_names = live.speaker_names
+        segments = (
+            (
+                await session.execute(
+                    select(MeetingSegment)
+                    .where(MeetingSegment.session_id == session_id)
+                    .order_by(MeetingSegment.created_at.desc(), MeetingSegment.id.desc())
+                    .limit(transcript_limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        insights = (
+            (
+                await session.execute(
+                    select(MeetingInsight)
+                    .where(MeetingInsight.session_id == session_id)
+                    .order_by(MeetingInsight.created_at, MeetingInsight.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    out = _live_dict(live)
+    out["notes"] = live.notes
+    out["summary"] = live.summary
+    out["transcript"] = [
+        {
+            "id": seg.id,
+            "speaker": speaker_names.get(seg.speaker_label or "", seg.speaker_label),
+            "text": seg.text,
+            "offset_ms": seg.offset_ms,
+            "created_at": _iso(seg.created_at),
+        }
+        for seg in reversed(segments)
+    ]
+    out["insights"] = [{"id": ins.id, "kind": ins.kind, "content": ins.content} for ins in insights]
+    return out
+
+
+# --------------------------------------------------------------------------
+# Which accessor tool retrieves the full content behind a search hit, keyed by
+# the palette section the hit belongs to. Surfaced on each result so a caller
+# knows how to open it.
+_ACCESSOR_BY_SECTION = {
+    "topics": "get_topic / list_messages",
+    "chats": "get_chat / list_chat_messages",
+    "agents": "get_agent",
+    "live": "get_live_session",
+}
+
+
+@mcp.tool()
+async def search(query: str, limit: int = 25) -> dict[str, Any]:
+    """Search every surface for ``query`` and return ranked, accessible hits.
+
+    This is the same cross-entity lookup that backs the in-app ⌘K palette. Each
+    hit self-describes the ``section`` it belongs to (topics/chats/agents/live),
+    the ``field`` that matched, a ``snippet`` around the match, and the container
+    ``entity_id`` + ``ref`` — plus an ``accessor`` naming the tool that returns
+    its full content.
+
+    Topic hits are always searched. Chat, agent and live hits are only included
+    when their own capability section (``chats`` / ``agents`` / ``live``) is also
+    exposed, since their snippets disclose that content.
+    """
+    if not await _section_enabled("search"):
+        return {"error": _GATED.format(section="search")}
+    if not query.strip():
+        return {"error": "query must not be empty"}
+    limit = max(1, min(limit, _MAX_ROWS))
+
+    # Surfaces beyond topics only appear when their own section is exposed.
+    allowed = {"topics"}
+    for section in ("chats", "agents", "live"):
+        if await _section_enabled(section):
+            allowed.add(section)
+
+    from precursor.backend.services.search import search as run_search
+
+    async with SessionLocal() as session:
+        response = await run_search(session, query, limit)
+
+    results = [
+        {
+            "section": r.section,
+            "field": r.field,
+            "is_title": r.is_title,
+            "entity_id": r.entity_id,
+            "ref": r.ref,
+            "title": r.title,
+            "snippet": r.snippet,
+            "role": r.role,
+            "updated_at": _iso(r.updated_at),
+            "accessor": _ACCESSOR_BY_SECTION.get(r.section),
+        }
+        for r in response.results
+        if r.section in allowed
+    ]
+    return {"query": query, "results": results, "count": len(results)}
 
 
 # --------------------------------------------------------------------------

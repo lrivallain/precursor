@@ -11,6 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **MCP: cross-entity search + chats/agents/live accessors**: the built-in
+  `precursor` MCP server's `search` tool now spans the same surfaces as the ⌘K
+  palette — topics, chats, agents, and live (meeting) sessions — and each hit
+  carries an `accessor` hint pointing to the tool that returns its full content.
+  Three new opt-in `mcp_expose` sections back this: **`chats`** (`list_chats`,
+  `get_chat`, `list_chat_messages`), **`agents`** (`list_agents`, `get_agent`),
+  and **`live`** (`list_live_sessions`, `get_live_session` — notes, summary,
+  transcript, and insights). Chat/agent/live search hits only surface when their
+  section is exposed, so snippets never leak content the host hasn't opted into.
+
 - **Playwright MCP server (authenticated scraping)**: a new built-in `playwright`
   tool server wraps Microsoft's official `@playwright/mcp` (launched via `npx`,
   like `workiq`) so agents, topics, and chats can drive a real browser —
