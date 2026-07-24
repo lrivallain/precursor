@@ -153,6 +153,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Stale WorkIQ sign-in banner across other windows**: when a WorkIQ sign-in
+  was renewed in one window (its popup, the OS-browser tab the hands-free flow
+  self-opens, or a silent pass), every *other* open window kept showing the
+  "WorkIQ needs you to sign in" banner — they never made the request, so nothing
+  told them the credentials were fresh. The reauthenticate flow now broadcasts a
+  cross-window `mcp.auth_resolved` event on success, so those windows drop the
+  banner (and any "Signing in…" state) immediately, without a reload.
+
 - **Spurious WorkIQ sign-in prompt when preview mode is off**: an agent turn
   whose `workiq` tool call errored would surface a "WorkIQ needs you to sign in"
   banner even with preview mode disabled — where WorkIQ runs as local stdio with

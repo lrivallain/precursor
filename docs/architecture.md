@@ -208,7 +208,10 @@ that finds its server parked in `needs_auth` does the same over the cross-window
 bus (`mcp.auth_required`) — instead of failing open into a turn that would just
 error — and skips the run with a durable transcript note until the user signs in.
 The reauthenticate route also drops idle agent sessions so the next dispatch
-rebuilds with the fresh token.
+rebuilds with the fresh token. On success it broadcasts a single
+`mcp.auth_resolved` event over the same bus so *every other* window — which only
+ever saw the `needs_auth` notice and never drove this sign-in — clears its stale
+`McpAuthBanner` (and any "Signing in…" state) without a reload.
 
 **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
 `precursor` exposing Precursor's own data: topics, messages, search, skills,

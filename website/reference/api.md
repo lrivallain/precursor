@@ -72,7 +72,7 @@ Health and version:
 
 - `GET /api/events` — a Server-Sent Events stream the SPA subscribes to for
   cross-window sync (`message.changed`, `stream.ended`, `mcp.auth_url`,
-  `mcp.auth_required`, …).
+  `mcp.auth_required`, `mcp.auth_resolved`, …).
 - Streamed chat responses are their own SSE stream, delivering text deltas and
   tool-call events for a single turn.
 

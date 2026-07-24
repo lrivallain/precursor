@@ -105,6 +105,11 @@ loopback port is busy, or the flow is declined / times out — does the
 script-opened popup that reuses the same silent-first flow). Turn the automatic
 attempt off with `workiq_auto_reauth_enabled=false` to always require the click.
 
+However the sign-in completes — popup, self-opened OS-browser tab, or silent
+pass — the renewal is broadcast to every open window, so any other window still
+showing the banner clears it at once instead of prompting for credentials that
+are already fresh.
+
 ::: warning One sign-in at a time per machine
 The OAuth callback uses a **fixed** loopback port (`127.0.0.1:12798`, matching
 the registered `redirect_uri`), so only one Precursor instance can run the
