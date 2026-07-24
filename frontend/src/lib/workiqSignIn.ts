@@ -11,12 +11,13 @@
  * the backend surfaces over the ``/api/events`` SSE bus. The callback page can
  * then close that popup for real.
  *
- * A second, hands-free path re-authenticates with *zero* clicks: when the
- * browser still holds a live Entra SSO session the backend's silent
- * ``prompt=none`` pass completes without any UI, so we can drive its
- * authorization URL through an **invisible iframe** instead of a popup — no
- * gesture, no visible window. Only when a silent pass genuinely needs
- * interaction (or framing/cookies block it) do we fall back to the popup flow.
+ * A second, hands-free path re-authenticates with as little friction as
+ * possible: it first drives the backend's silent ``prompt=none`` pass through an
+ * **invisible iframe** — when the browser still holds a live Entra SSO session
+ * that completes with zero clicks and no visible window. Only when a silent pass
+ * genuinely needs interaction does the backend **self-open the OS browser** to
+ * the visible prompt (no banner click); the manual popup flow above is the last
+ * resort when even that can't run (auto re-auth off, loopback port busy, etc.).
  */
 
 import { api } from "./api";
@@ -181,25 +182,29 @@ function openSilentFrame(): HTMLIFrameElement {
 }
 
 /**
- * Attempt the hands-free silent WorkIQ re-auth with no user gesture.
+ * Run the hands-free, self-triggering WorkIQ re-auth with no user gesture.
  *
  * Drives the backend's ``prompt=none`` pass through an invisible iframe: if the
- * browser still holds a live Entra SSO session it completes with zero clicks and
- * we resolve ``true`` (the caller can drop the sign-in banner). When a silent
- * pass can't complete — Entra reports interaction is required, the auto re-auth
- * setting is off, or framing/cookies block it — the backend answers with
- * ``interaction_required`` and we resolve ``false`` so the caller keeps the
- * manual banner. Never throws for an ordinary "needs a human" outcome.
+ * browser still holds a live Entra SSO session it completes with zero clicks.
+ * When that silent pass can't complete, the **backend self-opens the OS
+ * browser** to the visible interactive prompt — so the sign-in surfaces on its
+ * own without a banner click — and this call resolves once it finishes. Resolves
+ * ``true`` when the session is now authenticated (the caller can drop the sign-in
+ * banner); ``false`` when nothing could complete (auto re-auth off, port busy,
+ * declined, or timed out) so the caller keeps the manual banner. Never throws for
+ * an ordinary "needs a human / couldn't complete" outcome.
  *
- * At most one silent attempt runs at a time (a second call is a no-op that
- * resolves ``false``).
+ * The iframe stays attached for the whole flow (including the OS-browser
+ * interactive wait) so the silent pass keeps its browser context; it's torn down
+ * once the call resolves. At most one attempt runs at a time (a second call is a
+ * no-op that resolves ``false``).
  */
-export async function signInWorkiqSilent(): Promise<boolean> {
+export async function autoReauthWorkiq(): Promise<boolean> {
   if (pendingFrame) return false;
   const frame = openSilentFrame();
   pendingFrame = frame;
   try {
-    const status = await api.mcp.reauthenticateWorkiq({ silentOnly: true });
+    const status = await api.mcp.reauthenticateWorkiq({ auto: true });
     return status.interaction_required !== true;
   } catch {
     // Any failure (409 in-progress, transport, 502) just means "fall back to the

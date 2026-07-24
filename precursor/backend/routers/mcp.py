@@ -282,6 +282,7 @@ async def set_workiq_preview_mode(
 async def reauthenticate_workiq_server(
     use_popup: bool = False,
     silent_only: bool = False,
+    auto: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Restart the WorkIQ OAuth sign-in on an explicit user action.
@@ -295,12 +296,17 @@ async def reauthenticate_workiq_server(
     popup for the sign-in: we then skip the OS-browser fallback and only surface
     the authorization URL over SSE for that popup to navigate to.
 
-    ``silent_only`` runs the hands-free auto re-auth (gated by
-    :attr:`Settings.workiq_auto_reauth_enabled`): it attempts only the invisible
-    ``prompt=none`` pass — the SPA drives the authorization URL through a hidden
-    iframe — and, when that can't complete silently, returns the server status
-    with ``interaction_required=true`` (leaving the warm worker parked in
-    ``needs_auth``) so the SPA falls back to the manual "Sign in" banner.
+    ``auto`` runs the hands-free **self-triggering** re-auth (gated by
+    :attr:`Settings.workiq_auto_reauth_enabled`): the invisible ``prompt=none``
+    pass first (the SPA drives it through a hidden iframe) and, when that needs
+    interaction, the backend *self-opens the OS browser* to the visible prompt —
+    no banner click. Only when even that can't complete does it return the status
+    with ``interaction_required=true`` so the SPA falls back to the manual
+    "Sign in" banner as a last resort.
+
+    ``silent_only`` runs *only* the invisible ``prompt=none`` pass (no OS-browser
+    fallback), returning ``interaction_required=true`` the moment it can't
+    complete silently. Retained for callers that want the pure silent probe.
     """
     from precursor.backend.config import get_settings
     from precursor.backend.services.mcp.client import _describe_exception, _find_in_exception
@@ -325,9 +331,9 @@ async def reauthenticate_workiq_server(
     enabled = await _load_enabled(session)
     is_enabled = enabled.get("workiq", False)
 
-    # Hands-free auto re-auth turned off → don't attempt a silent pass; report
+    # Hands-free auto re-auth turned off → don't self-trigger anything; report
     # interaction required so the SPA shows the manual banner straight away.
-    if silent_only and not get_settings().workiq_auto_reauth_enabled:
+    if (silent_only or auto) and not get_settings().workiq_auto_reauth_enabled:
         entry = manager.get("workiq")
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
@@ -336,6 +342,8 @@ async def reauthenticate_workiq_server(
     try:
         if silent_only:
             authenticated = await reauthenticate_workiq(silent_only=True)
+        elif auto:
+            authenticated = await reauthenticate_workiq(auto=True)
         else:
             await reauthenticate_workiq(open_system_browser=not use_popup)
             authenticated = True
