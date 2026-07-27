@@ -197,12 +197,18 @@ async def test_callback_handler_silent_timeout_raises_interaction_required() -> 
         await handler()
 
 
-async def test_callback_handler_interactive_timeout_raises_runtime_error() -> None:
-    """A user-driven interactive sign-in that times out is a real, loud failure."""
+async def test_callback_handler_interactive_timeout_raises_workiq_timeout() -> None:
+    """A user-driven interactive sign-in that times out is a benign, typed timeout.
+
+    The visible loopback waiting out its full timeout means the user never
+    completed the sign-in (walked away / closed the tab). We raise the dedicated
+    :class:`WorkIQAuthTimeoutError` — suppressed from the SDK logs and handled by
+    re-surfacing the manual banner — not a loud, opaque generic ``RuntimeError``.
+    """
     from precursor.backend.services.mcp import workiq_preview as wp
 
     handler = wp._make_callback_handler(timeout=0.15, silent=False)
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(wp.WorkIQAuthTimeoutError) as excinfo:
         await handler()
     assert not isinstance(excinfo.value, wp.WorkIQInteractionRequiredError)
 
@@ -260,6 +266,36 @@ def test_suppress_filter_drops_silent_timeout_traceback() -> None:
     try:
         raise wp.WorkIQInteractionRequiredError("timed out") from TimeoutError()
     except wp.WorkIQInteractionRequiredError as exc:
+        record = logging.LogRecord(
+            "mcp.client.auth.oauth2",
+            logging.ERROR,
+            __file__,
+            0,
+            "OAuth flow error",
+            None,
+            (type(exc), exc, exc.__traceback__),
+        )
+    assert filt.filter(record) is False
+
+
+def test_suppress_filter_drops_interactive_timeout_traceback() -> None:
+    """The log filter must strip the SDK's ERROR traceback for an interactive timeout.
+
+    An interactive sign-in the user never completed raises the handled
+    ``WorkIQAuthTimeoutError`` (``raise ... from`` the ``TimeoutError``), so the
+    SDK's ``logger.exception("OAuth flow error")`` for it must be dropped from
+    ``mcp.client.auth.oauth2`` instead of dumping a misleading stack trace.
+    """
+    import logging
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    filt = wp._SuppressExpectedAuthError()
+    try:
+        raise wp.WorkIQAuthTimeoutError(
+            "Timed out waiting for the WorkIQ sign-in to complete."
+        ) from TimeoutError()
+    except wp.WorkIQAuthTimeoutError as exc:
         record = logging.LogRecord(
             "mcp.client.auth.oauth2",
             logging.ERROR,
@@ -806,16 +842,16 @@ def test_reauthenticate_surfaces_real_cause_on_group_failure(monkeypatch) -> Non
     """A 502 must show the underlying error, not anyio's opaque group wrapper.
 
     The MCP SDK's streamable-http transport raises inside a task group, so a
-    failed sign-in reaches the route as a ``BaseExceptionGroup`` whose ``str()``
-    is "unhandled errors in a TaskGroup (1 sub-exception)". The endpoint must
-    unwrap it so the SPA's error banner names the real reason.
+    genuinely failed sign-in reaches the route as a ``BaseExceptionGroup`` whose
+    ``str()`` is "unhandled errors in a TaskGroup (1 sub-exception)". The endpoint
+    must unwrap it so the SPA's error banner names the real reason.
     """
     from precursor.backend.services.mcp import workiq_preview as wp
 
     async def _fake_flow(*, open_system_browser: bool = True) -> None:
         raise BaseExceptionGroup(
             "unhandled errors in a TaskGroup (1 sub-exception)",
-            [RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")],
+            [RuntimeError("the WorkIQ sign-in endpoint refused the connection")],
         )
 
     monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
@@ -827,9 +863,35 @@ def test_reauthenticate_surfaces_real_cause_on_group_failure(monkeypatch) -> Non
         assert resp.status_code == 502
         detail = resp.json()["detail"]
         assert detail == (
-            "WorkIQ sign-in failed: Timed out waiting for the WorkIQ sign-in to complete."
+            "WorkIQ sign-in failed: the WorkIQ sign-in endpoint refused the connection"
         )
         assert "TaskGroup" not in detail
+
+
+def test_reauthenticate_interactive_timeout_is_benign(monkeypatch) -> None:
+    """An interactive timeout is not a 502; it re-surfaces the manual banner.
+
+    The user never completing the visible sign-in raises ``WorkIQAuthTimeoutError``
+    (wrapped by the SDK's task group). The endpoint must unwrap it and return a
+    normal 200 status flagged ``interaction_required`` — the same benign outcome
+    as the silent/auto "needs a human" path — rather than an opaque gateway error.
+    """
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+        raise BaseExceptionGroup(
+            "unhandled errors in a TaskGroup (1 sub-exception)",
+            [wp.WorkIQAuthTimeoutError("Timed out waiting for the WorkIQ sign-in to complete.")],
+        )
+
+    monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
+        resp = client.post("/api/mcp/servers/workiq/reauthenticate")
+        assert resp.status_code == 200
+        assert resp.json()["interaction_required"] is True
 
 
 def test_reauthenticate_silent_only_success(monkeypatch) -> None:

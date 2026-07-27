@@ -163,7 +163,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **Duplicate first message in a new chat/topic**: starting a fresh chat or topic
+- **Noisy WorkIQ sign-in timeouts**: an interactive WorkIQ sign-in the user never
+  completed (walked away or closed the tab without the popup's proactive cancel
+  firing) used to dump a misleading `ERROR ... OAuth flow error` traceback from
+  the MCP SDK and then fail the endpoint with an opaque `502 Bad Gateway`. That
+  timeout is now a dedicated, benign `WorkIQAuthTimeoutError`: its SDK traceback
+  is suppressed (like the silent-pass and background `needs_auth` signals) and the
+  reauthenticate endpoint re-surfaces the manual sign-in banner (a normal
+  `interaction_required` response) instead of a gateway error.
+
+
   briefly showed the opening user message twice. The backend persists the user
   turn immediately, so a panel mounting mid-stream could race a first-page fetch
   that already included it while the same turn also lived in the live buffer.

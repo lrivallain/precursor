@@ -95,15 +95,32 @@ class WorkIQAuthCancelledError(RuntimeError):
     """
 
 
+class WorkIQAuthTimeoutError(RuntimeError):
+    """An interactive WorkIQ sign-in the user never completed in time.
+
+    The visible loopback waits up to :data:`_CALLBACK_TIMEOUT_SECONDS` for the
+    browser redirect. When it never arrives — the user walked away, or closed the
+    tab without the SPA's proactive cancel firing — that's a *benign, expected*
+    outcome, not a server failure: we simply couldn't finish the grant. Raising a
+    dedicated type (instead of a bare ``RuntimeError``) lets
+    :class:`_SuppressExpectedAuthError` drop the SDK's misleading ERROR traceback
+    and lets :func:`reauthenticate_workiq`'s caller re-surface the manual sign-in
+    banner rather than reporting an opaque gateway failure. It is the interactive
+    twin of :class:`WorkIQInteractionRequiredError` (the silent-pass timeout).
+    """
+
+
 class _SuppressExpectedAuthError(logging.Filter):
     """Drop the SDK's ERROR traceback for an *expected* WorkIQ sign-in prompt.
 
     The MCP SDK logs ``logger.exception("OAuth flow error")`` for any exception
-    raised inside its auth flow, then re-raises. When a background connect hits
-    a sign-in it deliberately won't run, we raise :class:`WorkIQAuthRequiredError`
-    from the redirect handler on purpose — so that "error" is a normal, handled
-    ``needs_auth`` signal, not a failure. We already log it concisely at WARNING
-    in the client, so this filter strips the misleading full stack trace.
+    raised inside its auth flow, then re-raises. Several of those "errors" are, to
+    us, normal handled signals: :class:`WorkIQAuthRequiredError` (a background
+    connect refusing to pop a browser), :class:`WorkIQInteractionRequiredError`
+    (a silent ``prompt=none`` pass that needs UI) and :class:`WorkIQAuthTimeoutError`
+    (an interactive sign-in the user never completed). We already log those
+    concisely where we handle them, so this filter strips the misleading full
+    stack trace the SDK would otherwise dump for each.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -118,7 +135,12 @@ class _SuppressExpectedAuthError(logging.Filter):
             if node is None or id(node) in seen:
                 continue
             seen.add(id(node))
-            if isinstance(node, WorkIQAuthRequiredError | WorkIQInteractionRequiredError):
+            if isinstance(
+                node,
+                WorkIQAuthRequiredError
+                | WorkIQInteractionRequiredError
+                | WorkIQAuthTimeoutError,
+            ):
                 return False
             if isinstance(node, BaseExceptionGroup):
                 stack.extend(node.exceptions)
@@ -649,7 +671,10 @@ def _make_callback_handler(
     blocked, or no live SSO), the timeout is semantically "interaction required",
     so we raise :class:`WorkIQInteractionRequiredError` (which the caller handles
     by falling back to the visible prompt and which :class:`_SuppressExpectedAuthError`
-    keeps out of the logs) instead of a loud ``RuntimeError`` failure.
+    keeps out of the logs). An interactive (visible-prompt) loopback that times
+    out means the user never completed the sign-in; we raise the dedicated
+    :class:`WorkIQAuthTimeoutError` — also suppressed and handled benignly — rather
+    than a loud, opaque ``RuntimeError``.
     """
 
     async def _callback_handler() -> tuple[str, str | None]:
@@ -793,7 +818,14 @@ def _make_callback_handler(
                 raise WorkIQInteractionRequiredError(
                     "WorkIQ silent sign-in timed out; interaction required."
                 ) from exc
-            raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.") from exc
+            # A visible interactive loopback that never fired: the user walked
+            # away or closed the tab without the SPA's proactive cancel firing.
+            # That's a benign, expected "didn't finish" — a dedicated type the
+            # log filter suppresses and the caller re-surfaces as the manual
+            # sign-in banner, not an opaque gateway failure.
+            raise WorkIQAuthTimeoutError(
+                "Timed out waiting for the WorkIQ sign-in to complete."
+            ) from exc
 
     return _callback_handler
 

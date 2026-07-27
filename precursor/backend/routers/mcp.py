@@ -326,6 +326,7 @@ async def reauthenticate_workiq_server(
         WorkIQAuthCancelledError,
         WorkIQAuthInProgressError,
         WorkIQAuthPortBusyError,
+        WorkIQAuthTimeoutError,
         build_oauth_provider,
         reauthenticate_workiq,
         resolve_workiq_preview,
@@ -369,19 +370,31 @@ async def reauthenticate_workiq_server(
         # The SPA cancelled this sign-in (its popup was closed). Report a benign
         # conflict; the SPA already knows and simply drops its "Signing in…".
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except WorkIQAuthTimeoutError:
+        # The interactive loopback waited out the full timeout without a redirect:
+        # the user walked away or closed the tab without the SPA's proactive
+        # cancel firing. That's a benign "didn't finish", not a gateway failure —
+        # fall through to re-surface the manual sign-in banner (below).
+        authenticated = False
     except Exception as exc:
-        # A port-busy or user-cancel raised deep in the SDK's auth flow surfaces
-        # wrapped in its task-group ``BaseExceptionGroup`` — unwrap so it still
-        # reads as a clear conflict rather than an opaque gateway failure.
+        # A port-busy, user-cancel or interactive timeout raised deep in the SDK's
+        # auth flow surfaces wrapped in its task-group ``BaseExceptionGroup`` —
+        # unwrap so it still reads as the right handled outcome rather than an
+        # opaque gateway failure.
         conflict = _find_in_exception(exc, WorkIQAuthPortBusyError) or _find_in_exception(
             exc, WorkIQAuthCancelledError
         )
         if conflict is not None:
             raise HTTPException(status.HTTP_409_CONFLICT, str(conflict)) from exc
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"WorkIQ sign-in failed: {_describe_exception(exc)}",
-        ) from exc
+        if _find_in_exception(exc, WorkIQAuthTimeoutError) is not None:
+            # Benign interactive timeout wrapped by the task group: treat it like
+            # the direct catch above and re-surface the manual banner.
+            authenticated = False
+        else:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                f"WorkIQ sign-in failed: {_describe_exception(exc)}",
+            ) from exc
 
     # A silent pass that needs a human: leave the warm worker parked in
     # ``needs_auth`` and tell the SPA to surface the manual sign-in banner.
