@@ -403,6 +403,25 @@ class StreamStore {
 
 export const streamStore = new StreamStore();
 
+/**
+ * Combine the persisted message window with the live buffered turn, dropping any
+ * persisted rows the buffer already owns. When a brand-new conversation starts,
+ * the backend persists the user turn immediately, so a panel that mounts
+ * mid-stream can race a first-page fetch that already includes it — while the
+ * same turn also lives in the buffer (reconciled to its real id by the
+ * `user_message` event). Deduping by id keeps that first turn from rendering
+ * twice; for an established conversation there is no overlap and this is a no-op.
+ */
+export function mergeConversation(
+  persisted: Message[],
+  buffered: Message[],
+): Message[] {
+  if (buffered.length === 0) return persisted;
+  const bufferedIds = new Set(buffered.map((m) => m.id));
+  const deduped = persisted.filter((m) => !bufferedIds.has(m.id));
+  return [...deduped, ...buffered];
+}
+
 export function useStreamVersion(): number {
   return useSyncExternalStore(
     streamStore.subscribe,
