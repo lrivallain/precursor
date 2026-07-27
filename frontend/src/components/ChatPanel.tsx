@@ -22,7 +22,7 @@ import {
 } from "../lib/commands";
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
-import { streamStore, useStreamVersion, convKey } from "../lib/streamStore";
+import { streamStore, useStreamVersion, convKey, mergeConversation } from "../lib/streamStore";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
@@ -180,7 +180,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const buffered = streamStore.bufferedMessages(streamKey);
   const hasSession = streamStore.hasSession(streamKey);
   const messages = useMemo<Message[]>(
-    () => (hasSession ? [...persisted, ...buffered] : persisted),
+    () => (hasSession ? mergeConversation(persisted, buffered) : persisted),
     [persisted, buffered, hasSession],
   );
   const visibleMessages = useMemo<Message[]>(

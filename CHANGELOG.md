@@ -163,6 +163,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Duplicate first message in a new chat/topic**: starting a fresh chat or topic
+  briefly showed the opening user message twice. The backend persists the user
+  turn immediately, so a panel mounting mid-stream could race a first-page fetch
+  that already included it while the same turn also lived in the live buffer.
+  Merging the persisted window with the streaming buffer now dedupes by message
+  id, so the first turn renders once.
+
 - **Stale WorkIQ sign-in banner across other windows**: when a WorkIQ sign-in
   was renewed in one window (its popup, the OS-browser tab the hands-free flow
   self-opens, or a silent pass), every *other* open window kept showing the
