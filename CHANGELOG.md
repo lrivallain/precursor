@@ -11,6 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Installable app (PWA)**: Precursor now ships a web app manifest, PNG icons
+  (incl. a maskable variant), and a minimal service worker, so Chromium browsers
+  offer to **install it as a standalone app** (own window, dock/taskbar icon).
+  The service worker registers only in the built SPA (a one-process
+  `precursor` run), does **no offline caching**, and passes all traffic through
+  to the network — it exists purely to meet the browser's installability bar.
+  It stays a convenience wrapper around your local instance: works while the
+  process is running, on the same machine over `localhost`. See
+  [Installation → Install as a browser app](https://lrivallain.github.io/precursor/guide/installation.html).
+
 - **MCP: cross-entity search + chats/agents/live accessors**: the built-in
   `precursor` MCP server's `search` tool now spans the same surfaces as the ⌘K
   palette — topics, chats, agents, and live (meeting) sessions — and each hit

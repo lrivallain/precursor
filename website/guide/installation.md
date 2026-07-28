@@ -133,6 +133,40 @@ git pull
 uv run precursor               # frontend built + DB migrated automatically
 ```
 
+## Install as a browser app (PWA)
+
+Precursor ships a [web app manifest](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps)
+and a service worker, so Chromium browsers (Chrome, Edge) offer to **install it
+as a standalone app** — its own window, a dock/taskbar icon, no address bar.
+Look for the install icon in the address bar, or the browser menu →
+_Install Precursor…_.
+
+Installation only appears in a **one-process production run** (the service
+worker is registered in the built SPA, not under `precursor --dev`):
+
+```bash
+make build          # build the SPA
+uv run precursor    # open http://localhost:8000 and install from the browser
+```
+
+::: warning It's a window, not an offline app
+The installed app is a convenience wrapper around your **local** Precursor
+instance — there is deliberately **no offline caching**. It only works while the
+`precursor` process is running, on the same machine, over `localhost`:
+
+- **No offline use.** Every request hits the live FastAPI backend (LLM
+  providers, MCP servers, the database, GitHub auth all live server-side). If
+  the process isn't running, the window opens but nothing works.
+- **Localhost only.** Service workers and the install prompt require a
+  [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts).
+  `localhost` counts, so same-machine use works over plain HTTP; installing over
+  a LAN address or remotely would require serving Precursor behind HTTPS.
+- **Not portable / multi-device.** Installing on another device still points at
+  the one running instance — it isn't a standalone copy.
+- **Platform gaps.** Desktop Chrome/Edge give the best experience; Safari/iOS
+  only support a manual _Add to Home Screen_ with stricter limits.
+:::
+
 ## Next steps
 
 - [Quick start](/guide/quick-start) — create your first topic.
