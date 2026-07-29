@@ -137,9 +137,7 @@ class _SuppressExpectedAuthError(logging.Filter):
             seen.add(id(node))
             if isinstance(
                 node,
-                WorkIQAuthRequiredError
-                | WorkIQInteractionRequiredError
-                | WorkIQAuthTimeoutError,
+                WorkIQAuthRequiredError | WorkIQInteractionRequiredError | WorkIQAuthTimeoutError,
             ):
                 return False
             if isinstance(node, BaseExceptionGroup):
