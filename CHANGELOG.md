@@ -173,6 +173,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ sign-in in the installed PWA**: clicking **Sign in** (the banner or
+  Settings) from Precursor running as an installed standalone PWA did nothing —
+  standalone display mode heavily restricts `window.open`, so the script-opened
+  sign-in popup couldn't be created, steered to the authorization URL, or
+  auto-closed. The manual sign-in now detects standalone PWA mode and drives the
+  OAuth flow through the **OS default browser** instead (the same surface the
+  hands-free re-auth already uses), clearing the banner over SSE on success.
+
 - **Noisy WorkIQ sign-in timeouts**: an interactive WorkIQ sign-in the user never
   completed (walked away or closed the tab without the popup's proactive cancel
   firing) used to dump a misleading `ERROR ... OAuth flow error` traceback from

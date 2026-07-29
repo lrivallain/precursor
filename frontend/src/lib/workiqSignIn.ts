@@ -18,6 +18,14 @@
  * genuinely needs interaction does the backend **self-open the OS browser** to
  * the visible prompt (no banner click); the manual popup flow above is the last
  * resort when even that can't run (auto re-auth off, loopback port busy, etc.).
+ *
+ * When Precursor runs as an **installed standalone PWA** the script-opened popup
+ * isn't available — ``window.open`` is heavily restricted in standalone display
+ * mode (blocked, or ejected to the default browser as an uncontrollable tab we
+ * can neither steer nor auto-close), so the manual sign-in there skips the popup
+ * and has the backend drive the sign-in through the OS default browser instead
+ * (the same surface the hands-free flow uses), clearing the banner over SSE on
+ * success.
  */
 
 import { api } from "./api";
@@ -71,6 +79,24 @@ export function emitWorkiqAuthUrl(url: string): void {
   }
 }
 
+/**
+ * Whether the SPA is running as an installed, standalone PWA (its own window,
+ * no browser tab chrome) rather than inside a normal browser tab.
+ *
+ * Standalone PWAs can't reliably host the OAuth sign-in in a script-opened
+ * popup, so the manual sign-in defers to the backend's OS-browser flow in that
+ * mode — see the module docstring.
+ */
+function isStandalonePWA(): boolean {
+  try {
+    if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
+  } catch {
+    // matchMedia unavailable or threw — fall through to the iOS check.
+  }
+  // iOS home-screen web apps expose standalone via this non-standard flag.
+  return (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
 function openSigninPopup(): Window | null {
   const width = Math.min(POPUP_WIDTH, window.screen.availWidth);
   const height = Math.min(POPUP_HEIGHT, window.screen.availHeight);
@@ -105,6 +131,19 @@ function openSigninPopup(): Window | null {
  * "Signing in…" state without surfacing an error.
  */
 export async function signInWorkiq(): Promise<MCPServerStatus | null> {
+  // In an installed standalone PWA a script-opened popup can't host the OAuth
+  // flow, so skip it and have the backend open the OS default browser (as the
+  // hands-free flow does). This call blocks until the loopback callback fires;
+  // on success the backend also broadcasts ``mcp.auth_resolved`` to clear the
+  // banner in every window. ``interaction_required`` means the sign-in couldn't
+  // complete (timed out / needs a human that never showed) — resolve ``null``
+  // so the caller keeps the banner without surfacing an error, matching the
+  // popup path's abandonment semantics.
+  if (isStandalonePWA()) {
+    const status = await api.mcp.reauthenticateWorkiq({ usePopup: false });
+    return status.interaction_required ? null : status;
+  }
+
   const popup = openSigninPopup();
   pendingPopup = popup;
   pendingNavigated = false;
