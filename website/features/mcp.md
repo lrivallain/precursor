@@ -27,6 +27,8 @@ Built-in servers ship in-tree:
 | `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
 | `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
+| `workiq-teams` | Microsoft Teams via [Agent 365](#agent-365-workiq-teams-and-workiq-user) — chats, channels, messages, presence. |
+| `workiq-user` | Directory and people lookups via Agent 365 — profiles, managers, direct reports. |
 | `precursor` | Precursor's *own* data (see below). |
 
 You can also add **your own** servers (stdio or streamable-HTTP). A host-dependency
@@ -111,9 +113,10 @@ showing the banner clears it at once instead of prompting for credentials that
 are already fresh.
 
 ::: warning One sign-in at a time per machine
-The OAuth callback uses a **fixed** loopback port (`127.0.0.1:12798`, matching
-the registered `redirect_uri`), so only one Precursor instance can run the
-sign-in at a time. If you have several windows open (e.g. multiple worktrees)
+Each OAuth-protected server's callback listens on a **fixed** loopback port —
+`12798` for `workiq`, `12799` for `workiq-teams`, `12800` for `workiq-user` — so
+only one Precursor instance can
+run a given sign-in at a time. If you have several windows open (e.g. multiple worktrees)
 and start a sign-in while another already owns the port, Precursor fails fast
 with a clear message ("port 12798 is already in use — another Precursor window
 or app is signing in…") **without** disturbing your existing session — finish or
@@ -121,6 +124,46 @@ close that other sign-in, then retry. Simply **closing the sign-in popup cancels
 the flow** and frees the port immediately, so an abandoned sign-in never blocks
 the next one.
 :::
+
+### Agent 365: `workiq-teams` and `workiq-user`
+
+Microsoft's **Agent 365** platform exposes two more hosted MCP endpoints, and
+Precursor ships both as built-ins:
+
+| Server | Endpoint | Covers |
+| --- | --- | --- |
+| `workiq-teams` | `…/servers/mcp_TeamsServer` | Teams: list/send chat and channel messages, members, presence, files. |
+| `workiq-user` | `…/servers/mcp_MeServer` | Directory: your profile, other users, managers, direct reports. |
+
+They are `streamable_http` and use **the same browser sign-in stack** as the
+WorkIQ preview above (silent-first, self-triggering re-auth, keep-alive ticker,
+inline banner).
+
+**One sign-in covers both.** They authenticate as the same Entra client against
+the same resource, and the consented scope set spans every `McpServers.*`
+permission — a token minted for one is accepted verbatim by the other. So
+Precursor caches a single Agent 365 credential: sign in from either server and
+both come up. The WorkIQ preview is a *different* client **and** a different
+resource, so it keeps its own separate token — signing in to Teams never
+disturbs your WorkIQ session, and vice versa.
+
+**They need your Microsoft tenant.** The endpoint URL embeds a tenant **GUID**:
+
+```
+https://agent365.svc.cloud.microsoft/agents/tenants/{tenant}/servers/mcp_TeamsServer
+```
+
+Entra rejects the `common` / `organizations` aliases there, so Precursor has to
+know which tenant to address. It resolves one, in order:
+
+1. **Settings → MCP → “Microsoft 365 tenant”** — paste the GUID.
+2. `PRECURSOR_WORKIQ_TENANT_ID` in the environment.
+3. **Auto-discovery** — the `tid` claim of a token you already hold from a
+   hosted WorkIQ sign-in. In practice, if you've signed in to the WorkIQ preview
+   the two servers configure themselves with **nothing to fill in**.
+
+Until a tenant is known the two entries stay unconfigured and say so, rather
+than pointing at an unusable URL.
 
 ## As a server — exposing your conversations
 

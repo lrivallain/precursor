@@ -190,6 +190,7 @@ export function SettingsPanel({ onClose }: Props) {
   const [expose, setExpose] = useState<Record<string, boolean>>({});
   // HTTP (localhost) transport for the built-in "precursor" MCP server.
   const [httpEnabled, setHttpEnabled] = useState(false);
+  const [workiqTenant, setWorkiqTenant] = useState("");
   const [saving, setSaving] = useState(false);
   const [mcpEditing, setMcpEditing] = useState<MCPServerStatus | "new" | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -279,6 +280,9 @@ export function SettingsPanel({ onClose }: Props) {
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
       setHttpEnabled(s.mcp_http_enabled);
+      // A discovered tenant shows as a placeholder rather than typed input, so
+      // saving doesn't silently pin it into the database.
+      setWorkiqTenant(s.workiq_tenant_discovered ? "" : s.workiq_tenant_id);
       settingsStore.set(s);
       await refreshMcp();
       try {
@@ -371,6 +375,7 @@ export function SettingsPanel({ onClose }: Props) {
         live_transcript_retention_days: liveTranscriptRetentionDays,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
+        workiq_tenant_id: workiqTenant.trim(),
         backup_enabled: backupEnabled,
         backup_dir: backupDir,
         backup_retention: backupRetention,
@@ -523,7 +528,7 @@ export function SettingsPanel({ onClose }: Props) {
       ),
     );
     try {
-      const next = await signInWorkiq();
+      const next = await signInWorkiq(name);
       if (!next) {
         // The user abandoned the sign-in (closed the popup) — restore the
         // needs-auth state without an error.
@@ -1110,6 +1115,15 @@ export function SettingsPanel({ onClose }: Props) {
                   httpUrl={settings?.mcp_http_url ?? null}
                   httpLoopbackOk={settings?.mcp_http_loopback_ok ?? true}
                 />
+                <Agent365Card
+                  tenant={workiqTenant}
+                  setTenant={setWorkiqTenant}
+                  discoveredTenant={
+                    settings?.workiq_tenant_discovered
+                      ? (settings?.workiq_tenant_id ?? "")
+                      : ""
+                  }
+                />
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[11px] text-muted">
                     Enable an MCP server to expose its tools to the chat. The
@@ -1150,7 +1164,7 @@ export function SettingsPanel({ onClose }: Props) {
                             : undefined
                         }
                         onReauthenticate={
-                          s.preview
+                          s.oauth
                             ? () => void reauthenticateWorkiq(s.name)
                             : undefined
                         }
@@ -1693,6 +1707,81 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
   },
 ];
 
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Tenant for the Agent 365 hosted MCP servers (``workiq-teams`` /
+// ``workiq-user``): their URL embeds a tenant GUID, so without one they stay
+// unconfigured. Left blank, Precursor reads the tenant off an existing WorkIQ
+// sign-in.
+function Agent365Card({
+  tenant,
+  setTenant,
+  discoveredTenant,
+}: {
+  tenant: string;
+  setTenant: (next: string) => void;
+  discoveredTenant: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const typed = tenant.trim();
+  const effective = typed || discoveredTenant;
+  const invalid = typed !== "" && !GUID_RE.test(typed);
+  return (
+    <div className="border border-border rounded mb-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 w-full px-2 py-1.5 text-left"
+      >
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="text-sm flex-1">
+          Microsoft 365 tenant (WorkIQ Teams / User)
+        </span>
+        <span className="text-[11px] text-muted">
+          {effective ? (typed ? "set" : "discovered") : "not set"}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-2 space-y-2">
+          <p className="text-[11px] text-muted">
+            The hosted <span className="font-mono">workiq-teams</span> and{" "}
+            <span className="font-mono">workiq-user</span> servers address your
+            tenant by GUID. Leave this blank to reuse the tenant of an existing
+            WorkIQ sign-in.
+          </p>
+          <input
+            type="text"
+            value={tenant}
+            onChange={(e) => setTenant(e.target.value)}
+            placeholder={discoveredTenant || "00000000-0000-0000-0000-000000000000"}
+            spellCheck={false}
+            className="w-full px-2 py-1 rounded border border-border bg-surface text-sm font-mono"
+          />
+          {invalid && (
+            <div className="text-[11px] rounded border border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400 px-3 py-2">
+              Expected a tenant GUID like{" "}
+              <span className="font-mono">72f988bf-86f1-41af-91ab-2d7cd011db47</span>.
+            </div>
+          )}
+          {!typed && discoveredTenant && (
+            <div className="text-[11px] text-muted">
+              Using{" "}
+              <span className="font-mono text-text/80">{discoveredTenant}</span>,
+              discovered from your WorkIQ sign-in.
+            </div>
+          )}
+          {!effective && (
+            <div className="text-[11px] text-muted">
+              Until a tenant is known those two servers stay unconfigured. Save
+              settings to apply.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Per-section enablement for the built-in "precursor" MCP server, which serves
 // Precursor's own capabilities to the in-app agent and external MCP hosts.
 function McpExposeCard({
@@ -1890,7 +1979,7 @@ function McpServerCard({
             <span className="text-muted">preview</span>
           </label>
         )}
-        {onReauthenticate && server.preview && (
+        {onReauthenticate && server.oauth && (
           <button
             type="button"
             onClick={onReauthenticate}

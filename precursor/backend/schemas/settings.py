@@ -55,6 +55,8 @@ class SettingsPayload(BaseModel):
     mcp_expose: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
     mcp_http_enabled: bool | None = None
+    # Entra tenant GUID for the Agent 365 MCP servers (workiq-teams / workiq-user).
+    workiq_tenant_id: str | None = None
     # --- System settings (env default + DB override) ---
     # Prompt budgeting.
     llm_max_input_tokens: int | None = None
@@ -131,6 +133,10 @@ class SettingsRead(BaseModel):
     mcp_http_url: str | None = None
     # True when the app is bound to a loopback host (HTTP transport is allowed).
     mcp_http_loopback_ok: bool = True
+    # Effective Entra tenant GUID used by the Agent 365 MCP servers ("" when unset).
+    workiq_tenant_id: str = ""
+    # True when the tenant above came from a signed-in token rather than config.
+    workiq_tenant_discovered: bool = False
     # --- System settings (effective: env default with DB override applied) ---
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000

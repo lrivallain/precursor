@@ -38,6 +38,8 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _RESERVED_NAMES = {
     "github",
     "workiq",
+    "workiq-teams",
+    "workiq-user",
     "fetch",
     "workspace-fs",
     "cmd-runner",
@@ -290,14 +292,19 @@ async def set_workiq_preview_mode(
     return _enrich_with_user_meta(base, None)
 
 
-@router.post("/servers/workiq/reauthenticate")
+@router.post("/servers/{name}/reauthenticate")
 async def reauthenticate_workiq_server(
+    name: str,
     use_popup: bool = False,
     silent_only: bool = False,
     auto: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Restart the WorkIQ OAuth sign-in on an explicit user action.
+    """Restart an OAuth-protected server's browser sign-in on an explicit action.
+
+    Serves the hosted WorkIQ preview (``workiq``) and the Agent 365 servers
+    (``workiq-teams`` / ``workiq-user``) — everything that authenticates through
+    Precursor's loopback authorization-code flow.
 
     Background connects never pop a browser (they surface ``needs_auth``); this
     endpoint runs the interactive authorization-code grant, persists the fresh
@@ -321,8 +328,14 @@ async def reauthenticate_workiq_server(
     complete silently. Retained for callers that want the pure silent probe.
     """
     from precursor.backend.config import get_settings
+    from precursor.backend.services.mcp.agent365 import (
+        TENANT_REQUIRED_MESSAGE,
+        is_agent365_server,
+        profile_for,
+    )
     from precursor.backend.services.mcp.client import _describe_exception, _find_in_exception
     from precursor.backend.services.mcp.workiq_preview import (
+        PREVIEW_PROFILE,
         WorkIQAuthCancelledError,
         WorkIQAuthInProgressError,
         WorkIQAuthPortBusyError,
@@ -333,32 +346,44 @@ async def reauthenticate_workiq_server(
     )
 
     manager = get_mcp_client_manager()
-    if manager.get("workiq") is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "WorkIQ MCP server not found")
-    if not await resolve_workiq_preview():
+    if manager.get(name) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"MCP server '{name}' not found")
+
+    if is_agent365_server(name):
+        profile = await profile_for(name)
+        if profile is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, TENANT_REQUIRED_MESSAGE)
+    elif name == "workiq":
+        if not await resolve_workiq_preview():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Enable WorkIQ preview mode before signing in.",
+            )
+        profile = PREVIEW_PROFILE
+    else:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Enable WorkIQ preview mode before signing in.",
+            f"MCP server '{name}' does not use Precursor's browser sign-in.",
         )
 
     enabled = await _load_enabled(session)
-    is_enabled = enabled.get("workiq", False)
+    is_enabled = enabled.get(name, False)
 
     # Hands-free auto re-auth turned off → don't self-trigger anything; report
     # interaction required so the SPA shows the manual banner straight away.
     if (silent_only or auto) and not get_settings().workiq_auto_reauth_enabled:
-        entry = manager.get("workiq")
+        entry = manager.get(name)
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
         return {**_enrich_with_user_meta(base, None), "interaction_required": True}
 
     try:
         if silent_only:
-            authenticated = await reauthenticate_workiq(silent_only=True)
+            authenticated = await reauthenticate_workiq(profile=profile, silent_only=True)
         elif auto:
-            authenticated = await reauthenticate_workiq(auto=True)
+            authenticated = await reauthenticate_workiq(profile=profile, auto=True)
         else:
-            await reauthenticate_workiq(open_system_browser=not use_popup)
+            await reauthenticate_workiq(profile=profile, open_system_browser=not use_popup)
             authenticated = True
     except WorkIQAuthInProgressError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -393,26 +418,31 @@ async def reauthenticate_workiq_server(
         else:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                f"WorkIQ sign-in failed: {_describe_exception(exc)}",
+                f"{profile.label} sign-in failed: {_describe_exception(exc)}",
             ) from exc
 
     # A silent pass that needs a human: leave the warm worker parked in
     # ``needs_auth`` and tell the SPA to surface the manual sign-in banner.
     if not authenticated:
-        entry = manager.get("workiq")
+        entry = manager.get(name)
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
         return {**_enrich_with_user_meta(base, None), "interaction_required": True}
 
     # Swap in a fresh background (non-interactive) provider so it reads the newly
     # persisted tokens, drop the stale warm worker, then refresh the catalog.
-    manager.configure_workiq_preview(True, auth_provider=build_oauth_provider())
-    await manager.retire_worker("workiq")
+    if is_agent365_server(name):
+        manager.configure_agent365(
+            name, url=profile.url, auth_provider=build_oauth_provider(profile=profile)
+        )
+    else:
+        manager.configure_workiq_preview(True, auth_provider=build_oauth_provider())
+    await manager.retire_worker(name)
 
     if is_enabled:
-        await manager.probe("workiq", github_token=await resolve_github_token(session))
+        await manager.probe(name, github_token=await resolve_github_token(session))
 
-    entry = manager.get("workiq")
+    entry = manager.get(name)
     assert entry is not None
     # Wake any chat turn paused waiting for this sign-in so it resumes with the
     # freshly authenticated tools instead of timing out.
@@ -422,7 +452,7 @@ async def reauthenticate_workiq_server(
     # the window that drove this sign-in already cleared locally.
     from precursor.backend.services.events import publish_mcp_auth_resolved
 
-    await publish_mcp_auth_resolved("workiq")
+    await publish_mcp_auth_resolved(name)
     # Agents bake a static OAuth bearer into their SDK session at creation, so an
     # agent built before sign-in still lacks WorkIQ's tools. Drop idle sessions so
     # the next dispatch rebuilds with the new token (no-op when agents are off).
@@ -436,9 +466,9 @@ async def reauthenticate_workiq_server(
     return _enrich_with_user_meta(base, None)
 
 
-@router.post("/servers/workiq/reauthenticate/cancel")
-async def cancel_reauthenticate_workiq_server() -> dict[str, bool]:
-    """Abort an in-flight interactive WorkIQ sign-in and free the loopback port.
+@router.post("/servers/{name}/reauthenticate/cancel")
+async def cancel_reauthenticate_workiq_server(name: str) -> dict[str, bool]:
+    """Abort an in-flight interactive sign-in and free that server's loopback port.
 
     The SPA calls this when its sign-in popup closes without completing, so the
     loopback stops waiting and releases the fixed redirect port immediately —
@@ -446,9 +476,16 @@ async def cancel_reauthenticate_workiq_server() -> dict[str, bool]:
     window) until the callback times out. A no-op (``cancelled: false``) when no
     interactive sign-in is waiting, or once the redirect has already arrived.
     """
-    from precursor.backend.services.mcp.workiq_preview import cancel_reauthenticate_workiq
+    from precursor.backend.services.mcp.agent365 import is_agent365_server, profile_for
+    from precursor.backend.services.mcp.workiq_preview import (
+        PREVIEW_PROFILE,
+        cancel_reauthenticate_workiq,
+    )
 
-    return {"cancelled": cancel_reauthenticate_workiq()}
+    profile = await profile_for(name) if is_agent365_server(name) else PREVIEW_PROFILE
+    if profile is None:
+        return {"cancelled": False}
+    return {"cancelled": cancel_reauthenticate_workiq(profile=profile)}
 
 
 # --------- user-defined CRUD ---------

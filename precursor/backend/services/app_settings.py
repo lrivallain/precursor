@@ -328,6 +328,23 @@ async def resolve_azure_speech_language(session: AsyncSession) -> str:
     return await resolve(session, SettingSpec("azure_speech_language", _nonempty_str(), default=""))
 
 
+async def resolve_workiq_tenant_id(session: AsyncSession) -> str:
+    """Effective Microsoft Entra tenant GUID for the Agent 365 MCP endpoints.
+
+    DB override (Settings panel) wins, then ``PRECURSOR_WORKIQ_TENANT_ID``.
+    Returns ``""`` when neither is set — the caller then falls back to
+    discovering the tenant from the stored WorkIQ token's ``tid`` claim.
+    """
+    return await resolve(
+        session,
+        SettingSpec(
+            "workiq_tenant_id",
+            _nonempty_str(),
+            default_factory=lambda: get_settings().workiq_tenant_id.strip(),
+        ),
+    )
+
+
 async def azure_stt_ready(session: AsyncSession) -> bool:
     """True when both an Azure Speech key and endpoint are configured."""
     return bool(

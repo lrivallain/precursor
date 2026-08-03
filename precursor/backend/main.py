@@ -109,6 +109,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_mcp_client_manager().configure_workiq_preview(
             True, auth_provider=build_oauth_provider()
         )
+    from precursor.backend.services.mcp.agent365 import configure_agent365_servers
+
+    await configure_agent365_servers()
     discover(app)
     from precursor.backend.services.scheduler import get_scheduler
 

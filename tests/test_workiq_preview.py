@@ -224,7 +224,7 @@ async def test_callback_handler_cancel_aborts_and_frees_port() -> None:
 
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    wp._active_signin_cancel = asyncio.Event()
+    wp._active_signin_cancels[wp.PREVIEW_PROFILE.auth_family] = asyncio.Event()
     try:
         # A long timeout: only the cancel should end the wait.
         handler = wp._make_callback_handler(timeout=30.0)
@@ -237,7 +237,7 @@ async def test_callback_handler_cancel_aborts_and_frees_port() -> None:
     finally:
         if not waiter.done():
             waiter.cancel()
-        wp._active_signin_cancel = None
+        wp._active_signin_cancels.pop("workiq", None)
 
     # The loopback released the fixed port as soon as it unwound.
     wp._assert_loopback_port_available()
@@ -247,7 +247,7 @@ def test_cancel_reauthenticate_is_a_noop_when_idle() -> None:
     """With no interactive sign-in in flight, cancelling reports it did nothing."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    assert wp._active_signin_cancel is None
+    assert wp._active_signin_cancels.get("workiq") is None
     assert wp.cancel_reauthenticate_workiq() is False
 
 
@@ -312,7 +312,7 @@ async def test_reauthenticate_single_flight() -> None:
     """A second sign-in while one is running is rejected, not queued."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async with wp._reauth_lock:
+    async with wp._lock_for(wp.PREVIEW_PROFILE):
         with pytest.raises(wp.WorkIQAuthInProgressError):
             await wp.reauthenticate_workiq()
 
@@ -563,26 +563,36 @@ async def test_try_silent_reauth_falls_back_on_interaction_required(monkeypatch)
     """A group-wrapped interaction-required signal means 'prompt the user'."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _needs_interaction(_provider) -> None:
+    async def _needs_interaction(_provider, _profile=None) -> None:
         raise BaseExceptionGroup("grp", [wp.WorkIQInteractionRequiredError("login_required")])
 
     monkeypatch.setattr(wp, "_run_signin", _needs_interaction)
     assert (
-        await wp._try_silent_reauth(login_hint="u@contoso.com", open_system_browser=False) is False
+        await wp._try_silent_reauth(
+            profile=wp.PREVIEW_PROFILE, login_hint="u@contoso.com", open_system_browser=False
+        )
+        is False
     )
 
-    async def _ok(_provider) -> None:
+    async def _ok(_provider, _profile=None) -> None:
         return None
 
     monkeypatch.setattr(wp, "_run_signin", _ok)
-    assert await wp._try_silent_reauth(login_hint=None, open_system_browser=False) is True
+    assert (
+        await wp._try_silent_reauth(
+            profile=wp.PREVIEW_PROFILE, login_hint=None, open_system_browser=False
+        )
+        is True
+    )
 
-    async def _boom(_provider) -> None:
+    async def _boom(_provider, _profile=None) -> None:
         raise RuntimeError("transport exploded")
 
     monkeypatch.setattr(wp, "_run_signin", _boom)
     with pytest.raises(RuntimeError, match="transport exploded"):
-        await wp._try_silent_reauth(login_hint=None, open_system_browser=False)
+        await wp._try_silent_reauth(
+            profile=wp.PREVIEW_PROFILE, login_hint=None, open_system_browser=False
+        )
 
 
 async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> None:
@@ -593,13 +603,13 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
 
     events: list[str] = []
 
-    async def _noop_clear() -> None:
+    async def _noop_clear(*_a, **_k) -> None:
         events.append("clear")
 
-    async def _hint() -> str | None:
+    async def _hint(*_a, **_k) -> str | None:
         return "u@contoso.com"
 
-    async def _run_signin(_provider) -> None:
+    async def _run_signin(_provider, _profile=None) -> None:
         events.append("interactive")
 
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
@@ -610,7 +620,7 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
         return lambda: types.SimpleNamespace(workiq_silent_reauth_enabled=enabled)
 
     # Silent succeeds → no interactive prompt.
-    async def _silent_ok(*, login_hint, open_system_browser) -> bool:
+    async def _silent_ok(*, profile=None, login_hint, open_system_browser) -> bool:
         events.append(f"silent({login_hint})")
         return True
 
@@ -621,7 +631,7 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
     assert events == ["clear", "silent(u@contoso.com)"]
 
     # Silent needs interaction → falls back to the interactive prompt.
-    async def _silent_fail(*, login_hint, open_system_browser) -> bool:
+    async def _silent_fail(*, profile=None, login_hint, open_system_browser) -> bool:
         events.append("silent")
         return False
 
@@ -631,7 +641,9 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
     assert events == ["clear", "silent", "interactive"]
 
     # Silent disabled → straight to the interactive prompt, no silent pass.
-    async def _silent_unexpected(*, login_hint, open_system_browser) -> bool:  # pragma: no cover
+    async def _silent_unexpected(
+        *, profile=None, login_hint, open_system_browser
+    ) -> bool:  # pragma: no cover
         events.append("silent-should-not-run")
         return True
 
@@ -642,19 +654,77 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
     assert events == ["clear", "interactive"]
 
 
+async def test_reauthenticate_without_a_known_account_skips_the_silent_pass(monkeypatch) -> None:
+    """A hintless ``prompt=none`` dead-ends in AADSTS16000, so don't attempt it.
+
+    Instead go straight to a visible prompt carrying ``prompt=select_account`` so
+    Entra shows the account picker rather than refusing to choose.
+    """
+    import types
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    events: list[str] = []
+
+    async def _noop_clear(*_a, **_k) -> None:
+        events.append("clear")
+
+    async def _no_hint(*_a, **_k) -> str | None:
+        return None
+
+    async def _silent_unexpected(**_k) -> bool:  # pragma: no cover
+        events.append("silent-should-not-run")
+        return True
+
+    prompts: list[str | None] = []
+
+    def _build(**kwargs):
+        prompts.append(kwargs.get("prompt"))
+        return object()
+
+    async def _run_signin(_provider, _profile=None) -> None:
+        events.append("interactive")
+
+    monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
+    monkeypatch.setattr(wp, "get_workiq_login_hint", _no_hint)
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_unexpected)
+    monkeypatch.setattr(wp, "build_oauth_provider", _build)
+    monkeypatch.setattr(wp, "_run_signin", _run_signin)
+    monkeypatch.setattr(
+        wp, "get_settings", lambda: types.SimpleNamespace(workiq_silent_reauth_enabled=True)
+    )
+
+    assert await wp.reauthenticate_workiq(open_system_browser=False) is True
+    assert events == ["clear", "interactive"]
+    assert prompts == ["select_account"]
+
+    # Silent-only has no visible prompt to fall back to: report "not silently".
+    events.clear()
+    assert await wp.reauthenticate_workiq(silent_only=True) is False
+    assert "silent-should-not-run" not in events
+
+
+def test_interactive_prompt_only_forces_the_picker_without_a_hint() -> None:
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    assert wp._interactive_prompt("u@contoso.com") is None
+    assert wp._interactive_prompt(None) == "select_account"
+    assert wp._interactive_prompt("") == "select_account"
+
+
 async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
     """The hands-free silent pass returns its outcome and never prompts."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
     events: list[str] = []
 
-    async def _noop_clear() -> None:
+    async def _noop_clear(*_a, **_k) -> None:
         events.append("clear")
 
-    async def _hint() -> str | None:
+    async def _hint(*_a, **_k) -> str | None:
         return "u@contoso.com"
 
-    async def _run_signin(_provider) -> None:  # pragma: no cover - must never run
+    async def _run_signin(_provider, _profile=None) -> None:  # pragma: no cover - must never run
         events.append("interactive")
 
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
@@ -662,7 +732,9 @@ async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
     monkeypatch.setattr(wp, "_run_signin", _run_signin)
 
     # Silent success → authenticated, no OS browser, no interactive fallback.
-    async def _silent_ok(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+    async def _silent_ok(
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+    ) -> bool:
         events.append(f"silent(browser={open_system_browser},timeout={callback_timeout})")
         return True
 
@@ -675,7 +747,9 @@ async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
     ]
 
     # Silent needs interaction → False, and the interactive prompt never runs.
-    async def _silent_needs_ui(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+    async def _silent_needs_ui(
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+    ) -> bool:
         events.append("silent")
         return False
 
@@ -685,7 +759,9 @@ async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
     assert events == ["clear", "silent"]
 
     # Any failure (timeout / framing blocked) is swallowed as "needs a human".
-    async def _silent_boom(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+    async def _silent_boom(
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+    ) -> bool:
         events.append("silent")
         raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")
 
@@ -702,20 +778,20 @@ async def test_reauthenticate_auto_self_triggers_interactive(monkeypatch) -> Non
     events: list[str] = []
     provider_kwargs: list[dict] = []
 
-    async def _noop_clear() -> None:
+    async def _noop_clear(*_a, **_k) -> None:
         events.append("clear")
 
-    async def _hint() -> str | None:
+    async def _hint(*_a, **_k) -> str | None:
         return "u@contoso.com"
 
-    def _port_ok() -> None:
+    def _port_ok(*_a, **_k) -> None:
         events.append("port")
 
     def _fake_build(**kwargs):
         provider_kwargs.append(kwargs)
         return object()
 
-    async def _run_signin(_provider) -> None:
+    async def _run_signin(_provider, _profile=None) -> None:
         events.append("interactive")
 
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
@@ -725,7 +801,9 @@ async def test_reauthenticate_auto_self_triggers_interactive(monkeypatch) -> Non
     monkeypatch.setattr(wp, "_run_signin", _run_signin)
 
     # Silent succeeds → authenticated with zero interaction, no OS browser.
-    async def _silent_ok(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+    async def _silent_ok(
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+    ) -> bool:
         events.append(f"silent(browser={open_system_browser},timeout={callback_timeout})")
         return True
 
@@ -742,7 +820,9 @@ async def test_reauthenticate_auto_self_triggers_interactive(monkeypatch) -> Non
 
     # Silent needs a human → self-trigger the OS browser (open_system_browser on,
     # publish_url off so the still-attached silent frame doesn't race the loopback).
-    async def _silent_needs_ui(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+    async def _silent_needs_ui(
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+    ) -> bool:
         events.append("silent")
         return False
 
@@ -761,30 +841,32 @@ async def test_reauthenticate_auto_degrades_to_false(monkeypatch) -> None:
     """Port busy or a failing interactive fallback yields False (manual banner)."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _noop_clear() -> None:  # pragma: no cover - not reached when port busy
+    async def _noop_clear(*_a, **_k) -> None:  # pragma: no cover - not reached when port busy
         return None
 
-    async def _hint() -> str | None:
+    async def _hint(*_a, **_k) -> str | None:
         return None
 
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
     monkeypatch.setattr(wp, "get_workiq_login_hint", _hint)
 
     # Loopback port busy → defer to the manual banner without clearing tokens.
-    def _port_busy() -> None:
+    def _port_busy(*_a, **_k) -> None:
         raise wp.WorkIQAuthPortBusyError("busy")
 
     monkeypatch.setattr(wp, "_assert_loopback_port_available", _port_busy)
     assert await wp.reauthenticate_workiq(auto=True) is False
 
     # Port free, but the interactive fallback blows up → swallowed as False.
-    monkeypatch.setattr(wp, "_assert_loopback_port_available", lambda: None)
+    monkeypatch.setattr(wp, "_assert_loopback_port_available", lambda *_a, **_k: None)
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
 
-    async def _silent_needs_ui(*, login_hint, open_system_browser, callback_timeout=None) -> bool:
+    async def _silent_needs_ui(
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+    ) -> bool:
         return False
 
-    async def _run_signin_boom(_provider) -> None:
+    async def _run_signin_boom(_provider, _profile=None) -> None:
         raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")
 
     monkeypatch.setattr(wp, "_try_silent_reauth", _silent_needs_ui)
@@ -816,7 +898,7 @@ def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:
 
     calls: list[bool] = []
 
-    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+    async def _fake_flow(*, profile: object = None, open_system_browser: bool = True) -> None:
         calls.append(open_system_browser)
 
     monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
@@ -848,7 +930,7 @@ def test_reauthenticate_surfaces_real_cause_on_group_failure(monkeypatch) -> Non
     """
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+    async def _fake_flow(*, profile: object = None, open_system_browser: bool = True) -> None:
         raise BaseExceptionGroup(
             "unhandled errors in a TaskGroup (1 sub-exception)",
             [RuntimeError("the WorkIQ sign-in endpoint refused the connection")],
@@ -878,7 +960,7 @@ def test_reauthenticate_interactive_timeout_is_benign(monkeypatch) -> None:
     """
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+    async def _fake_flow(*, profile: object = None, open_system_browser: bool = True) -> None:
         raise BaseExceptionGroup(
             "unhandled errors in a TaskGroup (1 sub-exception)",
             [wp.WorkIQAuthTimeoutError("Timed out waiting for the WorkIQ sign-in to complete.")],
@@ -900,7 +982,9 @@ def test_reauthenticate_silent_only_success(monkeypatch) -> None:
 
     calls: list[dict] = []
 
-    async def _fake_flow(*, open_system_browser: bool = True, silent_only: bool = False) -> bool:
+    async def _fake_flow(
+        *, profile: object = None, open_system_browser: bool = True, silent_only: bool = False
+    ) -> bool:
         calls.append({"open_system_browser": open_system_browser, "silent_only": silent_only})
         return True
 
@@ -924,7 +1008,9 @@ def test_reauthenticate_silent_only_needs_interaction(monkeypatch) -> None:
     """When the silent pass can't complete, the endpoint flags interaction_required."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _fake_flow(*, open_system_browser: bool = True, silent_only: bool = False) -> bool:
+    async def _fake_flow(
+        *, profile: object = None, open_system_browser: bool = True, silent_only: bool = False
+    ) -> bool:
         return False
 
     monkeypatch.setattr(wp, "reauthenticate_workiq", _fake_flow)
@@ -947,7 +1033,9 @@ def test_reauthenticate_silent_only_disabled_skips_flow(monkeypatch) -> None:
 
     called = False
 
-    async def _fake_flow(*, open_system_browser: bool = True, silent_only: bool = False) -> bool:
+    async def _fake_flow(
+        *, profile: object = None, open_system_browser: bool = True, silent_only: bool = False
+    ) -> bool:
         nonlocal called
         called = True  # pragma: no cover - must never run
         return True
@@ -970,7 +1058,11 @@ def test_reauthenticate_auto_success(monkeypatch) -> None:
     calls: list[dict] = []
 
     async def _fake_flow(
-        *, open_system_browser: bool = True, silent_only: bool = False, auto: bool = False
+        *,
+        profile: object = None,
+        open_system_browser: bool = True,
+        silent_only: bool = False,
+        auto: bool = False,
     ) -> bool:
         calls.append({"silent_only": silent_only, "auto": auto})
         return True
@@ -993,7 +1085,11 @@ def test_reauthenticate_auto_needs_interaction(monkeypatch) -> None:
     from precursor.backend.services.mcp import workiq_preview as wp
 
     async def _fake_flow(
-        *, open_system_browser: bool = True, silent_only: bool = False, auto: bool = False
+        *,
+        profile: object = None,
+        open_system_browser: bool = True,
+        silent_only: bool = False,
+        auto: bool = False,
     ) -> bool:
         return False
 
@@ -1018,7 +1114,11 @@ def test_reauthenticate_auto_disabled_skips_flow(monkeypatch) -> None:
     called = False
 
     async def _fake_flow(
-        *, open_system_browser: bool = True, silent_only: bool = False, auto: bool = False
+        *,
+        profile: object = None,
+        open_system_browser: bool = True,
+        silent_only: bool = False,
+        auto: bool = False,
     ) -> bool:
         nonlocal called
         called = True  # pragma: no cover - must never run
@@ -1044,8 +1144,8 @@ def test_reauthenticate_endpoint_maps_port_busy_to_409(monkeypatch) -> None:
     """
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _busy_direct(*, open_system_browser: bool = True) -> None:
-        raise wp.WorkIQAuthPortBusyError(wp._PORT_BUSY_MESSAGE)
+    async def _busy_direct(*, profile: object = None, open_system_browser: bool = True) -> None:
+        raise wp.WorkIQAuthPortBusyError(wp._port_busy_message(wp.PREVIEW_PROFILE))
 
     monkeypatch.setattr(wp, "reauthenticate_workiq", _busy_direct)
 
@@ -1057,10 +1157,12 @@ def test_reauthenticate_endpoint_maps_port_busy_to_409(monkeypatch) -> None:
         assert "already in use" in resp.json()["detail"]
 
         # The same conflict wrapped by the SDK's task group must still read as 409.
-        async def _busy_wrapped(*, open_system_browser: bool = True) -> None:
+        async def _busy_wrapped(
+            *, profile: object = None, open_system_browser: bool = True
+        ) -> None:
             raise BaseExceptionGroup(
                 "unhandled errors in a TaskGroup (1 sub-exception)",
-                [wp.WorkIQAuthPortBusyError(wp._PORT_BUSY_MESSAGE)],
+                [wp.WorkIQAuthPortBusyError(wp._port_busy_message(wp.PREVIEW_PROFILE))],
             )
 
         monkeypatch.setattr(wp, "reauthenticate_workiq", _busy_wrapped)
@@ -1082,7 +1184,7 @@ def test_reauthenticate_endpoint_maps_cancel_to_409(monkeypatch) -> None:
     """A user-cancelled sign-in surfaces as a benign 409, direct or SDK-wrapped."""
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _cancelled(*, open_system_browser: bool = True) -> None:
+    async def _cancelled(*, profile: object = None, open_system_browser: bool = True) -> None:
         raise wp.WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")
 
     monkeypatch.setattr(wp, "reauthenticate_workiq", _cancelled)
@@ -1094,7 +1196,9 @@ def test_reauthenticate_endpoint_maps_cancel_to_409(monkeypatch) -> None:
         assert resp.status_code == 409
         assert "cancelled" in resp.json()["detail"].lower()
 
-        async def _cancelled_wrapped(*, open_system_browser: bool = True) -> None:
+        async def _cancelled_wrapped(
+            *, profile: object = None, open_system_browser: bool = True
+        ) -> None:
             raise BaseExceptionGroup(
                 "unhandled errors in a TaskGroup (1 sub-exception)",
                 [wp.WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")],
@@ -1120,7 +1224,7 @@ def test_reauthenticate_endpoint_publishes_resolved_on_success(monkeypatch) -> N
     async def _record(server: str) -> None:
         resolved.append(server)
 
-    async def _fake_flow(*, open_system_browser: bool = True) -> None:
+    async def _fake_flow(*, profile: object = None, open_system_browser: bool = True) -> None:
         return None
 
     monkeypatch.setattr(events_mod, "publish_mcp_auth_resolved", _record)

@@ -61,9 +61,10 @@ Precursor's **Settings** panel is organized into tabs:
 
 - **Model** — active provider + credentials, default chat model.
 - **GitHub** — token, and issue-context TTL behavior.
-- **MCP** — enable/disable [tool servers](/features/mcp) and toggle which of your
-  own conversation sections are exposed by the built-in MCP server (`mcp_expose`,
-  off by default).
+- **MCP** — enable/disable [tool servers](/features/mcp), set the Microsoft
+  tenant GUID the Agent 365 servers (`workiq-teams`, `workiq-user`) address, and
+  toggle which of your own conversation sections are exposed by the built-in MCP
+  server (`mcp_expose`, off by default).
 - **Agents** — turn [Agents mode](/features/agents) on/off; reports whether the
   native runtime resolved on your platform.
 - **Live / Speech-to-text** — enable the section, pick the fast model + reasoning

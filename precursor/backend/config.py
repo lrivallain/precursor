@@ -140,6 +140,14 @@ class Settings(BaseSettings):
     # manual click.
     workiq_auto_reauth_enabled: bool = True
 
+    # Microsoft Agent 365 tenant (services/mcp/agent365.py). The hosted
+    # ``workiq-teams`` / ``workiq-user`` MCP endpoints embed a tenant GUID in
+    # their URL — Entra rejects the ``common``/``organizations`` aliases there.
+    # Leave blank to let Precursor discover it from the ``tid`` claim of the
+    # WorkIQ preview token the user already signed in with; set it explicitly
+    # (or from Settings) to pin a specific tenant.
+    workiq_tenant_id: str = ""
+
     # Command runner (cmd-runner MCP) — runs bash/python/node either inside a
     # throwaway Docker "jail" (default) or, when the jail is disabled, directly
     # on the host with full local disk access. See services/cmd_runner.py.

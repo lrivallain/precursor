@@ -562,21 +562,26 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ enabled }),
       }),
-    reauthenticateWorkiq: (opts?: { usePopup?: boolean; silentOnly?: boolean; auto?: boolean }) => {
+    // Drive the browser sign-in for an OAuth-protected server: the hosted
+    // WorkIQ preview, or the Agent 365 workiq-teams / workiq-user endpoints.
+    reauthenticateWorkiq: (
+      name = "workiq",
+      opts?: { usePopup?: boolean; silentOnly?: boolean; auto?: boolean },
+    ) => {
       const params = new URLSearchParams();
       if (opts?.usePopup) params.set("use_popup", "true");
       if (opts?.silentOnly) params.set("silent_only", "true");
       if (opts?.auto) params.set("auto", "true");
       const qs = params.toString();
       return request<MCPServerStatus & { interaction_required?: boolean }>(
-        `/api/mcp/servers/workiq/reauthenticate${qs ? `?${qs}` : ""}`,
+        `/api/mcp/servers/${name}/reauthenticate${qs ? `?${qs}` : ""}`,
         { method: "POST" },
       );
     },
-    // Abort an in-flight interactive WorkIQ sign-in so the backend releases the
-    // fixed OAuth loopback port at once (see workiqSignIn.ts). Best-effort.
-    cancelReauthenticateWorkiq: () =>
-      request<{ cancelled: boolean }>(`/api/mcp/servers/workiq/reauthenticate/cancel`, {
+    // Abort an in-flight interactive sign-in so the backend releases that
+    // server's fixed OAuth loopback port at once (see workiqSignIn.ts).
+    cancelReauthenticateWorkiq: (name = "workiq") =>
+      request<{ cancelled: boolean }>(`/api/mcp/servers/${name}/reauthenticate/cancel`, {
         method: "POST",
       }),
     create: (data: MCPServerCreate) =>
