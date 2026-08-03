@@ -60,11 +60,15 @@ class _Agent365Spec:
     redirect_port: int
 
 
-# Fixed loopback ports, one per server, so two sign-ins never contend for the
-# same socket (12798 belongs to the WorkIQ preview flow).
+# Loopback ports registered for the Agent 365 OAuth client, one per server —
+# Entra validates a public client's redirect URI *including* the port, so these
+# aren't ours to choose: they mirror what the Copilot CLI registers
+# (``mcp_TeamsServer`` → 54112, ``mcp_MeServer`` → 54114; each server reserves a
+# http/https pair, hence the gap). Being distinct also keeps two sign-ins from
+# contending for the same socket.
 AGENT365_SERVERS: Final[tuple[_Agent365Spec, ...]] = (
-    _Agent365Spec("workiq-teams", "WorkIQ Teams", "mcp_TeamsServer", 12799),
-    _Agent365Spec("workiq-user", "WorkIQ User", "mcp_MeServer", 12800),
+    _Agent365Spec("workiq-teams", "WorkIQ Teams", "mcp_TeamsServer", 54112),
+    _Agent365Spec("workiq-user", "WorkIQ User", "mcp_MeServer", 54114),
 )
 
 _SPECS_BY_NAME: Final = {spec.name: spec for spec in AGENT365_SERVERS}

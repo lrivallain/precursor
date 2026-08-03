@@ -114,7 +114,9 @@ are already fresh.
 
 ::: warning One sign-in at a time per machine
 Each OAuth-protected server's callback listens on a **fixed** loopback port —
-`12798` for `workiq`, `12799` for `workiq-teams`, `12800` for `workiq-user` — so
+`12798` for `workiq`, `54112` for `workiq-teams`, `54114` for `workiq-user`
+(the Agent 365 ports aren't ours to pick: Entra validates the redirect URI
+port, so they mirror the ones registered for the Microsoft client) — so
 only one Precursor instance can
 run a given sign-in at a time. If you have several windows open (e.g. multiple worktrees)
 and start a sign-in while another already owns the port, Precursor fails fast
