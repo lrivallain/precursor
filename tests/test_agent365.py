@@ -79,7 +79,9 @@ def test_build_profile_keeps_each_server_isolated() -> None:
     assert teams.tokens_key == "workiq_teams_oauth_tokens"
     assert teams.issued_at_key == "workiq_teams_oauth_issued_at"
     assert user.tokens_key == "workiq_user_oauth_tokens"
-    assert teams.redirect_uri == f"http://localhost:{teams.redirect_port}/callback"
+    # Entra ignores the *port* of a public client's loopback redirect but matches
+    # host and path exactly — the Agent 365 client registered a bare 127.0.0.1 root.
+    assert teams.redirect_uri == f"http://127.0.0.1:{teams.redirect_port}/"
 
 
 def test_build_profile_shares_the_login_hint_with_the_workiq_family() -> None:

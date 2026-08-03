@@ -206,10 +206,17 @@ class WorkIQOAuthProfile:
     tokens_key: str
     issued_at_key: str
     login_hint_key: str
+    # Loopback host and path of the redirect URI. Entra ignores the *port* of a
+    # public client's loopback redirect, but the host and path must match the
+    # registration character for character — and the two WorkIQ client apps were
+    # registered differently (``localhost``/``/callback`` vs ``127.0.0.1``/``/``).
+    # The callback listener binds 127.0.0.1 and ignores the path either way.
+    redirect_host: str = "localhost"
+    redirect_path: str = WORKIQ_OAUTH_REDIRECT_PATH
 
     @property
     def redirect_uri(self) -> str:
-        return f"http://localhost:{self.redirect_port}{WORKIQ_OAUTH_REDIRECT_PATH}"
+        return f"http://{self.redirect_host}:{self.redirect_port}{self.redirect_path}"
 
 
 PREVIEW_PROFILE = WorkIQOAuthProfile(

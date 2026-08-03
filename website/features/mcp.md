@@ -113,9 +113,9 @@ showing the banner clears it at once instead of prompting for credentials that
 are already fresh.
 
 ::: warning One sign-in at a time per machine
-Each OAuth-protected server's callback uses a **fixed** loopback port matching
-its registered `redirect_uri` — `127.0.0.1:12798` for `workiq`, `12799` for
-`workiq-teams`, `12800` for `workiq-user` — so only one Precursor instance can
+Each OAuth-protected server's callback listens on a **fixed** loopback port —
+`12798` for `workiq`, `12799` for `workiq-teams`, `12800` for `workiq-user` — so
+only one Precursor instance can
 run a given sign-in at a time. If you have several windows open (e.g. multiple worktrees)
 and start a sign-in while another already owns the port, Precursor fails fast
 with a clear message ("port 12798 is already in use — another Precursor window

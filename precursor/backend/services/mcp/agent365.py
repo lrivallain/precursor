@@ -99,6 +99,11 @@ def build_profile(name: str, tenant_id: str) -> WorkIQOAuthProfile:
         # AADSTS16000 ("multiple user identities are available") instead of
         # redirecting back.
         login_hint_key=OAUTH_LOGIN_HINT_KEY,
+        # The Agent 365 client is registered with a bare ``http://127.0.0.1/``
+        # loopback (Entra ignores the port), unlike the WorkIQ preview client's
+        # ``http://localhost:<port>/callback``.
+        redirect_host="127.0.0.1",
+        redirect_path="/",
     )
 
 
