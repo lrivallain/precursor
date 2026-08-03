@@ -7,7 +7,11 @@ import json
 from typing import ClassVar
 
 import pytest
+from fastapi.testclient import TestClient
 
+from precursor.backend.db import SessionLocal
+from precursor.backend.main import create_app
+from precursor.backend.models import AppSetting
 from precursor.backend.services.mcp import agent365, workiq_preview
 
 TENANT = "72f988bf-86f1-41af-91ab-2d7cd011db47"
@@ -68,17 +72,23 @@ def test_server_url_embeds_the_tenant() -> None:
     assert agent365.server_url("workiq-user", TENANT).endswith("/servers/mcp_MeServer")
 
 
-def test_build_profile_keeps_each_server_isolated() -> None:
+def test_build_profile_shares_one_credential_across_the_pair() -> None:
     teams = agent365.build_profile("workiq-teams", TENANT)
     user = agent365.build_profile("workiq-user", TENANT)
 
     assert teams.client_id == user.client_id == agent365.AGENT365_CLIENT_ID
-    # Distinct loopback ports and AppSetting keys so two sign-ins never collide.
+    # Same Entra client, same resource, and a scope set spanning every
+    # ``McpServers.*`` permission — one token is accepted by both endpoints, so
+    # they share a credential and the user signs in once, not twice.
+    assert teams.tokens_key == user.tokens_key == agent365.AGENT365_TOKENS_KEY
+    assert teams.issued_at_key == user.issued_at_key == agent365.AGENT365_ISSUED_AT_KEY
+    assert teams.auth_family == user.auth_family
+    # ...but not with the WorkIQ preview, which is a different client *and* a
+    # different resource.
+    assert teams.tokens_key != workiq_preview.PREVIEW_PROFILE.tokens_key
+    # Distinct loopback ports so a stray concurrent sign-in can't fight for one.
     assert teams.redirect_port != user.redirect_port
     assert teams.redirect_port not in (12798,)  # reserved for the WorkIQ preview
-    assert teams.tokens_key == "workiq_teams_oauth_tokens"
-    assert teams.issued_at_key == "workiq_teams_oauth_issued_at"
-    assert user.tokens_key == "workiq_user_oauth_tokens"
     # Entra ignores the *port* of a public client's loopback redirect but matches
     # host and path exactly — the Agent 365 client registered a bare ``localhost``
     # root, so ``127.0.0.1`` or a ``/callback`` path is rejected (AADSTS50011).
@@ -100,7 +110,7 @@ async def test_discover_tenant_id_reads_the_tid_claim() -> None:
 
 
 async def test_discover_tenant_id_falls_back_to_an_agent365_token() -> None:
-    _FakeStorage.tokens_by_key["workiq_teams_oauth_tokens"] = _access_token({"tid": TENANT})
+    _FakeStorage.tokens_by_key[agent365.AGENT365_TOKENS_KEY] = _access_token({"tid": TENANT})
     assert await agent365.discover_tenant_id() == TENANT
 
 
@@ -208,3 +218,72 @@ async def test_configure_agent365_servers_points_at_the_tenant(
         ("workiq-teams", agent365.server_url("workiq-teams", TENANT)),
         ("workiq-user", agent365.server_url("workiq-user", TENANT)),
     ]
+
+
+def _init_db() -> None:
+    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
+    with TestClient(create_app()):
+        pass
+
+
+async def _settings_value(key: str) -> str | None:
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, key)
+    return None if row is None else row.value
+
+
+async def _seed(rows: dict[str, str]) -> None:
+    async with SessionLocal() as session:
+        for key in (
+            agent365.AGENT365_TOKENS_KEY,
+            agent365.AGENT365_ISSUED_AT_KEY,
+            *(key for pair in agent365._LEGACY_KEYS for key in pair),
+        ):
+            existing = await session.get(AppSetting, key)
+            if existing is not None:
+                await session.delete(existing)
+        await session.flush()
+        for key, value in rows.items():
+            session.add(AppSetting(key=key, value=value))
+        await session.commit()
+
+
+async def test_adopt_legacy_tokens_promotes_a_per_server_sign_in() -> None:
+    _init_db()
+    await _seed(
+        {
+            "workiq_teams_oauth_tokens": '{"access_token": "abc"}',
+            "workiq_teams_oauth_issued_at": '"2026-01-01T00:00:00+00:00"',
+        }
+    )
+
+    await agent365._adopt_legacy_tokens()
+
+    # The still-valid sign-in carries over instead of forcing another browser trip.
+    assert await _settings_value(agent365.AGENT365_TOKENS_KEY) == '{"access_token": "abc"}'
+    assert await _settings_value(agent365.AGENT365_ISSUED_AT_KEY) == '"2026-01-01T00:00:00+00:00"'
+    assert await _settings_value("workiq_teams_oauth_tokens") is None
+
+
+async def test_adopt_legacy_tokens_prunes_stale_rows_once_shared() -> None:
+    _init_db()
+    await _seed(
+        {
+            agent365.AGENT365_TOKENS_KEY: '{"access_token": "shared"}',
+            "workiq_user_oauth_tokens": '{"access_token": "old"}',
+        }
+    )
+
+    await agent365._adopt_legacy_tokens()
+
+    assert await _settings_value(agent365.AGENT365_TOKENS_KEY) == '{"access_token": "shared"}'
+    assert await _settings_value("workiq_user_oauth_tokens") is None
+
+
+async def test_adopt_legacy_tokens_is_a_noop_without_any_sign_in() -> None:
+    _init_db()
+    await _seed({})
+
+    await agent365._adopt_legacy_tokens()
+
+    assert await _settings_value(agent365.AGENT365_TOKENS_KEY) is None

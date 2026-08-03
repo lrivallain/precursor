@@ -23,8 +23,9 @@ in that case this simply surfaces the re-auth prompt promptly.
 
 The same treatment applies to every OAuth profile Precursor holds tokens for —
 the hosted WorkIQ preview plus the Agent 365 servers (``workiq-teams`` /
-``workiq-user``) — each tracked independently so one expired session doesn't mask
-another.
+``workiq-user``) — each *credential* tracked independently so one expired session
+doesn't mask another. The Agent 365 pair shares a token, so it's kept warm once
+per tick rather than once per server.
 """
 
 from __future__ import annotations
@@ -107,17 +108,26 @@ class WorkIQKeepAlive:
 
         The preview profile only counts while preview mode is on (stdio mode has
         no token to refresh); the Agent 365 profiles only once a tenant resolves.
+        Deduplicated by auth family so a credential shared between servers is
+        refreshed once per tick, not once per server.
         """
         from precursor.backend.services.mcp.agent365 import AGENT365_SERVERS, profile_for
 
         out: list[WorkIQOAuthProfile] = []
+        seen: set[str] = set()
+
+        def add(profile: WorkIQOAuthProfile) -> None:
+            if profile.auth_family not in seen:
+                seen.add(profile.auth_family)
+                out.append(profile)
+
         if await resolve_workiq_preview():
-            out.append(PREVIEW_PROFILE)
+            add(PREVIEW_PROFILE)
         try:
             for spec in AGENT365_SERVERS:
                 profile = await profile_for(spec.name)
                 if profile is not None:
-                    out.append(profile)
+                    add(profile)
         except Exception:
             # Tenant resolution touches the DB; a hiccup there must not stop the
             # preview session from being kept warm.

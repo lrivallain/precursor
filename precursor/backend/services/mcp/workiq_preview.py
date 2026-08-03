@@ -189,9 +189,13 @@ class WorkIQOAuthProfile:
     The sign-in machinery below (token storage, loopback callback, silent and
     interactive re-auth) is identical for every WorkIQ server; only the endpoint,
     the Entra client it authenticates as, the loopback port it redirects to and
-    the ``AppSetting`` keys it persists under differ. Each server gets its own
-    port so two sign-ins can run side by side, and its own storage keys so their
-    tokens never collide.
+    the ``AppSetting`` keys it persists under differ.
+
+    Profiles that authenticate as the same Entra client against the same resource
+    deliberately **share** ``tokens_key``: one token is valid for all of them, so
+    sharing spares the user a redundant sign-in per server (see
+    :mod:`~precursor.backend.services.mcp.agent365`). :attr:`auth_family` names
+    that group, and single-flight sign-in is serialized on it.
     """
 
     # MCP server name — the identity used on the event bus and in log lines.
@@ -219,6 +223,16 @@ class WorkIQOAuthProfile:
     @property
     def redirect_uri(self) -> str:
         return f"http://{self.redirect_host}:{self.redirect_port}{self.redirect_path}"
+
+    @property
+    def auth_family(self) -> str:
+        """Identity of the credential this profile shares with its siblings.
+
+        Profiles storing tokens under the same key are one sign-in: they must not
+        run competing browser flows, so locks and cancellations key on this
+        rather than on :attr:`server`.
+        """
+        return self.tokens_key
 
 
 PREVIEW_PROFILE = WorkIQOAuthProfile(
@@ -261,25 +275,26 @@ _CALLBACK_TIMEOUT_SECONDS = 180.0
 _SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS = 20.0
 
 # Serializes interactive sign-ins so two triggers can't open competing browser
-# flows fighting over a profile's single loopback redirect port. Per profile:
-# different servers use different ports, so their sign-ins don't contend.
+# flows fighting over a profile's single loopback redirect port. Keyed by
+# *auth family*: servers sharing one token (the Agent 365 pair) share a sign-in,
+# so the second never re-opens a browser for a credential the first just got.
 _reauth_locks: dict[str, asyncio.Lock] = {}
 
 # Set while an interactive sign-in is waiting on the loopback redirect; the SPA
 # signals it (via :func:`cancel_reauthenticate_workiq`) when its popup closes
 # without completing, so the callback stops waiting and frees the fixed port at
 # once instead of holding it for the full timeout. Absent when no interactive
-# sign-in is in flight for that profile. Only ever touched from the single event
-# loop.
+# sign-in is in flight for that auth family. Only ever touched from the single
+# event loop.
 _active_signin_cancels: dict[str, asyncio.Event] = {}
 
 
 def _lock_for(profile: WorkIQOAuthProfile) -> asyncio.Lock:
     """The single-flight sign-in lock for ``profile``, created on first use."""
-    lock = _reauth_locks.get(profile.server)
+    lock = _reauth_locks.get(profile.auth_family)
     if lock is None:
         lock = asyncio.Lock()
-        _reauth_locks[profile.server] = lock
+        _reauth_locks[profile.auth_family] = lock
     return lock
 
 
@@ -292,7 +307,7 @@ def cancel_reauthenticate_workiq(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) 
     down. Safe to call at any time; the loopback releases the fixed redirect port
     as soon as it unwinds.
     """
-    event = _active_signin_cancels.get(profile.server)
+    event = _active_signin_cancels.get(profile.auth_family)
     if event is None or event.is_set():
         return False
     event.set()
@@ -888,7 +903,7 @@ def _make_callback_handler(
             raise
         try:
             async with server:
-                cancel_event = _active_signin_cancels.get(profile.server)
+                cancel_event = _active_signin_cancels.get(profile.auth_family)
                 if cancel_event is None:
                     # No cancel channel (e.g. a unit test drives the handler
                     # directly) — preserve the plain timed wait.
@@ -1190,7 +1205,7 @@ async def reauthenticate_workiq(
                 logger.info("%s: auto re-auth skipped: %s", profile.server, exc)
                 return False
             await clear_workiq_oauth_tokens(profile)
-            _active_signin_cancels[profile.server] = asyncio.Event()
+            _active_signin_cancels[profile.auth_family] = asyncio.Event()
             try:
                 if (
                     get_settings().workiq_silent_reauth_enabled
@@ -1221,7 +1236,7 @@ async def reauthenticate_workiq(
                 logger.info("%s: auto re-auth could not complete: %s", profile.server, exc)
                 return False
             finally:
-                _active_signin_cancels.pop(profile.server, None)
+                _active_signin_cancels.pop(profile.auth_family, None)
 
         # Interactive: fail fast — before clearing tokens or driving the browser
         # flow — when another process already owns the fixed loopback port, so
@@ -1234,7 +1249,7 @@ async def reauthenticate_workiq(
 
         # Arm the cancel channel so the SPA can abort this sign-in (freeing the
         # loopback port immediately) when its popup is closed without finishing.
-        _active_signin_cancels[profile.server] = asyncio.Event()
+        _active_signin_cancels[profile.auth_family] = asyncio.Event()
         try:
             if (
                 get_settings().workiq_silent_reauth_enabled
@@ -1257,4 +1272,4 @@ async def reauthenticate_workiq(
             await _run_signin(provider, profile)
             return True
         finally:
-            _active_signin_cancels.pop(profile.server, None)
+            _active_signin_cancels.pop(profile.auth_family, None)

@@ -224,7 +224,7 @@ async def test_callback_handler_cancel_aborts_and_frees_port() -> None:
 
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    wp._active_signin_cancels["workiq"] = asyncio.Event()
+    wp._active_signin_cancels[wp.PREVIEW_PROFILE.auth_family] = asyncio.Event()
     try:
         # A long timeout: only the cancel should end the wait.
         handler = wp._make_callback_handler(timeout=30.0)

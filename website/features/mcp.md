@@ -137,8 +137,15 @@ Precursor ships both as built-ins:
 
 They are `streamable_http` and use **the same browser sign-in stack** as the
 WorkIQ preview above (silent-first, self-triggering re-auth, keep-alive ticker,
-inline banner) — each with its own loopback port and its own cached tokens, so
-signing in to Teams never disturbs your WorkIQ session.
+inline banner).
+
+**One sign-in covers both.** They authenticate as the same Entra client against
+the same resource, and the consented scope set spans every `McpServers.*`
+permission — a token minted for one is accepted verbatim by the other. So
+Precursor caches a single Agent 365 credential: sign in from either server and
+both come up. The WorkIQ preview is a *different* client **and** a different
+resource, so it keeps its own separate token — signing in to Teams never
+disturbs your WorkIQ session, and vice versa.
 
 **They need your Microsoft tenant.** The endpoint URL embeds a tenant **GUID**:
 
