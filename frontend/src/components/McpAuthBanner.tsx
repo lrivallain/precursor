@@ -2,6 +2,7 @@ import { useState } from "react";
 import { LogIn, ShieldAlert, X } from "lucide-react";
 import { mcpAuthStore, useMcpAuthNotice } from "../lib/mcpAuth";
 import { signInWorkiq } from "../lib/workiqSignIn";
+import { mcpServerLabel } from "../lib/mcpServers";
 
 /**
  * App-global banner shown when a background MCP connect needs an interactive
@@ -15,7 +16,8 @@ export function McpAuthBanner() {
 
   if (!notice) return null;
 
-  const label = notice.server === "workiq" ? "WorkIQ" : notice.server;
+  const label = mcpServerLabel(notice.server);
+  const server = notice.server;
 
   async function signIn(): Promise<void> {
     setBusy(true);
@@ -25,7 +27,7 @@ export function McpAuthBanner() {
       // browser sign-in completes; on success the stale notice is gone and the
       // next turn reuses the fresh session. Resolves null when the user abandons
       // the sign-in (closes the popup) — leave the banner up, no error.
-      const status = await signInWorkiq();
+      const status = await signInWorkiq(server);
       if (status) mcpAuthStore.clear();
     } catch (err) {
       setError((err as Error).message);

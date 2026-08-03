@@ -11,6 +11,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **MCP: Microsoft Agent 365 servers (`workiq-teams`, `workiq-user`)**: two new
+  built-in, OAuth-protected streamable-HTTP servers covering **Teams** (chats,
+  channels, messages, members, presence) and the **directory** (profiles,
+  managers, direct reports). They reuse the existing WorkIQ browser sign-in
+  stack — silent-first re-auth, keep-alive refresh, inline auth banner — each
+  with its own loopback port (`12799` / `12800`) and its own cached tokens, so a
+  Teams sign-in never clobbers the WorkIQ preview session. Their endpoint URL
+  embeds a Microsoft **tenant GUID**, resolved from **Settings → MCP →
+  Microsoft 365 tenant**, then `PRECURSOR_WORKIQ_TENANT_ID`, then — as a
+  convenience — the `tid` claim of a token from an existing WorkIQ sign-in, so
+  in practice there is usually nothing to configure. See
+  [MCP → Agent 365](https://lrivallain.github.io/precursor/features/mcp.html#agent-365-workiq-teams-and-workiq-user).
+
 - **Installable app (PWA)**: Precursor now ships a web app manifest, PNG icons
   (incl. a maskable variant), and a minimal service worker, so Chromium browsers
   offer to **install it as a standalone app** (own window, dock/taskbar icon).

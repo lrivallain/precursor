@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { autoReauthWorkiq } from "./workiqSignIn";
+import { OAUTH_SERVERS } from "./mcpServers";
 
 /**
  * App-global notice that an MCP server needs an interactive sign-in.
@@ -79,14 +80,15 @@ class McpAuthStore {
    * Keeps the banner hidden while the backend runs the invisible ``prompt=none``
    * iframe pass and, if needed, self-opens the OS browser to the visible prompt;
    * on success the notice is cleared so the banner never appears; otherwise it is
-   * revealed for a manual "Sign in". A no-op for non-WorkIQ servers or once an
-   * attempt has already run for the current episode.
+   * revealed for a manual "Sign in". A no-op for servers outside the WorkIQ
+   * family (which share this OAuth flow) or once an attempt has already run for
+   * the current episode.
    */
   private maybeAutoReauth(server: string): void {
-    if (server !== "workiq" || this.autoReauthTried) return;
+    if (!OAUTH_SERVERS.has(server) || this.autoReauthTried) return;
     this.autoReauthTried = true;
     this.silentInFlight = true;
-    void autoReauthWorkiq().then((authenticated) => {
+    void autoReauthWorkiq(server).then((authenticated) => {
       this.silentInFlight = false;
       if (authenticated) {
         this.clear();

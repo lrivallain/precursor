@@ -130,7 +130,7 @@ function openSigninPopup(): Window | null {
  * callback times out) and resolve ``null`` so the caller can quietly drop its
  * "Signing in…" state without surfacing an error.
  */
-export async function signInWorkiq(): Promise<MCPServerStatus | null> {
+export async function signInWorkiq(name = "workiq"): Promise<MCPServerStatus | null> {
   // In an installed standalone PWA a script-opened popup can't host the OAuth
   // flow, so skip it and have the backend open the OS default browser (as the
   // hands-free flow does). This call blocks until the loopback callback fires;
@@ -140,7 +140,7 @@ export async function signInWorkiq(): Promise<MCPServerStatus | null> {
   // so the caller keeps the banner without surfacing an error, matching the
   // popup path's abandonment semantics.
   if (isStandalonePWA()) {
-    const status = await api.mcp.reauthenticateWorkiq({ usePopup: false });
+    const status = await api.mcp.reauthenticateWorkiq(name, { usePopup: false });
     return status.interaction_required ? null : status;
   }
 
@@ -149,9 +149,9 @@ export async function signInWorkiq(): Promise<MCPServerStatus | null> {
   pendingNavigated = false;
   const usePopup = popup !== null;
   let settled = false;
-  const stopWatch = watchForAbandon(popup, () => settled);
+  const stopWatch = watchForAbandon(name, popup, () => settled);
   try {
-    return await api.mcp.reauthenticateWorkiq({ usePopup });
+    return await api.mcp.reauthenticateWorkiq(name, { usePopup });
   } catch (err) {
     // The user closed the popup and we cancelled the sign-in — a quiet
     // abandonment, not a failure to surface.
@@ -183,7 +183,11 @@ let abandoned = false;
  * own first and is never mistaken for an abandonment. A no-op when no popup was
  * opened. Returns a stopper to call once the flow resolves.
  */
-function watchForAbandon(popup: Window | null, isSettled: () => boolean): () => void {
+function watchForAbandon(
+  name: string,
+  popup: Window | null,
+  isSettled: () => boolean,
+): () => void {
   abandoned = false;
   if (!popup) return () => {};
   let graceTimer: number | undefined;
@@ -199,7 +203,7 @@ function watchForAbandon(popup: Window | null, isSettled: () => boolean): () => 
         // Best-effort: the backend releases the loopback port and the pending
         // sign-in request then rejects (409), which the catch treats as a quiet
         // abandonment.
-        void api.mcp.cancelReauthenticateWorkiq().catch(() => {});
+        void api.mcp.cancelReauthenticateWorkiq(name).catch(() => {});
       }, ABANDON_GRACE_MS);
     }
   }, ABANDON_POLL_MS);
@@ -238,12 +242,12 @@ function openSilentFrame(): HTMLIFrameElement {
  * once the call resolves. At most one attempt runs at a time (a second call is a
  * no-op that resolves ``false``).
  */
-export async function autoReauthWorkiq(): Promise<boolean> {
+export async function autoReauthWorkiq(name = "workiq"): Promise<boolean> {
   if (pendingFrame) return false;
   const frame = openSilentFrame();
   pendingFrame = frame;
   try {
-    const status = await api.mcp.reauthenticateWorkiq({ auto: true });
+    const status = await api.mcp.reauthenticateWorkiq(name, { auto: true });
     return status.interaction_required !== true;
   } catch {
     // Any failure (409 in-progress, transport, 502) just means "fall back to the

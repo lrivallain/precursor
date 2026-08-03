@@ -352,6 +352,10 @@ export interface Settings {
   mcp_http_enabled: boolean;
   mcp_http_url: string | null;
   mcp_http_loopback_ok: boolean;
+  // Tenant GUID used by the Agent 365 servers (workiq-teams / workiq-user).
+  workiq_tenant_id: string;
+  // True when the tenant above was read off a stored token rather than typed.
+  workiq_tenant_discovered: boolean;
   // System settings (effective: env default with DB override applied).
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
@@ -411,6 +415,7 @@ export interface SettingsUpdate {
   live_reasoning_effort?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
+  workiq_tenant_id?: string;
   llm_max_input_tokens?: number;
   llm_max_tool_result_tokens?: number;
   scheduled_run_timeout_seconds?: number;
@@ -563,6 +568,9 @@ export interface MCPServerStatus {
   // Workiq-only: hosted HTTP + OAuth (writes) when true, local stdio when false.
   // null for servers where preview mode does not apply.
   preview: boolean | null;
+  // True when this server signs in through Precursor's browser OAuth flow, so
+  // the UI offers the sign-in / re-authenticate action.
+  oauth: boolean;
   // Populated for user-defined entries only.
   id: number | null;
   header_keys: string[];

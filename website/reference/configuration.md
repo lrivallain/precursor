@@ -81,11 +81,12 @@ a `PRECURSOR_SKILLS_DIR` override.
 ## MCP tool servers
 
 Most [MCP](/features/mcp) built-ins are toggled **at runtime** (**Settings →
-MCP**). One env knob affects the `playwright` server:
+MCP**). A few env knobs affect the `playwright` and Agent 365 servers:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_PLAYWRIGHT_BROWSER` | `msedge` | Browser channel the `playwright` server drives (`--browser`): one of `msedge`, `chromium`, `chrome`, `firefox`, `webkit`. Defaults to **Microsoft Edge** so it can ride the corporate SSO/WAM broker for authenticated Entra scraping. Set `chromium` on machines without Edge. |
+| `PRECURSOR_WORKIQ_TENANT_ID` | *(empty)* | Microsoft tenant **GUID** the [Agent 365](/features/mcp#agent-365-workiq-teams-and-workiq-user) servers (`workiq-teams`, `workiq-user`) address. Overridden by **Settings → MCP → Microsoft 365 tenant**; when both are empty Precursor reads the tenant off an existing WorkIQ sign-in. Entra rejects `common` / `organizations` here — it must be a GUID. |
 | `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` | *(empty)* | Browser profile the `playwright` server uses (`--user-data-dir`). Empty means **reuse `@playwright/mcp`'s own shared, machine-wide profile** — so any Entra/SSO sign-in already onboarded there (incl. via other Playwright-MCP tools) carries over. Set a path to pin an isolated profile for Precursor instead. |
 
 ::: tip Runtime settings win
