@@ -638,17 +638,31 @@ def _make_redirect_handler(
     return _handler
 
 
-# Seconds the success page waits before trying to close itself.
+# Seconds the success page of a *manual* sign-in waits before trying to close
+# itself: the user clicked "Sign in" and is watching, so a brief beat of "you're
+# connected" (and a visible countdown) is worth more than an instant vanish.
 _CALLBACK_AUTOCLOSE_SECONDS = 2
+# Hands-free (silent / auto) sign-ins get no countdown — nobody is watching the
+# window, so lingering on it only delays the user getting their app back.
+_HANDS_FREE_AUTOCLOSE_SECONDS = 0
 
 
-def _render_callback_page(*, status: str, title: str, message: str, label: str = "WorkIQ") -> str:
+def _render_callback_page(
+    *,
+    status: str,
+    title: str,
+    message: str,
+    label: str = "WorkIQ",
+    autoclose_seconds: int = _CALLBACK_AUTOCLOSE_SECONDS,
+) -> str:
     """Build the styled HTML shown in the loopback OAuth callback tab.
 
     The page mirrors Precursor's look (theme tokens, Inter font, dark-mode via
     ``prefers-color-scheme``) so it feels like part of the app, and — on
-    success — counts down and closes the tab automatically so the user isn't
-    left staring at a stray browser tab once they're connected.
+    success — closes the tab automatically so the user isn't left staring at a
+    stray browser tab once they're connected. ``autoclose_seconds`` sets the
+    countdown before that close; ``0`` closes straight away, which is what the
+    hands-free flows use since there's no one there to read a countdown.
     """
     auto_close = status == "success"
     return f"""<!doctype html>
@@ -730,7 +744,19 @@ def _render_callback_page(*, status: str, title: str, message: str, label: str =
         if (el) el.textContent = pending ? "" : "You can close this tab.";
         return;
       }}
-      var remaining = {_CALLBACK_AUTOCLOSE_SECONDS};
+      function closeTab() {{
+        window.close();
+        // Reached when the browser refuses the close (a tab it didn't open by
+        // script): leave a clear instruction rather than a stale countdown.
+        if (el) el.textContent = "You can close this tab and return to Precursor.";
+      }}
+      var remaining = {autoclose_seconds};
+      if (remaining <= 0) {{
+        // Hands-free sign-in: no countdown to read, so close as soon as the
+        // document is done loading (some browsers ignore a close mid-parse).
+        setTimeout(closeTab, 0);
+        return;
+      }}
       function render() {{
         if (el) el.innerHTML = "Closing this tab in <b>" + remaining + "</b>s\u2026";
       }}
@@ -739,8 +765,7 @@ def _render_callback_page(*, status: str, title: str, message: str, label: str =
         remaining -= 1;
         if (remaining <= 0) {{
           clearInterval(timer);
-          window.close();
-          if (el) el.textContent = "You can close this tab and return to Precursor.";
+          closeTab();
           return;
         }}
         render();
@@ -776,6 +801,7 @@ def _make_callback_handler(
     *,
     silent: bool = False,
     profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
+    autoclose_seconds: int = _CALLBACK_AUTOCLOSE_SECONDS,
 ) -> Callable[[], Awaitable[tuple[str, str | None]]]:
     """Build the SDK ``callback_handler`` bound to a specific wait ``timeout``.
 
@@ -793,6 +819,9 @@ def _make_callback_handler(
     out means the user never completed the sign-in; we raise the dedicated
     :class:`WorkIQAuthTimeoutError` — also suppressed and handled benignly — rather
     than a loud, opaque ``RuntimeError``.
+
+    ``autoclose_seconds`` is how long the success page lingers before closing
+    itself — ``0`` for hands-free sign-ins, which nobody is watching.
     """
 
     async def _callback_handler() -> tuple[str, str | None]:
@@ -854,6 +883,7 @@ def _make_callback_handler(
                         title="You're connected",
                         message=f"{profile.label} sign-in is complete.",
                         label=profile.label,
+                        autoclose_seconds=autoclose_seconds,
                     )
                 else:
                     body = _render_callback_page(
@@ -961,6 +991,7 @@ def build_oauth_provider(
     prompt: str | None = None,
     callback_timeout: float | None = None,
     publish_url: bool = True,
+    hands_free: bool = False,
 ) -> OAuthClientProvider:
     """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
 
@@ -978,6 +1009,10 @@ def build_oauth_provider(
     for the silent pass) is forwarded onto the authorization request.
     ``callback_timeout`` caps how long the loopback waits for the redirect —
     short for the hands-free silent auto re-auth, long for interactive.
+    ``hands_free`` marks a sign-in the user never asked for by hand (the silent
+    pass and the auto flow's self-opened prompt): its success page closes at
+    once instead of showing the manual flow's short "closing in…" countdown,
+    since nobody is watching it.
     """
     client_metadata = OAuthClientMetadata(
         redirect_uris=[profile.redirect_uri],
@@ -1002,6 +1037,9 @@ def build_oauth_provider(
             callback_timeout if callback_timeout is not None else _CALLBACK_TIMEOUT_SECONDS,
             silent=prompt == "none",
             profile=profile,
+            autoclose_seconds=(
+                _HANDS_FREE_AUTOCLOSE_SECONDS if hands_free else _CALLBACK_AUTOCLOSE_SECONDS
+            ),
         ),
     )
 
@@ -1080,6 +1118,7 @@ async def _try_silent_reauth(
     login_hint: str | None,
     open_system_browser: bool,
     callback_timeout: float | None = None,
+    hands_free: bool = False,
 ) -> bool:
     """Attempt a no-UI (``prompt=none``) authorization.
 
@@ -1088,7 +1127,8 @@ async def _try_silent_reauth(
     interaction is required so the caller should fall back to the visible prompt.
     Any other failure propagates. ``callback_timeout`` bounds the loopback wait —
     the hands-free auto re-auth passes a short one so a frame that can't complete
-    silently gives up quickly.
+    silently gives up quickly. ``hands_free`` marks a pass nobody triggered by
+    hand, so its callback window closes instantly rather than counting down.
     """
     provider = build_oauth_provider(
         profile=profile,
@@ -1097,6 +1137,7 @@ async def _try_silent_reauth(
         login_hint=login_hint,
         prompt="none",
         callback_timeout=callback_timeout,
+        hands_free=hands_free,
     )
     try:
         await _run_signin(provider, profile)
@@ -1188,6 +1229,7 @@ async def reauthenticate_workiq(
                     login_hint=login_hint,
                     open_system_browser=False,
                     callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
+                    hands_free=True,
                 )
             except Exception as exc:
                 logger.info("%s: silent auto re-auth could not complete: %s", profile.server, exc)
@@ -1215,6 +1257,7 @@ async def reauthenticate_workiq(
                         login_hint=login_hint,
                         open_system_browser=False,
                         callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
+                        hands_free=True,
                     )
                 ):
                     return True
@@ -1229,6 +1272,7 @@ async def reauthenticate_workiq(
                     login_hint=login_hint,
                     prompt=_interactive_prompt(login_hint),
                     publish_url=False,
+                    hands_free=True,
                 )
                 await _run_signin(provider, profile)
                 return True

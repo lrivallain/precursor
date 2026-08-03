@@ -733,7 +733,7 @@ async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
 
     # Silent success → authenticated, no OS browser, no interactive fallback.
     async def _silent_ok(
-        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None, hands_free=False
     ) -> bool:
         events.append(f"silent(browser={open_system_browser},timeout={callback_timeout})")
         return True
@@ -748,7 +748,7 @@ async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
 
     # Silent needs interaction → False, and the interactive prompt never runs.
     async def _silent_needs_ui(
-        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None, hands_free=False
     ) -> bool:
         events.append("silent")
         return False
@@ -760,7 +760,7 @@ async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
 
     # Any failure (timeout / framing blocked) is swallowed as "needs a human".
     async def _silent_boom(
-        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None, hands_free=False
     ) -> bool:
         events.append("silent")
         raise RuntimeError("Timed out waiting for the WorkIQ sign-in to complete.")
@@ -802,9 +802,12 @@ async def test_reauthenticate_auto_self_triggers_interactive(monkeypatch) -> Non
 
     # Silent succeeds → authenticated with zero interaction, no OS browser.
     async def _silent_ok(
-        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None, hands_free=False
     ) -> bool:
-        events.append(f"silent(browser={open_system_browser},timeout={callback_timeout})")
+        events.append(
+            f"silent(browser={open_system_browser},timeout={callback_timeout},"
+            f"hands_free={hands_free})"
+        )
         return True
 
     monkeypatch.setattr(wp, "_try_silent_reauth", _silent_ok)
@@ -814,14 +817,15 @@ async def test_reauthenticate_auto_self_triggers_interactive(monkeypatch) -> Non
     assert events == [
         "port",
         "clear",
-        f"silent(browser=False,timeout={wp._SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS})",
+        f"silent(browser=False,timeout={wp._SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS},"
+        "hands_free=True)",
     ]
     assert provider_kwargs == []  # no interactive fallback built
 
     # Silent needs a human → self-trigger the OS browser (open_system_browser on,
     # publish_url off so the still-attached silent frame doesn't race the loopback).
     async def _silent_needs_ui(
-        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None, hands_free=False
     ) -> bool:
         events.append("silent")
         return False
@@ -835,6 +839,8 @@ async def test_reauthenticate_auto_self_triggers_interactive(monkeypatch) -> Non
     assert provider_kwargs[0]["open_system_browser"] is True
     assert provider_kwargs[0]["publish_url"] is False
     assert provider_kwargs[0]["interactive"] is True
+    # Nobody clicked for this prompt, so its callback window closes at once.
+    assert provider_kwargs[0]["hands_free"] is True
 
 
 async def test_reauthenticate_auto_degrades_to_false(monkeypatch) -> None:
@@ -862,7 +868,7 @@ async def test_reauthenticate_auto_degrades_to_false(monkeypatch) -> None:
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
 
     async def _silent_needs_ui(
-        *, profile=None, login_hint, open_system_browser, callback_timeout=None
+        *, profile=None, login_hint, open_system_browser, callback_timeout=None, hands_free=False
     ) -> bool:
         return False
 
@@ -891,6 +897,58 @@ def test_callback_page_pending_status_is_neutral() -> None:
         # Preview off by default → the endpoint refuses rather than opening a flow.
         resp = client.post("/api/mcp/servers/workiq/reauthenticate")
         assert resp.status_code == 400
+
+
+def test_callback_page_manual_success_counts_down() -> None:
+    """A manual sign-in keeps its brief, visible "closing in…" beat."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    html = wp._render_callback_page(status="success", title="You're connected", message="done")
+    assert "var autoClose = true" in html
+    assert f"var remaining = {wp._CALLBACK_AUTOCLOSE_SECONDS};" in html
+    assert "Closing this tab in" in html
+
+
+def test_callback_page_hands_free_success_closes_immediately() -> None:
+    """A hands-free (silent / auto) sign-in closes its window with no countdown."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    html = wp._render_callback_page(
+        status="success",
+        title="You're connected",
+        message="done",
+        autoclose_seconds=wp._HANDS_FREE_AUTOCLOSE_SECONDS,
+    )
+    assert "var remaining = 0;" in html
+    assert "setTimeout(closeTab, 0)" in html
+
+
+async def test_hands_free_callback_serves_immediate_close_page() -> None:
+    """The hands-free callback handler serves a page with a zero-second close."""
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    handler = wp._make_callback_handler(
+        timeout=5.0, autoclose_seconds=wp._HANDS_FREE_AUTOCLOSE_SECONDS
+    )
+    waiter = asyncio.ensure_future(handler())
+    await asyncio.sleep(0.1)  # let the loopback server bind
+
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT)
+        writer.write(b"GET /?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        await writer.drain()
+        page = (await reader.read()).decode("utf-8")
+        writer.close()
+
+        await asyncio.wait_for(waiter, timeout=5.0)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+
+    assert "var remaining = 0;" in page
+    assert "setTimeout(closeTab, 0)" in page
 
 
 def test_reauthenticate_runs_flow_and_reports_status(monkeypatch) -> None:

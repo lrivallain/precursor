@@ -99,7 +99,9 @@ self-triggering re-auth** — it prefers automation over interrupting you:
 2. When that silent pass genuinely needs interaction (or iframe framing /
    third-party cookies block it), Precursor **self-opens your OS browser** to the
    visible sign-in — no banner click, no second prompt. You complete a single
-   sign-in and the tab reports it's done.
+   sign-in and the tab reports it's done, then closes itself right away (an
+   automatic sign-in has no countdown to read; only the manual **Sign in** popup
+   pauses for a brief "you're connected" beat first).
 
 Only when even the self-triggered sign-in can't run — auto re-auth is off, the
 loopback port is busy, or the flow is declined / times out — does the
