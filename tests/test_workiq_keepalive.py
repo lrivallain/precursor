@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from precursor.backend.services.mcp import agent365
 from precursor.backend.services.mcp import workiq_keepalive as ka
 
 
@@ -18,6 +19,9 @@ class _FakeStorage:
     """Stand-in for ``DbTokenStorage`` returning a fixed token (or none)."""
 
     token: object | None = object()
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        pass
 
     async def get_tokens(self) -> object | None:
         return type(self).token
@@ -38,10 +42,10 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     async def _resolve_preview() -> bool:
         return state["preview"]
 
-    async def _stored_expiry(_token: object) -> datetime | None:
+    async def _stored_expiry(_token: object, _profile: object = None) -> datetime | None:
         return state["expiry"]
 
-    async def _resolve_bearer() -> tuple[str, datetime | None] | None:
+    async def _resolve_bearer(_profile: object = None) -> tuple[str, datetime | None] | None:
         state["refresh_calls"] += 1
         return state["refresh_result"]
 
@@ -53,6 +57,9 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     monkeypatch.setattr(ka, "_stored_token_expiry", _stored_expiry)
     monkeypatch.setattr(ka, "resolve_workiq_bearer_token", _resolve_bearer)
     monkeypatch.setattr(ka, "publish_mcp_auth_required", _publish)
+    # The Agent 365 profiles resolve their tenant from the DB; keep this unit
+    # test on the preview profile alone.
+    monkeypatch.setattr(agent365, "AGENT365_SERVERS", ())
     return state
 
 

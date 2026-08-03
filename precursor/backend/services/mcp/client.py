@@ -243,6 +243,13 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
     # WorkIQ MCP — local stdio launcher. The npm package handles its own
     # interactive auth on first run.
     _BuiltinSpec("workiq", "stdio", command=_WORKIQ_STDIO_COMMAND, args=_WORKIQ_STDIO_ARGS),
+    # Microsoft Agent 365 MCP — hosted, per-tenant streamable-HTTP endpoints
+    # behind Entra OAuth. The URL embeds a tenant GUID that isn't known until the
+    # setting is read (or discovered from a WorkIQ token), so both entries start
+    # url-less and are pointed at the tenant by ``configure_agent365`` on startup
+    # and whenever the tenant setting changes.
+    _BuiltinSpec("workiq-teams", "streamable_http"),
+    _BuiltinSpec("workiq-user", "streamable_http"),
     # Playwright MCP — Microsoft's official ``@playwright/mcp`` via npx (like
     # workiq). Drives a real browser (Microsoft Edge by default, for corporate
     # SSO) with a persistent profile so an interactive Entra/SSO sign-in survives
@@ -462,6 +469,26 @@ class MCPClientManager:
         entry.error = None
         entry.tools = []
 
+    def configure_agent365(
+        self, name: str, *, url: str | None, auth_provider: httpx.Auth | None
+    ) -> None:
+        """Point a built-in Agent 365 entry at the resolved per-tenant endpoint.
+
+        ``url=None`` means no tenant could be resolved, so the entry is left
+        addressable-but-broken with a clear error instead of silently pointing at
+        an invalid URL (Entra 400s on a non-GUID tenant segment).
+        """
+        from precursor.backend.services.mcp.agent365 import TENANT_REQUIRED_MESSAGE
+
+        entry = self._servers.get(name)
+        if entry is None:
+            return
+        entry.url = url
+        entry.auth_provider = auth_provider
+        entry.state = "disconnected"
+        entry.error = None if url else TENANT_REQUIRED_MESSAGE
+        entry.tools = []
+
     async def retire_worker(self, name: str) -> None:
         """Close + drop any warm worker for ``name`` (e.g. after reconfiguring)."""
         async with self._pool_lock:
@@ -501,7 +528,16 @@ class MCPClientManager:
         try:
             if entry.transport == "streamable_http":
                 if not entry.url:
-                    raise RuntimeError(f"MCP server '{name}' has no URL configured")
+                    from precursor.backend.services.mcp.agent365 import (
+                        TENANT_REQUIRED_MESSAGE,
+                        is_agent365_server,
+                    )
+
+                    raise RuntimeError(
+                        TENANT_REQUIRED_MESSAGE
+                        if is_agent365_server(name)
+                        else f"MCP server '{name}' has no URL configured"
+                    )
                 headers = entry.headers_provider(github_token) if entry.headers_provider else None
                 if entry.headers_provider and headers is None and entry.auth_provider is None:
                     raise RuntimeError(
@@ -664,6 +700,8 @@ class MCPClientManager:
         return entry
 
     def status_dict(self, entry: MCPServerEntry, *, enabled: bool) -> dict[str, Any]:
+        from precursor.backend.services.mcp.agent365 import is_agent365_server
+
         command_str: str | None = None
         if entry.transport == "stdio" and entry.command:
             command_str = " ".join([entry.command, *entry.args])
@@ -684,6 +722,11 @@ class MCPClientManager:
             # Preview toggle is workiq-specific; None means "not applicable" so
             # the UI only renders the extra checkbox for that server.
             "preview": self._workiq_preview if entry.name == "workiq" else None,
+            # Whether this server authenticates through Precursor's browser
+            # OAuth flow, so the UI knows to offer the sign-in / re-authenticate
+            # action (hosted WorkIQ preview + the Agent 365 servers).
+            "oauth": (entry.name == "workiq" and self._workiq_preview)
+            or is_agent365_server(entry.name),
         }
 
 

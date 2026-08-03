@@ -39,6 +39,7 @@ from precursor.backend.services.app_settings import (
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
     resolve_system_settings,
+    resolve_workiq_tenant_id,
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
@@ -111,11 +112,20 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
 
 
 async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
+    from precursor.backend.services.mcp.agent365 import discover_tenant_id
+
     cfg = get_settings()
+    # Surface the *effective* tenant so the UI can show what the Agent 365
+    # servers actually use — including one auto-discovered from a signed-in
+    # token, which the user never typed anywhere.
+    configured = (await resolve_workiq_tenant_id(session)).strip()
+    tenant = configured or await discover_tenant_id()
     return {
         "mcp_http_enabled": await resolve_mcp_http_enabled(session),
         "mcp_http_url": http_endpoint_url(),
         "mcp_http_loopback_ok": is_loopback_host(cfg.host),
+        "workiq_tenant_id": tenant,
+        "workiq_tenant_discovered": bool(tenant) and not configured,
     }
 
 
@@ -235,6 +245,16 @@ async def update_settings(
             await get_backup_ticker().nudge()
         except Exception:
             logger.exception("Backup nudge failed after settings update")
+
+    # Re-point the Agent 365 servers when the tenant changes, so a fresh tenant
+    # takes effect without a restart (and clearing it disables them cleanly).
+    if "workiq_tenant_id" in data:
+        from precursor.backend.services.mcp.agent365 import configure_agent365_servers
+
+        try:
+            await configure_agent365_servers()
+        except Exception:
+            logger.exception("Agent 365 reconfigure failed after settings update")
 
     refreshed = await _load_all(session)
     system = await resolve_system_settings(session)

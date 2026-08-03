@@ -1,4 +1,4 @@
-"""Background ticker that keeps the WorkIQ preview OAuth session alive.
+"""Background ticker that keeps the WorkIQ-family OAuth sessions alive.
 
 WorkIQ preview mode holds an OAuth access token (persisted in ``AppSetting`` by
 :mod:`precursor.backend.services.mcp.workiq_preview`). Left idle, the access
@@ -20,6 +20,11 @@ app-global ``McpAuthBanner`` offers the re-authenticate action — the same UX a
 live turn gets — without spamming the banner on every tick. Note a Conditional
 Access "sign-in frequency" policy is an absolute window no keep-alive can defeat;
 in that case this simply surfaces the re-auth prompt promptly.
+
+The same treatment applies to every OAuth profile Precursor holds tokens for —
+the hosted WorkIQ preview plus the Agent 365 servers (``workiq-teams`` /
+``workiq-user``) — each tracked independently so one expired session doesn't mask
+another.
 """
 
 from __future__ import annotations
@@ -32,7 +37,9 @@ from datetime import UTC, datetime
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.services.events import publish_mcp_auth_required
 from precursor.backend.services.mcp.workiq_preview import (
+    PREVIEW_PROFILE,
     DbTokenStorage,
+    WorkIQOAuthProfile,
     _stored_token_expiry,
     resolve_workiq_bearer_token,
     resolve_workiq_preview,
@@ -40,9 +47,9 @@ from precursor.backend.services.mcp.workiq_preview import (
 
 logger = logging.getLogger(__name__)
 
-_AUTH_REQUIRED_MESSAGE = (
-    "WorkIQ sign-in expired. Re-authenticate to keep the preview session active."
-)
+
+def _auth_required_message(profile: WorkIQOAuthProfile) -> str:
+    return f"{profile.label} sign-in expired. Re-authenticate to keep the session active."
 
 
 class WorkIQKeepAlive:
@@ -50,9 +57,9 @@ class WorkIQKeepAlive:
         self._settings = settings or get_settings()
         self._task: asyncio.Task[None] | None = None
         self._running = False
-        # Edge-trigger the auth-required banner: publish once when a silent
-        # refresh starts failing, then stay quiet until it succeeds again.
-        self._auth_required_notified = False
+        # Edge-trigger the auth-required banner *per profile*: publish once when
+        # a silent refresh starts failing, then stay quiet until it succeeds.
+        self._auth_required_notified: set[str] = set()
 
     async def start(self) -> None:
         if self._running or not self._settings.workiq_keepalive_enabled:
@@ -60,7 +67,7 @@ class WorkIQKeepAlive:
                 logger.info("WorkIQ keep-alive disabled via settings.")
             return
         self._running = True
-        self._auth_required_notified = False
+        self._auth_required_notified.clear()
         self._task = asyncio.create_task(self._ticker(), name="workiq-keepalive")
         logger.info(
             "WorkIQ keep-alive started (poll=%ss, margin=%ss).",
@@ -89,42 +96,71 @@ class WorkIQKeepAlive:
                 break
 
     async def _tick_once(self) -> None:
-        # Only keep a preview session alive: stdio (local) mode has no OAuth
-        # token to refresh.
-        if not await resolve_workiq_preview():
-            return
+        for profile in await self._profiles():
+            try:
+                await self._tick_profile(profile)
+            except Exception:
+                logger.exception("WorkIQ keep-alive failed for %s", profile.server)
+
+    async def _profiles(self) -> list[WorkIQOAuthProfile]:
+        """Every OAuth profile worth keeping warm on this tick.
+
+        The preview profile only counts while preview mode is on (stdio mode has
+        no token to refresh); the Agent 365 profiles only once a tenant resolves.
+        """
+        from precursor.backend.services.mcp.agent365 import AGENT365_SERVERS, profile_for
+
+        out: list[WorkIQOAuthProfile] = []
+        if await resolve_workiq_preview():
+            out.append(PREVIEW_PROFILE)
+        try:
+            for spec in AGENT365_SERVERS:
+                profile = await profile_for(spec.name)
+                if profile is not None:
+                    out.append(profile)
+        except Exception:
+            # Tenant resolution touches the DB; a hiccup there must not stop the
+            # preview session from being kept warm.
+            logger.debug("Agent 365 tenant resolution failed during keep-alive", exc_info=True)
+        return out
+
+    async def _tick_profile(self, profile: WorkIQOAuthProfile) -> None:
         # No stored token → the user hasn't signed in. Do nothing (never start
         # an interactive flow from a background tick).
-        tokens = await DbTokenStorage().get_tokens()
+        tokens = await DbTokenStorage(profile).get_tokens()
         if tokens is None:
             return
 
-        expiry = await _stored_token_expiry(tokens)
+        expiry = await _stored_token_expiry(tokens, profile)
         if expiry is not None and not self._due_for_refresh(expiry):
             return
 
         # Near expiry (or expiry unknown for a legacy token) → silently refresh.
-        result = await resolve_workiq_bearer_token()
+        result = await resolve_workiq_bearer_token(profile)
         if result is None:
-            await self._on_refresh_failed()
+            await self._on_refresh_failed(profile)
         else:
-            await self._on_refresh_ok(result[1])
+            await self._on_refresh_ok(profile, result[1])
 
     def _due_for_refresh(self, expiry: datetime) -> bool:
         margin = self._settings.workiq_keepalive_refresh_margin_seconds
         return (expiry - datetime.now(UTC)).total_seconds() <= margin
 
-    async def _on_refresh_failed(self) -> None:
-        if self._auth_required_notified:
+    async def _on_refresh_failed(self, profile: WorkIQOAuthProfile) -> None:
+        if profile.server in self._auth_required_notified:
             return
-        self._auth_required_notified = True
-        logger.info("WorkIQ keep-alive: silent refresh needs interactive sign-in.")
-        await publish_mcp_auth_required("workiq", _AUTH_REQUIRED_MESSAGE)
+        self._auth_required_notified.add(profile.server)
+        logger.info(
+            "WorkIQ keep-alive: silent refresh for %s needs interactive sign-in.",
+            profile.server,
+        )
+        await publish_mcp_auth_required(profile.server, _auth_required_message(profile))
 
-    async def _on_refresh_ok(self, expiry: datetime | None) -> None:
-        self._auth_required_notified = False
+    async def _on_refresh_ok(self, profile: WorkIQOAuthProfile, expiry: datetime | None) -> None:
+        self._auth_required_notified.discard(profile.server)
         logger.debug(
-            "WorkIQ keep-alive refreshed token (expires=%s).",
+            "WorkIQ keep-alive refreshed %s token (expires=%s).",
+            profile.server,
             expiry.isoformat() if expiry else "unknown",
         )
 
