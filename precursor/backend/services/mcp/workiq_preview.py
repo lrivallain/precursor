@@ -11,6 +11,12 @@ That endpoint is OAuth-protected. We drive the MCP SDK's
 client id and a loopback redirect on port 12798 (matching the Copilot CLI
 plugin's ``redirectPort``). Tokens are persisted in ``AppSetting`` so the
 interactive browser login only happens once per machine.
+
+The same machinery serves every OAuth-protected WorkIQ endpoint — the hosted
+preview above and the Agent 365 servers in
+:mod:`precursor.backend.services.mcp.agent365` — so it is parameterized by a
+:class:`WorkIQOAuthProfile` (endpoint, client id, loopback port, storage keys).
+Everything defaults to :data:`PREVIEW_PROFILE`.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import logging
 import socket
 import webbrowser
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
@@ -174,6 +181,49 @@ OAUTH_ISSUED_AT_KEY = "workiq_oauth_issued_at"
 # ``clear_workiq_oauth_tokens`` (which only forgets the tokens themselves).
 OAUTH_LOGIN_HINT_KEY = "workiq_oauth_login_hint"
 
+
+@dataclass(frozen=True, slots=True)
+class WorkIQOAuthProfile:
+    """Everything that distinguishes one OAuth-protected WorkIQ endpoint.
+
+    The sign-in machinery below (token storage, loopback callback, silent and
+    interactive re-auth) is identical for every WorkIQ server; only the endpoint,
+    the Entra client it authenticates as, the loopback port it redirects to and
+    the ``AppSetting`` keys it persists under differ. Each server gets its own
+    port so two sign-ins can run side by side, and its own storage keys so their
+    tokens never collide.
+    """
+
+    # MCP server name — the identity used on the event bus and in log lines.
+    server: str
+    # Human-facing name shown in the sign-in page and error messages.
+    label: str
+    # The MCP endpoint whose 401 drives the OAuth discovery.
+    url: str
+    client_id: str
+    redirect_port: int
+    client_name: str
+    tokens_key: str
+    issued_at_key: str
+    login_hint_key: str
+
+    @property
+    def redirect_uri(self) -> str:
+        return f"http://localhost:{self.redirect_port}{WORKIQ_OAUTH_REDIRECT_PATH}"
+
+
+PREVIEW_PROFILE = WorkIQOAuthProfile(
+    server="workiq",
+    label="WorkIQ",
+    url=WORKIQ_PREVIEW_URL,
+    client_id=WORKIQ_OAUTH_CLIENT_ID,
+    redirect_port=WORKIQ_OAUTH_REDIRECT_PORT,
+    client_name="Precursor (WorkIQ preview)",
+    tokens_key=OAUTH_TOKENS_KEY,
+    issued_at_key=OAUTH_ISSUED_AT_KEY,
+    login_hint_key=OAUTH_LOGIN_HINT_KEY,
+)
+
 # Entra ``prompt=none`` error codes that mean "can't sign in silently, ask the
 # user". Anything else from the callback is a genuine failure.
 _INTERACTION_REQUIRED_ERRORS = frozenset(
@@ -202,18 +252,29 @@ _CALLBACK_TIMEOUT_SECONDS = 180.0
 _SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS = 20.0
 
 # Serializes interactive sign-ins so two triggers can't open competing browser
-# flows fighting over the single loopback redirect port.
-_reauth_lock = asyncio.Lock()
+# flows fighting over a profile's single loopback redirect port. Per profile:
+# different servers use different ports, so their sign-ins don't contend.
+_reauth_locks: dict[str, asyncio.Lock] = {}
 
 # Set while an interactive sign-in is waiting on the loopback redirect; the SPA
 # signals it (via :func:`cancel_reauthenticate_workiq`) when its popup closes
 # without completing, so the callback stops waiting and frees the fixed port at
-# once instead of holding it for the full timeout. ``None`` when no interactive
-# sign-in is in flight. Only ever touched from the single event loop.
-_active_signin_cancel: asyncio.Event | None = None
+# once instead of holding it for the full timeout. Absent when no interactive
+# sign-in is in flight for that profile. Only ever touched from the single event
+# loop.
+_active_signin_cancels: dict[str, asyncio.Event] = {}
 
 
-def cancel_reauthenticate_workiq() -> bool:
+def _lock_for(profile: WorkIQOAuthProfile) -> asyncio.Lock:
+    """The single-flight sign-in lock for ``profile``, created on first use."""
+    lock = _reauth_locks.get(profile.server)
+    if lock is None:
+        lock = asyncio.Lock()
+        _reauth_locks[profile.server] = lock
+    return lock
+
+
+def cancel_reauthenticate_workiq(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> bool:
     """Ask an in-flight interactive WorkIQ sign-in to abort, freeing the port.
 
     Returns ``True`` when a waiting sign-in was signalled, ``False`` when none is
@@ -222,23 +283,26 @@ def cancel_reauthenticate_workiq() -> bool:
     down. Safe to call at any time; the loopback releases the fixed redirect port
     as soon as it unwinds.
     """
-    event = _active_signin_cancel
+    event = _active_signin_cancels.get(profile.server)
     if event is None or event.is_set():
         return False
     event.set()
     return True
 
 
-# Shown when the fixed loopback redirect port is already owned by another
-# process (typically a second Precursor window mid sign-in on the same machine).
-_PORT_BUSY_MESSAGE = (
-    f"The WorkIQ sign-in port {WORKIQ_OAUTH_REDIRECT_PORT} is already in use — "
-    "another Precursor window or app is signing in. Finish or close that sign-in, "
-    "then try again."
-)
+def _port_busy_message(profile: WorkIQOAuthProfile) -> str:
+    """Message for a loopback port already owned by another process.
+
+    Typically a second Precursor window mid sign-in on the same machine.
+    """
+    return (
+        f"The {profile.label} sign-in port {profile.redirect_port} is already in use — "
+        "another Precursor window or app is signing in. Finish or close that sign-in, "
+        "then try again."
+    )
 
 
-def _assert_loopback_port_available() -> None:
+def _assert_loopback_port_available(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> None:
     """Fail fast when another process already owns the OAuth loopback port.
 
     The redirect port is fixed (it must match the registered ``redirect_uri``),
@@ -254,10 +318,10 @@ def _assert_loopback_port_available() -> None:
         # matches the real bind: it still raises EADDRINUSE against a live
         # listener, but not against a socket merely lingering in TIME_WAIT.
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        probe.bind(("127.0.0.1", WORKIQ_OAUTH_REDIRECT_PORT))
+        probe.bind(("127.0.0.1", profile.redirect_port))
     except OSError as exc:
         if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.EACCES):
-            raise WorkIQAuthPortBusyError(_PORT_BUSY_MESSAGE) from exc
+            raise WorkIQAuthPortBusyError(_port_busy_message(profile)) from exc
         raise
     finally:
         probe.close()
@@ -284,24 +348,27 @@ async def set_workiq_preview(enabled: bool) -> None:
 class DbTokenStorage(TokenStorage):
     """OAuth token + client-info storage backed by the ``AppSetting`` table.
 
-    ``client_info`` is fixed: we always hand the SDK the WorkIQ-published public
-    client id so it skips dynamic registration (see ``OAuthClientProvider`` step
-    4). Only the issued tokens are persisted, so a successful login survives app
-    restarts.
+    ``client_info`` is fixed: we always hand the SDK the profile's pre-registered
+    public client id so it skips dynamic registration (see ``OAuthClientProvider``
+    step 4) — which Entra doesn't offer anyway. Only the issued tokens are
+    persisted, under the profile's own keys, so a successful login survives app
+    restarts without one server's tokens overwriting another's.
     """
 
-    _client_info = OAuthClientInformationFull(
-        client_id=WORKIQ_OAUTH_CLIENT_ID,
-        redirect_uris=[WORKIQ_OAUTH_REDIRECT_URI],
-        token_endpoint_auth_method="none",
-        grant_types=["authorization_code", "refresh_token"],
-        response_types=["code"],
-        client_name="Precursor (WorkIQ preview)",
-    )
+    def __init__(self, profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> None:
+        self._profile = profile
+        self._client_info = OAuthClientInformationFull(
+            client_id=profile.client_id,
+            redirect_uris=[profile.redirect_uri],
+            token_endpoint_auth_method="none",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            client_name=profile.client_name,
+        )
 
     async def get_tokens(self) -> OAuthToken | None:
         async with SessionLocal() as session:
-            row = await session.get(AppSetting, OAUTH_TOKENS_KEY)
+            row = await session.get(AppSetting, self._profile.tokens_key)
         if row is None or not row.value or row.value == "null":
             return None
         try:
@@ -320,21 +387,21 @@ class DbTokenStorage(TokenStorage):
         # Best-effort: remember the account so we can pre-select it on re-auth.
         login_hint = _login_hint_from_access_token(tokens.access_token)
         async with SessionLocal() as session:
-            row = await session.get(AppSetting, OAUTH_TOKENS_KEY)
+            row = await session.get(AppSetting, self._profile.tokens_key)
             if row is None:
-                session.add(AppSetting(key=OAUTH_TOKENS_KEY, value=encoded))
+                session.add(AppSetting(key=self._profile.tokens_key, value=encoded))
             else:
                 row.value = encoded
-            issued_row = await session.get(AppSetting, OAUTH_ISSUED_AT_KEY)
+            issued_row = await session.get(AppSetting, self._profile.issued_at_key)
             if issued_row is None:
-                session.add(AppSetting(key=OAUTH_ISSUED_AT_KEY, value=issued_at))
+                session.add(AppSetting(key=self._profile.issued_at_key, value=issued_at))
             else:
                 issued_row.value = issued_at
             if login_hint:
                 encoded_hint = json.dumps(login_hint)
-                hint_row = await session.get(AppSetting, OAUTH_LOGIN_HINT_KEY)
+                hint_row = await session.get(AppSetting, self._profile.login_hint_key)
                 if hint_row is None:
-                    session.add(AppSetting(key=OAUTH_LOGIN_HINT_KEY, value=encoded_hint))
+                    session.add(AppSetting(key=self._profile.login_hint_key, value=encoded_hint))
                 else:
                     hint_row.value = encoded_hint
             await session.commit()
@@ -347,18 +414,38 @@ class DbTokenStorage(TokenStorage):
         return None
 
 
-async def clear_workiq_oauth_tokens() -> None:
+async def clear_workiq_oauth_tokens(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> None:
     """Forget any stored tokens so the next connect re-runs the browser login.
 
     The captured ``login_hint`` (last account) deliberately survives: it isn't a
     credential, and keeping it lets the next re-auth pre-select the same account.
     """
     async with SessionLocal() as session:
-        for key in (OAUTH_TOKENS_KEY, OAUTH_ISSUED_AT_KEY):
+        for key in (profile.tokens_key, profile.issued_at_key):
             row = await session.get(AppSetting, key)
             if row is not None:
                 await session.delete(row)
         await session.commit()
+
+
+def _claims_from_access_token(access_token: str) -> dict[str, Any] | None:
+    """Best-effort decode of an Entra JWT's payload, **unverified**.
+
+    The values we read from it (account name, tenant id) only ever drive UX —
+    pre-filling the account picker, building the tenant-scoped endpoint URL — and
+    are never an authorization decision, so skipping signature validation is
+    safe. Returns ``None`` for an opaque or malformed token.
+    """
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)  # restore stripped base64 padding
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+    except (ValueError, TypeError):
+        return None
+    return claims if isinstance(claims, dict) else None
 
 
 def _login_hint_from_access_token(access_token: str) -> str | None:
@@ -370,16 +457,8 @@ def _login_hint_from_access_token(access_token: str) -> str | None:
     pre-fill the account picker, never for authorization — and return ``None``
     for an opaque or malformed token.
     """
-    parts = access_token.split(".")
-    if len(parts) < 2:
-        return None
-    payload = parts[1]
-    payload += "=" * (-len(payload) % 4)  # restore stripped base64 padding
-    try:
-        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(claims, dict):
+    claims = _claims_from_access_token(access_token)
+    if claims is None:
         return None
     for claim in ("preferred_username", "upn", "unique_name", "email"):
         value = claims.get(claim)
@@ -388,10 +467,19 @@ def _login_hint_from_access_token(access_token: str) -> str | None:
     return None
 
 
-async def get_workiq_login_hint() -> str | None:
+def _tenant_from_access_token(access_token: str) -> str | None:
+    """Best-effort extract the Entra tenant id (``tid`` claim) from a JWT."""
+    claims = _claims_from_access_token(access_token)
+    if claims is None:
+        return None
+    value = claims.get("tid")
+    return value if isinstance(value, str) and value else None
+
+
+async def get_workiq_login_hint(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> str | None:
     """The last signed-in WorkIQ account name, or ``None`` if never captured."""
     async with SessionLocal() as session:
-        row = await session.get(AppSetting, OAUTH_LOGIN_HINT_KEY)
+        row = await session.get(AppSetting, profile.login_hint_key)
     if row is None or not row.value:
         return None
     try:
@@ -401,7 +489,9 @@ async def get_workiq_login_hint() -> str | None:
     return hint if isinstance(hint, str) and hint else None
 
 
-async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
+async def _stored_token_expiry(
+    token: OAuthToken, profile: WorkIQOAuthProfile = PREVIEW_PROFILE
+) -> datetime | None:
     """Absolute expiry of the stored tokens, or ``None`` when it can't be known.
 
     Combines the ``issued_at`` stamp written by :meth:`DbTokenStorage.set_tokens`
@@ -412,7 +502,7 @@ async def _stored_token_expiry(token: OAuthToken) -> datetime | None:
     if token.expires_in is None:
         return None
     async with SessionLocal() as session:
-        row = await session.get(AppSetting, OAUTH_ISSUED_AT_KEY)
+        row = await session.get(AppSetting, profile.issued_at_key)
     if row is None or not row.value:
         return None
     # New rows are JSON-encoded; tolerate legacy rows saved as a raw ISO string.
@@ -451,6 +541,7 @@ async def _redirect_handler(
     authorization_url: str,
     *,
     open_system_browser: bool,
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
     login_hint: str | None = None,
     prompt: str | None = None,
     publish_url: bool = True,
@@ -472,21 +563,22 @@ async def _redirect_handler(
     authorization_url = _augment_authorization_url(
         authorization_url, login_hint=login_hint, prompt=prompt
     )
-    logger.info("WorkIQ preview: authorization URL ready; surfacing sign-in")
+    logger.info("%s: authorization URL ready; surfacing sign-in", profile.server)
     if publish_url:
         with contextlib.suppress(Exception):
-            await publish_mcp_auth_url("workiq", authorization_url)
+            await publish_mcp_auth_url(profile.server, authorization_url)
     if not open_system_browser:
         return
     try:
         webbrowser.open(authorization_url)
     except Exception as exc:  # pragma: no cover - platform dependent
-        logger.warning("WorkIQ preview: could not open a browser automatically: %s", exc)
+        logger.warning("%s: could not open a browser automatically: %s", profile.server, exc)
 
 
 def _make_redirect_handler(
     interactive: bool,
     *,
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
     open_system_browser: bool = True,
     login_hint: str | None = None,
     prompt: str | None = None,
@@ -507,10 +599,13 @@ def _make_redirect_handler(
 
     async def _handler(authorization_url: str) -> None:
         if not interactive:
-            raise WorkIQAuthRequiredError("WorkIQ needs you to sign in again to continue.")
+            raise WorkIQAuthRequiredError(
+                f"{profile.label} needs you to sign in again to continue."
+            )
         await _redirect_handler(
             authorization_url,
             open_system_browser=open_system_browser,
+            profile=profile,
             login_hint=login_hint,
             prompt=prompt,
             publish_url=publish_url,
@@ -523,7 +618,7 @@ def _make_redirect_handler(
 _CALLBACK_AUTOCLOSE_SECONDS = 2
 
 
-def _render_callback_page(*, status: str, title: str, message: str) -> str:
+def _render_callback_page(*, status: str, title: str, message: str, label: str = "WorkIQ") -> str:
     """Build the styled HTML shown in the loopback OAuth callback tab.
 
     The page mirrors Precursor's look (theme tokens, Inter font, dark-mode via
@@ -537,7 +632,7 @@ def _render_callback_page(*, status: str, title: str, message: str) -> str:
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Precursor — WorkIQ sign-in</title>
+<title>Precursor — {label} sign-in</title>
 <style>
   :root {{
     --bg: #ffffff; --surface: #f7f7f8; --border: #e5e7eb;
@@ -656,6 +751,7 @@ def _make_callback_handler(
     timeout: float = _CALLBACK_TIMEOUT_SECONDS,
     *,
     silent: bool = False,
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
 ) -> Callable[[], Awaitable[tuple[str, str | None]]]:
     """Build the SDK ``callback_handler`` bound to a specific wait ``timeout``.
 
@@ -678,7 +774,7 @@ def _make_callback_handler(
     async def _callback_handler() -> tuple[str, str | None]:
         """Run a one-shot loopback server and return ``(auth_code, state)``.
 
-        Listens on ``127.0.0.1:WORKIQ_OAUTH_REDIRECT_PORT`` for the single OAuth
+        Listens on ``127.0.0.1:<profile.redirect_port>`` for the single OAuth
         redirect, parses ``code``/``state`` off the query string, replies with a
         styled success page that auto-closes the tab, and resolves.
         """
@@ -718,25 +814,29 @@ def _make_callback_handler(
                     body = _render_callback_page(
                         status="pending",
                         title="Finishing sign-in…",
-                        message="Completing your WorkIQ sign-in — one moment.",
+                        message=f"Completing your {profile.label} sign-in — one moment.",
+                        label=profile.label,
                     )
                 elif error:
                     body = _render_callback_page(
                         status="error",
                         title="Sign-in failed",
-                        message=f"WorkIQ couldn't complete the sign-in ({error}).",
+                        message=f"{profile.label} couldn't complete the sign-in ({error}).",
+                        label=profile.label,
                     )
                 elif code:
                     body = _render_callback_page(
                         status="success",
                         title="You're connected",
-                        message="WorkIQ sign-in is complete.",
+                        message=f"{profile.label} sign-in is complete.",
+                        label=profile.label,
                     )
                 else:
                     body = _render_callback_page(
                         status="error",
                         title="Sign-in incomplete",
-                        message="No authorization code was received from WorkIQ.",
+                        message=f"No authorization code was received from {profile.label}.",
+                        label=profile.label,
                     )
 
                 payload = (
@@ -767,7 +867,7 @@ def _make_callback_handler(
 
         try:
             server = await asyncio.start_server(
-                _on_connect, host="127.0.0.1", port=WORKIQ_OAUTH_REDIRECT_PORT
+                _on_connect, host="127.0.0.1", port=profile.redirect_port
             )
         except OSError as exc:
             # Lost a TOCTOU race with another process (or another Precursor
@@ -775,11 +875,11 @@ def _make_callback_handler(
             # typed error the up-front preflight raises rather than a generic
             # transport failure.
             if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.EACCES):
-                raise WorkIQAuthPortBusyError(_PORT_BUSY_MESSAGE) from exc
+                raise WorkIQAuthPortBusyError(_port_busy_message(profile)) from exc
             raise
         try:
             async with server:
-                cancel_event = _active_signin_cancel
+                cancel_event = _active_signin_cancels.get(profile.server)
                 if cancel_event is None:
                     # No cancel channel (e.g. a unit test drives the handler
                     # directly) — preserve the plain timed wait.
@@ -805,7 +905,7 @@ def _make_callback_handler(
                     raise TimeoutError
                 # The user closed the popup before the redirect: abort cleanly so
                 # the loopback releases the fixed port instead of squatting it.
-                raise WorkIQAuthCancelledError("WorkIQ sign-in was cancelled.")
+                raise WorkIQAuthCancelledError(f"{profile.label} sign-in was cancelled.")
         except TimeoutError as exc:
             if silent:
                 # A silent (``prompt=none``) pass whose loopback never fired: the
@@ -814,7 +914,7 @@ def _make_callback_handler(
                 # falls back to the visible prompt — and so the SDK's ERROR
                 # traceback for it is dropped by ``_SuppressExpectedAuthError``.
                 raise WorkIQInteractionRequiredError(
-                    "WorkIQ silent sign-in timed out; interaction required."
+                    f"{profile.label} silent sign-in timed out; interaction required."
                 ) from exc
             # A visible interactive loopback that never fired: the user walked
             # away or closed the tab without the SPA's proactive cancel firing.
@@ -822,7 +922,7 @@ def _make_callback_handler(
             # log filter suppresses and the caller re-surfaces as the manual
             # sign-in banner, not an opaque gateway failure.
             raise WorkIQAuthTimeoutError(
-                "Timed out waiting for the WorkIQ sign-in to complete."
+                f"Timed out waiting for the {profile.label} sign-in to complete."
             ) from exc
 
     return _callback_handler
@@ -830,6 +930,7 @@ def _make_callback_handler(
 
 def build_oauth_provider(
     *,
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
     interactive: bool = False,
     open_system_browser: bool = True,
     login_hint: str | None = None,
@@ -855,18 +956,19 @@ def build_oauth_provider(
     short for the hands-free silent auto re-auth, long for interactive.
     """
     client_metadata = OAuthClientMetadata(
-        redirect_uris=[WORKIQ_OAUTH_REDIRECT_URI],
+        redirect_uris=[profile.redirect_uri],
         token_endpoint_auth_method="none",
         grant_types=["authorization_code", "refresh_token"],
         response_types=["code"],
-        client_name="Precursor (WorkIQ preview)",
+        client_name=profile.client_name,
     )
     return OAuthClientProvider(
-        server_url=WORKIQ_PREVIEW_URL,
+        server_url=profile.url,
         client_metadata=client_metadata,
-        storage=DbTokenStorage(),
+        storage=DbTokenStorage(profile),
         redirect_handler=_make_redirect_handler(
             interactive,
+            profile=profile,
             open_system_browser=open_system_browser,
             login_hint=login_hint,
             prompt=prompt,
@@ -875,11 +977,14 @@ def build_oauth_provider(
         callback_handler=_make_callback_handler(
             callback_timeout if callback_timeout is not None else _CALLBACK_TIMEOUT_SECONDS,
             silent=prompt == "none",
+            profile=profile,
         ),
     )
 
 
-async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
+async def resolve_workiq_bearer_token(
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
+) -> tuple[str, datetime | None] | None:
     """Resolve a current WorkIQ access token plus its expiry, or ``None``.
 
     The Copilot SDK's HTTP MCP config only accepts *static* headers — it can't
@@ -894,13 +999,13 @@ async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
     ``(access_token, expires_at)``; ``expires_at`` is ``None`` when the lifetime
     can't be determined (legacy token / no ``expires_in``).
     """
-    storage = DbTokenStorage()
+    storage = DbTokenStorage(profile)
     if await storage.get_tokens() is None:
         return None
     try:
-        provider = build_oauth_provider(interactive=False)
+        provider = build_oauth_provider(profile=profile, interactive=False)
         async with (
-            streamablehttp_client(WORKIQ_PREVIEW_URL, auth=provider) as (read, write, _),
+            streamablehttp_client(profile.url, auth=provider) as (read, write, _),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
@@ -922,13 +1027,13 @@ async def resolve_workiq_bearer_token() -> tuple[str, datetime | None] | None:
     tokens = await storage.get_tokens()
     if tokens is None:
         return None
-    return tokens.access_token, await _stored_token_expiry(tokens)
+    return tokens.access_token, await _stored_token_expiry(tokens, profile)
 
 
-async def _run_signin(provider: OAuthClientProvider) -> None:
+async def _run_signin(provider: OAuthClientProvider, profile: WorkIQOAuthProfile) -> None:
     """Open a throwaway hosted WorkIQ session purely to drive the OAuth grant."""
     async with (
-        streamablehttp_client(WORKIQ_PREVIEW_URL, auth=provider) as (read, write, _),
+        streamablehttp_client(profile.url, auth=provider) as (read, write, _),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
@@ -936,6 +1041,7 @@ async def _run_signin(provider: OAuthClientProvider) -> None:
 
 async def _try_silent_reauth(
     *,
+    profile: WorkIQOAuthProfile,
     login_hint: str | None,
     open_system_browser: bool,
     callback_timeout: float | None = None,
@@ -950,6 +1056,7 @@ async def _try_silent_reauth(
     silently gives up quickly.
     """
     provider = build_oauth_provider(
+        profile=profile,
         interactive=True,
         open_system_browser=open_system_browser,
         login_hint=login_hint,
@@ -957,22 +1064,26 @@ async def _try_silent_reauth(
         callback_timeout=callback_timeout,
     )
     try:
-        await _run_signin(provider)
+        await _run_signin(provider, profile)
     except Exception as exc:
         # The streamable-http transport wraps callback errors in a
         # ``BaseExceptionGroup``; unwrap to spot the deliberate "needs UI" signal.
         from precursor.backend.services.mcp.client import _find_in_exception
 
         if _find_in_exception(exc, WorkIQInteractionRequiredError) is not None:
-            logger.info("WorkIQ silent re-auth needs interaction; prompting.")
+            logger.info("%s: silent re-auth needs interaction; prompting.", profile.server)
             return False
         raise
-    logger.info("WorkIQ silent re-auth succeeded without a prompt.")
+    logger.info("%s: silent re-auth succeeded without a prompt.", profile.server)
     return True
 
 
 async def reauthenticate_workiq(
-    *, open_system_browser: bool = True, silent_only: bool = False, auto: bool = False
+    *,
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
+    open_system_browser: bool = True,
+    silent_only: bool = False,
+    auto: bool = False,
 ) -> bool:
     """Run the browser OAuth flow and persist fresh WorkIQ tokens.
 
@@ -983,7 +1094,7 @@ async def reauthenticate_workiq(
     browser still holds a live Entra SSO session; only if Entra reports that
     interaction is required do we fall back to the visible interactive prompt.
     The same script-opened popup is reused for both passes. Serialized via
-    :data:`_reauth_lock` so two triggers can't fight over the redirect port.
+    :func:`_lock_for` so two triggers can't fight over the redirect port.
 
     ``open_system_browser`` toggles the OS-browser fallback: the SPA passes it
     off once it has opened its own script-openable popup (so we don't double up
@@ -1007,11 +1118,12 @@ async def reauthenticate_workiq(
 
     Raises :class:`WorkIQAuthInProgressError` if a sign-in is already running.
     """
-    if _reauth_lock.locked():
-        raise WorkIQAuthInProgressError("A WorkIQ sign-in is already in progress.")
-    async with _reauth_lock:
+    lock = _lock_for(profile)
+    if lock.locked():
+        raise WorkIQAuthInProgressError(f"A {profile.label} sign-in is already in progress.")
+    async with lock:
         # Pre-select the last account, but read it before clearing tokens.
-        login_hint = await get_workiq_login_hint()
+        login_hint = await get_workiq_login_hint(profile)
 
         if silent_only:
             # Silent-only: the no-UI pass, on a short timeout, with no OS browser
@@ -1021,21 +1133,22 @@ async def reauthenticate_workiq(
             # Preflight the loopback port first so a busy port doesn't needlessly
             # clear the still-usable stored tokens.
             try:
-                _assert_loopback_port_available()
+                _assert_loopback_port_available(profile)
             except WorkIQAuthPortBusyError as exc:
-                logger.info("WorkIQ silent auto re-auth skipped: %s", exc)
+                logger.info("%s: silent auto re-auth skipped: %s", profile.server, exc)
                 return False
             # Drop stale tokens so the flow always re-runs the grant (the retained
             # login_hint still lets the user pick another account in the prompt).
-            await clear_workiq_oauth_tokens()
+            await clear_workiq_oauth_tokens(profile)
             try:
                 return await _try_silent_reauth(
+                    profile=profile,
                     login_hint=login_hint,
                     open_system_browser=False,
                     callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
                 )
             except Exception as exc:
-                logger.info("WorkIQ silent auto re-auth could not complete: %s", exc)
+                logger.info("%s: silent auto re-auth could not complete: %s", profile.server, exc)
                 return False
 
         if auto:
@@ -1045,15 +1158,15 @@ async def reauthenticate_workiq(
             # (another window signing in) defers cleanly to the manual banner
             # without destroying still-usable tokens.
             try:
-                _assert_loopback_port_available()
+                _assert_loopback_port_available(profile)
             except WorkIQAuthPortBusyError as exc:
-                logger.info("WorkIQ auto re-auth skipped: %s", exc)
+                logger.info("%s: auto re-auth skipped: %s", profile.server, exc)
                 return False
-            await clear_workiq_oauth_tokens()
-            global _active_signin_cancel
-            _active_signin_cancel = asyncio.Event()
+            await clear_workiq_oauth_tokens(profile)
+            _active_signin_cancels[profile.server] = asyncio.Event()
             try:
                 if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
+                    profile=profile,
                     login_hint=login_hint,
                     open_system_browser=False,
                     callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
@@ -1064,43 +1177,47 @@ async def reauthenticate_workiq(
                 # silent frame is still attached and would otherwise race the OS
                 # browser for the single loopback port.
                 provider = build_oauth_provider(
+                    profile=profile,
                     interactive=True,
                     open_system_browser=True,
                     login_hint=login_hint,
                     publish_url=False,
                 )
-                await _run_signin(provider)
+                await _run_signin(provider, profile)
                 return True
             except Exception as exc:
-                logger.info("WorkIQ auto re-auth could not complete: %s", exc)
+                logger.info("%s: auto re-auth could not complete: %s", profile.server, exc)
                 return False
             finally:
-                _active_signin_cancel = None
+                _active_signin_cancels.pop(profile.server, None)
 
         # Interactive: fail fast — before clearing tokens or driving the browser
         # flow — when another process already owns the fixed loopback port, so
         # the UI shows a clear error instead of stranding "Signing in…" until the
         # callback times out (and without destroying a still-usable session).
-        _assert_loopback_port_available()
+        _assert_loopback_port_available(profile)
         # Drop stale tokens so the flow always re-runs the grant (the retained
         # login_hint still lets the user pick another account in the prompt).
-        await clear_workiq_oauth_tokens()
+        await clear_workiq_oauth_tokens(profile)
 
         # Arm the cancel channel so the SPA can abort this sign-in (freeing the
         # loopback port immediately) when its popup is closed without finishing.
-        _active_signin_cancel = asyncio.Event()
+        _active_signin_cancels[profile.server] = asyncio.Event()
         try:
             if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
-                login_hint=login_hint, open_system_browser=open_system_browser
+                profile=profile,
+                login_hint=login_hint,
+                open_system_browser=open_system_browser,
             ):
                 return True
 
             provider = build_oauth_provider(
+                profile=profile,
                 interactive=True,
                 open_system_browser=open_system_browser,
                 login_hint=login_hint,
             )
-            await _run_signin(provider)
+            await _run_signin(provider, profile)
             return True
         finally:
-            _active_signin_cancel = None
+            _active_signin_cancels.pop(profile.server, None)
