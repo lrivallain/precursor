@@ -654,6 +654,64 @@ async def test_reauthenticate_prefers_silent_then_interactive(monkeypatch) -> No
     assert events == ["clear", "interactive"]
 
 
+async def test_reauthenticate_without_a_known_account_skips_the_silent_pass(monkeypatch) -> None:
+    """A hintless ``prompt=none`` dead-ends in AADSTS16000, so don't attempt it.
+
+    Instead go straight to a visible prompt carrying ``prompt=select_account`` so
+    Entra shows the account picker rather than refusing to choose.
+    """
+    import types
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    events: list[str] = []
+
+    async def _noop_clear(*_a, **_k) -> None:
+        events.append("clear")
+
+    async def _no_hint(*_a, **_k) -> str | None:
+        return None
+
+    async def _silent_unexpected(**_k) -> bool:  # pragma: no cover
+        events.append("silent-should-not-run")
+        return True
+
+    prompts: list[str | None] = []
+
+    def _build(**kwargs):
+        prompts.append(kwargs.get("prompt"))
+        return object()
+
+    async def _run_signin(_provider, _profile=None) -> None:
+        events.append("interactive")
+
+    monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
+    monkeypatch.setattr(wp, "get_workiq_login_hint", _no_hint)
+    monkeypatch.setattr(wp, "_try_silent_reauth", _silent_unexpected)
+    monkeypatch.setattr(wp, "build_oauth_provider", _build)
+    monkeypatch.setattr(wp, "_run_signin", _run_signin)
+    monkeypatch.setattr(
+        wp, "get_settings", lambda: types.SimpleNamespace(workiq_silent_reauth_enabled=True)
+    )
+
+    assert await wp.reauthenticate_workiq(open_system_browser=False) is True
+    assert events == ["clear", "interactive"]
+    assert prompts == ["select_account"]
+
+    # Silent-only has no visible prompt to fall back to: report "not silently".
+    events.clear()
+    assert await wp.reauthenticate_workiq(silent_only=True) is False
+    assert "silent-should-not-run" not in events
+
+
+def test_interactive_prompt_only_forces_the_picker_without_a_hint() -> None:
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    assert wp._interactive_prompt("u@contoso.com") is None
+    assert wp._interactive_prompt(None) == "select_account"
+    assert wp._interactive_prompt("") == "select_account"
+
+
 async def test_reauthenticate_silent_only_never_falls_back(monkeypatch) -> None:
     """The hands-free silent pass returns its outcome and never prompts."""
     from precursor.backend.services.mcp import workiq_preview as wp

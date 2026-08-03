@@ -1039,6 +1039,17 @@ async def _run_signin(provider: OAuthClientProvider, profile: WorkIQOAuthProfile
         await session.initialize()
 
 
+def _interactive_prompt(login_hint: str | None) -> str | None:
+    """The ``prompt`` for a *visible* authorization, given what we know.
+
+    With a ``login_hint`` we let Entra decide (an existing session for that
+    account signs straight through). Without one, force the account picker:
+    a hintless authorization against a browser holding several identities can
+    otherwise fail outright with AADSTS16000 instead of asking who you are.
+    """
+    return None if login_hint else "select_account"
+
+
 async def _try_silent_reauth(
     *,
     profile: WorkIQOAuthProfile,
@@ -1140,6 +1151,13 @@ async def reauthenticate_workiq(
             # Drop stale tokens so the flow always re-runs the grant (the retained
             # login_hint still lets the user pick another account in the prompt).
             await clear_workiq_oauth_tokens(profile)
+            if not login_hint:
+                # Nothing to disambiguate with: Entra answers a hintless
+                # ``prompt=none`` against a browser holding several identities
+                # with AADSTS16000 — a rendered error page, not a redirect — so
+                # the loopback would just hang. Report "can't do it silently".
+                logger.info("%s: no known account; silent auto re-auth skipped.", profile.server)
+                return False
             try:
                 return await _try_silent_reauth(
                     profile=profile,
@@ -1165,11 +1183,15 @@ async def reauthenticate_workiq(
             await clear_workiq_oauth_tokens(profile)
             _active_signin_cancels[profile.server] = asyncio.Event()
             try:
-                if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
-                    profile=profile,
-                    login_hint=login_hint,
-                    open_system_browser=False,
-                    callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
+                if (
+                    get_settings().workiq_silent_reauth_enabled
+                    and login_hint
+                    and await _try_silent_reauth(
+                        profile=profile,
+                        login_hint=login_hint,
+                        open_system_browser=False,
+                        callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
+                    )
                 ):
                     return True
                 # Silent pass needs a human — self-trigger the visible prompt via
@@ -1181,6 +1203,7 @@ async def reauthenticate_workiq(
                     interactive=True,
                     open_system_browser=True,
                     login_hint=login_hint,
+                    prompt=_interactive_prompt(login_hint),
                     publish_url=False,
                 )
                 await _run_signin(provider, profile)
@@ -1204,10 +1227,14 @@ async def reauthenticate_workiq(
         # loopback port immediately) when its popup is closed without finishing.
         _active_signin_cancels[profile.server] = asyncio.Event()
         try:
-            if get_settings().workiq_silent_reauth_enabled and await _try_silent_reauth(
-                profile=profile,
-                login_hint=login_hint,
-                open_system_browser=open_system_browser,
+            if (
+                get_settings().workiq_silent_reauth_enabled
+                and login_hint
+                and await _try_silent_reauth(
+                    profile=profile,
+                    login_hint=login_hint,
+                    open_system_browser=open_system_browser,
+                )
             ):
                 return True
 
@@ -1216,6 +1243,7 @@ async def reauthenticate_workiq(
                 interactive=True,
                 open_system_browser=open_system_browser,
                 login_hint=login_hint,
+                prompt=_interactive_prompt(login_hint),
             )
             await _run_signin(provider, profile)
             return True

@@ -8,7 +8,7 @@ from typing import ClassVar
 
 import pytest
 
-from precursor.backend.services.mcp import agent365
+from precursor.backend.services.mcp import agent365, workiq_preview
 
 TENANT = "72f988bf-86f1-41af-91ab-2d7cd011db47"
 
@@ -78,9 +78,17 @@ def test_build_profile_keeps_each_server_isolated() -> None:
     assert teams.redirect_port not in (12798,)  # reserved for the WorkIQ preview
     assert teams.tokens_key == "workiq_teams_oauth_tokens"
     assert teams.issued_at_key == "workiq_teams_oauth_issued_at"
-    assert teams.login_hint_key == "workiq_teams_oauth_login_hint"
     assert user.tokens_key == "workiq_user_oauth_tokens"
     assert teams.redirect_uri == f"http://localhost:{teams.redirect_port}/callback"
+
+
+def test_build_profile_shares_the_login_hint_with_the_workiq_family() -> None:
+    # Same Microsoft identity everywhere: sharing the hint lets a server that has
+    # never signed in reuse the known account instead of tripping AADSTS16000.
+    teams = agent365.build_profile("workiq-teams", TENANT)
+    user = agent365.build_profile("workiq-user", TENANT)
+
+    assert teams.login_hint_key == user.login_hint_key == workiq_preview.OAUTH_LOGIN_HINT_KEY
 
 
 async def test_discover_tenant_id_reads_the_tid_claim() -> None:

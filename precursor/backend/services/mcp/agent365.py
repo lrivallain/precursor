@@ -33,6 +33,7 @@ from typing import Final
 from precursor.backend.db import SessionLocal
 from precursor.backend.services.app_settings import resolve_workiq_tenant_id
 from precursor.backend.services.mcp.workiq_preview import (
+    OAUTH_LOGIN_HINT_KEY,
     DbTokenStorage,
     WorkIQOAuthProfile,
     _tenant_from_access_token,
@@ -92,7 +93,12 @@ def build_profile(name: str, tenant_id: str) -> WorkIQOAuthProfile:
         client_name=f"Precursor ({spec.label})",
         tokens_key=f"{spec.name.replace('-', '_')}_oauth_tokens",
         issued_at_key=f"{spec.name.replace('-', '_')}_oauth_issued_at",
-        login_hint_key=f"{spec.name.replace('-', '_')}_oauth_login_hint",
+        # Tokens stay isolated per server, but the login hint is shared with the
+        # rest of the WorkIQ family: it's the same Microsoft identity, and a
+        # profile signing in with *no* hint makes Entra reject a silent pass with
+        # AADSTS16000 ("multiple user identities are available") instead of
+        # redirecting back.
+        login_hint_key=OAUTH_LOGIN_HINT_KEY,
     )
 
 
