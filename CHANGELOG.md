@@ -16,7 +16,7 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   channels, messages, members, presence) and the **directory** (profiles,
   managers, direct reports). They reuse the existing WorkIQ browser sign-in
   stack — silent-first re-auth, keep-alive refresh, inline auth banner — each
-  with its own loopback port (`54112` / `54114`) and its own cached tokens, so a
+  with its own loopback port (`12799` / `12800`) and its own cached tokens, so a
   Teams sign-in never clobbers the WorkIQ preview session. Their endpoint URL
   embeds a Microsoft **tenant GUID**, resolved from **Settings → MCP →
   Microsoft 365 tenant**, then `PRECURSOR_WORKIQ_TENANT_ID`, then — as a

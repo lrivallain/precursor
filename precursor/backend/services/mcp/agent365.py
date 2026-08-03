@@ -60,15 +60,17 @@ class _Agent365Spec:
     redirect_port: int
 
 
-# Loopback ports registered for the Agent 365 OAuth client, one per server —
-# Entra validates a public client's redirect URI *including* the port, so these
-# aren't ours to choose: they mirror what the Copilot CLI registers
-# (``mcp_TeamsServer`` → 54112, ``mcp_MeServer`` → 54114; each server reserves a
-# http/https pair, hence the gap). Being distinct also keeps two sign-ins from
-# contending for the same socket.
+# Fixed loopback ports, one per server, so two sign-ins never contend for the
+# same socket (12798 belongs to the WorkIQ preview flow). The Agent 365 client is
+# registered as a public client with the loopback redirect ``http://localhost``,
+# for which Entra ignores the port — but *not* the host or the path, so the
+# redirect URI below must stay ``localhost`` (never ``127.0.0.1``) with an empty
+# ``/`` path. Verified against Entra: ``http://localhost:12799/`` is issued a
+# code, while ``http://localhost:12799/callback`` and ``http://127.0.0.1:…/``
+# both fail with AADSTS50011.
 AGENT365_SERVERS: Final[tuple[_Agent365Spec, ...]] = (
-    _Agent365Spec("workiq-teams", "WorkIQ Teams", "mcp_TeamsServer", 54112),
-    _Agent365Spec("workiq-user", "WorkIQ User", "mcp_MeServer", 54114),
+    _Agent365Spec("workiq-teams", "WorkIQ Teams", "mcp_TeamsServer", 12799),
+    _Agent365Spec("workiq-user", "WorkIQ User", "mcp_MeServer", 12800),
 )
 
 _SPECS_BY_NAME: Final = {spec.name: spec for spec in AGENT365_SERVERS}
@@ -103,10 +105,11 @@ def build_profile(name: str, tenant_id: str) -> WorkIQOAuthProfile:
         # AADSTS16000 ("multiple user identities are available") instead of
         # redirecting back.
         login_hint_key=OAUTH_LOGIN_HINT_KEY,
-        # The Agent 365 client is registered with a bare ``http://127.0.0.1/``
-        # loopback (Entra ignores the port), unlike the WorkIQ preview client's
-        # ``http://localhost:<port>/callback``.
-        redirect_host="127.0.0.1",
+        # The Agent 365 client registers the loopback redirect ``http://localhost``
+        # with an empty path. Entra ignores the *port* of a loopback redirect but
+        # matches the host and path exactly, so ``127.0.0.1`` or a ``/callback``
+        # path (what the WorkIQ preview client uses) is rejected with AADSTS50011.
+        redirect_host="localhost",
         redirect_path="/",
     )
 

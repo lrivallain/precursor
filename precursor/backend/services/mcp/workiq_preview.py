@@ -209,8 +209,10 @@ class WorkIQOAuthProfile:
     # Loopback host and path of the redirect URI. Entra ignores the *port* of a
     # public client's loopback redirect, but the host and path must match the
     # registration character for character — and the two WorkIQ client apps were
-    # registered differently (``localhost``/``/callback`` vs ``127.0.0.1``/``/``).
-    # The callback listener binds 127.0.0.1 and ignores the path either way.
+    # registered differently (the preview client with ``localhost``/``/callback``,
+    # the Agent 365 one with ``localhost``/``/``). ``localhost`` and ``127.0.0.1``
+    # are *not* interchangeable to Entra. The callback listener binds 127.0.0.1
+    # and ignores the path either way.
     redirect_host: str = "localhost"
     redirect_path: str = WORKIQ_OAUTH_REDIRECT_PATH
 
