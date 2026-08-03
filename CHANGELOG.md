@@ -141,6 +141,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Hands-free WorkIQ sign-ins close their window instantly**: the loopback
+  success page now closes immediately for the silent and self-triggered
+  (`auto`) re-auth passes instead of showing the manual flow's two-second
+  "Closing this tab in…" countdown. Nobody is watching an automatic sign-in, so
+  it no longer leaves a stray window sitting around after it succeeds; the
+  manual, banner-driven sign-in keeps its brief confirmation beat.
+
 - **WorkIQ re-auth is now hands-free and self-triggering**: when the WorkIQ
   refresh token ages out, Precursor prefers automation over interrupting you. It
   runs the silent `prompt=none` pass in an invisible iframe first and, when that
