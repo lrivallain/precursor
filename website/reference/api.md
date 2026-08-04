@@ -51,9 +51,9 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 
 | Area | What it covers |
 | --- | --- |
-| `topics` | CRUD for topics, the topic tree, and per-topic messages. |
+| `topics` | CRUD for topics, the topic tree, read/unread state, and per-topic messages. |
 | `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events. |
-| `chats` | Quick throwaway chats. |
+| `chats` | Quick throwaway chats, including read/unread state. |
 | `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed). |
 | `github` | Issue/label/comment operations behind topic linking. |
 | `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. |

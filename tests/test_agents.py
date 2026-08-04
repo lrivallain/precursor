@@ -934,16 +934,22 @@ async def test_agent_background_task_events_broadcast_to_originating_tab() -> No
         events.set_current_client_id(None)
 
 
-async def test_mark_read_endpoints_publish_read_changed() -> None:
-    """The topic/chat/agent /read endpoints emit a ``read.changed`` event so
-    other tabs clear the badge + counter for that discussion in real time."""
+async def test_mark_read_state_endpoints_publish_read_changed() -> None:
+    """Read and unread state changes notify other tabs in real time."""
     import asyncio
 
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession, Chat, Topic
-    from precursor.backend.routers.agents import mark_agent_read
-    from precursor.backend.routers.chats import mark_chat_read
-    from precursor.backend.routers.topics import mark_topic_read
+    from precursor.backend.models import (
+        AgentEventRecord,
+        AgentSession,
+        Chat,
+        Message,
+        MessageRole,
+        Topic,
+    )
+    from precursor.backend.routers.agents import mark_agent_read, mark_agent_unread
+    from precursor.backend.routers.chats import mark_chat_read, mark_chat_unread
+    from precursor.backend.routers.topics import mark_topic_read, mark_topic_unread
     from precursor.backend.services import events
 
     with TestClient(create_app()):
@@ -954,6 +960,17 @@ async def test_mark_read_endpoints_publish_read_changed() -> None:
         topic = Topic(title="t", slug="read-evt-topic")
         agent = AgentSession(title="a", task_prompt="x", status="idle")
         session.add_all([chat, topic, agent])
+        await session.flush()
+        session.add_all(
+            [
+                Message(chat_id=chat.id, role=MessageRole.ASSISTANT, content="chat reply"),
+                Message(topic_id=topic.id, role=MessageRole.ASSISTANT, content="topic reply"),
+                AgentEventRecord(
+                    agent_session_id=agent.id,
+                    payload='{"kind":"assistant_message","text":"agent reply"}',
+                ),
+            ]
+        )
         await session.commit()
         cid, tid, aid = chat.id, topic.id, agent.id
 
@@ -962,13 +979,23 @@ async def test_mark_read_endpoints_publish_read_changed() -> None:
             await mark_chat_read(cid, session=session)
             await mark_topic_read(tid, session=session)
             await mark_agent_read(str(aid), session=session)
-        seen = [await asyncio.wait_for(q.get(), timeout=2) for _ in range(3)]
+            await mark_chat_unread(cid, session=session)
+            await mark_topic_unread(tid, session=session)
+            await mark_agent_unread(str(aid), session=session)
+        seen = [await asyncio.wait_for(q.get(), timeout=2) for _ in range(6)]
 
-    by_kind = {(e.get("chat_id"), e.get("topic_id"), e.get("agent_session_id")): e for e in seen}
     assert all(e["type"] == "read.changed" for e in seen)
-    assert (cid, None, None) in by_kind
-    assert (None, tid, None) in by_kind
-    assert (None, None, aid) in by_kind
+    assert sum(e.get("chat_id") == cid for e in seen) == 2
+    assert sum(e.get("topic_id") == tid for e in seen) == 2
+    assert sum(e.get("agent_session_id") == aid for e in seen) == 2
+
+    with TestClient(create_app()) as client:
+        chat_row = next(row for row in client.get("/api/chats").json() if row["id"] == cid)
+        topic_row = next(row for row in client.get("/api/topics/tree").json() if row["id"] == tid)
+        agent_row = next(row for row in client.get("/api/agents").json() if row["id"] == aid)
+        assert chat_row["unread_count"] == 1
+        assert topic_row["unread_count"] == 1
+        assert agent_row["unread_count"] == 1
 
     # Clean up so the shared session DB stays empty for order-independent tests
     # (test_app.py asserts an empty chat list to start).

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Radio, Search } from "lucide-react";
+import { Archive, Pencil, Radio, Search } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { InlineTitle } from "./InlineTitle";
 import { useMultiSelect } from "../lib/useMultiSelect";
 import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
+import { ContextMenu } from "./ContextMenu";
 
 interface LiveListProps {
   sessions: MeetingSession[] | null;
@@ -30,6 +31,12 @@ export function LiveList({
   const [query, setQuery] = useState("");
   const sel = useMultiSelect();
   const [busy, setBusy] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    session: MeetingSession;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [renameRequest, setRenameRequest] = useState<{ id: number; token: number } | null>(null);
   const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
 
   const filtered = useMemo(() => {
@@ -108,6 +115,11 @@ export function LiveList({
                     role="button"
                     tabIndex={0}
                     onClick={() => (sel.active ? sel.toggle(s.id) : onSelect(s))}
+                    onContextMenu={(event) => {
+                      if (sel.active) return;
+                      event.preventDefault();
+                      setContextMenu({ session: s, x: event.clientX, y: event.clientY });
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
@@ -152,6 +164,7 @@ export function LiveList({
                         <InlineTitle
                           title={s.title}
                           onRename={(t) => onRename(s, t)}
+                          editRequest={renameRequest?.id === s.id ? renameRequest.token : 0}
                           className="block truncate"
                         />
                       ) : (
@@ -170,6 +183,36 @@ export function LiveList({
           </ul>
         )}
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`Actions for ${contextMenu.session.title}`}
+          onClose={() => setContextMenu(null)}
+          items={[
+            ...(onRename
+              ? [
+                  {
+                    label: "Rename",
+                    icon: Pencil,
+                    onSelect: () =>
+                      setRenameRequest({ id: contextMenu.session.id, token: Date.now() }),
+                  },
+                ]
+              : []),
+            ...(onArchiveMany
+              ? [
+                  {
+                    label: "Archive",
+                    icon: Archive,
+                    danger: true,
+                    onSelect: () => onArchiveMany([contextMenu.session.id]),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
     </div>
   );
 }

@@ -10,11 +10,13 @@ export function InlineTitle({
   onRename,
   className,
   inputClassName,
+  editRequest = 0,
 }: {
   title: string;
   onRename: (next: string) => void | Promise<void>;
   className?: string;
   inputClassName?: string;
+  editRequest?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -25,6 +27,12 @@ export function InlineTitle({
   useEffect(() => {
     setDraft(title);
   }, [title]);
+
+  useEffect(() => {
+    if (editRequest === 0) return;
+    setDraft(title);
+    setEditing(true);
+  }, [editRequest, title]);
 
   useEffect(() => {
     if (!editing) return;

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
@@ -236,6 +236,26 @@ async def mark_topic_read(
     topic.last_read_at = datetime.now(UTC)
     await session.commit()
     # Let other tabs clear this topic's badge/counter in real time.
+    await publish_read_changed(topic_id=topic_id)
+
+
+@router.post("/{topic_id}/unread", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_topic_unread(
+    topic_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    latest = await session.scalar(
+        select(Message.created_at)
+        .where(Message.topic_id == topic_id)
+        .where(Message.role != MessageRole.USER)
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    topic.last_read_at = (latest or datetime.now(UTC)) - timedelta(microseconds=1)
+    await session.commit()
     await publish_read_changed(topic_id=topic_id)
 
 

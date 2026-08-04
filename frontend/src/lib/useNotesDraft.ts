@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { subscribeNoteDraftChanges } from "./detachedDraftStore";
+import { subscribeNotesOpen } from "./notesOpen";
 import {
   splitSupportedAttachmentFiles,
   unsupportedAttachmentMessage,
@@ -179,6 +180,8 @@ export function useNotesDraft({
 
   const openNotesPad = () => beginPad(true);
   const resumeSavedNotesDraft = () => beginPad(false);
+
+  useEffect(() => subscribeNotesOpen(container, id, () => void beginPad(true)), [container, id]);
 
   function resolveNotesConfirm(ok: boolean): void {
     notesConfirm?.resolve(ok);

@@ -33,6 +33,10 @@ post comments — from the composer's GitHub actions and the shared draft panel.
 Topics form a **self-referencing tree**: nest a topic under a parent to group
 related threads.
 
+Right-click a topic in the left sidebar to rename it, mark it read or unread,
+pin or unpin it, set a reminder, open `/notes`, or archive it without first
+opening the topic.
+
 ## Scheduling & reminders
 
 Any topic can carry a **schedule** so a prompt runs on a cadence — an interval, a
