@@ -79,11 +79,14 @@ export function CollectionSwitcher({
         className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded border border-border bg-surface hover:border-accent outline-none focus:border-accent"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={`Collection: ${active?.name ?? "none"} — switch collection`}
         onClick={() => setOpen((v) => !v)}
       >
         <span className={`w-2 h-2 rounded-full shrink-0 ${activeColor.dot}`} aria-hidden />
         <span className="truncate flex-1 text-left">{active?.name ?? "Collection"}</span>
-        <span className="text-xs text-muted shrink-0">{active?.topic_count ?? 0}</span>
+        <span className="text-xs text-muted shrink-0" title="Topics in this collection">
+          {active?.topic_count ?? 0}
+        </span>
         <ChevronDown size={13} className="text-muted shrink-0" />
       </button>
 

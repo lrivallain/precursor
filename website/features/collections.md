@@ -14,12 +14,16 @@ Every topic lives in exactly one collection. Fresh installs get a single
 protected **General** collection, and every existing topic is backfilled into it
 — so if you never create a second one, nothing changes.
 
+<Screenshot src="/screenshots/collections.png" alt="The Collections tab in Settings, listing General, Client work, Platform and Research with their topic counts and GitHub repository overrides" caption="Settings → Collections — each one carries a colour accent, a description, and an optional GitHub repository; the protected General collection can't be deleted." />
+
 ## Switching collections
 
 A switcher sits at the top of the **Topics** panel, above the search box. Picking
 a collection re-scopes the topic tree — including the **Pinned** section — to
 that collection alone. Reminders stay visible regardless, so a nudge you set is
 never hidden behind the wrong filter.
+
+<Screenshot src="/screenshots/collection-switcher.png" alt="The collection switcher open at the top of the Topics sidebar, listing four collections with their topic counts, plus New collection and Manage collections actions" caption="The switcher lists every collection with its topic count, and lets you create or manage them without leaving the sidebar." />
 
 The selection is remembered per browser (it isn't part of the URL), and the
 switcher hides itself entirely while you only have the default collection, so

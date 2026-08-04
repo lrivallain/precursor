@@ -79,8 +79,12 @@ export function CollectionsTab({ onChanged }: Props) {
                     </span>
                   </div>
                   <div className="text-[11px] text-muted truncate">
-                    {c.github_repo ?? "Inherits the global GitHub repository"}
-                    {c.description ? ` — ${c.description}` : ""}
+                    {[
+                      c.github_repo || "Inherits the global GitHub repository",
+                      c.description,
+                    ]
+                      .filter(Boolean)
+                      .join(" — ")}
                   </div>
                 </div>
                 <button
