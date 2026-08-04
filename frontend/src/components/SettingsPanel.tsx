@@ -21,6 +21,7 @@ import {
   LogIn,
   RefreshCw,
   HardDriveDownload,
+  Layers,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -48,12 +49,17 @@ import { Select } from "./Select";
 import { SidebarTabs } from "./SidebarTabs";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
+import { CollectionsTab } from "./CollectionsTab";
 import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
 import { AgentsSettings } from "./AgentsSettings";
 
 interface Props {
   onClose: () => void;
+  /** Opens straight to a category (e.g. "collections" from the switcher). */
+  initialCategory?: Category;
+  /** Fired when collections change so the sidebar switcher can reload. */
+  onCollectionsChanged?: () => void | Promise<void>;
 }
 
 // The editable "System" settings subset of the full Settings payload.
@@ -99,6 +105,7 @@ type Category =
   | "mcp"
   | "skills"
   | "roles"
+  | "collections"
   | "memory"
   | "agents"
   | "stats"
@@ -120,6 +127,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
+  { id: "collections", label: "Collections", icon: Layers, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
@@ -144,9 +152,9 @@ const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
   { value: "zh-CN", label: "Chinese (Mandarin, Simplified)" },
 ];
 
-export function SettingsPanel({ onClose }: Props) {
+export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }: Props) {
   const confirmAction = useConfirm();
-  const [category, setCategory] = useState<Category>("appearance");
+  const [category, setCategory] = useState<Category>(initialCategory ?? "appearance");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mcp, setMcp] = useState<MCPServerStatus[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
@@ -1204,6 +1212,9 @@ export function SettingsPanel({ onClose }: Props) {
             {category === "skills" && <SkillsTab />}
 
             {category === "roles" && <RolesTab />}
+            {category === "collections" && (
+              <CollectionsTab onChanged={onCollectionsChanged} />
+            )}
 
             {category === "memory" && <MemoriesTab />}
             {category === "agents" && <AgentsSettings />}

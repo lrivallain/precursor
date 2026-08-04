@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import Topic
 from precursor.backend.services.app_settings import (
-    resolve_global_github_repo,
     resolve_issue_associations_enabled,
 )
+from precursor.backend.services.collections import resolve_collection_github_repo
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
 
@@ -49,8 +49,12 @@ async def create_linked_issue(
     title: str,
     description: str | None,
     repo_override: str | None = None,
+    collection_id: int | None = None,
 ) -> tuple[str, int]:
     """Create a GitHub issue for a topic and return ``(repo, issue_number)``.
+
+    The repo follows the standard precedence: the topic's own override, then its
+    collection's, then the global setting.
 
     Raises HTTPException on any misconfiguration (feature disabled, missing repo
     or token, GitHub error) so the calling router surfaces a clear message and
@@ -61,11 +65,14 @@ async def create_linked_issue(
             status.HTTP_403_FORBIDDEN,
             "GitHub issue associations are disabled. Enable the feature in Settings → GitHub.",
         )
-    repo = (repo_override or "").strip() or await resolve_global_github_repo(session)
+    repo = (repo_override or "").strip() or await resolve_collection_github_repo(
+        session, collection_id
+    )
     if not repo:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "No GitHub repository configured. Set one on the topic or in Settings.",
+            "No GitHub repository configured. Set one on the topic, "
+            "its collection, or in Settings.",
         )
     token = await resolve_github_token(session)
     if not token:

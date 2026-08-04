@@ -21,6 +21,9 @@ export interface Topic {
   kind: TopicKind;
   archived_at: string | null;
   role_id: number | null;
+  // Collection the topic belongs to. Membership cascades down the tree, so a
+  // subtree is never split across collections.
+  collection_id: number | null;
   created_at: string;
   updated_at: string;
   // Recurrence summary when the topic runs on a schedule (null otherwise).
@@ -755,6 +758,49 @@ export interface RoleCreate {
 export interface RoleUpdate {
   name?: string;
   system_prompt?: string;
+}
+
+// Collection — a named set of topics that filters the sidebar tree. Mirrors the
+// backend CollectionRead schema.
+export interface Collection {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  // Optional repo override, sitting between the topic's own and the global one.
+  github_repo: string | null;
+  accent: CollectionAccent;
+  icon: string | null;
+  is_default: boolean;
+  topic_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Accent keys the SPA maps to static Tailwind classes (see lib/collections.ts).
+export type CollectionAccent =
+  | "sky"
+  | "emerald"
+  | "amber"
+  | "violet"
+  | "rose"
+  | "cyan"
+  | "slate";
+
+export interface CollectionCreate {
+  name: string;
+  description?: string | null;
+  github_repo?: string | null;
+  accent?: CollectionAccent;
+  icon?: string | null;
+}
+
+export interface CollectionUpdate {
+  name?: string;
+  description?: string | null;
+  github_repo?: string | null;
+  accent?: CollectionAccent;
+  icon?: string | null;
 }
 
 export interface Memory {

@@ -41,10 +41,10 @@ from precursor.backend.schemas import (
 )
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services.app_settings import (
-    resolve_global_github_repo,
     resolve_issue_associations_enabled,
     resolve_llm_model,
 )
+from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_topic_changed,
@@ -105,7 +105,7 @@ async def _require_repo(session: AsyncSession, topic_id: int) -> tuple[Topic, st
     topic = await session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    repo = topic.github_repo or await resolve_global_github_repo(session)
+    repo = await resolve_topic_github_repo(session, topic)
     if not repo:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

@@ -61,12 +61,12 @@ from precursor.backend.schemas import (
     TranslateResult,
 )
 from precursor.backend.services.app_settings import (
-    resolve_global_github_repo,
     resolve_issue_associations_enabled,
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
 )
 from precursor.backend.services.blob_store import blob_path, write_blob
+from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
@@ -847,7 +847,7 @@ async def post_summary_to_topic(
     issue_number: int | None = None
     issue_comment_url: str | None = None
     if topic.github_issue_number is not None and await resolve_issue_associations_enabled(session):
-        repo = topic.github_repo or await resolve_global_github_repo(session)
+        repo = await resolve_topic_github_repo(session, topic)
         token = await resolve_github_token(session)
         if repo and token:
             client = GitHubClient(token=token)

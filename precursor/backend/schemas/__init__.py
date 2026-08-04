@@ -13,6 +13,11 @@ from precursor.backend.schemas.chat import (
     ChatRead,
     ChatUpdate,
 )
+from precursor.backend.schemas.collection import (
+    CollectionCreate,
+    CollectionRead,
+    CollectionUpdate,
+)
 from precursor.backend.schemas.meeting import (
     AgendaAttendee,
     AgendaEvent,
@@ -111,6 +116,9 @@ __all__ = [
     "ChatRead",
     "ChatRequest",
     "ChatUpdate",
+    "CollectionCreate",
+    "CollectionRead",
+    "CollectionUpdate",
     "CommitRequest",
     "ContextNoteAdd",
     "ContextNotesUpdate",

@@ -16,7 +16,7 @@ import {
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
-import type { Schedule, Topic, TopicNode } from "../lib/types";
+import type { Collection, Schedule, Topic, TopicNode } from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
@@ -66,6 +66,8 @@ export function TopicSettingsPanel({
     topic.github_issue_number !== null ? String(topic.github_issue_number) : "",
   );
   const [defaultRepo, setDefaultRepo] = useState("");
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [collectionId, setCollectionId] = useState<number | "">(topic.collection_id ?? "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -116,10 +118,17 @@ export function TopicSettingsPanel({
       } catch {
         /* settings optional */
       }
+      try {
+        setCollections(await api.collections.list());
+      } catch {
+        /* collections optional */
+      }
     })();
   }, []);
 
   const forbiddenIds = collectDescendantIds(tree, topic.id);
+  const collectionRepo =
+    collections.find((c) => c.id === collectionId)?.github_repo ?? "";
 
   async function save(): Promise<void> {
     const trimmed = title.trim();
@@ -139,6 +148,7 @@ export function TopicSettingsPanel({
         slug: slug.trim() && slug.trim() !== topic.slug ? slug.trim() : undefined,
         description: description.trim() ? description.trim() : null,
         parent_id: parentId === "" ? null : parentId,
+        collection_id: collectionId === "" ? null : collectionId,
         github_repo: repo.trim() ? repo.trim() : null,
         github_issue_number: issueNumber.trim() ? Number(issueNumber.trim()) : null,
       });
@@ -334,6 +344,25 @@ export function TopicSettingsPanel({
                 />
               </section>
 
+              {collections.length > 0 && (
+                <section>
+                  <label className="block text-xs text-muted mb-1">Collection</label>
+                  <Select
+                    value={collectionId === "" ? "" : String(collectionId)}
+                    onChange={(v) => setCollectionId(v === "" ? "" : Number(v))}
+                    ariaLabel="Collection"
+                    fullWidth
+                    options={collections.map((c) => ({
+                      value: String(c.id),
+                      label: c.name,
+                    }))}
+                  />
+                  <p className="mt-1 text-[11px] text-muted">
+                    Sub-topics move with this topic.
+                  </p>
+                </section>
+              )}
+
               {issueAssociationsEnabled && (
                 <section className="grid grid-cols-[1fr_120px] gap-2">
                   <div>
@@ -342,7 +371,7 @@ export function TopicSettingsPanel({
                       type="text"
                       value={repo}
                       onChange={(e) => setRepo(e.target.value)}
-                      placeholder={defaultRepo || "owner/name"}
+                      placeholder={collectionRepo || defaultRepo || "owner/name"}
                       className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                     />
                   </div>

@@ -57,11 +57,15 @@ import type {
   ProjectBoard,
   ProjectSummary,
   IssueDetail,
-  Reminder,  ReminderContainer,
+  Reminder,
+  ReminderContainer,
   ReminderCreate,
   ReminderItem,
   RefineRequest,
   RefineResponse,
+  Collection,
+  CollectionCreate,
+  CollectionUpdate,
   Role,
   RoleCreate,
   RoleUpdate,
@@ -188,7 +192,12 @@ export const api = {
     // Topics
     list: (q?: string) =>
       request<Topic[]>(`/api/topics${q ? `?q=${encodeURIComponent(q)}` : ""}`),
-    tree: () => request<TopicNode[]>(`/api/topics/tree`),
+    tree: (collectionId?: number | null) =>
+      request<TopicNode[]>(
+        collectionId == null
+          ? `/api/topics/tree`
+          : `/api/topics/tree?collection_id=${collectionId}`,
+      ),
     get: (id: number) => request<Topic>(`/api/topics/${id}`),
     getBySlug: (slug: string) =>
       request<Topic>(`/api/topics/by-slug/${encodeURIComponent(slug)}`),
@@ -688,6 +697,30 @@ export const api = {
       }),
     remove: (id: number) =>
       request<void>(`/api/roles/${id}`, { method: "DELETE" }),
+  },
+
+  collections: {
+    // Collections (topic groupings that filter the sidebar tree)
+    list: () => request<Collection[]>(`/api/collections`),
+    create: (data: CollectionCreate) =>
+      request<Collection>(`/api/collections`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: number, data: CollectionUpdate) =>
+      request<Collection>(`/api/collections/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    // Topics are never deleted with the collection — they move to `reassignTo`
+    // (or the built-in default when omitted).
+    remove: (id: number, reassignTo?: number | null) =>
+      request<void>(
+        reassignTo == null
+          ? `/api/collections/${id}`
+          : `/api/collections/${id}?reassign_to=${reassignTo}`,
+        { method: "DELETE" },
+      ),
   },
 
   memories: {

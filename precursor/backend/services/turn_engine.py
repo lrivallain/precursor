@@ -25,12 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.services import memories as memory_service
-from precursor.backend.services.app_settings import resolve_global_github_repo
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
     attachments_to_text_context,
     is_image_attachment,
 )
+from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.context_budget import trim_messages
 from precursor.backend.services.events import (
     publish_message_changed,
@@ -92,7 +92,7 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
     if topic.description:
         parts.append(f"Topic description: {topic.description}")
 
-    repo = topic.github_repo or await resolve_global_github_repo(session)
+    repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)
     if repo and topic.github_issue_number and token:
         try:

@@ -1,4 +1,4 @@
-"""Topic and Chat slug generation and uniqueness."""
+"""Topic, Chat and Collection slug generation and uniqueness."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.models import Topic
 
 if TYPE_CHECKING:
-    from precursor.backend.models import Chat
+    from precursor.backend.models import Chat, Collection
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _MAX_LEN = 80
@@ -32,7 +32,7 @@ def slugify(text: str) -> str:
     return s[:_MAX_LEN]
 
 
-async def allocate_unique_slug[T: (Topic, "Chat")](
+async def allocate_unique_slug[T: (Topic, "Chat", "Collection")](
     session: AsyncSession,
     base: str,
     model: type[T],
