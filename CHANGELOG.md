@@ -37,6 +37,27 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `workiq_loopback_port_fallback=false` to restore the previous strict
   behaviour.
 
+- **MCP: sign-in prompts are collapsed per credential on the backend too**: when
+  a turn pauses because MCP servers need authenticating, the blocked list is now
+  reduced to **one name per credential** before anything is announced, so two
+  blocked Agent 365 servers ask you to sign in **once** rather than twice. This
+  lands at a single choke point (`auth_blocked_servers`), so chat, topic,
+  workspace and scheduled-command pauses all inherit it. Which servers share a
+  credential is no longer hardcoded per call site: a new **OAuth server
+  registry** is the one place that knows which built-ins sign in, what to call
+  them, and which of them are backed by the same token.
+
+- **MCP: keep-alive backs off for credentials you aren't using**: the ticker
+  still refreshes a token shortly before it expires so an active session never
+  breaks mid-turn, but a WorkIQ server enabled long ago and never called is now
+  left alone — no refresh, and crucially **no sign-in prompt** when its refresh
+  token finally lapses. Usage is tracked per credential (calling either Agent 365
+  server keeps the shared token warm) with a **6 hour** default window, and the
+  clock is seeded at process start so a restart doesn't leave everything cold.
+  Set `workiq_keepalive_idle_after_seconds=0` to keep every signed-in credential
+  warm indefinitely, as before. See
+  [MCP → Quiet when you're not using it](https://lrivallain.github.io/precursor/features/mcp.html#quiet-when-you-re-not-using-it).
+
 ### Added
 
 - **MCP: Microsoft Agent 365 servers (`workiq-teams`, `workiq-user`)**: two new
@@ -368,7 +389,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   install is deprecation-free and dedupes to a single `uuid`. The SDK only uses
   `uuid.v4()`, which is unchanged across these majors.
 
+### Fixed
+
+- **MCP: Agent 365 servers never attached to agent sessions**: `workiq-teams`
+  and `workiq-user` were rejected by name when an agent turn resolved its bearer
+  token, so despite being signed in they were dropped from the agent's tool
+  catalog, their tools silently went missing, and a sign-in prompt was raised
+  that **signing in could never clear** — the same name gate blocked the retry,
+  so the prompt came back on every rebuild. Bearer resolution and tool-failure
+  attribution now go through the OAuth server registry, which covers every
+  OAuth-protected built-in rather than the WorkIQ preview alone.
+
 ## [2026.7.0] - 2026-07-19
+
 
 ### Added
 

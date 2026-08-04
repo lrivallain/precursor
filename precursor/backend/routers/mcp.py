@@ -310,22 +310,15 @@ async def _renew_stale_sibling_credentials(
     to get anyway, sooner and cheaper.
     """
     from precursor.backend.config import get_settings
-    from precursor.backend.services.mcp.agent365 import AGENT365_SERVERS, profile_for
-    from precursor.backend.services.mcp.workiq_preview import (
-        PREVIEW_PROFILE,
-        resolve_workiq_preview,
-    )
+    from precursor.backend.services.mcp.oauth_registry import active_profiles
 
     if not get_settings().workiq_chain_reauth_enabled:
         return
 
-    candidates: list[Any] = []
-    if await resolve_workiq_preview():
-        candidates.append(PREVIEW_PROFILE)
-    for spec in AGENT365_SERVERS:
-        sibling = await profile_for(spec.name)
-        if sibling is not None:
-            candidates.append(sibling)
+    # Per-server (not credential-deduped) on purpose: the enabled/needs_auth
+    # filters below are per-server, so collapsing first could let a disabled
+    # representative mask an enabled sibling sharing the same credential.
+    candidates = await active_profiles()
 
     from precursor.backend.services.events import publish_mcp_auth_required
 

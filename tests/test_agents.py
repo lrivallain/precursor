@@ -188,12 +188,22 @@ async def test_enabled_catalog_fingerprint_tracks_toggles() -> None:
         await _set_mcp_enabled({})
 
 
-async def test_oauth_bearer_header_only_applies_to_workiq() -> None:
+async def test_oauth_bearer_header_skips_non_oauth_servers() -> None:
     """Catalog servers without an OAuth provider never get a bearer header."""
     from precursor.backend.services.agents.manager import AgentManager
 
     assert await AgentManager()._oauth_bearer_header("github") is None
     assert await AgentManager()._oauth_bearer_header("my-http") is None
+
+
+async def _enable_preview(monkeypatch) -> None:
+    """Turn preview mode on so ``workiq`` resolves to a signable OAuth profile."""
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    async def _on() -> bool:
+        return True
+
+    monkeypatch.setattr(wp, "resolve_workiq_preview", _on)
 
 
 async def test_oauth_bearer_header_workiq_injects_token(monkeypatch) -> None:
@@ -205,12 +215,46 @@ async def test_oauth_bearer_header_workiq_injects_token(monkeypatch) -> None:
 
     expires = datetime.now(UTC) + timedelta(hours=1)
 
-    async def _tok() -> tuple[str, datetime]:
+    async def _tok(_profile: object = None) -> tuple[str, datetime]:
         return "wq-access-token", expires
 
+    await _enable_preview(monkeypatch)
     monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
     result = await AgentManager()._oauth_bearer_header("workiq")
     assert result == ({"Authorization": "Bearer wq-access-token"}, expires)
+
+
+async def test_oauth_bearer_header_resolves_agent365_servers(monkeypatch) -> None:
+    """Agent 365 servers authenticate too — the header isn't preview-only.
+
+    Regression guard: these used to be rejected by name, so enabling one left the
+    agent without its tools *and* raised a sign-in prompt that signing in could
+    never clear, because the same name gate blocked the retry.
+    """
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp import agent365
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    name = agent365.AGENT365_SERVERS[0].name
+    seen: list[str] = []
+
+    async def _profile(server: str):
+        return agent365.build_profile(server, "11111111-2222-3333-4444-555555555555")
+
+    async def _tok(profile: object = None) -> tuple[str, None]:
+        seen.append(getattr(profile, "server", ""))
+        return "a365-token", None
+
+    monkeypatch.setattr(agent365, "profile_for", _profile)
+    monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
+
+    result = await AgentManager()._oauth_bearer_header(name)
+    assert result is not None
+    headers, expiry = result
+    assert expiry is None
+    assert headers["Authorization"].endswith("a365-token")
+    # The token is minted against that server's own profile, not the preview one.
+    assert seen == [name]
 
 
 async def test_oauth_bearer_header_passes_through_unknown_expiry(monkeypatch) -> None:
@@ -218,9 +262,10 @@ async def test_oauth_bearer_header_passes_through_unknown_expiry(monkeypatch) ->
     from precursor.backend.services.agents.manager import AgentManager
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _tok() -> tuple[str, None]:
+    async def _tok(_profile: object = None) -> tuple[str, None]:
         return "wq-access-token", None
 
+    await _enable_preview(monkeypatch)
     monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
     result = await AgentManager()._oauth_bearer_header("workiq")
     assert result == ({"Authorization": "Bearer wq-access-token"}, None)
@@ -231,9 +276,10 @@ async def test_oauth_bearer_header_workiq_without_token_is_none(monkeypatch) -> 
     from precursor.backend.services.agents.manager import AgentManager
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _none() -> None:
+    async def _none(_profile: object = None) -> None:
         return None
 
+    await _enable_preview(monkeypatch)
     monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _none)
     assert await AgentManager()._oauth_bearer_header("workiq") is None
 
@@ -338,9 +384,10 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
 
         expires = datetime.now(UTC) + timedelta(hours=1)
 
-        async def _tok() -> tuple[str, datetime]:
+        async def _tok(_profile: object = None) -> tuple[str, datetime]:
             return "wq-token", expires
 
+        await _enable_preview(monkeypatch)
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok)
         configs, oauth_expiry, _auth_required = await AgentManager()._catalog_mcp_configs()
         assert configs["workiq"]["type"] == "http"
@@ -350,7 +397,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
         assert oauth_expiry == expires
 
         # Unknown lifetime → a conservative fallback TTL, not None.
-        async def _tok_no_exp() -> tuple[str, None]:
+        async def _tok_no_exp(_profile: object = None) -> tuple[str, None]:
             return "wq-token", None
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok_no_exp)
@@ -359,7 +406,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
         assert fallback_expiry is not None
         assert before < fallback_expiry <= datetime.now(UTC) + _OAUTH_FALLBACK_TTL
 
-        async def _none() -> None:
+        async def _none(_profile: object = None) -> None:
             return None
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _none)

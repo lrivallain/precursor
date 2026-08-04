@@ -120,6 +120,13 @@ class Settings(BaseSettings):
     workiq_keepalive_poll_seconds: int = 60
     # Refresh once the access token is within this many seconds of expiring.
     workiq_keepalive_refresh_margin_seconds: int = 300
+    # Stop keeping a credential warm once it has gone this long without a tool
+    # call. Refreshing a server nobody uses is wasted work, and — worse — when
+    # its refresh token eventually lapses the keep-alive raises a sign-in prompt
+    # for tools the user never asked for. The idle clock is seeded at process
+    # start, so a freshly started app still keeps everything warm for one window
+    # rather than going cold until the first call. Set to 0 to always keep warm.
+    workiq_keepalive_idle_after_seconds: int = 21_600
 
     # WorkIQ interactive re-auth UX (services/mcp/workiq_preview.py). We always
     # pre-fill the Entra account picker with the last signed-in user

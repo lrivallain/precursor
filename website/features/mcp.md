@@ -151,6 +151,25 @@ busy port fails fast with "port 12798 is already in use — another Precursor wi
 or app is signing in…" rather than moving.
 :::
 
+#### Quiet when you're not using it
+
+The collapse runs on the **backend** too, not just in the banner. When a turn
+pauses because servers need authenticating, Precursor reduces that list to one
+name **per credential** before it prompts, so two blocked Agent 365 servers ask
+you to sign in **once**, not twice. Chat, topic, workspace and scheduled-command
+pauses all share that single choke point.
+
+The keep-alive ticker also **backs off for credentials you aren't using**. It
+still refreshes a token shortly before it expires so an active session never
+breaks mid-turn — but a WorkIQ server you enabled months ago and never call no
+longer keeps getting refreshed, and, more to the point, no longer raises a
+sign-in prompt when its refresh token finally lapses. Usage is tracked per
+credential (calling either Agent 365 server keeps the shared token warm) and the
+window defaults to **6 hours**; the clock is seeded at startup, so a freshly
+started Precursor keeps everything warm rather than going quiet until your first
+tool call. Set `workiq_keepalive_idle_after_seconds=0` to disable the back-off
+and keep every signed-in credential warm indefinitely.
+
 ### Agent 365: `workiq-teams` and `workiq-user`
 
 Microsoft's **Agent 365** platform exposes two more hosted MCP endpoints, and
