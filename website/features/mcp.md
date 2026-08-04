@@ -114,17 +114,41 @@ pass — the renewal is broadcast to every open window, so any other window stil
 showing the banner clears it at once instead of prompting for credentials that
 are already fresh.
 
-::: warning One sign-in at a time per machine
-Each OAuth-protected server's callback listens on a **fixed** loopback port —
-`12798` for `workiq`, `12799` for `workiq-teams`, `12800` for `workiq-user` — so
-only one Precursor instance can
-run a given sign-in at a time. If you have several windows open (e.g. multiple worktrees)
-and start a sign-in while another already owns the port, Precursor fails fast
-with a clear message ("port 12798 is already in use — another Precursor window
-or app is signing in…") **without** disturbing your existing session — finish or
-close that other sign-in, then retry. Simply **closing the sign-in popup cancels
-the flow** and frees the port immediately, so an abandoned sign-in never blocks
-the next one.
+#### One prompt, not one per credential
+
+The built-ins don't all share a credential: the WorkIQ preview and
+[Agent 365](#agent-365-workiq-teams-and-workiq-user) are different Entra clients
+against different resources, so they hold **separate tokens** that expire on
+their own clocks. Left alone that means two banners and two sign-ins.
+
+Precursor collapses them instead. Pending sign-ins are tracked **per credential**
+and rendered as **one banner** naming every server involved ("WorkIQ and WorkIQ
+Teams need you to sign in…"), and re-auth attempts run **strictly one at a time**
+so two flows can never race for the same window.
+
+The single **Sign in** you click covers the first credential — then, the moment it
+succeeds, Precursor immediately retries the *others* while your Entra SSO session
+is hot. Those retries take the hands-free path (silent `prompt=none` first), so
+in the common case the remaining credentials renew with **zero extra clicks** and
+the banner disappears on its own. The backend does the same for its side: after
+any successful sign-in it re-arms the sign-in prompt for servers still parked on
+a stale, *different* credential, so a browser that's already there picks them up
+in the same breath. Set `workiq_chain_reauth_enabled=false` to disable that
+follow-on pass and renew each credential only when it's independently needed.
+
+::: tip Concurrent sign-ins
+Each OAuth-protected server prefers a **fixed** loopback port for its callback —
+`12798` for `workiq`, `12799` for `workiq-teams`, `12800` for `workiq-user`. When
+that port is already taken — another Precursor window (e.g. a second worktree)
+mid-sign-in, or an unrelated app — Precursor now **falls back to a free ephemeral
+port** for that one flow instead of refusing to start. Entra ignores the port of a
+loopback redirect for public clients (it matches the host and path exactly), so
+the fallback is transparent, and several windows can sign in at once.
+
+Closing the sign-in popup still **cancels the flow** immediately. Set
+`workiq_loopback_port_fallback=false` to restore the old strict behaviour, where a
+busy port fails fast with "port 12798 is already in use — another Precursor window
+or app is signing in…" rather than moving.
 :::
 
 ### Agent 365: `workiq-teams` and `workiq-user`
@@ -147,7 +171,10 @@ permission — a token minted for one is accepted verbatim by the other. So
 Precursor caches a single Agent 365 credential: sign in from either server and
 both come up. The WorkIQ preview is a *different* client **and** a different
 resource, so it keeps its own separate token — signing in to Teams never
-disturbs your WorkIQ session, and vice versa.
+disturbs your WorkIQ session, and vice versa. When *both* credentials happen to
+be stale at once you still only get **one prompt**: the sign-in you complete
+chains a hands-free renewal for the other, as described under
+[one prompt, not one per credential](#one-prompt-not-one-per-credential).
 
 **They need your Microsoft tenant.** The endpoint URL embeds a tenant **GUID**:
 

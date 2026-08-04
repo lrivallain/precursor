@@ -140,6 +140,26 @@ class Settings(BaseSettings):
     # manual click.
     workiq_auto_reauth_enabled: bool = True
 
+    # WorkIQ loopback redirect port fallback (services/mcp/workiq_preview.py).
+    # Every WorkIQ credential redirects to a *fixed* loopback port, so two of them
+    # signing in at once — or any unrelated process squatting the port — used to
+    # fail the sign-in outright. Entra ignores the port of a public client's
+    # loopback redirect (only host and path must match the registration), so when
+    # the preferred port is taken we can listen on an ephemeral one instead. Turn
+    # off to keep the strict "port busy" failure.
+    workiq_loopback_port_fallback: bool = True
+
+    # WorkIQ cross-credential renewal (routers/mcp.py). Precursor's WorkIQ servers
+    # authenticate as two different Entra clients (the preview app and the Agent
+    # 365 one), so each needs its own sign-in. Right after any one of them
+    # succeeds the browser holds a hot Entra SSO cookie — the cheapest moment to
+    # renew the others, where a ``prompt=none`` pass usually completes with zero
+    # clicks. When on, a successful sign-in re-announces any sibling credential
+    # still parked in ``needs_auth`` so the SPA spends that cookie immediately
+    # instead of prompting again minutes later. Turn off to renew each credential
+    # only when its own server is next used.
+    workiq_chain_reauth_enabled: bool = True
+
     # Microsoft Agent 365 tenant (services/mcp/agent365.py). The hosted
     # ``workiq-teams`` / ``workiq-user`` MCP endpoints embed a tenant GUID in
     # their URL — Entra rejects the ``common``/``organizations`` aliases there.

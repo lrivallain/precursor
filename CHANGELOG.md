@@ -9,6 +9,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP: one sign-in prompt instead of one per credential**: the WorkIQ preview
+  and the Agent 365 servers are different Entra clients against different
+  resources, so they hold separate tokens on separate expiry clocks — which used
+  to mean a second banner and a second click every time both aged out. Pending
+  sign-ins are now tracked **per credential** and collapsed into a **single
+  banner** naming every server involved, with re-auth attempts serialized so two
+  flows can't race for the same window. The one **Sign in** you click now also
+  **chains the others**: as soon as it succeeds, the remaining credentials retry
+  on the hands-free silent path while the Entra SSO session is hot (and the
+  backend re-arms the prompt for servers parked on a different stale
+  credential), so in the common case they renew with **zero extra clicks**. Set
+  `workiq_chain_reauth_enabled=false` to renew each credential only when it's
+  independently needed. Previously the second credential never even attempted the
+  silent pass and always fell through to a manual click. See
+  [MCP → One prompt, not one per credential](https://lrivallain.github.io/precursor/features/mcp.html#one-prompt-not-one-per-credential).
+
+- **MCP: a busy loopback port no longer blocks a WorkIQ sign-in**: each
+  OAuth-protected server still *prefers* its fixed callback port (`12798`,
+  `12799`, `12800`), but when that port is taken — another Precursor window
+  mid-sign-in, or an unrelated app — the flow now falls back to a free
+  **ephemeral port** instead of failing fast. Entra ignores the port of a
+  loopback redirect for public clients, so the fallback is transparent and
+  several windows can sign in concurrently. Set
+  `workiq_loopback_port_fallback=false` to restore the previous strict
+  behaviour.
+
 ### Added
 
 - **MCP: Microsoft Agent 365 servers (`workiq-teams`, `workiq-user`)**: two new
