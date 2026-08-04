@@ -123,7 +123,8 @@ function highlight(text: string, query: string, cls: string): ReactNode {
 }
 
 /**
- * Keyboard-first launcher **and** content search. Opened with ⌘K / Ctrl+K.
+ * Keyboard-first launcher **and** content search. Opened with ⌘K / Ctrl+K, or
+ * with a bare `/` when focus isn't in a text field.
  *
  * With an empty query it's the section switcher (type to filter, ↑/↓ to move,
  * Enter to jump, a digit to pick that numbered row). Once you type, it also

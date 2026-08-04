@@ -842,7 +842,7 @@ function SectionRailButtons({
         <button
           className="group relative p-2 rounded hover:bg-surface"
           aria-label="Jump to section"
-          data-tooltip={labelOnHover ? undefined : "Jump to section (⌘K)"}
+          data-tooltip={labelOnHover ? undefined : "Search or jump to section (⌘K or /)"}
           onClick={onOpenPalette}
         >
           <Search size={18} />
@@ -1099,7 +1099,7 @@ function ModeSwitcher({
           type="button"
           className="flex shrink-0 items-center justify-center rounded px-1.5 text-muted hover:bg-surface hover:text-text"
           aria-label="Jump to section"
-          data-tooltip="Jump to section (⌘K)"
+          data-tooltip="Search or jump to section (⌘K or /)"
           onClick={onOpenPalette}
         >
           <Search size={16} />
