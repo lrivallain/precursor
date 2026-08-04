@@ -510,6 +510,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runRole(argument);
       return;
     }
+    if (name === "collection") {
+      await runCollection(argument);
+      return;
+    }
     if (name === "agent") {
       await runAgent(argument);
       return;
@@ -600,6 +604,39 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       systemNote(`Assistant role set to "${role.name}".`);
     } catch (err) {
       systemNote(`Role change failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function runCollection(argument: string): Promise<void> {
+    const arg = argument.trim();
+    let collections;
+    try {
+      collections = await api.collections.list();
+    } catch (err) {
+      systemNote(`Could not load collections: ${(err as Error).message}`);
+      return;
+    }
+    if (!arg) {
+      const current = collections.find((c) => c.id === topic.collection_id);
+      systemNote(
+        `Collections: ${collections.map((c) => c.name).join(", ")}.` +
+          (current ? ` This topic is in "${current.name}".` : ""),
+      );
+      return;
+    }
+    const target = collections.find(
+      (c) => c.name.toLowerCase() === arg.toLowerCase() || c.slug === arg.toLowerCase(),
+    );
+    if (!target) {
+      systemNote(`Unknown collection "${arg}". Manage collections in Settings → Collections.`);
+      return;
+    }
+    try {
+      await api.topics.update(topic.id, { collection_id: target.id });
+      onTopicUpdated();
+      systemNote(`Moved to "${target.name}" (sub-topics follow).`);
+    } catch (err) {
+      systemNote(`Move failed: ${(err as Error).message}`);
     }
   }
 

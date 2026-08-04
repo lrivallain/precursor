@@ -39,13 +39,15 @@ from typing import Any, TypeVar
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentSession,
     Chat,
+    Collection,
     MeetingInsight,
     MeetingSegment,
     MeetingSession,
@@ -162,7 +164,8 @@ async def _section_enabled(section: str) -> bool:
     return bool(expose.get(section))
 
 
-def _topic_dict(t: Topic) -> dict[str, Any]:
+def _topic_dict(t: Topic, collection_names: dict[int, str] | None = None) -> dict[str, Any]:
+    names = collection_names or {}
     return {
         "id": t.id,
         "slug": t.slug,
@@ -170,11 +173,18 @@ def _topic_dict(t: Topic) -> dict[str, Any]:
         "kind": t.kind,
         "description": t.description,
         "parent_id": t.parent_id,
+        "collection_id": t.collection_id,
+        "collection": names.get(t.collection_id) if t.collection_id is not None else None,
         "pinned": t.pinned,
         "archived": t.archived_at is not None,
         "created_at": _iso(t.created_at),
         "updated_at": _iso(t.updated_at),
     }
+
+
+async def _collection_names(session: AsyncSession) -> dict[int, str]:
+    rows = await session.execute(select(Collection.id, Collection.name))
+    return {cid: name for cid, name in rows.all()}
 
 
 def _message_dict(m: Message) -> dict[str, Any]:
@@ -293,11 +303,16 @@ async def precursor_info() -> dict[str, Any]:
 # topics
 # --------------------------------------------------------------------------
 @mcp.tool()
-async def list_topics(q: str | None = None, include_archived: bool = False) -> dict[str, Any]:
+async def list_topics(
+    q: str | None = None,
+    include_archived: bool = False,
+    collection: str | None = None,
+) -> dict[str, Any]:
     """List Precursor topics (id, slug, title, kind), optionally filtered by ``q``.
 
     ``q`` matches the title (case-insensitive). Archived topics are excluded
-    unless ``include_archived`` is true.
+    unless ``include_archived`` is true. ``collection`` restricts results to a
+    single collection, matched on its name or slug (case-insensitive).
     """
     if not await _section_enabled("topics"):
         return {"error": _GATED.format(section="topics")}
@@ -307,8 +322,28 @@ async def list_topics(q: str | None = None, include_archived: bool = False) -> d
             stmt = stmt.where(Topic.archived_at.is_(None))
         if q:
             stmt = stmt.where(Topic.title.ilike(f"%{q.lower()}%"))
+        if collection:
+            wanted = collection.strip().lower()
+            match = (
+                (
+                    await session.execute(
+                        select(Collection).where(
+                            or_(
+                                func.lower(Collection.name) == wanted,
+                                func.lower(Collection.slug) == wanted,
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if match is None:
+                return {"error": f"Collection '{collection}' not found"}
+            stmt = stmt.where(Topic.collection_id == match.id)
         rows = (await session.execute(stmt)).scalars().all()
-    return {"topics": [_topic_dict(t) for t in rows], "count": len(rows)}
+        names = await _collection_names(session)
+    return {"topics": [_topic_dict(t, names) for t in rows], "count": len(rows)}
 
 
 @mcp.tool()
@@ -318,9 +353,10 @@ async def get_topic(topic_id: int) -> dict[str, Any]:
         return {"error": _GATED.format(section="topics")}
     async with SessionLocal() as session:
         topic = await session.get(Topic, topic_id)
-    if topic is None:
-        return {"error": f"Topic {topic_id} not found"}
-    return _topic_dict(topic)
+        if topic is None:
+            return {"error": f"Topic {topic_id} not found"}
+        names = await _collection_names(session)
+    return _topic_dict(topic, names)
 
 
 # --------------------------------------------------------------------------

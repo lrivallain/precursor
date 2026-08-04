@@ -34,8 +34,13 @@ Topics form a **self-referencing tree**: nest a topic under a parent to group
 related threads.
 
 Right-click a topic in the left sidebar to rename it, mark it read or unread,
-pin or unpin it, set a reminder, open `/notes`, or archive it without first
-opening the topic.
+pin or unpin it, set a reminder, open `/notes`, move it to another
+[collection](/features/collections), or archive it without first opening the
+topic.
+
+Above the tree, [**collections**](/features/collections) split your topics into
+separate workspaces of work and filter the sidebar to one at a time — each with
+its own optional GitHub repo.
 
 ## Scheduling & reminders
 

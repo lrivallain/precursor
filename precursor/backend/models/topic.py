@@ -63,6 +63,15 @@ class Topic(Base, TimestampMixin):
         ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Collection this topic belongs to — the lens the sidebar filters by.
+    # Membership cascades down the tree, so a subtree is never split across
+    # collections (enforced in the API layer). Null is a transient state only:
+    # every topic is assigned the protected default collection. The DB-level
+    # SET NULL is a safety net for out-of-band deletion.
+    collection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("collections.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Timestamp of the last time the user opened this topic. Used to compute
     # the sidebar unread badge (non-user messages newer than this are unread).
     # Null means "never explicitly opened" — treated as fully read so old topics

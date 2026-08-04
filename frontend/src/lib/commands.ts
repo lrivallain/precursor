@@ -150,6 +150,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic", "chat"],
   },
   {
+    name: "collection",
+    label: "/collection",
+    description:
+      "Move this topic (and its sub-topics) to another collection. Run it bare to list the collections you have.",
+    argumentHint: "collection name (optional)",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
     name: "archive",
     label: "/archive",
     description:

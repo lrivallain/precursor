@@ -565,7 +565,7 @@ def test_meeting_summary_post_mirrors_to_linked_issue(
     async def _enabled(_session: object) -> bool:
         return True
 
-    async def _repo(_session: object) -> str:
+    async def _repo(_session: object, _topic: object) -> str:
         return "acme/app"
 
     async def _token(_session: object) -> str:
@@ -573,7 +573,7 @@ def test_meeting_summary_post_mirrors_to_linked_issue(
 
     monkeypatch.setattr(live_router, "GitHubClient", _FakeClient)
     monkeypatch.setattr(live_router, "resolve_issue_associations_enabled", _enabled)
-    monkeypatch.setattr(live_router, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(live_router, "resolve_topic_github_repo", _repo)
     monkeypatch.setattr(live_router, "resolve_github_token", _token)
 
     app = create_app()

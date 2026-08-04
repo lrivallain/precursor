@@ -74,7 +74,8 @@ async def init_db() -> None:
       ``create_all`` one that has tables but no version row (``stamp head``
       adopts it). Told apart by whether any application table already exists.
 
-    Either way the protected default Assistant Role is seeded (idempotent).
+    Either way the protected default Assistant Role and Collection are seeded
+    (idempotent).
     """
     async with engine.connect() as conn:
         has_version, has_tables, stored = await conn.run_sync(_inspect_alembic_state)
@@ -94,6 +95,7 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(ensure_default_role)
+        await conn.run_sync(ensure_default_collection)
 
 
 def _inspect_alembic_state(sync_conn: Connection) -> tuple[bool, bool, str | None]:
@@ -162,6 +164,52 @@ def ensure_default_role(sync_conn: Connection) -> None:
             "INSERT INTO roles (name, system_prompt, is_default, created_at, updated_at) "
             "VALUES ('default', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
+    )
+
+
+def ensure_default_collection(sync_conn: Connection) -> None:
+    """Seed the protected default Collection and adopt any orphaned topics.
+
+    Idempotent: runs on every startup so a fresh database — or one created
+    before Collections existed — always has somewhere for topics to live. Also
+    re-homes topics whose collection was removed out-of-band, since the FK is
+    ``SET NULL``.
+    """
+    from sqlalchemy import inspect, text
+
+    from precursor.backend.models.collection import (
+        DEFAULT_COLLECTION_ACCENT,
+        DEFAULT_COLLECTION_NAME,
+        DEFAULT_COLLECTION_SLUG,
+    )
+
+    names = set(inspect(sync_conn).get_table_names())
+    if "collections" not in names:
+        return
+    row = sync_conn.execute(text("SELECT id FROM collections WHERE is_default = 1 LIMIT 1")).first()
+    if row is None:
+        sync_conn.execute(
+            text(
+                "INSERT INTO collections "
+                "(name, slug, description, github_repo, accent, icon, is_default, "
+                " created_at, updated_at) "
+                "VALUES (:name, :slug, NULL, NULL, :accent, NULL, 1, "
+                " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {
+                "name": DEFAULT_COLLECTION_NAME,
+                "slug": DEFAULT_COLLECTION_SLUG,
+                "accent": DEFAULT_COLLECTION_ACCENT,
+            },
+        )
+        row = sync_conn.execute(
+            text("SELECT id FROM collections WHERE is_default = 1 LIMIT 1")
+        ).first()
+    if row is None or "topics" not in names:
+        return
+    sync_conn.execute(
+        text("UPDATE topics SET collection_id = :cid WHERE collection_id IS NULL"),
+        {"cid": row[0]},
     )
 
 

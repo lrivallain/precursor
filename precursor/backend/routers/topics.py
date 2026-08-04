@@ -18,6 +18,10 @@ from precursor.backend.schemas.schedule import (
     ScheduleUpdate,
     TopicScheduleCreate,
 )
+from precursor.backend.services.collections import (
+    move_subtree_to_collection,
+    resolve_collection_id,
+)
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_read_changed,
@@ -60,16 +64,28 @@ async def list_archived_topics(
 
 
 @router.get("/tree", response_model=list[TopicNode])
-async def topic_tree(session: AsyncSession = Depends(get_session)) -> list[TopicNode]:
+async def topic_tree(
+    collection_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[TopicNode]:
     """Return topics arranged as a tree (roots with nested children).
 
     Archived topics are skipped; any non-archived descendants of an archived
     node are re-parented to that node's nearest non-archived ancestor (or
     promoted to the root) so they remain reachable in the visible tree.
+
+    When ``collection_id`` is given the tree is restricted to that collection.
+    Membership cascades down the tree, so a subtree is never split — filtering
+    on the node alone is enough.
     """
     result = await session.execute(select(Topic).options(selectinload(Topic.children)))
     all_topics = list(result.scalars().unique().all())
     by_id = {t.id: t for t in all_topics}
+
+    visible = [t for t in all_topics if t.archived_at is None]
+    if collection_id is not None:
+        visible = [t for t in visible if t.collection_id == collection_id]
+    visible_ids = {t.id for t in visible}
 
     def visible_parent(t: Topic) -> int | None:
         pid = t.parent_id
@@ -77,12 +93,11 @@ async def topic_tree(session: AsyncSession = Depends(get_session)) -> list[Topic
             parent = by_id.get(pid)
             if parent is None:
                 return None
-            if parent.archived_at is None:
+            if parent.id in visible_ids:
                 return parent.id
             pid = parent.parent_id
         return None
 
-    visible = [t for t in all_topics if t.archived_at is None]
     effective_parent: dict[int, int | None] = {t.id: visible_parent(t) for t in visible}
     children_of: dict[int | None, list[Topic]] = {}
     for t in visible:
@@ -107,6 +122,7 @@ async def topic_tree(session: AsyncSession = Depends(get_session)) -> list[Topic
             kind=node.kind,
             description=node.description,
             parent_id=node.parent_id,
+            collection_id=node.collection_id,
             github_repo=node.github_repo,
             github_issue_number=node.github_issue_number,
             pinned=node.pinned,
@@ -127,6 +143,7 @@ async def create_topic(
     payload: TopicCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
+    parent: Topic | None = None
     if payload.parent_id is not None:
         parent = await session.get(Topic, payload.parent_id)
         if parent is None:
@@ -140,6 +157,13 @@ async def create_topic(
         base = "topic"
     data["slug"] = await allocate_unique_slug(session, base, Topic)
 
+    # A subtree always lives in one collection: inherit the parent's, otherwise
+    # honour the requested one (falling back to the default).
+    if parent is not None:
+        data["collection_id"] = parent.collection_id
+    else:
+        data["collection_id"] = await resolve_collection_id(session, payload.collection_id)
+
     if create_linked_issue:
         # Create the issue first so a GitHub failure aborts before the topic is
         # persisted, keeping topic and issue in sync.
@@ -149,6 +173,7 @@ async def create_topic(
             title=payload.title,
             description=payload.description,
             repo_override=payload.github_repo,
+            collection_id=data["collection_id"],
         )
         data["github_repo"] = repo
         data["github_issue_number"] = issue_number
@@ -199,8 +224,27 @@ async def update_topic(
                 "Slug must contain at least one alphanumeric character",
             )
         data["slug"] = await allocate_unique_slug(session, base, Topic, exclude_id=topic_id)
+
+    # Collection membership cascades: an explicit move takes the whole subtree
+    # with it, and re-parenting adopts the new parent's collection so a subtree
+    # is never split. Re-parenting to the root keeps the topic where it is.
+    target_collection_id: int | None = None
+    if "collection_id" in data:
+        target_collection_id = await resolve_collection_id(session, data["collection_id"])
+    elif "parent_id" in data and data["parent_id"] != topic.parent_id:
+        new_parent_id = data["parent_id"]
+        if new_parent_id is not None:
+            new_parent = await session.get(Topic, new_parent_id)
+            if new_parent is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_id does not exist")
+            target_collection_id = new_parent.collection_id
+    data.pop("collection_id", None)
+
     for key, value in data.items():
         setattr(topic, key, value)
+    if target_collection_id is not None and target_collection_id != topic.collection_id:
+        await session.flush()
+        await move_subtree_to_collection(session, topic_id, target_collection_id)
 
     await session.commit()
     await session.refresh(topic)

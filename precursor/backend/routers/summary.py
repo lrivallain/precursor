@@ -14,11 +14,11 @@ from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import IssueContextCache, Topic
 from precursor.backend.services.app_settings import (
-    resolve_global_github_repo,
     resolve_issue_associations_enabled,
     resolve_issue_context_ttl_minutes,
     resolve_llm_model,
 )
+from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
@@ -93,7 +93,7 @@ async def summarize_issue(
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
 
-    repo = topic.github_repo or await resolve_global_github_repo(session)
+    repo = await resolve_topic_github_repo(session, topic)
     if topic.github_issue_number is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

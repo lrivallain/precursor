@@ -33,6 +33,9 @@ launcher sit together at the top of the rail, above the sections.
 
 These work across the sections above:
 
+- **[Collections](/features/collections)** — split topics into separate
+  workspaces of work, filter the sidebar to one at a time, and give each its own
+  GitHub repo.
 - **[Skills & memory](/features/skills-memory)** — reusable `/slash` prompt
   presets (stored as `SKILL.md` files) and long-term memory injected into every
   conversation.

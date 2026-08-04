@@ -11,6 +11,7 @@ import {
   Clock,
   FolderGit2,
   Home,
+  Layers,
   MessageSquare,
   Mail,
   MailOpen,
@@ -28,9 +29,11 @@ import {
   SquareKanban,
   StickyNote,
 } from "lucide-react";
-import type { ReminderItem, TopicNode } from "../lib/types";
+import type { Collection, ReminderItem, TopicNode } from "../lib/types";
 import { SECTION_COLORS } from "../lib/sections";
 import { Z_INDEX } from "../lib/constants";
+import { CollectionSwitcher } from "./CollectionSwitcher";
+import { collectionColor } from "../lib/collections";
 import { PersonaMenu } from "./PersonaMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
@@ -41,6 +44,7 @@ import { useSectionOrder } from "../lib/useSectionOrder";
 import type { DropSide } from "../lib/useSectionOrder";
 import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
 import { ContextMenu } from "./ContextMenu";
+import type { ContextMenuItem } from "./ContextMenu";
 
 export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
 
@@ -111,6 +115,15 @@ interface Props {
   /** Whether the Kanban section is enabled (shown only when a GitHub repo +
       issue associations are configured). */
   kanbanEnabled?: boolean;
+  /** Collections available to filter the topic tree. */
+  collections?: Collection[];
+  /** Currently selected collection (null while collections are loading). */
+  activeCollectionId?: number | null;
+  onCollectionChange?: (id: number) => void;
+  onCollectionCreate?: (name: string) => void | Promise<void>;
+  onManageCollections?: () => void;
+  /** Move a topic (and its subtree) to another collection. */
+  onMoveToCollection?: (topicId: number, collectionId: number) => void | Promise<void>;
 }
 
 export function Sidebar({
@@ -147,6 +160,12 @@ export function Sidebar({
   unreadByMode,
   liveEnabled = true,
   kanbanEnabled = false,
+  collections = [],
+  activeCollectionId = null,
+  onCollectionChange,
+  onCollectionCreate,
+  onManageCollections,
+  onMoveToCollection,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
@@ -344,6 +363,15 @@ export function Sidebar({
         kanbanSlot
       ) : (
         <>
+          {onCollectionChange && (
+            <CollectionSwitcher
+              collections={collections}
+              activeId={activeCollectionId}
+              onSelect={onCollectionChange}
+              onCreate={onCollectionCreate ?? (() => {})}
+              onManage={onManageCollections ?? (() => {})}
+            />
+          )}
           <div className="px-3 py-2 border-b border-border">
             <div className="relative">
               <Search
@@ -386,6 +414,8 @@ export function Sidebar({
                     onOpenReminder={onOpenReminder}
                     onOpenNotes={onOpenNotes}
                     hasReminder={reminderTopicIds?.has(node.id)}
+                    collections={collections}
+                    onMoveToCollection={onMoveToCollection}
                   />
                 ))}
               </ul>
@@ -416,6 +446,8 @@ export function Sidebar({
                 onOpenReminder={onOpenReminder}
                 onOpenNotes={onOpenNotes}
                 reminderTopicIds={reminderTopicIds}
+                collections={collections}
+                onMoveToCollection={onMoveToCollection}
               />
             ))}
           </ul>
@@ -450,6 +482,8 @@ interface ItemProps {
   onOpenReminder: (id: number) => void;
   onOpenNotes: (id: number) => void;
   reminderTopicIds?: Set<number>;
+  collections?: Collection[];
+  onMoveToCollection?: (topicId: number, collectionId: number) => void | Promise<void>;
 }
 
 function TopicItem({
@@ -469,6 +503,8 @@ function TopicItem({
   onOpenReminder,
   onOpenNotes,
   reminderTopicIds,
+  collections,
+  onMoveToCollection,
 }: ItemProps) {
   const open = !collapsedIds.has(node.id);
   const isActive = node.id === activeId;
@@ -604,6 +640,7 @@ function TopicItem({
               icon: StickyNote,
               onSelect: () => onOpenNotes(node.id),
             },
+            ...moveToCollectionItems(node, collections, onMoveToCollection),
             {
               label: "Archive",
               icon: Archive,
@@ -634,6 +671,8 @@ function TopicItem({
               onOpenReminder={onOpenReminder}
               onOpenNotes={onOpenNotes}
               reminderTopicIds={reminderTopicIds}
+              collections={collections}
+              onMoveToCollection={onMoveToCollection}
             />
           ))}
         </ul>
@@ -725,6 +764,31 @@ function filterTree(tree: TopicNode[], q: string): TopicNode[] {
     }
   }
   return out;
+}
+
+/**
+ * Builds the "Move to collection" submenu, omitting the topic's current
+ * collection. Moving a topic carries its whole subtree along.
+ */
+function moveToCollectionItems(
+  node: TopicNode,
+  collections: Collection[] | undefined,
+  onMove: ((topicId: number, collectionId: number) => void | Promise<void>) | undefined,
+): ContextMenuItem[] {
+  if (!onMove || !collections || collections.length < 2) return [];
+  const targets = collections.filter((c) => c.id !== node.collection_id);
+  if (targets.length === 0) return [];
+  return [
+    {
+      label: "Move to collection",
+      icon: Layers,
+      submenu: targets.map((c) => ({
+        label: c.name,
+        dot: collectionColor(c.accent).dot,
+        onSelect: () => onMove(node.id, c.id),
+      })),
+    },
+  ];
 }
 
 function collectPinned(tree: TopicNode[]): TopicNode[] {
@@ -1235,6 +1299,8 @@ interface PinnedItemProps {
   onOpenReminder: (id: number) => void;
   onOpenNotes: (id: number) => void;
   hasReminder?: boolean;
+  collections?: Collection[];
+  onMoveToCollection?: (topicId: number, collectionId: number) => void | Promise<void>;
 }
 function PinnedItem({
   node,
@@ -1249,6 +1315,8 @@ function PinnedItem({
   onOpenReminder,
   onOpenNotes,
   hasReminder,
+  collections,
+  onMoveToCollection,
 }: PinnedItemProps) {
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
@@ -1317,6 +1385,7 @@ function PinnedItem({
               icon: StickyNote,
               onSelect: () => onOpenNotes(node.id),
             },
+            ...moveToCollectionItems(node, collections, onMoveToCollection),
             {
               label: "Archive",
               icon: Archive,

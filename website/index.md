@@ -26,6 +26,14 @@ features:
       and labels become live context — newer updates outweigh older ones.
     link: /features/topics
     linkText: About topics
+  - icon: 🗃️
+    title: Collections
+    details: >-
+      Split topics into separate workspaces of work and filter the sidebar to
+      one at a time. Each collection can point at its own GitHub repo, so issues
+      land in the right place without touching the global setting.
+    link: /features/collections
+    linkText: About collections
   - icon: 💬
     title: Quick chats
     details: >-

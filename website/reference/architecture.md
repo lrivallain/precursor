@@ -90,7 +90,11 @@ Models live in `precursor/backend/models/`; async SQLAlchemy 2 via `AsyncSession
 Highlights:
 
 - **`Topic`** — a self-referencing tree (parent/children). A topic is "scheduled"
-  when it has an enabled `TopicSchedule`.
+  when it has an enabled `TopicSchedule`. Its optional `collection_id` places it
+  in a [collection](/features/collections).
+- **`Collection`** — a named group of topics (name, slug, description, colour
+  accent, optional GitHub repo override). A protected **General** collection is
+  seeded on first boot and every existing topic is backfilled into it.
 - **`Message`** — per-topic, cascade delete; roles `user` / `assistant` /
   `system` / `tool`. Large `tool` results can be age-pruned in place.
 - **`TopicSchedule`** / **`AgentSchedule`** — recurrence config + run state
@@ -117,6 +121,11 @@ context is rebuilt on every turn so changes to the linked issue propagate
 instantly; the result is cached (`IssueContextCache`) with a TTL. Auth resolves
 in order: a token saved in settings, then the GitHub CLI session
 (`gh auth token`). With neither, the LLM falls back to the mock provider.
+
+The **repository** an issue is created in resolves through
+`services/collections.resolve_topic_github_repo()`, which walks three levels and
+returns the first non-empty value: the topic's own `github_repo`, then its
+collection's, then the global `github_repo` setting.
 
 ## LLM provider abstraction
 

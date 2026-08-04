@@ -11,6 +11,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Collections**: split topics into separate workspaces of work. A switcher at
+  the top of the Topics panel filters the sidebar tree (and the Pinned section)
+  to one collection at a time; search, the command palette, and the archive stay
+  unfiltered, and opening a topic from another collection switches to it. Move
+  topics via the sidebar context menu, topic settings, or the new
+  **`/collection <name>`** command — sub-topics always follow their parent.
+  Each collection carries a name, description, colour accent, and an optional
+  **GitHub repo** override, giving repo resolution a three-step chain:
+  `topic.github_repo` → `collection.github_repo` → the global setting. Manage
+  them in **Settings → Collections**; deleting one re-homes its topics to a
+  destination you choose rather than deleting anything. Existing topics are
+  backfilled into a protected **General** collection. The MCP `list_topics` /
+  `get_topic` tools now report a topic's collection, and `list_topics` accepts a
+  `collection` filter. See [collections](https://lrivallain.github.io/precursor/features/collections).
+
 - **Sidebar contextual menus**: right-click topic, chat, Live, and agent rows for
   the actions each surface supports. Topics and chats expose rename,
   read/unread, pin/unpin, reminder, notes, and archive; agents expose rename,

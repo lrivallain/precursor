@@ -17,6 +17,9 @@ class TopicBase(BaseModel):
     github_issue_number: int | None = None
     pinned: bool = False
     role_id: int | None = None
+    # Null on input means "use the default collection"; reads always carry the
+    # resolved id.
+    collection_id: int | None = None
 
 
 class TopicCreate(TopicBase):
@@ -36,6 +39,8 @@ class TopicUpdate(BaseModel):
     github_issue_number: int | None = None
     pinned: bool | None = None
     role_id: int | None = None
+    # Moving a topic also moves its whole subtree (see routers/topics.py).
+    collection_id: int | None = None
     # When present, the router normalizes and uniquifies it before storing.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 

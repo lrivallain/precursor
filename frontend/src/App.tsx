@@ -61,6 +61,7 @@ import { openNotes } from "./lib/notesOpen";
 import type {
   AgentSession,
   Chat,
+  Collection,
   MeetingSession,
   ProjectSummary,
   ReminderItem,
@@ -69,6 +70,11 @@ import type {
   TopicNode,
   Workspace,
 } from "./lib/types";
+import {
+  pickInitialCollection,
+  readStoredCollectionId,
+  writeStoredCollectionId,
+} from "./lib/collections";
 
 interface WsRoute {
   open: boolean;
@@ -347,6 +353,12 @@ export default function App() {
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<"collections" | undefined>(
+    undefined,
+  );
+  // Collections filter the topic tree; the selection is per-browser, not in the URL.
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [activeCollectionId, setActiveCollectionId] = useState<number | null>(null);
   const [roleSelectorOpen, setRoleSelectorOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [wsRoute, setWsRoute] = useState<WsRoute>(parseWsRoute);
@@ -564,8 +576,43 @@ export default function App() {
     }
   }, [agents]);
 
+  const activeCollectionRef = useRef<number | null>(activeCollectionId);
+  useEffect(() => {
+    activeCollectionRef.current = activeCollectionId;
+  }, [activeCollectionId]);
+
   async function refreshTree(): Promise<void> {
-    setTree(await api.topics.tree());
+    setTree(await api.topics.tree(activeCollectionRef.current));
+  }
+
+  async function refreshCollections(): Promise<void> {
+    let list: Collection[];
+    try {
+      list = await api.collections.list();
+    } catch {
+      return; // transient — keep the previous list
+    }
+    setCollections(list);
+    setActiveCollectionId((current) => {
+      const next = pickInitialCollection(list, current ?? readStoredCollectionId());
+      return next?.id ?? null;
+    });
+  }
+
+  function selectCollection(id: number): void {
+    writeStoredCollectionId(id);
+    setActiveCollectionId(id);
+  }
+
+  async function createCollection(name: string): Promise<void> {
+    const created = await api.collections.create({ name });
+    await refreshCollections();
+    selectCollection(created.id);
+  }
+
+  async function moveTopicToCollection(topicId: number, collectionId: number): Promise<void> {
+    await api.topics.update(topicId, { collection_id: collectionId });
+    await Promise.all([refreshTree(), refreshCollections()]);
   }
 
   // Total chat unread, kept current in App (not just in ChatList) so the mode
@@ -610,11 +657,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refreshTree();
+    void refreshCollections();
     void refreshChatsUnread();
     void skillsStore.load();
     void rolesStore.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The tree is always scoped to a collection, so (re)load it whenever the
+  // selection changes — including the first resolution on mount.
+  useEffect(() => {
+    if (activeCollectionId == null) return;
+    void refreshTree();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCollectionId]);
+
+  // Opening a topic from outside the current collection (deep link, search,
+  // command palette) follows it rather than showing an empty tree.
+  useEffect(() => {
+    const target = activeTopic?.collection_id;
+    if (target != null && activeCollectionId != null && target !== activeCollectionId) {
+      selectCollection(target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTopic?.collection_id]);
 
   // Reflect the total unread count in the tab title (always, independent of the
   // notification permission/setting). Cleared title falls back to the base.
@@ -1856,6 +1922,15 @@ export default function App() {
       {!atHome && (
       <Sidebar
         tree={tree}
+        collections={collections}
+        activeCollectionId={activeCollectionId}
+        onCollectionChange={selectCollection}
+        onCollectionCreate={createCollection}
+        onManageCollections={() => {
+          setSettingsCategory("collections");
+          setGlobalSettingsOpen(true);
+        }}
+        onMoveToCollection={moveTopicToCollection}
         activeId={activeTopic?.id ?? null}
         streamingTopicIds={streamingTopicIds}
         collapsed={sidebarCollapsed}
@@ -2412,7 +2487,14 @@ export default function App() {
       </main>
 
       {globalSettingsOpen && (
-        <SettingsPanel onClose={() => setGlobalSettingsOpen(false)} />
+        <SettingsPanel
+          initialCategory={settingsCategory}
+          onCollectionsChanged={refreshCollections}
+          onClose={() => {
+            setGlobalSettingsOpen(false);
+            setSettingsCategory(undefined);
+          }}
+        />
       )}
       {sidebarReminder && (
         <ReminderModal

@@ -46,6 +46,16 @@ the chat flow stays usable offline.
 The resolved source is surfaced to the UI as `settings | gh-cli | none`; the
 token value itself is never returned.
 
+### Which repository issues go to
+
+**Settings → GitHub** also holds the default `owner/name` repository used when a
+topic creates an issue. It can be overridden at two narrower levels, checked in
+this order:
+
+1. the **topic**'s own repository, set in its settings panel;
+2. its [collection](/features/collections)'s repository;
+3. the global setting above.
+
 ## Speech-to-text (Live sessions)
 
 The [live meeting assistant](/features/live-sessions) transcribes audio with
@@ -65,6 +75,9 @@ Precursor's **Settings** panel is organized into tabs:
   tenant GUID the Agent 365 servers (`workiq-teams`, `workiq-user`) address, and
   toggle which of your own conversation sections are exposed by the built-in MCP
   server (`mcp_expose`, off by default).
+- **Collections** — create, edit, and delete
+  [collections](/features/collections) (name, description, colour accent, and an
+  optional repository override).
 - **Agents** — turn [Agents mode](/features/agents) on/off; reports whether the
   native runtime resolved on your platform.
 - **Live / Speech-to-text** — enable the section, pick the fast model + reasoning

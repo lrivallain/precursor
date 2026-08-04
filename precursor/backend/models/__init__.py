@@ -6,6 +6,12 @@ from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
+from precursor.backend.models.collection import (
+    COLLECTION_ACCENTS,
+    DEFAULT_COLLECTION_ACCENT,
+    DEFAULT_COLLECTION_NAME,
+    Collection,
+)
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.meeting import (
@@ -28,6 +34,9 @@ from precursor.backend.models.usage import UsageRecord
 from precursor.backend.models.workspace import Workspace
 
 __all__ = [
+    "COLLECTION_ACCENTS",
+    "DEFAULT_COLLECTION_ACCENT",
+    "DEFAULT_COLLECTION_NAME",
     "AgentEventRecord",
     "AgentSchedule",
     "AgentSession",
@@ -35,6 +44,7 @@ __all__ = [
     "Attachment",
     "Base",
     "Chat",
+    "Collection",
     "IssueContextCache",
     "MCPServer",
     "MeetingAttachment",
