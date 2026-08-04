@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, CalendarClock, Search } from "lucide-react";
+import { Archive, Bot, CalendarClock, Mail, MailOpen, Pencil, Search } from "lucide-react";
+import { api } from "../lib/api";
 import type { AgentSession } from "../lib/types";
 import { AgentStatusBadge, agentRelativeTime } from "./AgentStatusBadge";
 import { InlineTitle } from "./InlineTitle";
 import { useMultiSelect } from "../lib/useMultiSelect";
 import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
+import { ContextMenu } from "./ContextMenu";
 
 interface AgentListProps {
   agents: AgentSession[];
@@ -28,6 +30,10 @@ export function AgentList({
   const [query, setQuery] = useState("");
   const sel = useMultiSelect();
   const [busy, setBusy] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ agent: AgentSession; x: number; y: number } | null>(
+    null,
+  );
+  const [renameRequest, setRenameRequest] = useState<{ id: number; token: number } | null>(null);
   const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
 
   const filtered = useMemo(() => {
@@ -113,6 +119,11 @@ export function AgentList({
                     role="button"
                     tabIndex={0}
                     onClick={() => (sel.active ? sel.toggle(a.id) : onSelect(a.id))}
+                    onContextMenu={(event) => {
+                      if (sel.active) return;
+                      event.preventDefault();
+                      setContextMenu({ agent: a, x: event.clientX, y: event.clientY });
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
@@ -140,6 +151,7 @@ export function AgentList({
                         <InlineTitle
                           title={a.title}
                           onRename={(t) => onRename(a.id, t)}
+                          editRequest={renameRequest?.id === a.id ? renameRequest.token : 0}
                           className={`flex-1 truncate text-sm ${
                             a.unread_count > 0 && !isActive ? "font-semibold" : ""
                           }`}
@@ -180,6 +192,43 @@ export function AgentList({
           </ul>
         )}
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`Actions for ${contextMenu.agent.title}`}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: "Rename",
+              icon: Pencil,
+              onSelect: () =>
+                setRenameRequest({ id: contextMenu.agent.id, token: Date.now() }),
+            },
+            {
+              label: contextMenu.agent.unread_count > 0 ? "Mark as read" : "Mark as unread",
+              icon: contextMenu.agent.unread_count > 0 ? MailOpen : Mail,
+              onSelect: async () => {
+                if (contextMenu.agent.unread_count > 0) {
+                  await api.agents.markRead(contextMenu.agent.id);
+                } else {
+                  await api.agents.markUnread(contextMenu.agent.id);
+                }
+              },
+            },
+            ...(onArchiveMany
+              ? [
+                  {
+                    label: "Archive",
+                    icon: Archive,
+                    danger: true,
+                    onSelect: () => onArchiveMany([contextMenu.agent.id]),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
     </div>
   );
 }

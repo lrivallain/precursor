@@ -199,6 +199,8 @@ export const api = {
     remove: (id: number) => request<void>(`/api/topics/${id}`, { method: "DELETE" }),
     markRead: (id: number) =>
       request<void>(`/api/topics/${id}/read`, { method: "POST" }),
+    markUnread: (id: number) =>
+      request<void>(`/api/topics/${id}/unread`, { method: "POST" }),
     listArchived: () => request<Topic[]>(`/api/topics/archived`),
     archive: (id: number) =>
       request<Topic>(`/api/topics/${id}/archive`, { method: "POST" }),
@@ -239,6 +241,8 @@ export const api = {
       request<Chat>(`/api/chats/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     remove: (id: number) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
     markRead: (id: number) => request<void>(`/api/chats/${id}/read`, { method: "POST" }),
+    markUnread: (id: number) =>
+      request<void>(`/api/chats/${id}/unread`, { method: "POST" }),
     archive: (id: number) =>
       request<Chat>(`/api/chats/${id}/archive`, { method: "POST" }),
     unarchive: (id: number) =>
@@ -322,6 +326,8 @@ export const api = {
     get: (id: number | string) => request<AgentSession>(`/api/agents/${id}`),
     markRead: (id: number | string) =>
       request<void>(`/api/agents/${id}/read`, { method: "POST" }),
+    markUnread: (id: number | string) =>
+      request<void>(`/api/agents/${id}/unread`, { method: "POST" }),
     create: (data: AgentSessionCreate) =>
       request<AgentSession>(`/api/agents`, {
         method: "POST",

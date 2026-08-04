@@ -46,6 +46,7 @@ import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
+import { ReminderModal } from "./components/ReminderModal";
 import { api, apiErrorMessage } from "./lib/api";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
@@ -56,6 +57,7 @@ import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
+import { openNotes } from "./lib/notesOpen";
 import type {
   AgentSession,
   Chat,
@@ -412,6 +414,10 @@ export default function App() {
   const agentUnreadRef = useRef<Map<number, number> | null>(null);
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
+  const [sidebarReminder, setSidebarReminder] = useState<{
+    container: "topic" | "chat";
+    id: number;
+  } | null>(null);
   // Ids already seen as fired, so we only notify on newly-fired ones.
   const seenFiredRef = useRef<Set<number>>(new Set());
   // Conversations with a fired reminder, so their list rows can flag it.
@@ -1403,6 +1409,34 @@ export default function App() {
     await refreshTree();
   }
 
+  async function handleTopicReadState(id: number, unread: boolean): Promise<void> {
+    if (unread) await api.topics.markUnread(id);
+    else await api.topics.markRead(id);
+    await refreshTree();
+  }
+
+  async function handleTopicPin(id: number, pinned: boolean): Promise<void> {
+    const updated = await api.topics.update(id, { pinned });
+    if (activeTopicRef.current?.id === id) setActiveTopic(updated);
+    await refreshTree();
+  }
+
+  async function handleArchiveTopic(id: number): Promise<void> {
+    await api.topics.archive(id);
+    if (activeTopicRef.current?.id === id) setActiveTopic(null);
+    await refreshTree();
+  }
+
+  async function handleOpenTopicNotes(id: number): Promise<void> {
+    await handleSelect(id);
+    openNotes("topic", id);
+  }
+
+  async function handleOpenChatNotes(chat: Chat): Promise<void> {
+    await handleSelectChat(chat);
+    openNotes("chat", chat.id);
+  }
+
   async function handleRenameAgent(id: number, title: string): Promise<void> {
     await api.agents.rename(id, title);
     await loadAgents();
@@ -1844,6 +1878,8 @@ export default function App() {
             onChatsChanged={() => void refreshActiveChat()}
             onUnreadChange={setChatsUnread}
             onArchiveMany={handleArchiveChats}
+            onOpenReminder={(chat) => setSidebarReminder({ container: "chat", id: chat.id })}
+            onOpenNotes={(chat) => void handleOpenChatNotes(chat)}
           />
         }
         workspaceSlot={
@@ -1891,6 +1927,11 @@ export default function App() {
         onNew={handleNew}
         onCreate={handleCreate}
         onRename={handleRenameTopic}
+        onSetRead={handleTopicReadState}
+        onTogglePin={handleTopicPin}
+        onArchive={handleArchiveTopic}
+        onOpenReminder={(id) => setSidebarReminder({ container: "topic", id })}
+        onOpenNotes={(id) => void handleOpenTopicNotes(id)}
         liveEnabled={liveEnabled}
         reminders={reminders}
         reminderTopicIds={reminderTopicIds}
@@ -2373,6 +2414,18 @@ export default function App() {
       {globalSettingsOpen && (
         <SettingsPanel onClose={() => setGlobalSettingsOpen(false)} />
       )}
+      {sidebarReminder && (
+        <ReminderModal
+          container={sidebarReminder.container}
+          containerId={sidebarReminder.id}
+          existing={null}
+          onClose={() => setSidebarReminder(null)}
+          onSaved={() => {
+            setSidebarReminder(null);
+            void loadReminders();
+          }}
+        />
+      )}
 
       {chatSettingsOpen && activeChat && (
         <ChatSettingsPanel
@@ -2514,4 +2567,3 @@ function EmptyHero({ label }: { label: string }) {
     </div>
   );
 }
-

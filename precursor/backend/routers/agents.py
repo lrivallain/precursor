@@ -8,7 +8,7 @@ are streamed via the shared event bus (``agent.changed``) and read back through
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -228,6 +228,21 @@ async def mark_agent_read(agent_id: str, session: AsyncSession = Depends(get_ses
     agent.last_read_at = datetime.now(UTC)
     await session.commit()
     # Let other tabs clear this agent's badge/counter in real time.
+    await publish_read_changed(agent_session_id=agent.id)
+
+
+@router.post("/{agent_id}/unread", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_agent_unread(agent_id: str, session: AsyncSession = Depends(get_session)) -> None:
+    agent = await _get_or_404(session, agent_id)
+    latest = await session.scalar(
+        select(AgentEventRecord.created_at)
+        .where(AgentEventRecord.agent_session_id == agent.id)
+        .where(AgentEventRecord.payload.like(_ASSISTANT_EVENT_MARKER))
+        .order_by(AgentEventRecord.created_at.desc())
+        .limit(1)
+    )
+    agent.last_read_at = (latest or datetime.now(UTC)) - timedelta(microseconds=1)
+    await session.commit()
     await publish_read_changed(agent_session_id=agent.id)
 
 

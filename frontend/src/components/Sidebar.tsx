@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ComponentType, ReactNode } from "react";
 import {
   AlarmClock,
+  Archive,
   Bot,
   Check,
   ChevronDown,
@@ -11,16 +12,21 @@ import {
   FolderGit2,
   Home,
   MessageSquare,
+  Mail,
+  MailOpen,
   MessagesSquare,
   PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
   PanelTop,
   Pin,
+  PinOff,
+  Pencil,
   Plus,
   Radio,
   Search,
   SquareKanban,
+  StickyNote,
 } from "lucide-react";
 import type { ReminderItem, TopicNode } from "../lib/types";
 import { SECTION_COLORS } from "../lib/sections";
@@ -34,6 +40,7 @@ import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { useSectionOrder } from "../lib/useSectionOrder";
 import type { DropSide } from "../lib/useSectionOrder";
 import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
+import { ContextMenu } from "./ContextMenu";
 
 export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
 
@@ -81,6 +88,11 @@ interface Props {
   onCreate: (parentId: number | null) => void;
   /** Inline rename of a topic (double-click its name in the tree). */
   onRename: (id: number, title: string) => void | Promise<void>;
+  onSetRead: (id: number, unread: boolean) => void | Promise<void>;
+  onTogglePin: (id: number, pinned: boolean) => void | Promise<void>;
+  onArchive: (id: number) => void | Promise<void>;
+  onOpenReminder: (id: number) => void;
+  onOpenNotes: (id: number) => void;
   /** Fired reminders, shown in a dedicated section across topics & chats. */
   reminders: ReminderItem[];
   /** Topic ids with a fired reminder, flagged with an alarm icon in the tree. */
@@ -120,6 +132,11 @@ export function Sidebar({
   onNew,
   onCreate,
   onRename,
+  onSetRead,
+  onTogglePin,
+  onArchive,
+  onOpenReminder,
+  onOpenNotes,
   reminders,
   reminderTopicIds,
   onReminderSelect,
@@ -363,6 +380,11 @@ export function Sidebar({
                     streamingTopicIds={streamingTopicIds}
                     onSelect={onSelect}
                     onRename={onRename}
+                    onSetRead={onSetRead}
+                    onTogglePin={onTogglePin}
+                    onArchive={onArchive}
+                    onOpenReminder={onOpenReminder}
+                    onOpenNotes={onOpenNotes}
                     hasReminder={reminderTopicIds?.has(node.id)}
                   />
                 ))}
@@ -388,6 +410,11 @@ export function Sidebar({
                 onSelect={onSelect}
                 onCreate={onCreate}
                 onRename={onRename}
+                onSetRead={onSetRead}
+                onTogglePin={onTogglePin}
+                onArchive={onArchive}
+                onOpenReminder={onOpenReminder}
+                onOpenNotes={onOpenNotes}
                 reminderTopicIds={reminderTopicIds}
               />
             ))}
@@ -417,6 +444,11 @@ interface ItemProps {
   onSelect: (id: number) => void;
   onCreate: (parentId: number | null) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  onSetRead: (id: number, unread: boolean) => void | Promise<void>;
+  onTogglePin: (id: number, pinned: boolean) => void | Promise<void>;
+  onArchive: (id: number) => void | Promise<void>;
+  onOpenReminder: (id: number) => void;
+  onOpenNotes: (id: number) => void;
   reminderTopicIds?: Set<number>;
 }
 
@@ -431,6 +463,11 @@ function TopicItem({
   onSelect,
   onCreate,
   onRename,
+  onSetRead,
+  onTogglePin,
+  onArchive,
+  onOpenReminder,
+  onOpenNotes,
   reminderTopicIds,
 }: ItemProps) {
   const open = !collapsedIds.has(node.id);
@@ -440,6 +477,8 @@ function TopicItem({
   const isScheduled = node.schedule != null;
   const scheduleDisabled = isScheduled && node.schedule?.enabled === false;
   const scheduleError = isScheduled && node.schedule?.status === "error";
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [renameRequest, setRenameRequest] = useState(0);
 
   return (
     <li>
@@ -450,6 +489,10 @@ function TopicItem({
         }`}
         style={{ paddingLeft: 6 + depth * 12 }}
         onClick={() => onSelect(node.id)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu({ x: event.clientX, y: event.clientY });
+        }}
       >
         <button
           className="p-0.5 text-muted disabled:opacity-30"
@@ -474,6 +517,7 @@ function TopicItem({
         <InlineTitle
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
+          editRequest={renameRequest}
           className={`flex-1 truncate ${
             (node.unread_count > 0 || reminderTopicIds?.has(node.id)) && !isStreaming
               ? "font-semibold"
@@ -528,6 +572,47 @@ function TopicItem({
           <Plus size={12} />
         </button>
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`Actions for ${node.title}`}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: "Rename",
+              icon: Pencil,
+              onSelect: () => setRenameRequest(Date.now()),
+            },
+            {
+              label: node.unread_count > 0 ? "Mark as read" : "Mark as unread",
+              icon: node.unread_count > 0 ? MailOpen : Mail,
+              onSelect: () => onSetRead(node.id, node.unread_count === 0),
+            },
+            {
+              label: node.pinned ? "Unpin" : "Pin",
+              icon: node.pinned ? PinOff : Pin,
+              onSelect: () => onTogglePin(node.id, !node.pinned),
+            },
+            {
+              label: "Set reminder",
+              icon: AlarmClock,
+              onSelect: () => onOpenReminder(node.id),
+            },
+            {
+              label: "New notes",
+              icon: StickyNote,
+              onSelect: () => onOpenNotes(node.id),
+            },
+            {
+              label: "Archive",
+              icon: Archive,
+              danger: true,
+              onSelect: () => onArchive(node.id),
+            },
+          ]}
+        />
+      )}
       {hasChildren && open && (
         <ul className="space-y-0.5">
           {node.children.map((child) => (
@@ -543,6 +628,11 @@ function TopicItem({
               onSelect={onSelect}
               onCreate={onCreate}
               onRename={onRename}
+              onSetRead={onSetRead}
+              onTogglePin={onTogglePin}
+              onArchive={onArchive}
+              onOpenReminder={onOpenReminder}
+              onOpenNotes={onOpenNotes}
               reminderTopicIds={reminderTopicIds}
             />
           ))}
@@ -1139,6 +1229,11 @@ interface PinnedItemProps {
   streamingTopicIds: number[];
   onSelect: (id: number) => void;
   onRename: (id: number, title: string) => void | Promise<void>;
+  onSetRead: (id: number, unread: boolean) => void | Promise<void>;
+  onTogglePin: (id: number, pinned: boolean) => void | Promise<void>;
+  onArchive: (id: number) => void | Promise<void>;
+  onOpenReminder: (id: number) => void;
+  onOpenNotes: (id: number) => void;
   hasReminder?: boolean;
 }
 function PinnedItem({
@@ -1148,10 +1243,17 @@ function PinnedItem({
   streamingTopicIds,
   onSelect,
   onRename,
+  onSetRead,
+  onTogglePin,
+  onArchive,
+  onOpenReminder,
+  onOpenNotes,
   hasReminder,
 }: PinnedItemProps) {
   const isActive = node.id === activeId;
   const isStreaming = streamingTopicIds.includes(node.id);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [renameRequest, setRenameRequest] = useState(0);
   return (
     <li>
       <div
@@ -1160,11 +1262,16 @@ function PinnedItem({
           isActive ? "section-selected" : "hover:bg-surface text-text/90"
         }`}
         onClick={() => onSelect(node.id)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu({ x: event.clientX, y: event.clientY });
+        }}
       >
         <Pin size={12} className="text-muted shrink-0" />
         <InlineTitle
           title={node.title}
           onRename={(t) => onRename(node.id, t)}
+          editRequest={renameRequest}
           className={`flex-1 truncate ${
             (node.unread_count > 0 || hasReminder) && !isStreaming ? "font-semibold" : ""
           }`}
@@ -1178,6 +1285,47 @@ function PinnedItem({
           <UnreadBadge count={node.unread_count} />
         ) : null}
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`Actions for ${node.title}`}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: "Rename",
+              icon: Pencil,
+              onSelect: () => setRenameRequest(Date.now()),
+            },
+            {
+              label: node.unread_count > 0 ? "Mark as read" : "Mark as unread",
+              icon: node.unread_count > 0 ? MailOpen : Mail,
+              onSelect: () => onSetRead(node.id, node.unread_count === 0),
+            },
+            {
+              label: "Unpin",
+              icon: PinOff,
+              onSelect: () => onTogglePin(node.id, false),
+            },
+            {
+              label: "Set reminder",
+              icon: AlarmClock,
+              onSelect: () => onOpenReminder(node.id),
+            },
+            {
+              label: "New notes",
+              icon: StickyNote,
+              onSelect: () => onOpenNotes(node.id),
+            },
+            {
+              label: "Archive",
+              icon: Archive,
+              danger: true,
+              onSelect: () => onArchive(node.id),
+            },
+          ]}
+        />
+      )}
     </li>
   );
 }

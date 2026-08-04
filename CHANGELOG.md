@@ -11,6 +11,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Sidebar contextual menus**: right-click topic, chat, Live, and agent rows for
+  the actions each surface supports. Topics and chats expose rename,
+  read/unread, pin/unpin, reminder, notes, and archive; agents expose rename,
+  read/unread, and archive; Live sessions expose rename and archive.
+
 - **MCP: Microsoft Agent 365 servers (`workiq-teams`, `workiq-user`)**: two new
   built-in, OAuth-protected streamable-HTTP servers covering **Teams** (chats,
   channels, messages, members, presence) and the **directory** (profiles,

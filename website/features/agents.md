@@ -49,6 +49,9 @@ row in the Agents list is bold with an unread count, and — when notifications 
 enabled and the window is unfocused — a browser notification fires. Opening the
 session clears its badge.
 
+Right-click an agent session in the left sidebar to rename it, mark it read or
+unread, or archive it.
+
 ## Scheduling agents
 
 An agent can carry its **own recurrence** (an `AgentSchedule`) so it re-runs its

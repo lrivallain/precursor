@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Chat, Message, Topic
+from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
 from precursor.backend.schemas.topic import TopicRead
 from precursor.backend.services.events import publish_read_changed, publish_topic_changed
@@ -170,6 +170,26 @@ async def mark_chat_read(
     chat.last_read_at = datetime.now(UTC)
     await session.commit()
     # Let other tabs clear this chat's badge/counter in real time.
+    await publish_read_changed(chat_id=chat_id)
+
+
+@router.post("/{chat_id}/unread", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_chat_unread(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    chat = await session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    latest = await session.scalar(
+        select(Message.created_at)
+        .where(Message.chat_id == chat_id)
+        .where(Message.role != MessageRole.USER)
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    chat.last_read_at = (latest or datetime.now(UTC)) - timedelta(microseconds=1)
+    await session.commit()
     await publish_read_changed(chat_id=chat_id)
 
 

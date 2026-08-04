@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlarmClock, Loader2, MessageSquare, Pin, Search, Settings2 } from "lucide-react";
+import {
+  AlarmClock,
+  Archive,
+  Loader2,
+  Mail,
+  MailOpen,
+  MessageSquare,
+  Pencil,
+  Pin,
+  PinOff,
+  Search,
+  Settings2,
+  StickyNote,
+} from "lucide-react";
 import { api } from "../lib/api";
 import { SectionHeader, useCollapsedSections } from "./CollapsibleSection";
 import { InlineTitle } from "./InlineTitle";
@@ -7,6 +20,7 @@ import type { Chat } from "../lib/types";
 import { useMultiSelect } from "../lib/useMultiSelect";
 import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 import { SelectToggleButton, SelectionToolbar, SelectionCheckbox } from "./ListSelection";
+import { ContextMenu } from "./ContextMenu";
 
 interface ChatListProps {
   activeId: number | null;
@@ -22,6 +36,8 @@ interface ChatListProps {
   onUnreadChange?: (total: number) => void;
   /** Bulk-archive the selected chats. Enables multi-select when provided. */
   onArchiveMany?: (ids: number[]) => void | Promise<void>;
+  onOpenReminder: (chat: Chat) => void;
+  onOpenNotes: (chat: Chat) => void;
 }
 
 export function ChatList({
@@ -34,11 +50,17 @@ export function ChatList({
   onChatsChanged,
   onUnreadChange,
   onArchiveMany,
+  onOpenReminder,
+  onOpenNotes,
 }: ChatListProps) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [query, setQuery] = useState("");
   const sel = useMultiSelect();
   const [busy, setBusy] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ chat: Chat; x: number; y: number } | null>(
+    null,
+  );
+  const [renameRequest, setRenameRequest] = useState<{ id: number; token: number } | null>(null);
   const activeItemRef = useScrollActiveIntoView<HTMLDivElement>(activeId);
   const { collapsed: collapsedSections, toggle: toggleSection } = useCollapsedSections(
     "precursor:chats:collapsedSections",
@@ -94,6 +116,18 @@ export function ChatList({
     onChatsChanged?.();
   }
 
+  async function setReadState(chat: Chat): Promise<void> {
+    if (chat.unread_count > 0) await api.chats.markRead(chat.id);
+    else await api.chats.markUnread(chat.id);
+    await refresh();
+  }
+
+  async function togglePin(chat: Chat): Promise<void> {
+    await api.chats.update(chat.id, { pinned: !chat.pinned });
+    await refresh();
+    onChatsChanged?.();
+  }
+
   function renderItem(chat: Chat) {
     const isActive = chat.id === activeId;
     const isStreaming = streamingIds.includes(chat.id);
@@ -105,6 +139,11 @@ export function ChatList({
           role="button"
           tabIndex={0}
           onClick={() => (sel.active ? sel.toggle(chat.id) : onSelect(chat))}
+          onContextMenu={(event) => {
+            if (sel.active) return;
+            event.preventDefault();
+            setContextMenu({ chat, x: event.clientX, y: event.clientY });
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
@@ -139,6 +178,7 @@ export function ChatList({
             <InlineTitle
               title={chat.title}
               onRename={(t) => renameChat(chat.id, t)}
+              editRequest={renameRequest?.id === chat.id ? renameRequest.token : 0}
               className={`flex-1 truncate ${
                 chat.unread_count > 0 || reminderChatIds?.has(chat.id) ? "font-semibold" : ""
               }`}
@@ -228,6 +268,55 @@ export function ChatList({
           </>
         )}
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`Actions for ${contextMenu.chat.title}`}
+          onClose={() => setContextMenu(null)}
+          items={[
+            {
+              label: "Rename",
+              icon: Pencil,
+              onSelect: () =>
+                setRenameRequest({ id: contextMenu.chat.id, token: Date.now() }),
+            },
+            {
+              label: contextMenu.chat.unread_count > 0 ? "Mark as read" : "Mark as unread",
+              icon: contextMenu.chat.unread_count > 0 ? MailOpen : Mail,
+              onSelect: () => setReadState(contextMenu.chat),
+            },
+            {
+              label: contextMenu.chat.pinned ? "Unpin" : "Pin",
+              icon: contextMenu.chat.pinned ? PinOff : Pin,
+              onSelect: () => togglePin(contextMenu.chat),
+            },
+            {
+              label: "Set reminder",
+              icon: AlarmClock,
+              onSelect: () => onOpenReminder(contextMenu.chat),
+            },
+            {
+              label: "New notes",
+              icon: StickyNote,
+              onSelect: () => onOpenNotes(contextMenu.chat),
+            },
+            {
+              label: "Archive",
+              icon: Archive,
+              danger: true,
+              onSelect: () => archiveSelectedChat(contextMenu.chat.id),
+            },
+          ]}
+        />
+      )}
     </div>
   );
+
+  async function archiveSelectedChat(id: number): Promise<void> {
+    if (!onArchiveMany) return;
+    await onArchiveMany([id]);
+    await refresh();
+    onChatsChanged?.();
+  }
 }
