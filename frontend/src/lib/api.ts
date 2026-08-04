@@ -309,8 +309,9 @@ export const api = {
     // Reminders (one-shot date/time). Keyed by container kind + id; shared by
     // topics and chats. listReminders returns only fired (awaiting acknowledgment).
     list: () => request<ReminderItem[]>(`/api/reminders`),
+    // Resolves to null when the conversation has no reminder (a 200, not a 404).
     get: (container: ReminderContainer, id: number) =>
-      request<Reminder>(`/api/reminders/${container}/${id}`),
+      request<Reminder | null>(`/api/reminders/${container}/${id}`),
     set: (container: ReminderContainer, id: number, data: ReminderCreate) =>
       request<Reminder>(`/api/reminders/${container}/${id}`, {
         method: "PUT",

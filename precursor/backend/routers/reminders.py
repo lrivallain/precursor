@@ -66,17 +66,21 @@ async def list_reminders(
     return items
 
 
-@router.get("/{container}/{container_id}", response_model=ReminderRead)
+@router.get("/{container}/{container_id}", response_model=ReminderRead | None)
 async def get_reminder(
     container: str,
     container_id: int,
     session: AsyncSession = Depends(get_session),
-) -> ReminderRead:
+) -> ReminderRead | None:
+    """Return the container's reminder, or ``null`` when none is set.
+
+    Having no reminder is the common case — the UI reads this on every
+    conversation open — so it answers 200/null rather than a 404 the client
+    would have to swallow (and the browser would log as a console error).
+    """
     kind = _validate_container(container)
     reminder = await svc.get_reminder(session, kind, container_id)
-    if reminder is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No reminder set")
-    return ReminderRead.model_validate(reminder)
+    return ReminderRead.model_validate(reminder) if reminder is not None else None
 
 
 @router.put("/{container}/{container_id}", response_model=ReminderRead)
