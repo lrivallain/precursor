@@ -11,6 +11,23 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Lockfiles are now resolved by CI, not by contributors**: many managed
+  devices route uv and npm through a corporate package mirror, and re-resolving
+  there doesn't merely relabel URLs — npm integrity comes back as `sha1` instead
+  of `sha512`, and uv drops the `size`/`upload-time` provenance. Because that
+  reads as an innocuous URL diff in review, it had already reached the
+  repository: **601 dependencies were pinned with sha1**. All three lockfiles
+  are regenerated from the public registries and now carry **only `sha512` and
+  public URLs**. A new **`Relock`** workflow is the supported way to change a
+  dependency (`gh workflow run relock.yml --ref <branch>`); it resolves on a
+  clean runner, verifies the result installs *and* builds, then pushes back to
+  the branch or opens a PR. A stdlib-only guard (`make lockcheck`, an opt-in
+  pre-commit hook via `make hooks`, and a CI job) rejects proxy URLs and weak
+  hashes, and `uv sync --locked` in CI turns a stale lock into a failure rather
+  than a silent re-resolution. `make sync` now uses `npm ci`, and the Makefile
+  exports `UV_FROZEN=1` — every `uv run` re-locks otherwise, so `make dev`,
+  `make check`, and `make test` were each rewriting `uv.lock`.
+
 - **MCP: one sign-in prompt instead of one per credential**: the WorkIQ preview
   and the Agent 365 servers are different Entra clients against different
   resources, so they hold separate tokens on separate expiry clocks — which used

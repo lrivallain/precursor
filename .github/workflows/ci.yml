@@ -82,3 +82,28 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  docs:
+    name: Docs site (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `pages.yml` only builds on main, so without this a broken docs build
+      # would surface at deploy time. It also gives docs changes a verification
+      # path on machines that can't reach every package from a corporate mirror.
+      - name: Build
+        run: npm run docs:build
