@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { autoReauthWorkiq } from "./workiqSignIn";
 import { OAUTH_SERVERS, mcpAuthFamily } from "./mcpServers";
+import { authLog, authLogEnd, authLogStart } from "./workiqAuthLog";
 
 /**
  * App-global notice that an MCP server needs an interactive sign-in.
@@ -71,6 +72,8 @@ class McpAuthStore {
   report(server: string, message: string): void {
     const family = mcpAuthFamily(server);
     const existing = this.families.get(family);
+    if (!existing) authLogStart(server);
+    authLog(server, existing ? "notice refreshed" : "notice opened", { family, message });
     if (existing) {
       // Same credential, possibly a different endpoint of it: refresh the text
       // but keep the episode (and its one-shot auto attempt) going.
@@ -89,6 +92,10 @@ class McpAuthStore {
   /** Drop every notice — the user dismissed the banner. */
   clear(): void {
     if (this.families.size === 0) return;
+    for (const state of this.families.values()) {
+      authLog(state.notice.server, "notice dismissed by user");
+      authLogEnd(state.notice.server);
+    }
     this.families.clear();
     this.queue = [];
     this.emit();
@@ -114,6 +121,8 @@ class McpAuthStore {
   resolve(server: string): void {
     const family = mcpAuthFamily(server);
     if (!this.families.delete(family)) return;
+    authLog(server, "notice resolved — credential is fresh", { family });
+    authLogEnd(server);
     this.chainPendingFamilies();
     this.emit();
   }
@@ -144,10 +153,15 @@ class McpAuthStore {
     if (!OAUTH_SERVERS.has(server)) return;
     const family = mcpAuthFamily(server);
     const state = this.families.get(family);
-    if (!state || state.autoReauthTried) return;
+    if (!state) return;
+    if (state.autoReauthTried) {
+      authLog(server, "hands-free not queued — already attempted this episode");
+      return;
+    }
     state.autoReauthTried = true;
     state.silentInFlight = true;
     this.queue.push(server);
+    authLog(server, "hands-free queued", { family, queue_depth: this.queue.length });
     void this.drain();
   }
 
@@ -167,13 +181,19 @@ class McpAuthStore {
         }
         const state = this.families.get(family);
         // Cleared while we were away (dismissed, or resolved by another window).
-        if (!state) continue;
+        if (!state) {
+          authLog(server, "hands-free result discarded — notice already cleared");
+          continue;
+        }
         state.silentInFlight = false;
         if (authenticated) {
           this.families.delete(family);
+          authLogEnd(server);
           // Same reasoning as ``resolve``: the SSO cookie is hot now, so give any
           // other pending family a fresh hands-free shot before it hits the banner.
           this.chainPendingFamilies();
+        } else {
+          authLog(server, "BANNER SHOWN — manual sign-in now required", { family });
         }
         this.emit();
       }
