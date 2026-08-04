@@ -14,6 +14,16 @@ permissions:
   contents: read
 
 jobs:
+  lockfiles:
+    name: Lockfiles (public pins · strong hashes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Stdlib-only, so no dependency install is needed to police dependencies.
+      - name: Check lockfiles
+        run: python3 scripts/check_lockfiles.py
+
   backend:
     name: Backend (lint · types · tests)
     runs-on: ubuntu-latest
@@ -31,8 +41,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # `--locked` fails instead of silently re-resolving, so a stale or
+      # locally-rewritten uv.lock surfaces here rather than in a release.
       - name: Sync dependencies
-        run: uv sync
+        run: uv sync --locked
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -70,3 +82,28 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  docs:
+    name: Docs site (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `pages.yml` only builds on main, so without this a broken docs build
+      # would surface at deploy time. It also gives docs changes a verification
+      # path on machines that can't reach every package from a corporate mirror.
+      - name: Build
+        run: npm run docs:build

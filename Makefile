@@ -1,16 +1,27 @@
-.PHONY: help sync dev backend frontend docs build wheel check test migration migrate
+.PHONY: help hooks sync dev backend frontend docs build wheel check lockcheck test migration migrate
+
+# Lockfiles are resolved by CI, never locally: a corporate package mirror
+# rewrites artifact URLs and weakens their integrity metadata. UV_FROZEN keeps
+# every `uv` call below from silently re-resolving. Override deliberately
+# (`make sync UV_FROZEN=0`) only when you intend to change the lockfile.
+export UV_FROZEN ?= 1
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
+hooks:  ## Install the git hooks (blocks proxy-polluted lockfiles)
+	git config core.hooksPath .githooks
+	@echo "Hooks enabled from .githooks/"
+
 # uv is the single source for the Python env, running, and building.
 # The `dev` dependency group is included by uv automatically, so `uv sync` /
 # `uv run` always carry the tooling (ruff/pytest/mypy) — no `--extra dev`.
+# `npm ci` (not `install`) installs *from* the lockfile without rewriting it.
 sync:  ## Install/refresh the dev environment (uv + npm)
 	uv sync
-	npm --prefix frontend install
-	npm --prefix website install
+	npm --prefix frontend ci
+	npm --prefix website ci
 
 # Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). `--extra
 # agents` pulls the Copilot SDK so Agents mode is live (opt-in payload, kept out
@@ -40,13 +51,16 @@ wheel: build docs  ## Build the distributable wheel + sdist (uv)
 	uv build
 
 # Quality gates — mirrors CI (.github/workflows/ci.yml).
-check:  ## Run all backend + frontend quality gates
+check: lockcheck  ## Run all backend + frontend quality gates
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy precursor
 	uv run pytest -q
 	npm --prefix frontend run typecheck
 	npm --prefix frontend run build
+
+lockcheck:  ## Verify lockfiles pin public artifacts with strong hashes
+	python3 scripts/check_lockfiles.py
 
 test:  ## Run the backend test suite (uv)
 	uv run pytest -q

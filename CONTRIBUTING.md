@@ -9,7 +9,7 @@ Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
 (env, run, build, release). Install it once, then:
 
 ```bash
-make sync                 # uv sync + npm install
+make sync                 # uv sync + npm ci
 cp .env.example .env
 ```
 
@@ -17,9 +17,10 @@ cp .env.example .env
 <summary>Without make</summary>
 
 ```bash
+export UV_FROZEN=1        # see "Lockfiles" below
 uv sync
 cp .env.example .env
-cd frontend && npm install && cd ..
+cd frontend && npm ci && cd ..
 ```
 </details>
 
@@ -69,6 +70,69 @@ npm --prefix frontend run build
 </details>
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
+
+## Lockfiles
+
+`uv.lock` and the two `package-lock.json` files are committed, and they must
+pin **public** artifacts (`files.pythonhosted.org`, `registry.npmjs.org`) with
+strong hashes. **Regenerating them is CI's job, not yours.**
+
+This matters because many managed devices route uv and npm through a corporate
+package mirror. Re-resolving there doesn't just relabel URLs, it *weakens* the
+lockfile: npm integrity comes back as `sha1` instead of `sha512`, and uv drops
+the `size`/`upload-time` provenance. In a diff that looks like a harmless URL
+change. Rewriting the URLs back by hand is worse still — it pairs a public
+artifact with the weakened metadata.
+
+Enable the guard once, and it will stop you committing one by accident:
+
+```bash
+make hooks        # git config core.hooksPath .githooks
+make lockcheck    # or check the working tree on demand
+```
+
+Day to day, install *from* the lockfiles rather than re-resolving:
+
+```bash
+make sync         # uv sync + npm ci  (never `npm install`)
+```
+
+The Makefile exports `UV_FROZEN=1`, which matters more than it looks: every
+`uv run` re-locks by default, so `make dev`, `make check`, and `make test` would
+each rewrite `uv.lock`. If you run `uv` outside make, set it yourself:
+
+```bash
+export UV_FROZEN=1
+```
+
+**To change a dependency**, edit `pyproject.toml` or `package.json`, commit that,
+then let a clean runner resolve it:
+
+```bash
+gh workflow run relock.yml --ref "$(git branch --show-current)"
+```
+
+The [`Relock`](https://github.com/lrivallain/precursor/actions/workflows/relock.yml)
+workflow regenerates the lockfiles, verifies they install *and* build, then
+pushes the result back to your branch (or opens a PR when run against `main`).
+Dependabot updates arrive the same way. If you only need the packages locally
+before that lands, `UV_FROZEN=0 uv lock && uv sync && git restore uv.lock` gets
+you a working environment without committing the pollution.
+
+### If `npm ci` can't find a version
+
+Corporate mirrors lag the public registries, so a lockfile CI just produced may
+pin a version your mirror hasn't cached — `npm ci` then fails with a 404 for one
+package. Install without consulting the lockfile:
+
+```bash
+npm --prefix website install --no-package-lock
+```
+
+That resolves against whatever your mirror does have and, because there is no
+lockfile to write, leaves the committed one untouched. Your `node_modules` may
+differ slightly from CI's, which is fine for local work — CI still builds from
+the real lockfile.
 
 ## Database migrations
 

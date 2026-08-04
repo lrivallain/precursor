@@ -1,0 +1,15 @@
+#!/bin/sh
+# Refuse commits that would publish proxy-resolved lockfiles.
+#
+# Enable with `make hooks` (sets core.hooksPath to .githooks).
+#
+# Corporate mirrors rewrite artifact URLs *and* weaken their integrity
+# metadata, so a polluted lockfile is not merely cosmetic. The guard is
+# stdlib-only so it runs under whatever python3 is on PATH.
+
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "pre-commit: python3 not found, skipping the lockfile check." >&2
+	exit 0
+fi
+
+exec python3 "$(git rev-parse --show-toplevel)/scripts/check_lockfiles.py" --staged

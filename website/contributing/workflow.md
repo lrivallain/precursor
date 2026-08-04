@@ -37,12 +37,66 @@ changes, server defaults, and any data migrations by hand.
 
 Every PR runs `.github/workflows/ci.yml`:
 
-- **Backend** — `uv sync`, then ruff check, ruff format check, mypy (strict), and
-  pytest.
+- **Lockfiles** — every artifact must resolve to a public registry with a strong
+  hash (see [Lockfiles](#lockfiles) below).
+- **Backend** — `uv sync --locked`, then ruff check, ruff format check, mypy
+  (strict), and pytest.
 - **Frontend** — `npm ci`, then typecheck and build.
+- **Docs site** — `npm ci` and `npm run docs:build` for `website/`, so a broken
+  docs build fails the PR instead of the deploy.
 
 All jobs must pass before merge. Run `make check` locally first to catch failures
 early.
+
+## Lockfiles
+
+`uv.lock` and the two `package-lock.json` files are committed, and must pin
+**public** artifacts (`files.pythonhosted.org`, `registry.npmjs.org`) with strong
+hashes. **Regenerating them is CI's job, not yours.**
+
+Many managed devices route uv and npm through a corporate package mirror.
+Re-resolving there doesn't just relabel URLs, it *weakens* the lockfile: npm
+integrity comes back as `sha1` instead of `sha512`, and uv drops the
+`size`/`upload-time` provenance — which in a diff looks like a harmless URL
+change. Rewriting the URLs back by hand is worse, since it pairs a public
+artifact with the weakened metadata.
+
+::: tip Enable the guard once
+```bash
+make hooks        # git config core.hooksPath .githooks
+```
+The pre-commit hook then rejects any lockfile you'd commit with a proxy URL or a
+weak hash. `make lockcheck` runs the same check on demand.
+:::
+
+Day to day, install *from* the lockfiles instead of re-resolving — `make sync`
+uses `npm ci` and exports `UV_FROZEN=1`. That flag matters more than it looks:
+every `uv run` re-locks by default, so `make dev`, `make check`, and `make test`
+would each rewrite `uv.lock` without it.
+
+To change a dependency, edit `pyproject.toml` or `package.json`, commit that,
+then let a clean runner resolve it:
+
+```bash
+gh workflow run relock.yml --ref "$(git branch --show-current)"
+```
+
+The `Relock` workflow regenerates the lockfiles, verifies they install *and*
+build, then pushes the result back to your branch (or opens a PR when run
+against `main`). Dependabot updates arrive the same way.
+
+::: warning If `npm ci` can't find a version
+Corporate mirrors lag the public registries, so a lockfile CI just produced may
+pin a version yours hasn't cached — `npm ci` then fails with a 404 for a single
+package. Install without consulting the lockfile instead:
+
+```bash
+npm --prefix website install --no-package-lock
+```
+
+There is no lockfile to write, so the committed one stays untouched. Your
+`node_modules` may differ slightly from CI's, which is fine for local work.
+:::
 
 ## Adding a plugin
 
