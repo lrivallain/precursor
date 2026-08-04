@@ -85,6 +85,19 @@ The `Relock` workflow regenerates the lockfiles, verifies they install *and*
 build, then pushes the result back to your branch (or opens a PR when run
 against `main`). Dependabot updates arrive the same way.
 
+::: warning If `npm ci` can't find a version
+Corporate mirrors lag the public registries, so a lockfile CI just produced may
+pin a version yours hasn't cached — `npm ci` then fails with a 404 for a single
+package. Install without consulting the lockfile instead:
+
+```bash
+npm --prefix website install --no-package-lock
+```
+
+There is no lockfile to write, so the committed one stays untouched. Your
+`node_modules` may differ slightly from CI's, which is fine for local work.
+:::
+
 ## Adding a plugin
 
 Plugins live in their own packages and register via

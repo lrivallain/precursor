@@ -119,6 +119,21 @@ Dependabot updates arrive the same way. If you only need the packages locally
 before that lands, `UV_FROZEN=0 uv lock && uv sync && git restore uv.lock` gets
 you a working environment without committing the pollution.
 
+### If `npm ci` can't find a version
+
+Corporate mirrors lag the public registries, so a lockfile CI just produced may
+pin a version your mirror hasn't cached — `npm ci` then fails with a 404 for one
+package. Install without consulting the lockfile:
+
+```bash
+npm --prefix website install --no-package-lock
+```
+
+That resolves against whatever your mirror does have and, because there is no
+lockfile to write, leaves the committed one untouched. Your `node_modules` may
+differ slightly from CI's, which is fine for local work — CI still builds from
+the real lockfile.
+
 ## Database migrations
 
 Alembic migrations are the single source of truth for the schema. On startup the
