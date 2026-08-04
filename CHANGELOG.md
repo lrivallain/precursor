@@ -11,6 +11,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **`GET /api/reminders/{container}/{id}` returns `200` with a `null` body when
+  no reminder is set**, instead of `404`. The conversation panel reads this
+  endpoint on every topic/chat open, so the far more common "no reminder" case
+  was logging a red `404 (Not Found)` in the browser console on nearly every
+  navigation — even though the client already handled it. Unknown container
+  kinds are still a genuine `404`.
+
 - **Lockfiles are now resolved by CI, not by contributors**: many managed
   devices route uv and npm through a corporate package mirror, and re-resolving
   there doesn't merely relabel URLs — npm integrity comes back as `sha1` instead

@@ -95,6 +95,30 @@ def test_reminder_lifecycle_shared_across_containers(container: str) -> None:
         assert client.delete(f"/api/reminders/{container}/{cid}").status_code == 404
 
 
+def test_reminder_get_is_null_when_none_set() -> None:
+    """ "No reminder" is a normal state, so GET answers 200/null, not 404.
+
+    The UI reads this on every conversation open; a 404 would show up as a
+    console error on the majority of opens.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        cid = client.post("/api/topics", json={"title": "No reminder here"}).json()["id"]
+
+        r = client.get(f"/api/reminders/topic/{cid}")
+        assert r.status_code == 200
+        assert r.json() is None
+
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        client.put(f"/api/reminders/topic/{cid}", json={"remind_at": future, "note": "hi"})
+        r = client.get(f"/api/reminders/topic/{cid}")
+        assert r.status_code == 200
+        assert r.json()["note"] == "hi"
+
+        # An unknown container kind is still a genuine 404.
+        assert client.get("/api/reminders/bogus/1").status_code == 404
+
+
 def test_reminder_set_requires_existing_container() -> None:
     app = create_app()
     with TestClient(app) as client:

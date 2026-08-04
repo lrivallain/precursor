@@ -52,7 +52,7 @@ export function useReminders({
       try {
         setReminder(await api.reminders.get(container, id));
       } catch {
-        setReminder(null); // 404 => no reminder
+        setReminder(null); // unreachable API — degrade to "no reminder"
       }
     },
     [container, id],
