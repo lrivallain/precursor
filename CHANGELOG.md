@@ -60,6 +60,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Search with `/`**: pressing <kbd>/</kbd> anywhere outside a text field now
+  opens the command palette straight into search — the same launcher as
+  <kbd>⌘K</kbd> / <kbd>Ctrl-K</kbd>, one key away. The shortcut stands down
+  whenever you're typing (inputs, textareas, and rich contenteditable editors),
+  so the composer's `/` slash-command picker is untouched, and it won't stack the
+  palette on top of an open dialog.
+
 - **Sidebar contextual menus**: right-click topic, chat, Live, and agent rows for
   the actions each surface supports. Topics and chats expose rename,
   read/unread, pin/unpin, reminder, notes, and archive; agents expose rename,

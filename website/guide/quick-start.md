@@ -48,7 +48,8 @@ Useful things to try in the composer:
 - **Attach a file** — drop in an image (used as vision input) or a PDF / DOCX /
   PPTX (text-extracted). See [attachments](/features/attachments).
 - **⌘K / Ctrl-K** — open the command palette to jump between sections and
-  conversations.
+  conversations. Outside a text field, a bare **`/`** does the same — inside the
+  composer `/` still opens the slash-command picker.
 
 ## 4. Organize as you go
 
