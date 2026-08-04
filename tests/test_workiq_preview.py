@@ -357,8 +357,11 @@ async def test_reauthenticate_interactive_fails_fast_when_port_busy(monkeypatch)
     Regression: when another Precursor window owned ``127.0.0.1:12798`` the
     interactive sign-in cleared the stored tokens and then hung on "Signing in…"
     until the 300s callback timeout, leaving the server unauthenticated. It must
-    instead raise immediately and preserve the existing tokens.
+    instead raise immediately and preserve the existing tokens. Checked with the
+    ephemeral-port fallback off, which is what makes the port genuinely fatal.
     """
+    import types
+
     from mcp.shared.auth import OAuthToken
 
     from precursor.backend.services.mcp import workiq_preview as wp
@@ -376,6 +379,13 @@ async def test_reauthenticate_interactive_fails_fast_when_port_busy(monkeypatch)
 
     monkeypatch.setattr(wp, "_run_signin", _must_not_run)
     monkeypatch.setattr(wp, "_try_silent_reauth", _must_not_run)
+    monkeypatch.setattr(
+        wp,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            workiq_silent_reauth_enabled=True, workiq_loopback_port_fallback=False
+        ),
+    )
 
     with _hold_loopback_port(), pytest.raises(wp.WorkIQAuthPortBusyError):
         await wp.reauthenticate_workiq(open_system_browser=False)
@@ -385,8 +395,46 @@ async def test_reauthenticate_interactive_fails_fast_when_port_busy(monkeypatch)
     assert tokens is not None and tokens.access_token == "live-token"
 
 
+def test_bind_loopback_profile_falls_back_to_ephemeral_port() -> None:
+    """A busy registered port moves the listener instead of failing the sign-in.
+
+    Entra ignores the port of a public client's loopback redirect, so a second
+    concurrent sign-in (the common case now that two Entra clients are in play)
+    can simply listen elsewhere. Host and path must not move — those *are*
+    matched against the registration.
+    """
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    # Free port → keep the registered one, byte-identical redirect URI.
+    assert wp._bind_loopback_profile(wp.PREVIEW_PROFILE) is wp.PREVIEW_PROFILE
+
+    with _hold_loopback_port():
+        bound = wp._bind_loopback_profile(wp.PREVIEW_PROFILE)
+
+    assert bound.redirect_port not in (0, wp.PREVIEW_PROFILE.redirect_port)
+    assert bound.redirect_host == wp.PREVIEW_PROFILE.redirect_host
+    assert bound.redirect_path == wp.PREVIEW_PROFILE.redirect_path
+    # Same credential: the fallback must not fork tokens or the sign-in lock.
+    assert bound.auth_family == wp.PREVIEW_PROFILE.auth_family
+
+
+def test_bind_loopback_profile_stays_strict_when_fallback_disabled(monkeypatch) -> None:
+    """Opting out restores the hard failure for port-exact registrations."""
+    import types
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    monkeypatch.setattr(
+        wp, "get_settings", lambda: types.SimpleNamespace(workiq_loopback_port_fallback=False)
+    )
+    with _hold_loopback_port(), pytest.raises(wp.WorkIQAuthPortBusyError):
+        wp._bind_loopback_profile(wp.PREVIEW_PROFILE)
+
+
 async def test_reauthenticate_silent_only_returns_false_when_port_busy(monkeypatch) -> None:
     """A busy port during the hands-free pass just defers to the manual banner."""
+    import types
+
     from mcp.shared.auth import OAuthToken
 
     from precursor.backend.services.mcp import workiq_preview as wp
@@ -403,6 +451,13 @@ async def test_reauthenticate_silent_only_returns_false_when_port_busy(monkeypat
         raise AssertionError("silent flow ran despite a busy loopback port")
 
     monkeypatch.setattr(wp, "_try_silent_reauth", _must_not_run)
+    monkeypatch.setattr(
+        wp,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            workiq_silent_reauth_enabled=True, workiq_loopback_port_fallback=False
+        ),
+    )
 
     with _hold_loopback_port():
         assert await wp.reauthenticate_workiq(silent_only=True) is False
@@ -856,11 +911,21 @@ async def test_reauthenticate_auto_degrades_to_false(monkeypatch) -> None:
     monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _noop_clear)
     monkeypatch.setattr(wp, "get_workiq_login_hint", _hint)
 
-    # Loopback port busy → defer to the manual banner without clearing tokens.
+    # Loopback port busy *and* the ephemeral fallback disabled → defer to the
+    # manual banner without clearing tokens.
+    import types
+
     def _port_busy(*_a, **_k) -> None:
         raise wp.WorkIQAuthPortBusyError("busy")
 
     monkeypatch.setattr(wp, "_assert_loopback_port_available", _port_busy)
+    monkeypatch.setattr(
+        wp,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            workiq_silent_reauth_enabled=True, workiq_loopback_port_fallback=False
+        ),
+    )
     assert await wp.reauthenticate_workiq(auto=True) is False
 
     # Port free, but the interactive fallback blows up → swallowed as False.

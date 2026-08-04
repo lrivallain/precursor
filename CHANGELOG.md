@@ -9,6 +9,55 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP: one sign-in prompt instead of one per credential**: the WorkIQ preview
+  and the Agent 365 servers are different Entra clients against different
+  resources, so they hold separate tokens on separate expiry clocks — which used
+  to mean a second banner and a second click every time both aged out. Pending
+  sign-ins are now tracked **per credential** and collapsed into a **single
+  banner** naming every server involved, with re-auth attempts serialized so two
+  flows can't race for the same window. The one **Sign in** you click now also
+  **chains the others**: as soon as it succeeds, the remaining credentials retry
+  on the hands-free silent path while the Entra SSO session is hot (and the
+  backend re-arms the prompt for servers parked on a different stale
+  credential), so in the common case they renew with **zero extra clicks**. Set
+  `workiq_chain_reauth_enabled=false` to renew each credential only when it's
+  independently needed. Previously the second credential never even attempted the
+  silent pass and always fell through to a manual click. See
+  [MCP → One prompt, not one per credential](https://lrivallain.github.io/precursor/features/mcp.html#one-prompt-not-one-per-credential).
+
+- **MCP: a busy loopback port no longer blocks a WorkIQ sign-in**: each
+  OAuth-protected server still *prefers* its fixed callback port (`12798`,
+  `12799`, `12800`), but when that port is taken — another Precursor window
+  mid-sign-in, or an unrelated app — the flow now falls back to a free
+  **ephemeral port** instead of failing fast. Entra ignores the port of a
+  loopback redirect for public clients, so the fallback is transparent and
+  several windows can sign in concurrently. Set
+  `workiq_loopback_port_fallback=false` to restore the previous strict
+  behaviour.
+
+- **MCP: sign-in prompts are collapsed per credential on the backend too**: when
+  a turn pauses because MCP servers need authenticating, the blocked list is now
+  reduced to **one name per credential** before anything is announced, so two
+  blocked Agent 365 servers ask you to sign in **once** rather than twice. This
+  lands at a single choke point (`auth_blocked_servers`), so chat, topic,
+  workspace and scheduled-command pauses all inherit it. Which servers share a
+  credential is no longer hardcoded per call site: a new **OAuth server
+  registry** is the one place that knows which built-ins sign in, what to call
+  them, and which of them are backed by the same token.
+
+- **MCP: keep-alive backs off for credentials you aren't using**: the ticker
+  still refreshes a token shortly before it expires so an active session never
+  breaks mid-turn, but a WorkIQ server enabled long ago and never called is now
+  left alone — no refresh, and crucially **no sign-in prompt** when its refresh
+  token finally lapses. Usage is tracked per credential (calling either Agent 365
+  server keeps the shared token warm) with a **6 hour** default window, and the
+  clock is seeded at process start so a restart doesn't leave everything cold.
+  Set `workiq_keepalive_idle_after_seconds=0` to keep every signed-in credential
+  warm indefinitely, as before. See
+  [MCP → Quiet when you're not using it](https://lrivallain.github.io/precursor/features/mcp.html#quiet-when-you-re-not-using-it).
+
 ### Added
 
 - **Collections**: split topics into separate workspaces of work. A switcher at
@@ -25,6 +74,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   backfilled into a protected **General** collection. The MCP `list_topics` /
   `get_topic` tools now report a topic's collection, and `list_topics` accepts a
   `collection` filter. See [collections](https://lrivallain.github.io/precursor/features/collections).
+
+- **Search with `/`**: pressing <kbd>/</kbd> anywhere outside a text field now
+  opens the command palette straight into search — the same launcher as
+  <kbd>⌘K</kbd> / <kbd>Ctrl-K</kbd>, one key away. The shortcut stands down
+  whenever you're typing (inputs, textareas, and rich contenteditable editors),
+  so the composer's `/` slash-command picker is untouched, and it won't stack the
+  palette on top of an open dialog.
 
 - **Sidebar contextual menus**: right-click topic, chat, Live, and agent rows for
   the actions each surface supports. Topics and chats expose rename,
@@ -360,7 +416,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   install is deprecation-free and dedupes to a single `uuid`. The SDK only uses
   `uuid.v4()`, which is unchanged across these majors.
 
+### Fixed
+
+- **MCP: Agent 365 servers never attached to agent sessions**: `workiq-teams`
+  and `workiq-user` were rejected by name when an agent turn resolved its bearer
+  token, so despite being signed in they were dropped from the agent's tool
+  catalog, their tools silently went missing, and a sign-in prompt was raised
+  that **signing in could never clear** — the same name gate blocked the retry,
+  so the prompt came back on every rebuild. Bearer resolution and tool-failure
+  attribution now go through the OAuth server registry, which covers every
+  OAuth-protected built-in rather than the WorkIQ preview alone.
+
 ## [2026.7.0] - 2026-07-19
+
 
 ### Added
 

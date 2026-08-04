@@ -42,6 +42,7 @@ from precursor.backend.services.events import (
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.mcp.client import get_mcp_client_manager
+from precursor.backend.services.mcp.oauth_registry import server_label as _server_label
 from precursor.backend.services.turn import run_topic_turn
 
 logger = logging.getLogger(__name__)
@@ -348,15 +349,6 @@ async def _evaluate_guards(topic_id: int, prompt: str, *, force: bool = False) -
                 await _record_guard_skip(topic_id, spec)
             return True, remaining
     return False, remaining
-
-
-# Friendly labels for servers that surface a sign-in prompt. Falls back to the
-# raw server name for anything not listed.
-_SERVER_LABELS = {"workiq": "WorkIQ"}
-
-
-def _server_label(server: str) -> str:
-    return _SERVER_LABELS.get(server, server)
 
 
 async def _record_guard_skip(topic_id: int, spec: _GuardSpec) -> None:

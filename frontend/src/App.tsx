@@ -293,6 +293,21 @@ function windowFocused(): boolean {
   return typeof document !== "undefined" && document.hasFocus();
 }
 
+// Bare-key shortcuts (like "/") must never steal a keystroke the user meant to
+// type, so they're ignored while focus sits in any editable control — including
+// contenteditable surfaces (the composer's rich editors) and shadow-DOM inputs
+// reported via composedPath().
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const path = typeof e.composedPath === "function" ? e.composedPath() : [e.target];
+  for (const node of path) {
+    if (!(node instanceof HTMLElement)) continue;
+    const tag = node.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (node.isContentEditable) return true;
+  }
+  return false;
+}
+
 /** Sum unread counts across the whole topic tree (recursively). */
 function totalUnread(nodes: TopicNode[]): number {
   let n = 0;
@@ -1166,12 +1181,22 @@ export default function App() {
   }
 
   // Global ⌘K / Ctrl+K toggles the command palette — a width-independent way to
-  // jump to any section regardless of the sidebar's horizontal overflow.
+  // jump to any section regardless of the sidebar's horizontal overflow. A bare
+  // "/" opens it too (search-first, like GitHub), but only when the user isn't
+  // typing and no other dialog owns the screen.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+        return;
+      }
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (isTypingTarget(e)) return;
+        // Any open modal (including the palette itself) keeps the key.
+        if (document.querySelector('[aria-modal="true"]')) return;
+        e.preventDefault();
+        setPaletteOpen(true);
       }
     }
     window.addEventListener("keydown", onKey);

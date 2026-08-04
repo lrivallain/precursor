@@ -546,7 +546,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         return;
       }
       setMcp((prev) => prev.map((s) => (s.name === name ? next : s)));
-      mcpAuthStore.clear();
+      // Clear just this credential's notice; the store spends the fresh SSO
+      // cookie on a hands-free pass for any sibling that is still stale.
+      mcpAuthStore.resolve(name);
     } catch (err) {
       setMcp((prev) =>
         prev.map((s) =>

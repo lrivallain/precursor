@@ -13,6 +13,8 @@ import pytest
 
 from precursor.backend.services.mcp import agent365
 from precursor.backend.services.mcp import workiq_keepalive as ka
+from precursor.backend.services.mcp import workiq_preview as wp
+from precursor.backend.services.mcp.usage import reset_usage
 
 
 class _FakeStorage:
@@ -38,6 +40,7 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
         "auth_banner_calls": [],
     }
     _FakeStorage.token = object()
+    reset_usage()
 
     async def _resolve_preview() -> bool:
         return state["preview"]
@@ -52,7 +55,9 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     async def _publish(server: str, message: str, *, topic_id: int | None = None) -> None:
         state["auth_banner_calls"].append(server)
 
-    monkeypatch.setattr(ka, "resolve_workiq_preview", _resolve_preview)
+    # Preview mode is resolved through the OAuth registry, which dereferences
+    # the module attribute at call time — so patch it on its owning module.
+    monkeypatch.setattr(wp, "resolve_workiq_preview", _resolve_preview)
     monkeypatch.setattr(ka, "DbTokenStorage", _FakeStorage)
     monkeypatch.setattr(ka, "_stored_token_expiry", _stored_expiry)
     monkeypatch.setattr(ka, "resolve_workiq_bearer_token", _resolve_bearer)
@@ -96,6 +101,34 @@ async def test_refreshes_when_expiry_unknown(patched: dict) -> None:
     # Legacy token with no derivable expiry → refresh anyway.
     patched["expiry"] = None
     keepalive = ka.WorkIQKeepAlive()
+    await keepalive._tick_once()
+    assert patched["refresh_calls"] == 1
+
+
+async def test_skips_idle_credential_entirely(patched: dict, monkeypatch) -> None:
+    """A credential nobody has used is neither refreshed nor prompted for.
+
+    This is the noisiest prompt we used to raise: a server enabled long ago and
+    never called would eventually fail its silent refresh and ask the user to
+    sign in for tools they weren't using.
+    """
+    from precursor.backend.services.mcp import usage
+
+    patched["expiry"] = None  # unknown expiry → would refresh if not idle
+    patched["refresh_result"] = None  # ...and would then raise the banner
+    keepalive = ka.WorkIQKeepAlive()
+    idle_after = keepalive._settings.workiq_keepalive_idle_after_seconds
+    assert idle_after > 0
+
+    base = usage.time.monotonic()
+    monkeypatch.setattr(usage.time, "monotonic", lambda: base + idle_after + 60)
+
+    await keepalive._tick_once()
+    assert patched["refresh_calls"] == 0
+    assert patched["auth_banner_calls"] == []
+
+    # Calling any tool on it marks it active again, so the next tick resumes.
+    usage.mark_server_used("workiq")
     await keepalive._tick_once()
     assert patched["refresh_calls"] == 1
 

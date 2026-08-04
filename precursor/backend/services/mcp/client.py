@@ -366,13 +366,23 @@ class MCPClientManager:
         return list(self._servers.values())
 
     def auth_blocked_servers(self, names: list[str]) -> list[str]:
-        """Subset of ``names`` currently parked in the ``needs_auth`` state."""
+        """Subset of ``names`` currently parked in the ``needs_auth`` state,
+        collapsed to one representative per credential.
+
+        Callers turn each returned name into a user-facing sign-in prompt. The
+        Agent 365 servers share a single Entra token, so returning both would
+        raise two prompts for one sign-in the user can only answer once — the
+        exact noise that makes multi-server WorkIQ feel relentless. Collapsing
+        here fixes every caller (turn engine, workspaces, guards) at once.
+        """
+        from precursor.backend.services.mcp.oauth_registry import collapse_by_credential
+
         blocked: list[str] = []
         for name in names:
             entry = self._servers.get(name)
             if entry is not None and entry.state == "needs_auth":
                 blocked.append(name)
-        return blocked
+        return collapse_by_credential(blocked)
 
     def signal_auth_resolved(self) -> None:
         """Wake any turns paused waiting for an interactive MCP sign-in."""
@@ -844,6 +854,12 @@ class ActiveTools:
         worker = self.workers.get(server)
         if worker is None:
             raise KeyError(f"No active MCP session for server '{server}'")
+        # Mark before the call, not after: a failing tool still proves the user
+        # is actively using this server, and that's what keeps its credential
+        # eligible for background refresh.
+        from precursor.backend.services.mcp.usage import mark_server_used
+
+        mark_server_used(server)
         return await worker.call(raw_name, args)
 
     async def aclose(self) -> None:

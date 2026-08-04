@@ -292,6 +292,54 @@ async def set_workiq_preview_mode(
     return _enrich_with_user_meta(base, None)
 
 
+async def _renew_stale_sibling_credentials(
+    signed_in: Any,
+    manager: Any,
+    enabled: dict[str, bool],
+) -> None:
+    """Re-announce other OAuth credentials while the Entra SSO cookie is hot.
+
+    Precursor's WorkIQ servers authenticate as two different Entra clients, so
+    one sign-in never covers both — and each is discovered independently, which
+    is what makes the prompts feel relentless. Right after any credential
+    succeeds, the browser holds a fresh SSO session, so re-emitting
+    ``mcp.auth_required`` for a sibling still parked in ``needs_auth`` lets the
+    SPA's hands-free ``prompt=none`` pass renew it with zero clicks. Servers
+    sharing the just-renewed credential are skipped (already covered), as are
+    disabled or healthy ones — this only re-surfaces prompts the user was going
+    to get anyway, sooner and cheaper.
+    """
+    from precursor.backend.config import get_settings
+    from precursor.backend.services.mcp.oauth_registry import active_profiles
+
+    if not get_settings().workiq_chain_reauth_enabled:
+        return
+
+    # Per-server (not credential-deduped) on purpose: the enabled/needs_auth
+    # filters below are per-server, so collapsing first could let a disabled
+    # representative mask an enabled sibling sharing the same credential.
+    candidates = await active_profiles()
+
+    from precursor.backend.services.events import publish_mcp_auth_required
+
+    # One announcement per credential, not per server: siblings sharing a token
+    # are a single sign-in, so a second prompt for them would be pure noise.
+    seen_families = {signed_in.auth_family}
+    for sibling in candidates:
+        if sibling.auth_family in seen_families or not enabled.get(sibling.server, False):
+            continue
+        entry = manager.get(sibling.server)
+        if entry is None or entry.state != "needs_auth":
+            continue
+        seen_families.add(sibling.auth_family)
+        logger.info(
+            "chaining %s sign-in onto the fresh %s session", sibling.server, signed_in.server
+        )
+        await publish_mcp_auth_required(
+            sibling.server, f"{sibling.label} needs you to sign in to use its tools."
+        )
+
+
 @router.post("/servers/{name}/reauthenticate")
 async def reauthenticate_workiq_server(
     name: str,
@@ -453,6 +501,13 @@ async def reauthenticate_workiq_server(
     from precursor.backend.services.events import publish_mcp_auth_resolved
 
     await publish_mcp_auth_resolved(name)
+    # The browser that just signed in still holds a hot Entra SSO cookie, and
+    # Precursor's WorkIQ servers span two Entra clients that each need their own
+    # sign-in. This is the cheapest moment to renew the other one: re-announce any
+    # sibling credential still parked in ``needs_auth`` so every window's auth
+    # store spends that cookie on a hands-free ``prompt=none`` pass now, instead
+    # of surfacing a second visible prompt minutes later.
+    await _renew_stale_sibling_credentials(profile, manager, enabled)
     # Agents bake a static OAuth bearer into their SDK session at creation, so an
     # agent built before sign-in still lacks WorkIQ's tools. Drop idle sessions so
     # the next dispatch rebuilds with the new token (no-op when agents are off).

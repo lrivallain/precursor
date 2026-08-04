@@ -114,7 +114,7 @@ async def test_auth_server_from_failed_tool(monkeypatch) -> None:
 
     mgr = AgentManager()
 
-    async def _no_creds() -> None:
+    async def _no_creds(_profile: object = None) -> None:
         return None
 
     async def _preview_on() -> bool:
@@ -145,7 +145,7 @@ async def test_auth_server_from_failed_tool(monkeypatch) -> None:
     # Creds are actually present → a workiq error is some other fault, no prompt.
     monkeypatch.setattr(wp, "resolve_workiq_preview", _preview_on)
 
-    async def _has_creds() -> tuple[str, None]:
+    async def _has_creds(_profile: object = None) -> tuple[str, None]:
         return "token", None
 
     monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _has_creds)
