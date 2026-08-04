@@ -554,11 +554,12 @@ class AgentManager:
             except ValueError as exc:
                 logger.warning("Skipping MCP server '%s': %s", entry.name, exc)
                 continue
-            # OAuth-protected catalog servers (WorkIQ preview) authenticate via an
-            # httpx.Auth provider that the SDK's static-header HTTP config can't
-            # carry. Mint a concrete bearer token and inject it, or skip the
-            # server entirely when sign-in is required — attaching it without
-            # credentials would just surface 401s as missing tools to the agent.
+            # OAuth-protected catalog servers (the hosted WorkIQ preview and the
+            # Agent 365 pair) authenticate via an httpx.Auth provider that the
+            # SDK's static-header HTTP config can't carry. Mint a concrete bearer
+            # token and inject it, or skip the server entirely when sign-in is
+            # required — attaching it without credentials would just surface 401s
+            # as missing tools to the agent.
             if entry.transport == "streamable_http" and entry.auth_provider is not None:
                 bearer = await self._oauth_bearer_header(entry.name)
                 if bearer is None:
@@ -587,17 +588,22 @@ class AgentManager:
     async def _oauth_bearer_header(name: str) -> tuple[dict[str, str], datetime | None] | None:
         """Resolve a static ``Authorization`` header for an OAuth catalog server.
 
-        Only WorkIQ preview uses an ``auth_provider`` today; return ``None`` for
-        anything else (or when no valid token is available) so the caller skips
-        attaching it rather than handing the agent an unauthenticated endpoint.
-        On success returns ``(header, expires_at)`` where ``expires_at`` may be
-        ``None`` if the token's lifetime can't be determined.
+        Works for every server Precursor can sign in to — the hosted WorkIQ
+        preview *and* the Agent 365 pair — by resolving the server's credential
+        profile and minting a bearer from it. Returns ``None`` when the server
+        has no usable credential (not an OAuth server, preview mode off, no
+        tenant resolved, or no valid token) so the caller skips attaching it
+        rather than handing the agent an unauthenticated endpoint. On success
+        returns ``(header, expires_at)`` where ``expires_at`` may be ``None`` if
+        the token's lifetime can't be determined.
         """
-        if name != "workiq":
-            return None
+        from precursor.backend.services.mcp.oauth_registry import profile_for_server
         from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
 
-        resolved = await resolve_workiq_bearer_token()
+        profile = await profile_for_server(name)
+        if profile is None:
+            return None
+        resolved = await resolve_workiq_bearer_token(profile)
         if resolved is None:
             return None
         token, expires_at = resolved
@@ -774,29 +780,29 @@ class AgentManager:
         """Return the OAuth server to prompt for when a tool failure looks like
         an expired sign-in, else ``None``.
 
-        Only WorkIQ uses OAuth today. We require the event to name ``workiq`` as
-        its server and the bearer to be genuinely unavailable, so a routine tool
-        error (bad args, server-side fault) never nags the user to re-auth.
+        We require the event to name a server Precursor can actually sign in to
+        *and* the bearer to be genuinely unavailable, so a routine tool error
+        (bad args, server-side fault) never nags the user to re-auth. Servers
+        that can't sign in as things stand resolve to no profile and are
+        ignored — notably ``workiq`` with preview mode off, which runs as local
+        stdio with no OAuth, so a routine stdio tool error must not surface a
+        prompt the user can't act on (re-auth 400s with "Enable WorkIQ preview
+        mode before signing in").
         """
         if event.tool_status != "error":
             return None
         server = (event.data or {}).get("server_name")
-        if server != "workiq":
+        if not isinstance(server, str) or not server:
             return None
-        from precursor.backend.services.mcp.workiq_preview import (
-            resolve_workiq_bearer_token,
-            resolve_workiq_preview,
-        )
+        from precursor.backend.services.mcp.oauth_registry import profile_for_server
+        from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
 
-        # Without preview mode WorkIQ runs as local stdio with no OAuth, so
-        # ``resolve_workiq_bearer_token`` is always ``None`` — a routine stdio
-        # tool error must not surface a sign-in prompt the user can't act on
-        # (re-auth 400s with "Enable WorkIQ preview mode before signing in").
-        if not await resolve_workiq_preview():
+        profile = await profile_for_server(server)
+        if profile is None:
             return None
-        if await resolve_workiq_bearer_token() is not None:
+        if await resolve_workiq_bearer_token(profile) is not None:
             return None
-        return "workiq"
+        return server
 
     async def _emit_synthetic(self, agent_id: int, event: AgentEvent) -> None:
         """Append a manager-originated event to the timeline (archive + publish).
@@ -819,17 +825,25 @@ class AgentManager:
     async def _announce_auth_required(self, agent_id: int, servers: list[str]) -> None:
         """Surface a sign-in prompt for each ``server`` we couldn't authenticate.
 
-        De-duped per agent so a held session doesn't re-announce on every rebuild.
-        Servers that are *not* currently blocked are dropped from the announced
-        set, so a later token expiry (or a sign-in that's since lapsed) prompts
-        again rather than staying silent.
+        Collapsed per credential first: the Agent 365 servers share one Entra
+        token, so announcing both would raise two prompts the user can only
+        answer once. De-duped per agent on top of that, so a held session
+        doesn't re-announce on every rebuild. Servers that are *not* currently
+        blocked are dropped from the announced set, so a later token expiry (or
+        a sign-in that's since lapsed) prompts again rather than staying silent.
         """
+        from precursor.backend.services.mcp.oauth_registry import (
+            collapse_by_credential,
+            server_label,
+        )
+
+        pending = collapse_by_credential(servers)
         announced = self._auth_announced.setdefault(agent_id, set())
-        for server in servers:
+        for server in pending:
             if server in announced:
                 continue
             announced.add(server)
-            label = "WorkIQ" if server == "workiq" else server
+            label = server_label(server)
             await self._emit_synthetic(
                 agent_id,
                 AgentEvent(
@@ -840,7 +854,7 @@ class AgentManager:
                 ),
             )
         # Reset servers that authenticated this build so a future lapse re-fires.
-        announced.intersection_update(servers)
+        announced.intersection_update(pending)
 
     async def refresh_oauth_sessions(self) -> None:
         """Drop idle live sessions after an interactive MCP sign-in.

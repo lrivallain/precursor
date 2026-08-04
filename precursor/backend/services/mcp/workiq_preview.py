@@ -30,7 +30,7 @@ import logging
 import socket
 import webbrowser
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
@@ -329,12 +329,11 @@ def _port_busy_message(profile: WorkIQOAuthProfile) -> str:
 def _assert_loopback_port_available(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> None:
     """Fail fast when another process already owns the OAuth loopback port.
 
-    The redirect port is fixed (it must match the registered ``redirect_uri``),
-    so only one process on the machine can run the loopback callback at a time.
-    Probing it before we clear tokens or drive the browser flow lets an
+    Probing the port before we clear tokens or drive the browser flow lets an
     interactive sign-in surface a clear :class:`WorkIQAuthPortBusyError` instead
     of stranding the UI on "Signing in…" until the callback times out — the
-    common failure when several Precursor instances run side by side.
+    common failure when several Precursor instances run side by side, or when
+    two WorkIQ credentials try to sign in at once.
     """
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -349,6 +348,51 @@ def _assert_loopback_port_available(profile: WorkIQOAuthProfile = PREVIEW_PROFIL
         raise
     finally:
         probe.close()
+
+
+def _reserve_ephemeral_port() -> int | None:
+    """Ask the OS for a free loopback port, or ``None`` if it can't spare one."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+    except OSError:
+        return None
+    finally:
+        probe.close()
+
+
+def _bind_loopback_profile(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> WorkIQOAuthProfile:
+    """Return the profile to run this sign-in on, with a bindable loopback port.
+
+    Each credential prefers its registered port, which keeps the redirect URI
+    byte-identical to the one Entra knows. But that port is a single machine-wide
+    slot, and Precursor now signs in to two Entra clients — so a second window, a
+    chained renewal, or an unrelated squatter used to fail the whole sign-in.
+    Entra ignores the *port* of a public client's loopback redirect (see
+    :class:`WorkIQOAuthProfile`), so falling back to an ephemeral port keeps the
+    flow working where it previously hard-failed. The strict behaviour is one
+    setting away for anyone whose registration is port-exact.
+    """
+    try:
+        _assert_loopback_port_available(profile)
+        return profile
+    except WorkIQAuthPortBusyError:
+        if not get_settings().workiq_loopback_port_fallback:
+            raise
+        port = _reserve_ephemeral_port()
+        if port is None:
+            raise
+        logger.info(
+            "workiq oauth loopback port %s busy for %s, falling back to ephemeral port %s",
+            profile.redirect_port,
+            profile.server,
+            port,
+        )
+        # Only the port moves: host and path must still match the registration
+        # character for character.
+        return replace(profile, redirect_port=port)
 
 
 async def resolve_workiq_preview() -> bool:
@@ -1209,7 +1253,7 @@ async def reauthenticate_workiq(
             # Preflight the loopback port first so a busy port doesn't needlessly
             # clear the still-usable stored tokens.
             try:
-                _assert_loopback_port_available(profile)
+                profile = _bind_loopback_profile(profile)
             except WorkIQAuthPortBusyError as exc:
                 logger.info("%s: silent auto re-auth skipped: %s", profile.server, exc)
                 return False
@@ -1242,7 +1286,7 @@ async def reauthenticate_workiq(
             # (another window signing in) defers cleanly to the manual banner
             # without destroying still-usable tokens.
             try:
-                _assert_loopback_port_available(profile)
+                profile = _bind_loopback_profile(profile)
             except WorkIQAuthPortBusyError as exc:
                 logger.info("%s: auto re-auth skipped: %s", profile.server, exc)
                 return False
@@ -1282,11 +1326,11 @@ async def reauthenticate_workiq(
             finally:
                 _active_signin_cancels.pop(profile.auth_family, None)
 
-        # Interactive: fail fast — before clearing tokens or driving the browser
-        # flow — when another process already owns the fixed loopback port, so
-        # the UI shows a clear error instead of stranding "Signing in…" until the
-        # callback times out (and without destroying a still-usable session).
-        _assert_loopback_port_available(profile)
+        # Interactive: settle the loopback port — before clearing tokens or driving
+        # the browser flow — so the UI shows a clear error instead of stranding
+        # "Signing in…" until the callback times out (and without destroying a
+        # still-usable session) when no port can be had at all.
+        profile = _bind_loopback_profile(profile)
         # Drop stale tokens so the flow always re-runs the grant (the retained
         # login_hint still lets the user pick another account in the prompt).
         await clear_workiq_oauth_tokens(profile)
