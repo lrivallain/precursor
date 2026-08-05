@@ -84,6 +84,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Type-to-filter in the model pickers**: the composer and agent model menus
+  now open with a search box focused, narrowing the list as you type. Matching a
+  vendor heading (`anthropic`, `microsoft`, …) keeps that whole group, so the
+  catalogue can be sliced by publisher as well as by model name, and <kbd>Enter</kbd>
+  picks the first match. Menus with only a handful of options — reasoning effort,
+  context size — stay plain lists.
+
 - **Collections**: split topics into separate workspaces of work. A switcher at
   the top of the Topics panel filters the sidebar tree (and the Pinned section)
   to one collection at a time; search, the command palette, and the archive stay
@@ -308,7 +315,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   panel's private copy, despite its label), and saving a new GitHub token forces
   a refresh because a different account can mean a different catalog.
 
+- **A long-running instance served a stale Copilot model catalogue**: the
+  `gh auth token` result was cached for the whole process lifetime, and GitHub
+  scopes entitlements — including which models the picker may offer — to the
+  token itself. An instance left running therefore kept serving the catalogue as
+  it looked when it first resolved a token, offering models that had since been
+  retired while hiding newly added ones; `MAI-Code-1-Flash` was missing for
+  exactly this reason, and the only cure was restarting Precursor. The CLI token
+  is now re-read when it is older than five minutes, and saving a GitHub token in
+  Settings drops the cached one immediately.
 
+- **WorkIQ sign-in in the installed PWA**: clicking **Sign in** (the banner or
   Settings) from Precursor running as an installed standalone PWA did nothing —
   standalone display mode heavily restricts `window.open`, so the script-opened
   sign-in popup couldn't be created, steered to the authorization URL, or

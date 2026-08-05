@@ -4,8 +4,10 @@ Priority:
 1. ``github_token`` saved in the app settings (``api_keys`` in the DB).
 2. ``gh auth token`` output, if the GitHub CLI is installed and signed in.
 
-The CLI result is cached for the lifetime of the process — if the user runs
-``gh auth login`` while Precursor is running, restart the server.
+The CLI result is cached for a short TTL rather than the process lifetime:
+GitHub scopes entitlements (notably the Copilot model catalogue) to the token
+itself, so pinning one forever makes a long-running instance serve a snapshot
+that drifts further from reality the longer it stays up.
 """
 
 from __future__ import annotations
@@ -14,7 +16,8 @@ import json
 import logging
 import shutil
 import subprocess
-from functools import lru_cache
+import threading
+import time
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +28,15 @@ logger = logging.getLogger(__name__)
 
 TokenSource = Literal["settings", "gh-cli", "none"]
 
+# Long enough to keep `gh` off the hot path, short enough that `gh auth login`
+# (or a rotated token) is picked up without restarting Precursor.
+_GH_TOKEN_TTL_SECONDS = 300.0
 
-@lru_cache(maxsize=1)
-def _gh_cli_token() -> str:
+_gh_token_lock = threading.Lock()
+_gh_token_cache: tuple[float, str] | None = None
+
+
+def _run_gh_auth_token() -> str:
     if shutil.which("gh") is None:
         return ""
     try:
@@ -44,6 +53,24 @@ def _gh_cli_token() -> str:
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
+
+
+def _gh_cli_token() -> str:
+    global _gh_token_cache
+    with _gh_token_lock:
+        cached = _gh_token_cache
+        if cached is not None and (time.monotonic() - cached[0]) < _GH_TOKEN_TTL_SECONDS:
+            return cached[1]
+        token = _run_gh_auth_token()
+        _gh_token_cache = (time.monotonic(), token)
+        return token
+
+
+def invalidate_gh_cli_token() -> None:
+    """Drop the cached CLI token so the next read re-runs ``gh auth token``."""
+    global _gh_token_cache
+    with _gh_token_lock:
+        _gh_token_cache = None
 
 
 async def _settings_github_token(session: AsyncSession) -> str:

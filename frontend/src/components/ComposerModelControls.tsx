@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel, useModelsVersion } from "../lib/modelsStore";
 import { settingsStore, useSettings } from "../lib/settingsStore";
@@ -181,6 +181,7 @@ function LlmModelControls() {
         menuMinWidthClass="min-w-[18rem]"
         emptyHint="No model catalog — set one in Settings."
         disabled={saving}
+        filterPlaceholder="Filter models…"
         onOpen={() => void modelsStore.ensureLoaded()}
         onSelect={onModelChange}
       />
@@ -301,6 +302,7 @@ function AgentModelControls() {
         groups={[{ options }]}
         menuMinWidthClass="min-w-[18rem]"
         disabled={saving}
+        filterPlaceholder="Filter models…"
         onSelect={onModelChange}
       />
       {supportedEfforts.length > 0 && (
@@ -336,6 +338,7 @@ function SelectMenu({
   emptyHint,
   menuMinWidthClass = "min-w-[11rem]",
   disabled,
+  filterPlaceholder,
   onOpen,
   onSelect,
 }: {
@@ -347,15 +350,23 @@ function SelectMenu({
   emptyHint?: string;
   menuMinWidthClass?: string;
   disabled: boolean;
+  // Passing a placeholder opts the menu into type-to-filter; short menus
+  // (reasoning effort, context size) leave it off and stay a plain list.
+  filterPlaceholder?: string;
   onOpen?: () => void;
   onSelect: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setQuery("");
+      return;
+    }
     function onDocPointerDown(e: PointerEvent): void {
       if (!rootRef.current?.contains(e.target as Node | null)) setOpen(false);
     }
@@ -364,6 +375,7 @@ function SelectMenu({
     }
     document.addEventListener("pointerdown", onDocPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    searchRef.current?.focus();
     // Bring the active row into view when the menu opens.
     selectedRef.current?.scrollIntoView({ block: "nearest" });
     return () => {
@@ -372,7 +384,30 @@ function SelectMenu({
     };
   }, [open]);
 
-  const hasOptions = groups.some((g) => g.options.length > 0);
+  // A matching group label keeps its whole group, so typing a vendor name
+  // ("microsoft") lists every model it publishes.
+  const q = query.trim().toLowerCase();
+  const visibleGroups = q
+    ? groups
+        .map((g) => ({
+          ...g,
+          options: g.label?.toLowerCase().includes(q)
+            ? g.options
+            : g.options.filter(
+                (o) =>
+                  o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+              ),
+        }))
+        .filter((g) => g.options.length > 0)
+    : groups;
+  const hasOptions = visibleGroups.some((g) => g.options.length > 0);
+
+  function selectFirstMatch(): void {
+    const first = visibleGroups.flatMap((g) => g.options)[0];
+    if (!first) return;
+    onSelect(first.value);
+    setOpen(false);
+  }
 
   return (
     <div ref={rootRef} className="relative">
@@ -397,44 +432,71 @@ function SelectMenu({
         <div
           role="listbox"
           aria-label={ariaLabel}
-          className={`absolute bottom-full left-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-xl ${menuMinWidthClass}`}
+          className={`absolute bottom-full left-0 z-30 mb-2 rounded-xl border border-border bg-surface p-1 shadow-xl ${menuMinWidthClass}`}
         >
-          {!hasOptions && (
-            <div className="px-2 py-1.5 text-xs text-muted">{emptyHint ?? "No options"}</div>
-          )}
-          {groups.map((group, gi) => (
-            <div key={group.label ?? gi}>
-              {group.label && group.options.length > 0 && (
-                <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                  {group.label}
-                </div>
-              )}
-              {group.options.map((opt) => {
-                const selected = opt.value === value;
-                return (
-                  <button
-                    key={opt.value}
-                    ref={selected ? selectedRef : undefined}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onClick={() => {
-                      onSelect(opt.value);
-                      setOpen(false);
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50 ${
-                      selected ? "text-text" : "text-text/90"
-                    }`}
-                  >
-                    <span className="flex w-4 shrink-0 justify-center">
-                      {selected && <Check size={14} className="text-accent" />}
-                    </span>
-                    <span className="truncate">{opt.label}</span>
-                  </button>
-                );
-              })}
+          {filterPlaceholder && (
+            <div className="flex items-center gap-1.5 border-b border-border px-2 pb-1.5 pt-1">
+              <Search size={13} className="shrink-0 text-muted" />
+              <input
+                ref={searchRef}
+                type="text"
+                value={query}
+                placeholder={filterPlaceholder}
+                aria-label={filterPlaceholder}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    selectFirstMatch();
+                  } else if (e.key !== "Escape") {
+                    // Keep typing away from the composer's global hotkeys.
+                    e.stopPropagation();
+                  }
+                }}
+                className="w-full bg-transparent text-sm text-text placeholder:text-muted outline-none"
+              />
             </div>
-          ))}
+          )}
+          <div className="max-h-72 overflow-y-auto">
+            {!hasOptions && (
+              <div className="px-2 py-1.5 text-xs text-muted">
+                {q ? "No match" : (emptyHint ?? "No options")}
+              </div>
+            )}
+            {visibleGroups.map((group, gi) => (
+              <div key={group.label ?? gi}>
+                {group.label && group.options.length > 0 && (
+                  <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                    {group.label}
+                  </div>
+                )}
+                {group.options.map((opt) => {
+                  const selected = opt.value === value;
+                  return (
+                    <button
+                      key={opt.value}
+                      ref={selected ? selectedRef : undefined}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => {
+                        onSelect(opt.value);
+                        setOpen(false);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50 ${
+                        selected ? "text-text" : "text-text/90"
+                      }`}
+                    >
+                      <span className="flex w-4 shrink-0 justify-center">
+                        {selected && <Check size={14} className="text-accent" />}
+                      </span>
+                      <span className="truncate">{opt.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

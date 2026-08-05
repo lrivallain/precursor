@@ -43,7 +43,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
-from precursor.backend.services.github_auth import github_token_source
+from precursor.backend.services.github_auth import github_token_source, invalidate_gh_cli_token
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
@@ -187,6 +187,9 @@ async def update_settings(
         current = await _load_all(session)
         merged = {**(current.get("api_keys") or {}), **data["api_keys"]}
         data["api_keys"] = {k: v for k, v in merged.items() if v}
+        # Clearing the saved token falls back to the CLI: re-read it rather than
+        # serving whatever was cached before.
+        invalidate_gh_cli_token()
 
     # Deep-merge llm_providers per provider so a partial update (e.g. one field)
     # doesn't drop the rest; an empty-string value clears a field.
