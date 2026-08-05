@@ -9,6 +9,7 @@
 
 import { CLIENT_ID } from "./clientId";
 import { mcpAuthStore } from "./mcpAuth";
+import { authLog } from "./workiqAuthLog";
 import { emitWorkiqAuthUrl } from "./workiqSignIn";
 
 export type BusEvent =
@@ -104,10 +105,9 @@ function connect(): void {
         server?: string;
         message?: string;
       };
-      mcpAuthStore.report(
-        payload.server ?? "workiq",
-        payload.message ?? "Sign-in required.",
-      );
+      const server = payload.server ?? "workiq";
+      authLog(server, "SSE mcp.auth_required", { message: payload.message });
+      mcpAuthStore.report(server, payload.message ?? "Sign-in required.");
     } catch {
       // Ignore malformed payloads.
     }
@@ -117,8 +117,11 @@ function connect(): void {
   // client-id filtered: the requesting window is the one that needs it.
   source.addEventListener("mcp.auth_url", (e) => {
     try {
-      const payload = JSON.parse((e as MessageEvent).data) as { url?: string };
-      if (payload.url) emitWorkiqAuthUrl(payload.url);
+      const payload = JSON.parse((e as MessageEvent).data) as {
+        url?: string;
+        server?: string;
+      };
+      if (payload.url) emitWorkiqAuthUrl(payload.url, payload.server ?? "workiq");
     } catch {
       // Ignore malformed payloads.
     }
@@ -130,7 +133,9 @@ function connect(): void {
   source.addEventListener("mcp.auth_resolved", (e) => {
     try {
       const payload = JSON.parse((e as MessageEvent).data) as { server?: string };
-      mcpAuthStore.resolve(payload.server ?? "workiq");
+      const server = payload.server ?? "workiq";
+      authLog(server, "SSE mcp.auth_resolved");
+      mcpAuthStore.resolve(server);
     } catch {
       // Ignore malformed payloads.
     }

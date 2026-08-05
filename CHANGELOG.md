@@ -129,6 +129,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   picks the first match. Menus with only a handful of options — reasoning effort,
   context size — stay plain lists.
 
+- **MCP: console tracing for the WorkIQ sign-in legs.** The hands-free re-auth
+  hides two sequential attempts inside one request — the invisible `prompt=none`
+  iframe, then the backend self-opening the OS browser — so when the manual
+  banner finally appears there was no way to tell which leg gave up, or why.
+  Each step of an auth episode now logs to the browser console under
+  `[workiq-auth]` with elapsed timings: when a notice opens, when the
+  authorization URL arrives over SSE (published for the silent leg only, so its
+  absence is itself diagnostic), how the hidden frame navigated — including
+  whether it was refused before any document loaded, the signature of
+  `X-Frame-Options` blocking the silent pass outright — and which outcome
+  produced the banner. `window.precursorWorkiqAuthTrace()` returns the whole
+  episode for pasting into a bug report; `login_hint`, `state` and `nonce` are
+  never logged. Silence it with
+  `localStorage['precursor.debug.workiqAuth'] = '0'`.
+
 - **Collections**: split topics into separate workspaces of work. A switcher at
   the top of the Topics panel filters the sidebar tree (and the Pinned section)
   to one collection at a time; search, the command palette, and the archive stay

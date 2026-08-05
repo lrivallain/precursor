@@ -170,6 +170,37 @@ started Precursor keeps everything warm rather than going quiet until your first
 tool call. Set `workiq_keepalive_idle_after_seconds=0` to disable the back-off
 and keep every signed-in credential warm indefinitely.
 
+#### Tracing a sign-in
+
+When the banner appears anyway, the useful question is *which* leg gave up — and
+both of them hide inside a single request, so there's nothing to see from the
+outside. Precursor traces each step of an auth episode to the **browser console**
+under `[workiq-auth]`, with elapsed timings:
+
+```text
+[workiq-auth] workiq-teams +0ms — notice opened
+[workiq-auth] workiq-teams +4ms — hands-free start — POST /reauthenticate?auto=true
+[workiq-auth] workiq-teams +812ms — auth url → silent frame (leg ①)
+[workiq-auth] workiq-teams +1103ms — leg ① frame load #1  {readable: true, verdict: "likely blocked before load"}
+[workiq-auth] workiq-teams +21406ms — hands-free gave up (interaction_required) — banner will show
+[workiq-auth] workiq-teams +21407ms — BANNER SHOWN — manual sign-in now required
+```
+
+Read it by the timings. Resolving in well under a second with **no `auth url`
+line** means the backend never started a leg at all — auto re-auth is off, the
+loopback port was busy, or there's no stored account to use as a `login_hint`. An
+`auth url` line followed by ~20 s of silence means the silent frame reached Entra
+but its loopback never fired. A further long wait after that is the OS-browser
+leg — which deliberately does *not* publish its URL, so its absence is the tell —
+and that's the one to suspect when your **default browser or profile differs from
+the one running Precursor**, since the sign-in then lands somewhere without your
+session.
+
+`window.precursorWorkiqAuthTrace()` returns the whole episode as an array if you
+want to paste it into an issue; `login_hint`, `state` and `nonce` are never
+logged. Set `localStorage['precursor.debug.workiqAuth'] = '0'` to silence the
+output (the trace buffer keeps working).
+
 ### Agent 365: `workiq-teams` and `workiq-user`
 
 Microsoft's **Agent 365** platform exposes two more hosted MCP endpoints, and
