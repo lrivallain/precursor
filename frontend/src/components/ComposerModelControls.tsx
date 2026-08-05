@@ -181,6 +181,7 @@ function LlmModelControls() {
         menuMinWidthClass="min-w-[18rem]"
         emptyHint="No model catalog — set one in Settings."
         disabled={saving}
+        onOpen={() => void modelsStore.ensureLoaded()}
         onSelect={onModelChange}
       />
       {supportedEfforts.length > 0 && (
@@ -335,6 +336,7 @@ function SelectMenu({
   emptyHint,
   menuMinWidthClass = "min-w-[11rem]",
   disabled,
+  onOpen,
   onSelect,
 }: {
   ariaLabel: string;
@@ -345,6 +347,7 @@ function SelectMenu({
   emptyHint?: string;
   menuMinWidthClass?: string;
   disabled: boolean;
+  onOpen?: () => void;
   onSelect: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -380,7 +383,11 @@ function SelectMenu({
         aria-expanded={open}
         data-tooltip={tooltip}
         disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) onOpen?.();
+        }}
         className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:text-text hover:bg-bg outline-none disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <span className="max-w-[13rem] truncate">{triggerLabel}</span>

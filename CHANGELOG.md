@@ -294,7 +294,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **WorkIQ sign-in in the installed PWA**: clicking **Sign in** (the banner or
+- **The composer model picker served a frozen catalog**: the shared model store
+  fetched `/api/llm/models` exactly once per app lifetime and nothing ever
+  invalidated it, so a list captured on first launch stayed pinned forever.
+  Because the desktop webview never reloads, that snapshot could be weeks stale
+  — showing models the provider has since retired while hiding newly added ones
+  (MAI-Code-1-Flash was missing for exactly this reason). Since the model
+  dropdown moved out of Settings into the composer, that store is the *only*
+  model list in the UI, so there was no way to refresh it short of restarting
+  Precursor. The catalog is now refetched when it is older than five minutes and
+  the picker is opened, Settings seeds the shared store on load and on
+  **Apply & refresh models** (previously the button only refreshed the settings
+  panel's private copy, despite its label), and saving a new GitHub token forces
+  a refresh because a different account can mean a different catalog.
+
+
   Settings) from Precursor running as an installed standalone PWA did nothing —
   standalone display mode heavily restricts `window.open`, so the script-opened
   sign-in popup couldn't be created, steered to the authorization URL, or

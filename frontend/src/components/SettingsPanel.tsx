@@ -239,12 +239,18 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     );
   }
 
-  async function loadModels(providerOverride?: string): Promise<LLMModel[]> {
+  // `share` seeds the shared store used by the composer picker — only safe when
+  // the fetched list reflects the *saved* provider, not an unsaved preview.
+  async function loadModels(
+    providerOverride?: string,
+    { share = false }: { share?: boolean } = {},
+  ): Promise<LLMModel[]> {
     setModelsLoading(true);
     setModelsError(null);
     try {
       const list = await api.llm.listModels(providerOverride);
       setModels(list);
+      if (share) modelsStore.adopt(list);
       return list;
     } catch (e) {
       setModels([]);
@@ -298,7 +304,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       } catch {
         setProviders([]);
       }
-      await loadModels();
+      await loadModels(undefined, { share: true });
       try {
         setMe(await api.me.get());
       } catch {
@@ -348,7 +354,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setSettings(updated);
       setProviderConfig(updated.llm_providers ?? {});
       settingsStore.set(updated);
-      const list = await loadModels(provider);
+      const list = await loadModels(provider, { share: true });
       if (list.length > 0 && !list.some((m) => m.id === updated.llm_model)) {
         const snapped = await api.settings.update({ llm_model: list[0].id });
         setSettings(snapped);
@@ -402,6 +408,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       const updated = await api.settings.update(payload);
       setSettings(updated);
       modelsStore.applySettings(updated);
+      // A new GitHub token can mean a different account/plan, hence a different
+      // catalog — the composer picker must not keep the previous one.
+      if (apiKeys.github_token) void modelsStore.refresh();
       settingsStore.set(updated);
       setGithubToken("");
       setAzureKey("");

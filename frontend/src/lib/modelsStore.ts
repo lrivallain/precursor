@@ -5,11 +5,17 @@ import type { LLMModel, Settings } from "./types";
 
 type Listener = () => void;
 
+// Providers add and retire models upstream, and the desktop webview never
+// reloads — a fetch-once catalog would stay frozen for the lifetime of the
+// app, hiding new models and offering retired ones.
+const STALE_AFTER_MS = 5 * 60 * 1000;
+
 class ModelsStore {
   private models: LLMModel[] = [];
   private byId = new Map<string, LLMModel>();
   private currentId: string | null = null;
   private loaded = false;
+  private fetchedAt = 0;
   private loading: Promise<void> | null = null;
   private version = 0;
   private listeners = new Set<Listener>();
@@ -51,15 +57,21 @@ class ModelsStore {
     this.setCurrent(settings?.llm_model ?? null);
   }
 
+  /** Seed the catalog from a list a caller already fetched. */
+  adopt(list: LLMModel[]): void {
+    this.models = list;
+    this.byId = new Map(list.map((m) => [m.id, m]));
+    this.loaded = true;
+    this.fetchedAt = Date.now();
+    this.notify();
+  }
+
   async load(): Promise<void> {
     if (this.loading) return this.loading;
     this.loading = (async () => {
       try {
         const list = await api.llm.listModels();
-        this.models = list;
-        this.byId = new Map(list.map((m) => [m.id, m]));
-        this.loaded = true;
-        this.notify();
+        this.adopt(list);
       } catch (err) {
         // Provider may not be configured; that's OK, just leave list empty.
         console.warn("Failed to load model catalog", err);
@@ -70,8 +82,13 @@ class ModelsStore {
     return this.loading;
   }
 
+  /** Force a catalog refetch — use after the provider or its token changes. */
+  async refresh(): Promise<void> {
+    return this.load();
+  }
+
   async ensureLoaded(): Promise<void> {
-    if (!this.loaded) await this.load();
+    if (!this.loaded || Date.now() - this.fetchedAt > STALE_AFTER_MS) await this.load();
   }
 }
 
