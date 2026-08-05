@@ -41,7 +41,7 @@ class MockProvider:
         )
         reply = (
             f"**[mock:{model}]** I received: _{last_user.strip()[:200]}_. "
-            "Configure `GITHUB_TOKEN` to enable real GitHub Models responses."
+            "Configure `GITHUB_TOKEN` to enable real GitHub Copilot responses."
         )
         for token in reply.split(" "):
             yield token + " "

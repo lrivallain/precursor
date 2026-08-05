@@ -11,6 +11,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **The GitHub Models provider is retired and no longer offered.** GitHub has
+  retired the service; `https://models.github.ai/catalog/models` now answers
+  `410 Gone`, so selecting the provider only ever produced a raw HTTP error
+  where the model list should be. Providers can now carry a `retired` reason in
+  the registry, which is the single source of truth for both the settings notice
+  and the API: `GET /api/llm/providers` hides retired providers (unless one is
+  still selected, in which case it is labelled *(retired)*), and
+  `GET /api/llm/models` answers `502` with that explanation instead of leaking
+  the upstream `410`. Existing configurations are **not** silently rewritten —
+  the provider stays selectable-but-flagged so the switch to **GitHub Copilot**,
+  which authenticates with the same GitHub token, is a deliberate choice.
+
 - **`GET /api/reminders/{container}/{id}` returns `200` with a `null` body when
   no reminder is set**, instead of `404`. The conversation panel reads this
   endpoint on every topic/chat open, so the far more common "no reminder" case

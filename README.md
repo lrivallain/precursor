@@ -14,7 +14,7 @@ older ones.
 - Collapsible, searchable, **tree-organized** topic sidebar
 - Each topic optionally linked to a GitHub issue; issue labels tag the chat
 - Multi-turn chat with **SSE streaming** and markdown rendering
-- Powered by **GitHub Models** (OpenAI-compatible) with a mock provider for
+- Powered by **GitHub Copilot** (OpenAI-compatible) with a mock provider for
   offline development
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
@@ -33,7 +33,7 @@ older ones.
 | -------- | --------------------------------------------------------------------- |
 | Tooling  | [uv](https://docs.astral.sh/uv/) for env, run, build & release        |
 | Backend  | Python 3.12+, FastAPI, SQLAlchemy 2 (async), Alembic, sse-starlette   |
-| LLM      | `openai` SDK pointed at `https://models.github.ai/inference`          |
+| LLM      | `openai` SDK pointed at `https://api.githubcopilot.com`               |
 | MCP      | `mcp` Python SDK (client + server scaffolding)                        |
 | Frontend | Vite + React 19 + TypeScript, Tailwind CSS 3, Lucide React            |
 | DB       | SQLite for dev (`aiosqlite`), PostgreSQL for prod (`asyncpg`, extra)  |

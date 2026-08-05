@@ -1,5 +1,11 @@
 """GitHub Models provider — OpenAI-compatible endpoint at https://models.github.ai/inference.
 
+Retired: GitHub has shut the service down and both the inference and catalog
+endpoints now answer ``410 Gone``. The provider is kept so existing installs
+pointed at it keep a valid config (and get an explanation) — see ``retired`` on
+its :class:`~precursor.backend.services.llm.registry.ProviderSpec`. Use the
+GitHub Copilot provider instead; it authenticates with the same GitHub token.
+
 Authenticates with a GitHub PAT (fine-grained ``models:read`` scope, or a
 classic ``GITHUB_TOKEN`` when running inside GitHub Actions).
 """

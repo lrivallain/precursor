@@ -134,8 +134,10 @@ text and a tool-capable event stream) plus `list_models()`. Providers are declar
 in `services/llm/registry.py`; `get_llm_provider(session)` reads the active
 provider + config from the DB per request and constructs it, falling back to the
 mock when credentials are missing. Shipped providers: **GitHub Copilot**
-(default), **GitHub Models**, **Azure AI Foundry**, **OpenAI-compatible**, and
-**Mock**. Adding a provider is one `ProviderSpec` plus an implementation class.
+(default), **Azure AI Foundry**, **OpenAI-compatible**, and **Mock**. Adding a
+provider is one `ProviderSpec` plus an implementation class; retiring one is a
+`retired` reason on its spec, which hides it from the picker unless it's the
+active selection.
 
 ## MCP
 

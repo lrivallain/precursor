@@ -14,7 +14,7 @@ release.
 | --- | --- |
 | **Tooling** | [uv](https://docs.astral.sh/uv/) for env, run, build & release |
 | **Backend** | Python 3.12+, FastAPI, SQLAlchemy 2 (async), Alembic, sse-starlette |
-| **LLM** | the `openai` SDK, pointed at the active provider (Copilot / GitHub Models / Azure / any OpenAI-compatible gateway) |
+| **LLM** | the `openai` SDK, pointed at the active provider (Copilot / Azure / any OpenAI-compatible gateway) |
 | **MCP** | the `mcp` Python SDK (client + server) |
 | **Frontend** | Vite + React 19 + TypeScript, Tailwind CSS, Lucide icons |
 | **DB** | SQLite for dev (`aiosqlite`), PostgreSQL for prod (`asyncpg`, extra) |

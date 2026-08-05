@@ -159,8 +159,9 @@ back to the mock when credentials are missing. Shipped providers:
 - `GitHubCopilotProvider` — **default**; the Copilot model catalogue (Claude,
   Gemini, GPT, …) via a `gho_*` token, OpenAI-compatible at
   `https://api.githubcopilot.com`.
-- `GitHubModelsProvider` — GitHub Models inference
-  (`https://models.github.ai/inference`), PAT with `models:read`.
+- `GitHubModelsProvider` — **retired**; GitHub shut the service down and its
+  endpoints answer `410 Gone`. Kept so existing installs get an explanation, and
+  hidden from the picker unless it's still the active selection.
 - `AzureFoundryProvider` — Azure OpenAI / AI Foundry deployments via
   `AsyncAzureOpenAI` (endpoint + key + deployment).
 - `OpenAICompatibleProvider` — OpenAI, Mistral, Hugging Face, Ollama, and any

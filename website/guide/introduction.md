@@ -38,8 +38,8 @@ tools in both directions.
   GitHub issue whose labels tag the chat.
 - **Streaming chat** over Server-Sent Events (sse) with markdown, mermaid, and
   code highlighting.
-- **Bring your own model** — GitHub Copilot (default), GitHub Models, Azure AI
-  Foundry, or any OpenAI-compatible gateway.
+- **Bring your own model** — GitHub Copilot (default), Azure AI Foundry, or any
+  OpenAI-compatible gateway.
 - **MCP both ways** — Precursor exposes its conversations and features as an MCP
   server *and* attaches external MCP tool servers to extend its capabilities.
 - **Live meeting assistant** — Meeting transcription via Azure Speech, live

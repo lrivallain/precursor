@@ -100,8 +100,8 @@ features:
   - icon: 🧰
     title: Bring your own model
     details: >-
-      GitHub Copilot, GitHub Models, Azure AI Foundry, OpenAI, Mistral, Hugging
-      Face, Ollama — or a deterministic mock provider for offline development.
+      GitHub Copilot, Azure AI Foundry, OpenAI, Mistral, Hugging Face, Ollama —
+      or a deterministic mock provider for offline development.
     link: /guide/configuration
     linkText: Configure a provider
   - icon: 🔒
