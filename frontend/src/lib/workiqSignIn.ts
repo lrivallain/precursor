@@ -30,6 +30,13 @@
 
 import { api } from "./api";
 import type { MCPServerStatus } from "./types";
+import {
+  authLog,
+  authLogEnsure,
+  authLogStart,
+  describeAuthUrl,
+  probeFrame,
+} from "./workiqAuthLog";
 
 const POPUP_WIDTH = 520;
 const POPUP_HEIGHT = 680;
@@ -68,15 +75,19 @@ let pendingFrame: HTMLIFrameElement | null = null;
  * silent ``prompt=none`` pass and, if Entra needs interaction, re-surfaces the
  * interactive URL — we simply re-navigate the same target to whichever URL comes.
  */
-export function emitWorkiqAuthUrl(url: string): void {
+export function emitWorkiqAuthUrl(url: string, server = "workiq"): void {
   if (pendingPopup && !pendingPopup.closed) {
+    authLog(server, "auth url → popup", describeAuthUrl(url));
     pendingPopup.location.href = url;
     pendingNavigated = true;
     return;
   }
   if (pendingFrame) {
+    authLog(server, "auth url → silent frame (leg ①)", describeAuthUrl(url));
     pendingFrame.src = url;
+    return;
   }
+  authLog(server, "auth url dropped — this window has no popup or frame waiting");
 }
 
 /**
@@ -140,22 +151,47 @@ export async function signInWorkiq(name = "workiq"): Promise<MCPServerStatus | n
   // so the caller keeps the banner without surfacing an error, matching the
   // popup path's abandonment semantics.
   if (isStandalonePWA()) {
+    authLogStart(name);
+    authLog(name, "manual sign-in start — standalone PWA, backend opens OS browser");
     const status = await api.mcp.reauthenticateWorkiq(name, { usePopup: false });
+    authLog(
+      name,
+      status.interaction_required
+        ? "manual sign-in did not complete (interaction_required)"
+        : "manual sign-in succeeded",
+      { state: status.state },
+    );
     return status.interaction_required ? null : status;
   }
 
+  authLogStart(name);
   const popup = openSigninPopup();
   pendingPopup = popup;
   pendingNavigated = false;
   const usePopup = popup !== null;
+  authLog(
+    name,
+    usePopup
+      ? "manual sign-in start — popup opened, awaiting auth url"
+      : "manual sign-in start — popup BLOCKED, backend will open OS browser",
+  );
   let settled = false;
   const stopWatch = watchForAbandon(name, popup, () => settled);
   try {
-    return await api.mcp.reauthenticateWorkiq(name, { usePopup });
+    const status = await api.mcp.reauthenticateWorkiq(name, { usePopup });
+    authLog(name, "manual sign-in succeeded", { state: status.state });
+    return status;
   } catch (err) {
     // The user closed the popup and we cancelled the sign-in — a quiet
     // abandonment, not a failure to surface.
-    if (abandoned) return null;
+    if (abandoned) {
+      authLog(name, "manual sign-in abandoned — popup closed by user");
+      return null;
+    }
+    authLog(name, "manual sign-in failed", {
+      navigated: pendingNavigated,
+      error: (err as Error).message,
+    });
     // The flow failed before we ever navigated the popup — tear down the blank
     // throwaway window rather than strand it. If it was already navigated the
     // user may be mid-sign-in, so leave it be.
@@ -243,15 +279,41 @@ function openSilentFrame(): HTMLIFrameElement {
  * no-op that resolves ``false``).
  */
 export async function autoReauthWorkiq(name = "workiq"): Promise<boolean> {
-  if (pendingFrame) return false;
+  if (pendingFrame) {
+    authLog(name, "hands-free skipped — a silent pass is already in flight");
+    return false;
+  }
+  authLogEnsure(name);
+  authLog(name, "hands-free start — POST /reauthenticate?auto=true");
   const frame = openSilentFrame();
   pendingFrame = frame;
+  // Each navigation of the frame fires this: one load means it stopped at
+  // whatever Entra served, two or more means the redirect chain progressed
+  // towards the loopback. ``probeFrame`` then separates "refused to be framed"
+  // from "loaded a real cross-origin document".
+  let loads = 0;
+  frame.addEventListener("load", () => {
+    loads += 1;
+    authLog(name, `leg ① frame load #${loads}`, probeFrame(frame));
+  });
   try {
     const status = await api.mcp.reauthenticateWorkiq(name, { auto: true });
-    return status.interaction_required !== true;
-  } catch {
+    const authenticated = status.interaction_required !== true;
+    authLog(
+      name,
+      authenticated
+        ? "hands-free succeeded — no banner"
+        : "hands-free gave up (interaction_required) — banner will show",
+      { frame_loads: loads, state: status.state },
+    );
+    return authenticated;
+  } catch (err) {
     // Any failure (409 in-progress, transport, 502) just means "fall back to the
     // manual banner" — never surface an error for a background attempt.
+    authLog(name, "hands-free request failed — banner will show", {
+      frame_loads: loads,
+      error: (err as Error).message,
+    });
     return false;
   } finally {
     if (pendingFrame === frame) pendingFrame = null;
