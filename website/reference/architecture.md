@@ -134,8 +134,30 @@ text and a tool-capable event stream) plus `list_models()`. Providers are declar
 in `services/llm/registry.py`; `get_llm_provider(session)` reads the active
 provider + config from the DB per request and constructs it, falling back to the
 mock when credentials are missing. Shipped providers: **GitHub Copilot**
-(default), **GitHub Models**, **Azure AI Foundry**, **OpenAI-compatible**, and
-**Mock**. Adding a provider is one `ProviderSpec` plus an implementation class.
+(default), **Azure AI Foundry**, **OpenAI-compatible**, and **Mock**. Adding a
+provider is one `ProviderSpec` plus an implementation class; retiring one is a
+`retired` reason on its spec, which hides it from the picker unless it's the
+active selection.
+
+**Two endpoints, one provider.** Copilot splits its catalogue across
+`/chat/completions` and the newer Responses API, and a model served by one is
+rejected by the other. `github_copilot.py` reads the `supported_endpoints` each
+model publishes, drops any model neither endpoint can serve, and routes the rest
+to the right surface; `_responses_compat.py` translates that surface back into
+the same four provider events (`text_delta`, `tool_calls`, `usage`,
+`turn_done`), so the turn engine never learns which API answered. A model we
+haven't catalogued yet is tried on `/chat/completions` first and transparently
+retried on Responses if it is refused, which keeps the hot path free of an
+extra round-trip and self-corrects for the rest of the process's life.
+
+**Refusals that don't mean no.** Copilot serves a given model from only part of
+its fleet, so the same request alternates between `200` and
+`400 model_not_available_for_integrator` — a 4xx that says nothing durable about
+the model. `open_stream_with_retry` in `_openai_compat.py` retries just that code
+a handful of times while opening the stream. Retrying is safe there because the
+refusal lands *before* the first token is yielded, so a second attempt cannot
+duplicate output; every other 4xx is translated and raised on the first try,
+since retrying a verdict that won't change only delays the message.
 
 ## MCP
 

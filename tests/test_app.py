@@ -991,3 +991,28 @@ def test_chat_messages_cursor_pagination() -> None:
             client.get(f"/api/chats/{cid}/messages?limit=2&before_id={oldest[0]['id']}").json()
             == []
         )
+
+
+def test_retired_provider_hidden_unless_selected() -> None:
+    """A retired provider drops out of the picker but stays visible when active.
+
+    Hiding it unconditionally would leave anyone still pointed at it staring at
+    a picker whose value doesn't exist, with no hint why the catalog is empty.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        listed = client.get("/api/llm/providers").json()
+        assert "github_models" not in {p["id"] for p in listed}
+        assert all(p["retired"] == "" for p in listed)
+
+        # Selecting it keeps it listed, flagged with the reason.
+        client.put("/api/settings", json={"llm_provider": "github_models"})
+        listed = client.get("/api/llm/providers").json()
+        retired = next(p for p in listed if p["id"] == "github_models")
+        assert "retired" in retired["retired"].lower()
+
+        # And its catalog fails with that reason, not a raw transport error.
+        r = client.get("/api/llm/models")
+        assert r.status_code == 502
+        assert r.json()["detail"] == retired["retired"]
+        assert "410" not in r.json()["detail"]

@@ -11,6 +11,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **The GitHub Models provider is retired and no longer offered.** GitHub has
+  retired the service; `https://models.github.ai/catalog/models` now answers
+  `410 Gone`, so selecting the provider only ever produced a raw HTTP error
+  where the model list should be. Providers can now carry a `retired` reason in
+  the registry, which is the single source of truth for both the settings notice
+  and the API: `GET /api/llm/providers` hides retired providers (unless one is
+  still selected, in which case it is labelled *(retired)*), and
+  `GET /api/llm/models` answers `502` with that explanation instead of leaking
+  the upstream `410`. Existing configurations are **not** silently rewritten —
+  the provider stays selectable-but-flagged so the switch to **GitHub Copilot**,
+  which authenticates with the same GitHub token, is a deliberate choice.
+
+- **Copilot's intermittent model refusals are ridden out instead of surfaced.**
+  Only part of Copilot's fleet serves every model, so an identical request
+  alternates between `200` and `400 model_not_available_for_integrator` at
+  roughly a coin-flip — measured at 3/8 to 5/8 success for `MAI-Code-1-Flash`
+  and `gemini-3.5-flash`. Despite the 4xx this says nothing durable about the
+  model, so Precursor now retries the rejection while opening the stream (up to
+  5 attempts, short backoff), which takes both models from a coin-flip to 6/6 in
+  end-to-end runs. The retry is safe because the refusal happens *before* any
+  token is streamed, and it is scoped to this one error code — every other 4xx
+  still surfaces immediately. If it does keep failing, the message now says the
+  rejection is intermittent and worth retrying rather than claiming the model is
+  permanently out of reach.
+
 - **`GET /api/reminders/{container}/{id}` returns `200` with a `null` body when
   no reminder is set**, instead of `404`. The conversation panel reads this
   endpoint on every topic/chat open, so the far more common "no reminder" case
@@ -83,6 +108,26 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   [MCP → Quiet when you're not using it](https://lrivallain.github.io/precursor/features/mcp.html#quiet-when-you-re-not-using-it).
 
 ### Added
+
+- **The GPT-5.5/5.6, Codex, Grok and MAI models now actually work.** Copilot
+  serves its catalogue across two API surfaces, and a model offered by one is
+  rejected by the other — Precursor only ever spoke `/chat/completions`, so
+  **eight of the models it listed** (`gpt-5.3-codex`, `gpt-5.4-mini`, `gpt-5.5`,
+  `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `grok-4.5` and
+  `mai-code-1-flash-picker`) answered a raw `400` the moment you sent a message.
+  Precursor now speaks the **Responses API** as well and routes each model to the
+  surface that serves it, reading the `supported_endpoints` the catalogue already
+  publishes. Streaming, tool calls, images and reasoning effort behave the same on
+  both. Models the catalogue says we can drive with *neither* endpoint are no
+  longer offered at all, since listing a model that cannot be called only
+  guarantees a failure once it is picked.
+
+- **Type-to-filter in the model pickers**: the composer and agent model menus
+  now open with a search box focused, narrowing the list as you type. Matching a
+  vendor heading (`anthropic`, `microsoft`, …) keeps that whole group, so the
+  catalogue can be sliced by publisher as well as by model name, and <kbd>Enter</kbd>
+  picks the first match. Menus with only a handful of options — reasoning effort,
+  context size — stay plain lists.
 
 - **MCP: console tracing for the WorkIQ sign-in legs.** The hands-free re-auth
   hides two sequential attempts inside one request — the invisible `prompt=none`
@@ -308,6 +353,30 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the expanded rail, and the collapsed sidebar.
 
 ### Fixed
+
+- **The composer model picker served a frozen catalog**: the shared model store
+  fetched `/api/llm/models` exactly once per app lifetime and nothing ever
+  invalidated it, so a list captured on first launch stayed pinned forever.
+  Because the desktop webview never reloads, that snapshot could be weeks stale
+  — showing models the provider has since retired while hiding newly added ones
+  (MAI-Code-1-Flash was missing for exactly this reason). Since the model
+  dropdown moved out of Settings into the composer, that store is the *only*
+  model list in the UI, so there was no way to refresh it short of restarting
+  Precursor. The catalog is now refetched when it is older than five minutes and
+  the picker is opened, Settings seeds the shared store on load and on
+  **Apply & refresh models** (previously the button only refreshed the settings
+  panel's private copy, despite its label), and saving a new GitHub token forces
+  a refresh because a different account can mean a different catalog.
+
+- **A long-running instance served a stale Copilot model catalogue**: the
+  `gh auth token` result was cached for the whole process lifetime, and GitHub
+  scopes entitlements — including which models the picker may offer — to the
+  token itself. An instance left running therefore kept serving the catalogue as
+  it looked when it first resolved a token, offering models that had since been
+  retired while hiding newly added ones; `MAI-Code-1-Flash` was missing for
+  exactly this reason, and the only cure was restarting Precursor. The CLI token
+  is now re-read when it is older than five minutes, and saving a GitHub token in
+  Settings drops the cached one immediately.
 
 - **WorkIQ sign-in in the installed PWA**: clicking **Sign in** (the banner or
   Settings) from Precursor running as an installed standalone PWA did nothing —

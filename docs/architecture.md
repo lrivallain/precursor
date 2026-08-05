@@ -157,10 +157,20 @@ config from the DB (Settings → Model) per request and constructs it, falling
 back to the mock when credentials are missing. Shipped providers:
 
 - `GitHubCopilotProvider` — **default**; the Copilot model catalogue (Claude,
-  Gemini, GPT, …) via a `gho_*` token, OpenAI-compatible at
-  `https://api.githubcopilot.com`.
-- `GitHubModelsProvider` — GitHub Models inference
-  (`https://models.github.ai/inference`), PAT with `models:read`.
+  Gemini, GPT, …) via a `gho_*` token at `https://api.githubcopilot.com`. The
+  catalogue straddles **two** API surfaces — `/chat/completions` and the
+  Responses API — and a model served by one is refused by the other, so the
+  provider reads each model's `supported_endpoints`, hides models neither
+  endpoint can serve, and routes the rest accordingly. Models it hasn't seen
+  are tried on `/chat/completions` and transparently retried on Responses if
+  refused, so the common path never pays for a catalogue lookup. Copilot also
+  serves a given model from only *part* of its fleet, so an identical request
+  flips between `200` and `400 model_not_available_for_integrator`; that one
+  code is retried while the stream is being opened (before any token is
+  yielded) rather than surfaced as a failure.
+- `GitHubModelsProvider` — **retired**; GitHub shut the service down and its
+  endpoints answer `410 Gone`. Kept so existing installs get an explanation, and
+  hidden from the picker unless it's still the active selection.
 - `AzureFoundryProvider` — Azure OpenAI / AI Foundry deployments via
   `AsyncAzureOpenAI` (endpoint + key + deployment).
 - `OpenAICompatibleProvider` — OpenAI, Mistral, Hugging Face, Ollama, and any
@@ -169,8 +179,11 @@ back to the mock when credentials are missing. Shipped providers:
   credentials are available.
 
 Shared OpenAI-compatible plumbing (message/tool translation, the tool-call
-delta accumulator) lives in `services/llm/_openai_compat.py`. Adding a provider
-is one `ProviderSpec` in the registry plus an implementation class.
+delta accumulator) lives in `services/llm/_openai_compat.py`; the Responses
+translation — input items, flat tool schemas, and the event stream mapped back
+onto the same four provider events — lives in `services/llm/_responses_compat.py`.
+Adding a provider is one `ProviderSpec` in the registry plus an implementation
+class.
 
 ## MCP
 

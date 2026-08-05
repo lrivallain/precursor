@@ -239,12 +239,18 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     );
   }
 
-  async function loadModels(providerOverride?: string): Promise<LLMModel[]> {
+  // `share` seeds the shared store used by the composer picker — only safe when
+  // the fetched list reflects the *saved* provider, not an unsaved preview.
+  async function loadModels(
+    providerOverride?: string,
+    { share = false }: { share?: boolean } = {},
+  ): Promise<LLMModel[]> {
     setModelsLoading(true);
     setModelsError(null);
     try {
       const list = await api.llm.listModels(providerOverride);
       setModels(list);
+      if (share) modelsStore.adopt(list);
       return list;
     } catch (e) {
       setModels([]);
@@ -262,6 +268,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     setProvider(next);
     void loadModels(next);
   }
+
+  const activeProviderSpec = providers.find((p) => p.id === provider);
+  const providerRetired = activeProviderSpec?.retired ?? "";
 
   useEffect(() => {
     void (async () => {
@@ -298,7 +307,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       } catch {
         setProviders([]);
       }
-      await loadModels();
+      await loadModels(undefined, { share: true });
       try {
         setMe(await api.me.get());
       } catch {
@@ -348,7 +357,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setSettings(updated);
       setProviderConfig(updated.llm_providers ?? {});
       settingsStore.set(updated);
-      const list = await loadModels(provider);
+      const list = await loadModels(provider, { share: true });
       if (list.length > 0 && !list.some((m) => m.id === updated.llm_model)) {
         const snapped = await api.settings.update({ llm_model: list[0].id });
         setSettings(snapped);
@@ -402,6 +411,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       const updated = await api.settings.update(payload);
       setSettings(updated);
       modelsStore.applySettings(updated);
+      // A new GitHub token can mean a different account/plan, hence a different
+      // catalog — the composer picker must not keep the previous one.
+      if (apiKeys.github_token) void modelsStore.refresh();
       settingsStore.set(updated);
       setGithubToken("");
       setAzureKey("");
@@ -711,14 +723,24 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                 <Select
                   value={provider}
                   onChange={onProviderChange}
-                  options={providers.map((p) => ({ value: p.id, label: p.label }))}
+                  options={providers.map((p) => ({
+                    value: p.id,
+                    label: p.retired ? `${p.label} (retired)` : p.label,
+                  }))}
                   ariaLabel="LLM provider"
                   fullWidth
                 />
 
                 {(() => {
-                  const activeSpec = providers.find((p) => p.id === provider);
+                  const activeSpec = activeProviderSpec;
                   if (!activeSpec) return null;
+                  if (activeSpec.retired) {
+                    return (
+                      <p className="text-[11px] text-amber-500 mt-2">
+                        {activeSpec.retired}
+                      </p>
+                    );
+                  }
                   if (activeSpec.uses_github_token) {
                     return (
                       <p className="text-[11px] text-muted mt-2">
@@ -784,11 +806,13 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                     {modelsLoading ? "Refreshing\u2026" : "Apply & refresh models"}
                   </button>
                   <span className="text-[11px] text-muted">
-                    {modelsError
-                      ? `Catalog unavailable: ${modelsError}.`
-                      : models.length > 0
-                        ? `${models.length} models`
-                        : "No catalog for this provider."}
+                    {providerRetired
+                      ? "No catalog \u2014 this provider is retired."
+                      : modelsError
+                        ? `Catalog unavailable: ${modelsError}.`
+                        : models.length > 0
+                          ? `${models.length} models`
+                          : "No catalog for this provider."}
                   </span>
                 </div>
                 <p className="text-[11px] text-muted mt-2">
@@ -1628,7 +1652,7 @@ function GitHubStatusBanner({ me }: { me: Me | null }) {
       </div>
     );
   }
-  // Identity resolved → token works and the GitHub Models provider can
+  // Identity resolved → token works and the GitHub Copilot provider can
   // call the API on the user's behalf.
   if (me.github) {
     return (

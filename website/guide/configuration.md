@@ -19,10 +19,16 @@ are stored in the local database and **never echoed back** by the API — only a
 | Provider | What it is | Credential |
 | --- | --- | --- |
 | **GitHub Copilot** *(default)* | The Copilot model catalogue (Claude, Gemini, GPT, …), OpenAI-compatible at `api.githubcopilot.com` | a `gho_*` token |
-| **GitHub Models** | GitHub Models inference (`models.github.ai/inference`) | a PAT with the `models:read` permission |
 | **Azure AI Foundry** | Azure OpenAI / AI Foundry deployments | endpoint + key + deployment |
 | **OpenAI-compatible** | OpenAI, Mistral, Hugging Face, Ollama, or any compatible gateway | base URL + key |
 | **Mock** | A deterministic streamed reply for offline development | *(none — automatic fallback)* |
+
+::: warning GitHub Models has been retired
+GitHub shut the **GitHub Models** service down and its endpoints now answer
+`410 Gone`, so the provider is no longer offered in the picker. If your install
+still points at it, Settings → Model shows it flagged as *(retired)* — switch to
+**GitHub Copilot**, which authenticates with the same GitHub token.
+:::
 
 ::: tip Offline by default
 When no credentials resolve, Precursor automatically uses the **mock provider**,
