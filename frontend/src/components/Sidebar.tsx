@@ -119,6 +119,8 @@ interface Props {
   collections?: Collection[];
   /** Currently selected collection (null while collections are loading). */
   activeCollectionId?: number | null;
+  /** Unread message count per collection id, for the switcher badges. */
+  unreadByCollection?: Record<number, number>;
   onCollectionChange?: (id: number) => void;
   onCollectionCreate?: (name: string) => void | Promise<void>;
   onManageCollections?: () => void;
@@ -162,6 +164,7 @@ export function Sidebar({
   kanbanEnabled = false,
   collections = [],
   activeCollectionId = null,
+  unreadByCollection,
   onCollectionChange,
   onCollectionCreate,
   onManageCollections,
@@ -367,6 +370,7 @@ export function Sidebar({
             <CollectionSwitcher
               collections={collections}
               activeId={activeCollectionId}
+              unreadByCollection={unreadByCollection}
               onSelect={onCollectionChange}
               onCreate={onCollectionCreate ?? (() => {})}
               onManage={onManageCollections ?? (() => {})}

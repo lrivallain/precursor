@@ -29,11 +29,31 @@ The selection is remembered per browser (it isn't part of the URL), and the
 switcher hides itself entirely while you only have the default collection, so
 the feature stays out of the way until you want it.
 
+Because the tree is filtered, unread activity in the collections you *aren't*
+looking at would otherwise be invisible — so the switcher carries a dot when
+another collection has unread messages, and each row in its dropdown shows that
+collection's own unread count. The Topics badge in the left rail, and the count
+in the browser tab title, always total **every** collection.
+
 ::: tip Opening a topic elsewhere follows it
 Search, the ⌘K command palette, deep links and the archive are **never**
 filtered. If you open a topic that lives in another collection, Precursor
 switches to that collection for you instead of showing you an empty tree.
 :::
+
+## What a collection actually filters
+
+A collection scopes **where you browse**, not what the rest of Precursor can
+reach. Filtered: the sidebar topic tree (including **Pinned**, and the sidebar's
+own *Search topics…* box, which narrows what's in front of you), and the *parent
+topic* pickers used when creating or re-parenting a topic — a subtree can't span
+two collections, so only same-collection parents are offered.
+
+Everything that merely *refers* to a topic spans all collections: the
+[live-session](/features/live-sessions) topic picker, an
+[agent](/features/agents)'s linked topic, unread totals, notification titles,
+global ⌘K search, and the archive. Attaching a live session to a topic in
+another collection is a perfectly ordinary thing to do, and stays available.
 
 ## Moving topics
 
