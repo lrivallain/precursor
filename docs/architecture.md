@@ -163,7 +163,11 @@ back to the mock when credentials are missing. Shipped providers:
   provider reads each model's `supported_endpoints`, hides models neither
   endpoint can serve, and routes the rest accordingly. Models it hasn't seen
   are tried on `/chat/completions` and transparently retried on Responses if
-  refused, so the common path never pays for a catalogue lookup.
+  refused, so the common path never pays for a catalogue lookup. Copilot also
+  serves a given model from only *part* of its fleet, so an identical request
+  flips between `200` and `400 model_not_available_for_integrator`; that one
+  code is retried while the stream is being opened (before any token is
+  yielded) rather than surfaced as a failure.
 - `GitHubModelsProvider` — **retired**; GitHub shut the service down and its
   endpoints answer `410 Gone`. Kept so existing installs get an explanation, and
   hidden from the picker unless it's still the active selection.

@@ -19,6 +19,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
+    ModelNotEntitledError,
     UnsupportedEndpointError,
     stream_openai_tools,
 )
@@ -121,6 +122,15 @@ class GitHubCopilotProvider:
                     raise
                 # Catalogue was stale or never fetched — remember the correction
                 # so the next turn routes straight to the Responses API.
+                _MODEL_ENDPOINTS[model] = frozenset({RESPONSES_ENDPOINT})
+            except ModelNotEntitledError:
+                # Copilot answers this — rather than ``unsupported_api_for_model``
+                # — for some Responses-only models called on chat-completions,
+                # so an *unknown* model gets a second guess on the other surface.
+                # A model the catalogue says serves chat-completions doesn't:
+                # there the rejection is about entitlement, not the endpoint.
+                if yielded or model in _MODEL_ENDPOINTS:
+                    raise
                 _MODEL_ENDPOINTS[model] = frozenset({RESPONSES_ENDPOINT})
 
         async for event in stream_responses_tools(

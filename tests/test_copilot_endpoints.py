@@ -15,16 +15,18 @@ import httpx
 import pytest
 from openai import APIStatusError
 
-from precursor.backend.services.llm import github_copilot
+from precursor.backend.services.llm import _openai_compat, github_copilot
 from precursor.backend.services.llm._openai_compat import (
+    ModelNotEntitledError,
     UnsupportedEndpointError,
     _friendly_request_error,
+    open_stream_with_retry,
 )
 from precursor.backend.services.llm._responses_compat import (
     to_responses_input,
     to_responses_tools,
 )
-from precursor.backend.services.llm.base import ChatMessage, LLMError, ToolDef
+from precursor.backend.services.llm.base import ChatMessage, ToolDef, TurnDoneEvent
 from precursor.backend.services.llm.github_copilot import (
     GitHubCopilotProvider,
     _prefers_responses,
@@ -143,16 +145,121 @@ def test_wrong_endpoint_is_typed_so_the_provider_can_retry() -> None:
     assert isinstance(exc, UnsupportedEndpointError)
 
 
-def test_integrator_denial_explains_it_is_not_configurable() -> None:
+def test_integrator_denial_is_typed_as_transient() -> None:
     exc = _friendly_request_error(
         _status_error("model_not_available_for_integrator", "not available for integrator"),
         tool_count=0,
     )
-    assert isinstance(exc, LLMError)
+    assert isinstance(exc, ModelNotEntitledError)
     assert not isinstance(exc, UnsupportedEndpointError)
-    # This one can't be fixed by the user fiddling with settings, so the message
-    # must send them to a different model rather than to a config screen.
+    # The rejection flaps rather than sticking, so the message must invite a
+    # retry — telling the user the model is unavailable would be wrong.
+    assert "intermittent" in str(exc)
     assert "different model" in str(exc)
+
+
+async def test_flaky_refusal_is_retried_until_it_lands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_openai_compat, "ENTITLEMENT_RETRY_BACKOFF", 0)
+    attempts = 0
+
+    async def _create() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise _status_error("model_not_available_for_integrator", "nope")
+        return "stream"
+
+    # Copilot serves a model from only part of its fleet, so the same request
+    # alternates between 200 and 400. Riding that out is the whole point.
+    assert await open_stream_with_retry(_create, tool_count=0) == "stream"
+    assert attempts == 3
+
+
+async def test_persistent_refusal_gives_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_openai_compat, "ENTITLEMENT_RETRY_BACKOFF", 0)
+    attempts = 0
+
+    async def _create() -> str:
+        nonlocal attempts
+        attempts += 1
+        raise _status_error("model_not_available_for_integrator", "nope")
+
+    with pytest.raises(ModelNotEntitledError):
+        await open_stream_with_retry(_create, tool_count=0)
+    # Bounded: the user shouldn't wait on a model that's genuinely out of reach.
+    assert attempts == _openai_compat.ENTITLEMENT_RETRY_ATTEMPTS
+
+
+async def test_actionable_errors_are_not_retried() -> None:
+    attempts = 0
+
+    async def _create() -> str:
+        nonlocal attempts
+        attempts += 1
+        raise _status_error("unsupported_api_for_model", "wrong surface")
+
+    with pytest.raises(UnsupportedEndpointError):
+        await open_stream_with_retry(_create, tool_count=0)
+    # Retrying a verdict that won't change just delays the message.
+    assert attempts == 1
+
+
+def _fake_stream(events: list[Any], *, raises: Exception | None = None) -> Any:
+    async def _gen(**kwargs: Any) -> Any:
+        if raises is not None:
+            raise raises
+        for event in events:
+            yield event
+
+    return _gen
+
+
+async def test_unknown_model_refused_on_chat_completions_tries_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    done = TurnDoneEvent(finish_reason="stop")
+    monkeypatch.setattr(
+        github_copilot,
+        "stream_openai_tools",
+        _fake_stream([], raises=ModelNotEntitledError("refused")),
+    )
+    monkeypatch.setattr(github_copilot, "stream_responses_tools", _fake_stream([done]))
+
+    events = [
+        e
+        async for e in GitHubCopilotProvider(token="t").stream_chat_with_tools(
+            model="never-seen", messages=[ChatMessage(role="user", content="hi")], tools=()
+        )
+    ]
+
+    # Copilot answers this — not ``unsupported_api_for_model`` — for some
+    # Responses-only models, so a model we only guessed about gets a second try.
+    assert events == [done]
+    assert _prefers_responses("never-seen")
+
+
+async def test_known_chat_model_gets_no_second_endpoint_guess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    github_copilot._MODEL_ENDPOINTS["chat-only"] = frozenset({"/chat/completions"})
+    monkeypatch.setattr(
+        github_copilot,
+        "stream_openai_tools",
+        _fake_stream([], raises=ModelNotEntitledError("refused")),
+    )
+
+    def _unreachable(**kwargs: Any) -> Any:
+        raise AssertionError("must not retry a model the catalogue placed on chat-completions")
+
+    monkeypatch.setattr(github_copilot, "stream_responses_tools", _unreachable)
+
+    with pytest.raises(ModelNotEntitledError):
+        async for _ in GitHubCopilotProvider(token="t").stream_chat_with_tools(
+            model="chat-only", messages=[ChatMessage(role="user", content="hi")], tools=()
+        ):
+            pass
 
 
 def test_tool_exchange_survives_translation_to_responses_items() -> None:

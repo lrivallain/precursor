@@ -150,6 +150,15 @@ haven't catalogued yet is tried on `/chat/completions` first and transparently
 retried on Responses if it is refused, which keeps the hot path free of an
 extra round-trip and self-corrects for the rest of the process's life.
 
+**Refusals that don't mean no.** Copilot serves a given model from only part of
+its fleet, so the same request alternates between `200` and
+`400 model_not_available_for_integrator` — a 4xx that says nothing durable about
+the model. `open_stream_with_retry` in `_openai_compat.py` retries just that code
+a handful of times while opening the stream. Retrying is safe there because the
+refusal lands *before* the first token is yielded, so a second attempt cannot
+duplicate output; every other 4xx is translated and raised on the first try,
+since retrying a verdict that won't change only delays the message.
+
 ## MCP
 
 Precursor is both an MCP client and an MCP server.

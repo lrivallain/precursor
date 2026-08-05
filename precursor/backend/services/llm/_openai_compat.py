@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI
@@ -29,6 +30,46 @@ class UnsupportedEndpointError(LLMError):
     and retry on the other one; when nothing catches it the message still reads
     sensibly on its own.
     """
+
+
+class ModelNotEntitledError(LLMError):
+    """Copilot refused the model for this integration.
+
+    Despite the 4xx this is *not* a durable verdict: only part of Copilot's
+    fleet serves every model, so the same request alternates between 200 and
+    this rejection at roughly a coin-flip. ``open_stream_with_retry`` absorbs
+    the flapping; the error only reaches a caller once several attempts in a
+    row have failed.
+    """
+
+
+# Enough attempts to make a ~50%-per-call rejection rare (0.5**5 ≈ 3%) without
+# leaving the user watching a spinner when a model really is out of reach.
+ENTITLEMENT_RETRY_ATTEMPTS = 5
+ENTITLEMENT_RETRY_BACKOFF = 0.25
+
+
+async def open_stream_with_retry[T](create: Callable[[], Awaitable[T]], *, tool_count: int) -> T:
+    """Open a provider stream, absorbing Copilot's intermittent refusals.
+
+    Retrying is safe here because the rejection happens while *opening* the
+    stream — nothing has been yielded downstream yet, so a second attempt can't
+    duplicate output. Every other 4xx is translated and raised on the first try:
+    a retry would only delay a message the user needs to act on.
+    """
+    last: ModelNotEntitledError | None = None
+    for attempt in range(ENTITLEMENT_RETRY_ATTEMPTS):
+        try:
+            return await create()
+        except APIStatusError as exc:
+            error = _friendly_request_error(exc, tool_count=tool_count)
+            if not isinstance(error, ModelNotEntitledError):
+                raise error from exc
+            last = error
+            if attempt + 1 < ENTITLEMENT_RETRY_ATTEMPTS:
+                await asyncio.sleep(ENTITLEMENT_RETRY_BACKOFF * (attempt + 1))
+    assert last is not None  # loop only exits here after a rejection
+    raise last
 
 
 def _extract_api_error(exc: APIStatusError) -> tuple[str | None, str | None, str]:
@@ -65,13 +106,15 @@ def _friendly_request_error(exc: APIStatusError, *, tool_count: int) -> LLMError
         return UnsupportedEndpointError(
             f"This model isn't reachable through the chat-completions API: {message}"
         )
-    # The model exists but this integration isn't entitled to it. GitHub grants
-    # Copilot model access per integration, so there's nothing to configure.
+    # Intermittent: part of Copilot's fleet answers this for a model the rest
+    # serves happily. Retried before it ever reaches the user (see
+    # ``open_stream_with_retry``), so by here it has failed several times over.
     if code == "model_not_available_for_integrator":
-        return LLMError(
-            "This model isn't available to Precursor's Copilot integration. "
-            "GitHub grants Copilot model access per integration, so it can't be "
-            "enabled from Precursor — pick a different model in Settings → Model."
+        return ModelNotEntitledError(
+            "GitHub Copilot kept refusing this model. That rejection is "
+            "intermittent — only part of Copilot's fleet serves every model — "
+            "so it's worth sending again. If it keeps failing, pick a different "
+            "model in Settings → Model."
         )
     if exc.status_code in (401, 403):
         return LLMError(
@@ -148,12 +191,11 @@ async def stream_openai_tools(
     if reasoning_effort:
         kwargs["reasoning_effort"] = reasoning_effort
 
-    try:
-        stream = await client.chat.completions.create(**kwargs)
-    except APIStatusError as exc:
-        # Turn provider 4xx rejections (too many tools, bad key, …) into a clean
-        # user-facing message instead of a raw traceback.
-        raise _friendly_request_error(exc, tool_count=len(tools)) from exc
+    # Provider 4xx rejections (too many tools, bad key, …) surface as clean
+    # user-facing messages instead of a raw traceback.
+    stream = await open_stream_with_retry(
+        lambda: client.chat.completions.create(**kwargs), tool_count=len(tools)
+    )
     # tool_call_id -> {id, name, arguments}
     pending: dict[int, dict[str, str]] = {}
     finish_reason: str | None = None

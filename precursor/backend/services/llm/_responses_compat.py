@@ -23,9 +23,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
-from openai import APIStatusError, AsyncOpenAI
+from openai import AsyncOpenAI
 
-from precursor.backend.services.llm._openai_compat import _friendly_request_error
+from precursor.backend.services.llm._openai_compat import open_stream_with_retry
 from precursor.backend.services.llm.base import (
     ChatMessage,
     ProviderEvent,
@@ -128,10 +128,9 @@ async def stream_responses_tools(
     if reasoning_effort:
         kwargs["reasoning"] = {"effort": reasoning_effort}
 
-    try:
-        stream = await client.responses.create(**kwargs)
-    except APIStatusError as exc:
-        raise _friendly_request_error(exc, tool_count=len(tools)) from exc
+    stream = await open_stream_with_retry(
+        lambda: client.responses.create(**kwargs), tool_count=len(tools)
+    )
 
     calls: list[ToolCallRequest] = []
     usage: UsageEvent | None = None
