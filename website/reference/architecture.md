@@ -139,6 +139,17 @@ provider is one `ProviderSpec` plus an implementation class; retiring one is a
 `retired` reason on its spec, which hides it from the picker unless it's the
 active selection.
 
+**Two endpoints, one provider.** Copilot splits its catalogue across
+`/chat/completions` and the newer Responses API, and a model served by one is
+rejected by the other. `github_copilot.py` reads the `supported_endpoints` each
+model publishes, drops any model neither endpoint can serve, and routes the rest
+to the right surface; `_responses_compat.py` translates that surface back into
+the same four provider events (`text_delta`, `tool_calls`, `usage`,
+`turn_done`), so the turn engine never learns which API answered. A model we
+haven't catalogued yet is tried on `/chat/completions` first and transparently
+retried on Responses if it is refused, which keeps the hot path free of an
+extra round-trip and self-corrects for the rest of the process's life.
+
 ## MCP
 
 Precursor is both an MCP client and an MCP server.

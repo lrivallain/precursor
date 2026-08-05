@@ -21,6 +21,16 @@ from precursor.backend.services.llm.base import (
 )
 
 
+class UnsupportedEndpointError(LLMError):
+    """The model doesn't serve the API surface we called.
+
+    Copilot answers ``unsupported_api_for_model`` for models available only
+    through the Responses API. Providers that speak both endpoints catch this
+    and retry on the other one; when nothing catches it the message still reads
+    sensibly on its own.
+    """
+
+
 def _extract_api_error(exc: APIStatusError) -> tuple[str | None, str | None, str]:
     """Pull (code, param, message) out of an OpenAI-style error response."""
     code: str | None = getattr(exc, "code", None)
@@ -48,6 +58,20 @@ def _friendly_request_error(exc: APIStatusError, *, tool_count: int) -> LLMError
             f"Too many tools for this model: {tool_count} are enabled, but this "
             f"provider accepts at most {limit}. Disable some MCP servers in "
             "Settings → MCP servers and try again."
+        )
+    # Model served by a different API surface (e.g. Responses-only). Providers
+    # that can speak both catch this and retry rather than surfacing it.
+    if code == "unsupported_api_for_model":
+        return UnsupportedEndpointError(
+            f"This model isn't reachable through the chat-completions API: {message}"
+        )
+    # The model exists but this integration isn't entitled to it. GitHub grants
+    # Copilot model access per integration, so there's nothing to configure.
+    if code == "model_not_available_for_integrator":
+        return LLMError(
+            "This model isn't available to Precursor's Copilot integration. "
+            "GitHub grants Copilot model access per integration, so it can't be "
+            "enabled from Precursor — pick a different model in Settings → Model."
         )
     if exc.status_code in (401, 403):
         return LLMError(

@@ -23,6 +23,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the provider stays selectable-but-flagged so the switch to **GitHub Copilot**,
   which authenticates with the same GitHub token, is a deliberate choice.
 
+- **Models your Copilot subscription can't reach now say so.** A handful of
+  models — `MAI-Code-1-Flash` among them — are advertised by the catalogue but
+  gated to specific Copilot integrations, and Precursor is not on that list. The
+  refusal used to surface as an unexplained JSON blob mid-conversation; it now
+  reads as a plain sentence telling you to pick a different model in
+  **Settings → Model**. This is an entitlement tied to the GitHub account's
+  token, so there is no setting that unlocks it.
+
 - **`GET /api/reminders/{container}/{id}` returns `200` with a `null` body when
   no reminder is set**, instead of `404`. The conversation panel reads this
   endpoint on every topic/chat open, so the far more common "no reminder" case
@@ -95,6 +103,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   [MCP → Quiet when you're not using it](https://lrivallain.github.io/precursor/features/mcp.html#quiet-when-you-re-not-using-it).
 
 ### Added
+
+- **The GPT-5.5/5.6, Codex and Grok models now actually work.** Copilot serves
+  its catalogue across two API surfaces, and a model offered by one is rejected
+  by the other — Precursor only ever spoke `/chat/completions`, so **7 of the 17
+  models it listed** (`gpt-5.3-codex`, `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6-luna`,
+  `gpt-5.6-sol`, `gpt-5.6-terra`, `grok-4.5`) answered a raw
+  `400 unsupported_api_for_model` the moment you sent a message. Precursor now
+  speaks the **Responses API** as well and routes each model to the surface that
+  serves it, reading the `supported_endpoints` the catalogue already publishes.
+  Streaming, tool calls, images and reasoning effort behave the same on both.
+  Models the catalogue says we can drive with *neither* endpoint are no longer
+  offered at all, since listing a model that cannot be called only guarantees a
+  failure once it is picked.
 
 - **Type-to-filter in the model pickers**: the composer and agent model menus
   now open with a search box focused, narrowing the list as you type. Matching a
