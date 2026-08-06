@@ -80,6 +80,7 @@ class IssueComment(BaseModel):
     id: int
     user: str
     body: str
+    created_at: str | None = None
     updated_at: str
 
 

@@ -514,6 +514,7 @@ export interface IssueComment {
   id: number;
   user: string;
   body: string;
+  created_at?: string | null;
   updated_at: string;
 }
 

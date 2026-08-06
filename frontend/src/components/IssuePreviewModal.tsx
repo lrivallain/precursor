@@ -17,6 +17,13 @@ import { Markdown } from "./Markdown";
 import { RefineTextarea } from "./RefineTextarea";
 import { IssueLabelChip, IssueStateBadge } from "./IssueTags";
 
+/** Format a comment timestamp as a localized medium date + short time. */
+function formatCommentTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 interface IssuePreviewModalProps {
   card: ProjectCard;
   /** Board repo, used when the card doesn't carry its own source repo. */
@@ -207,20 +214,36 @@ export function IssuePreviewModal({
                   </h3>
                   <div className="h-px flex-1 bg-border" />
                 </div>
-                {detail.comments.map((c) => (
-                  <div
-                    key={c.id}
-                    className="ml-3 rounded-lg border border-accent/30 bg-accent/10 p-3 shadow-sm"
-                  >
-                    <div className="mb-1.5 flex items-center gap-2">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[10px] font-bold uppercase text-white">
-                        {c.user.charAt(0)}
-                      </span>
-                      <span className="text-xs font-semibold text-text">@{c.user}</span>
+                {detail.comments.map((c) => {
+                  const ts = c.created_at ?? c.updated_at;
+                  const edited =
+                    c.created_at != null &&
+                    c.updated_at !== "" &&
+                    c.updated_at !== c.created_at;
+                  return (
+                    <div
+                      key={c.id}
+                      className="ml-3 rounded-lg border border-accent/30 bg-accent/10 p-3 shadow-sm"
+                    >
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[10px] font-bold uppercase text-white">
+                          {c.user.charAt(0)}
+                        </span>
+                        <span className="text-xs font-semibold text-text">@{c.user}</span>
+                        {ts && (
+                          <span
+                            className="text-xs text-muted"
+                            title={new Date(ts).toLocaleString()}
+                          >
+                            · {formatCommentTimestamp(ts)}
+                            {edited && " (edited)"}
+                          </span>
+                        )}
+                      </div>
+                      <Markdown className="text-sm">{c.body}</Markdown>
                     </div>
-                    <Markdown className="text-sm">{c.body}</Markdown>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

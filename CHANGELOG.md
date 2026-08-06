@@ -9,6 +9,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Added
+
+- **Kanban issue comments now show when they were posted.** The issue/PR
+  preview modal renders each comment's timestamp (localized medium date + short
+  time) next to the author, with an *(edited)* hint when the comment was updated
+  after posting. The GitHub `IssueComment` schema and its TypeScript mirror now
+  carry `created_at` alongside `updated_at`.
+
 ### Changed
 
 - **The GitHub Models provider is retired and no longer offered.** GitHub has
