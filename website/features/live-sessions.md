@@ -83,10 +83,14 @@ each with its own tab-strip and a draggable divider.
   feeds the insights and summary.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
-  **post into the linked topic** as a message. When a Teams meeting is linked and
-  the [WorkIQ MCP](/features/mcp) is enabled, a **Generate from Teams transcript** button
-  builds the recap from the meeting's own published transcript — a **"no local
-  record"** path that needs no local recording at all (see below).
+  **post into the linked topic** as a message. The summary and notes editors
+  carry a **Markdown formatting toolbar** (bold, italic, link, headings, lists, …)
+  and the usual shortcuts — <kbd>⌘/Ctrl</kbd> + <kbd>B</kbd> / <kbd>I</kbd> /
+  <kbd>K</kbd> — that format the current selection in place. When a Teams meeting
+  is linked and the [WorkIQ MCP](/features/mcp) is enabled, a **Generate from
+  Teams transcript** button builds the recap from the meeting's own published
+  transcript — a **"no local record"** path that needs no local recording at all
+  (see below).
 - **Context** — an AI summary of the attached topic, and — via the
   [WorkIQ MCP](/features/mcp) (Microsoft 365) — the ability to **link a meeting
   from your agenda** so its invitees flow into the summary's attendees. The

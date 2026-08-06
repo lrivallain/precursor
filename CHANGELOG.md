@@ -109,7 +109,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
-- **Unread counts in the collection switcher**: with the sidebar tree scoped to
+- **A Markdown formatting toolbar and keyboard shortcuts on the Markdown
+  composers.** The editors that render their value as Markdown — live-session
+  **notes** and **summary**, and the GitHub **issue / comment drafts**
+  (`/gh-update`, `/gh-create`, and the comment box) — now carry a small
+  formatting toolbar (bold, italic, strikethrough, inline code, link, heading,
+  quote, and bulleted / numbered lists) that rewrites the current selection in
+  place. The same actions are bound to shortcuts — <kbd>⌘/Ctrl</kbd> + <kbd>B</kbd>
+  (bold), <kbd>I</kbd> (italic), <kbd>K</kbd> (link), <kbd>E</kbd> (code), and
+  <kbd>⌘/Ctrl</kbd> + <kbd>⇧</kbd> + <kbd>X</kbd> (strikethrough). Toggles are
+  reversible (re-apply to unwrap), an empty selection parks the caret between the
+  markers, and <kbd>⌘/Ctrl</kbd> + <kbd>K</kbd> stays local to the field instead
+  of bubbling to the global command palette. The plain-text fields (system
+  prompts, memories, roles) are untouched.
+
+
   one collection, unread activity in the others was invisible. The switcher now
   carries a dot when another collection has unread messages, and each row in its
   dropdown shows that collection's own unread count.

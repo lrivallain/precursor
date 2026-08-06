@@ -233,6 +233,7 @@ export function IssuePreviewModal({
                 value={commentText}
                 onValueChange={setCommentText}
                 refineKind="comment"
+                markdown
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                     e.preventDefault();

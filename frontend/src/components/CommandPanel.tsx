@@ -199,6 +199,7 @@ export function CommandPanel({
             value={body}
             onValueChange={onBodyChange}
             refineKind="comment"
+            markdown
             onPaste={onBodyPaste}
             placeholder={bodyPlaceholder}
             disabled={disabled}

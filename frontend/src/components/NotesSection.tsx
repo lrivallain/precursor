@@ -133,6 +133,7 @@ export function NotesSection({ text, setText, saving, saved, onUpload, defaultPr
             value={text}
             onValueChange={setText}
             refineKind="note"
+            markdown
             containerClassName="h-full"
             onPaste={(e) => {
               const files = Array.from(e.clipboardData?.items ?? [])
