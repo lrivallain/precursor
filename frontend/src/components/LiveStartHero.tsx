@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, History, Loader2, Radio, RefreshCw, Users } from "lucide-react";
 import type {
   AgendaEvent,
+  Collection,
   MeetingSession,
   MeetingSessionCreate,
   TopicNode,
@@ -50,9 +51,11 @@ function flattenTopicNodes(tree: TopicNode[]): TopicNode[] {
  */
 export function LiveStartHero({
   topics,
+  collections,
   onCreated,
 }: {
   topics: TopicNode[];
+  collections?: Collection[];
   onCreated: (session: MeetingSession) => void | Promise<void>;
 }) {
   const settings = useSettings();
@@ -329,7 +332,7 @@ export function LiveStartHero({
 
         <label className="flex flex-col items-start gap-1 text-[12px] text-muted">
           Attach a topic for context <span className="opacity-70">(optional)</span>
-          <TopicPicker topics={allTopics} value={topicId} onChange={setTopicId} />
+          <TopicPicker topics={allTopics} value={topicId} onChange={setTopicId} collections={collections} />
         </label>
 
         <label className="flex flex-col items-start gap-1 text-[12px] text-muted">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Archive, CalendarClock, Play, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
-import type { AgentSession, Topic } from "../lib/types";
+import type { AgentSession, Collection, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
 import { AgentStatusBadge } from "./AgentStatusBadge";
@@ -34,6 +34,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
   const [task, setTask] = useState(agent.task_prompt);
   const [topicId, setTopicId] = useState<number | null>(agent.topic_id);
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -60,6 +61,9 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
     void api.topics.list()
       .then(setTopics)
       .catch(() => setTopics([]));
+    void api.collections.list()
+      .then(setCollections)
+      .catch(() => setCollections([]));
   }, []);
 
   async function save(): Promise<void> {
@@ -214,7 +218,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
 
             <section>
               <label className="block text-xs text-muted mb-1">Associated topic</label>
-              <TopicPicker topics={topics} value={topicId} onChange={setTopicId} disabled={saving} />
+              <TopicPicker topics={topics} value={topicId} onChange={setTopicId} disabled={saving} collections={collections} />
               <p className="text-[11px] text-muted mt-1">
                 The agent reads this topic's context and posts its prompt + answer back here when it
                 finishes. Changing it re-injects the new topic context on the next turn.

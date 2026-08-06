@@ -591,13 +591,12 @@ export default function App() {
     }
   }, [agents]);
 
-  const activeCollectionRef = useRef<number | null>(activeCollectionId);
-  useEffect(() => {
-    activeCollectionRef.current = activeCollectionId;
-  }, [activeCollectionId]);
-
+  // `tree` holds *every* topic, not just the active collection's: it doubles as
+  // the app-wide topic lookup (unread totals, notification titles, URL slug
+  // paths, the live-session and agent topic links). Collections are a sidebar
+  // filter, so scope it at the point of use — see `collectionTree` below.
   async function refreshTree(): Promise<void> {
-    setTree(await api.topics.tree(activeCollectionRef.current));
+    setTree(await api.topics.tree());
   }
 
   async function refreshCollections(): Promise<void> {
@@ -672,6 +671,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void refreshTree();
     void refreshCollections();
     void refreshChatsUnread();
     void skillsStore.load();
@@ -679,13 +679,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The tree is always scoped to a collection, so (re)load it whenever the
-  // selection changes — including the first resolution on mount.
-  useEffect(() => {
-    if (activeCollectionId == null) return;
-    void refreshTree();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCollectionId]);
+  // Collections are a sidebar filter over the app-wide tree. A topic's
+  // collection cascades to its whole subtree, so filtering the roots is enough.
+  const collectionTree = useMemo(
+    () =>
+      activeCollectionId == null
+        ? tree
+        : tree.filter((n) => n.collection_id === activeCollectionId),
+    [tree, activeCollectionId],
+  );
+
+  // Unread per collection, so the switcher can surface activity you'd otherwise
+  // only see after switching into that collection.
+  const unreadByCollection = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const node of tree) {
+      if (node.collection_id == null) continue;
+      map[node.collection_id] = (map[node.collection_id] ?? 0) + totalUnread([node]);
+    }
+    return map;
+  }, [tree]);
 
   // Opening a topic from outside the current collection (deep link, search,
   // command palette) follows it rather than showing an empty tree.
@@ -1946,9 +1959,10 @@ export default function App() {
       )}
       {!atHome && (
       <Sidebar
-        tree={tree}
+        tree={collectionTree}
         collections={collections}
         activeCollectionId={activeCollectionId}
+        unreadByCollection={unreadByCollection}
         onCollectionChange={selectCollection}
         onCollectionCreate={createCollection}
         onManageCollections={() => {
@@ -2332,11 +2346,11 @@ export default function App() {
               onOpenSettings={() => setGlobalSettingsOpen(true)}
               onOpenArchive={() => setArchiveOpen(true)}
               topicSurface={
-                <TopicStartHero tree={tree} onCreated={handleTopicCreated} />
+                <TopicStartHero tree={collectionTree} onCreated={handleTopicCreated} />
               }
               chatSurface={<ChatStartHero onStart={startChatFromHome} />}
               liveSurface={
-                <LiveStartHero topics={tree} onCreated={createLiveFromHome} />
+                <LiveStartHero topics={tree} collections={collections} onCreated={createLiveFromHome} />
               }
               agentSurface={
                 <AgentView
@@ -2395,7 +2409,7 @@ export default function App() {
             ) : (
               <TopicStartHero
                 key={`topic-create-${topicDraftParentId ?? "root"}-${topicDraftNonce}`}
-                tree={tree}
+                tree={collectionTree}
                 initialParentId={topicDraftParentId}
                 onCreated={handleTopicCreated}
               />
@@ -2444,6 +2458,7 @@ export default function App() {
                 key={activeSession.id}
                 session={activeSession}
                 topics={tree}
+                collections={collections}
                 onUpdated={(updated) =>
                   setMeetingSessions((prev) =>
                     prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
@@ -2465,6 +2480,7 @@ export default function App() {
             ) : (
               <LiveStartHero
                 topics={tree}
+                collections={collections}
                 onCreated={async (session) => {
                   await loadMeetingSessions();
                   setActiveSessionId(session.id);
@@ -2634,7 +2650,7 @@ export default function App() {
       {topicSettingsOpen && activeTopic && (
         <TopicSettingsPanel
           topic={activeTopic}
-          tree={tree}
+          tree={collectionTree}
           context={issueContext}
           initialTab={topicSettingsTab}
           onClose={() => setTopicSettingsOpen(false)}

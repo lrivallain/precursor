@@ -109,6 +109,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Unread counts in the collection switcher**: with the sidebar tree scoped to
+  one collection, unread activity in the others was invisible. The switcher now
+  carries a dot when another collection has unread messages, and each row in its
+  dropdown shows that collection's own unread count.
+
 - **The GPT-5.5/5.6, Codex, Grok and MAI models now actually work.** Copilot
   serves its catalogue across two API surfaces, and a model offered by one is
   rejected by the other — Precursor only ever spoke `/chat/completions`, so
@@ -353,6 +358,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the expanded rail, and the collapsed sidebar.
 
 ### Fixed
+
+- **Collections leaked their filter into every surface that looks up a topic**:
+  splitting topics into collections narrowed the app's single topic tree to the
+  active collection, and that tree is what the rest of the UI reads to *resolve*
+  a topic — not just what the sidebar renders. So the **Live session topic
+  picker listed only the current collection's topics** (both when linking an
+  existing session and when starting one), the Live header's *open topic* link
+  and the agent header's topic chip disappeared or fell back to a literal
+  "Topic" whenever the linked topic lived elsewhere, stream-completion
+  notifications lost their title, and the Topics unread badge and tab title
+  undercounted. The tree is global again and the collection filter is applied
+  where it belongs — the sidebar and the *parent topic* pickers — so switching
+  collections is now instant client-side filtering rather than a refetch. Since
+  the app-wide topic pickers (Live session linking and agent topic association)
+  now span every collection, each root topic in them carries its collection's
+  accent dot and name so same-named branches are easy to tell apart.
 
 - **The composer model picker served a frozen catalog**: the shared model store
   fetched `/api/llm/models` exactly once per app lifetime and nothing ever

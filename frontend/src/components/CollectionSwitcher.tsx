@@ -6,6 +6,8 @@ import { collectionColor } from "../lib/collections";
 interface Props {
   collections: Collection[];
   activeId: number | null;
+  /** Unread message count per collection id; badges collections with activity. */
+  unreadByCollection?: Record<number, number>;
   onSelect: (id: number) => void;
   /** Create a collection inline from the switcher (prompts for a name). */
   onCreate: (name: string) => void | Promise<void>;
@@ -20,6 +22,7 @@ interface Props {
 export function CollectionSwitcher({
   collections,
   activeId,
+  unreadByCollection,
   onSelect,
   onCreate,
   onManage,
@@ -58,6 +61,12 @@ export function CollectionSwitcher({
 
   const active = collections.find((c) => c.id === activeId) ?? null;
   const activeColor = collectionColor(active?.accent);
+  // Unread sitting in collections you're not looking at — the only signal that
+  // there is activity outside the filtered tree.
+  const elsewhereUnread = collections.reduce(
+    (n, c) => (c.id === activeId ? n : n + (unreadByCollection?.[c.id] ?? 0)),
+    0,
+  );
 
   async function submitDraft(): Promise<void> {
     const name = draft.trim();
@@ -84,6 +93,13 @@ export function CollectionSwitcher({
       >
         <span className={`w-2 h-2 rounded-full shrink-0 ${activeColor.dot}`} aria-hidden />
         <span className="truncate flex-1 text-left">{active?.name ?? "Collection"}</span>
+        {elsewhereUnread > 0 && (
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
+            aria-label={`${elsewhereUnread} unread in other collections`}
+            data-tooltip="Unread in other collections"
+          />
+        )}
         <span className="text-xs text-muted shrink-0" title="Topics in this collection">
           {active?.topic_count ?? 0}
         </span>
@@ -97,6 +113,7 @@ export function CollectionSwitcher({
         >
           {collections.map((c) => {
             const color = collectionColor(c.accent);
+            const unread = unreadByCollection?.[c.id] ?? 0;
             return (
               <button
                 key={c.id}
@@ -110,7 +127,17 @@ export function CollectionSwitcher({
                 }}
               >
                 <span className={`w-2 h-2 rounded-full shrink-0 ${color.dot}`} aria-hidden />
-                <span className="truncate flex-1">{c.name}</span>
+                <span className={`truncate flex-1 ${unread > 0 ? "font-semibold" : ""}`}>
+                  {c.name}
+                </span>
+                {unread > 0 && (
+                  <span
+                    className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 text-[10px] font-medium rounded-full bg-blue-500 text-white"
+                    aria-label={`${unread} unread ${unread === 1 ? "message" : "messages"}`}
+                  >
+                    {unread > 9 ? "9+" : unread}
+                  </span>
+                )}
                 <span className="text-xs text-muted">{c.topic_count}</span>
                 {c.id === activeId && <Check size={13} className="text-muted shrink-0" />}
               </button>
