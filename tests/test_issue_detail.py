@@ -34,7 +34,15 @@ class _FakeClient:
         }
 
     async def list_issue_comments(self, repo: str, number: int) -> list[dict[str, Any]]:
-        return [{"id": 1, "user": "octocat", "body": "first", "updated_at": "2024-01-02T00:00:00Z"}]
+        return [
+            {
+                "id": 1,
+                "user": "octocat",
+                "body": "first",
+                "created_at": "2024-01-02T00:00:00Z",
+                "updated_at": "2024-01-02T00:00:00Z",
+            }
+        ]
 
     async def add_issue_comment(self, repo: str, number: int, body: str) -> dict[str, Any]:
         return {
@@ -42,6 +50,7 @@ class _FakeClient:
             "url": f"https://github.com/{repo}/issues/{number}#c99",
             "user": "octocat",
             "body": body,
+            "created_at": "2024-01-03T00:00:00Z",
             "updated_at": "2024-01-03T00:00:00Z",
         }
 

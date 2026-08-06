@@ -157,6 +157,7 @@ class GitHubClient:
                 "id": c["id"],
                 "user": c["user"]["login"],
                 "body": c.get("body") or "",
+                "created_at": c.get("created_at"),
                 "updated_at": c["updated_at"],
             }
             for c in r.json()
@@ -223,6 +224,7 @@ class GitHubClient:
             "url": c.get("html_url"),
             "user": (c.get("user") or {}).get("login") or "",
             "body": c.get("body") or "",
+            "created_at": c.get("created_at") or c.get("updated_at") or "",
             "updated_at": c.get("updated_at") or c.get("created_at") or "",
         }
 
