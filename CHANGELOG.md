@@ -370,7 +370,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   notifications lost their title, and the Topics unread badge and tab title
   undercounted. The tree is global again and the collection filter is applied
   where it belongs — the sidebar and the *parent topic* pickers — so switching
-  collections is now instant client-side filtering rather than a refetch.
+  collections is now instant client-side filtering rather than a refetch. Since
+  the app-wide topic pickers (Live session linking and agent topic association)
+  now span every collection, each root topic in them carries its collection's
+  accent dot and name so same-named branches are easy to tell apart.
 
 - **The composer model picker served a frozen catalog**: the shared model store
   fetched `/api/llm/models` exactly once per app lifetime and nothing ever

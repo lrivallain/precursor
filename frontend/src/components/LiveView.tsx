@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type {
   Chat,
+  Collection,
   MeetingInsight,
   MeetingInsightKind,
   MeetingSegment,
@@ -163,6 +164,7 @@ const MAX_INTERVAL_MS = 25000;
 interface LiveViewProps {
   session: MeetingSession;
   topics: TopicNode[];
+  collections?: Collection[];
   onUpdated: (session: MeetingSession) => void;
   onDeleted: () => void | Promise<void>;
   /** Archive the session (hide from the list, keep restorable). */
@@ -179,6 +181,7 @@ interface LiveViewProps {
 export function LiveView({
   session,
   topics,
+  collections,
   onUpdated,
   onDeleted,
   onArchived,
@@ -1322,6 +1325,7 @@ export function LiveView({
             topics={allTopics}
             value={session.topic_id}
             onChange={(id) => void applyTopic(id)}
+            collections={collections}
           />
         </label>
 

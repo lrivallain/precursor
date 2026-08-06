@@ -2350,7 +2350,7 @@ export default function App() {
               }
               chatSurface={<ChatStartHero onStart={startChatFromHome} />}
               liveSurface={
-                <LiveStartHero topics={tree} onCreated={createLiveFromHome} />
+                <LiveStartHero topics={tree} collections={collections} onCreated={createLiveFromHome} />
               }
               agentSurface={
                 <AgentView
@@ -2458,6 +2458,7 @@ export default function App() {
                 key={activeSession.id}
                 session={activeSession}
                 topics={tree}
+                collections={collections}
                 onUpdated={(updated) =>
                   setMeetingSessions((prev) =>
                     prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
@@ -2479,6 +2480,7 @@ export default function App() {
             ) : (
               <LiveStartHero
                 topics={tree}
+                collections={collections}
                 onCreated={async (session) => {
                   await loadMeetingSessions();
                   setActiveSessionId(session.id);

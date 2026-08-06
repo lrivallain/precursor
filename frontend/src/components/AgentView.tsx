@@ -44,6 +44,7 @@ import type {
   AgentEvent,
   AgentPermissionDecisionValue,
   AgentSession,
+  Collection,
   Me,
   Topic,
 } from "../lib/types";
@@ -766,6 +767,7 @@ export function AgentView({
 }: AgentViewProps) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [me, setMe] = useState<Me | null>(null);
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
@@ -965,6 +967,7 @@ export function AgentView({
   useEffect(() => {
     if (!enabled) return;
     void api.topics.list().then(setTopics).catch(() => setTopics([]));
+    void api.collections.list().then(setCollections).catch(() => setCollections([]));
     void api.me.get().then(setMe).catch(() => setMe(null));
   }, [enabled]);
 
@@ -1218,6 +1221,7 @@ export function AgentView({
             value={newTopicId}
             onChange={setNewTopicId}
             disabled={!available || busy}
+            collections={collections}
           />
         </label>
         {error && <p className="text-[11px] text-red-500">{error}</p>}

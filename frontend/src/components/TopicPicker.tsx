@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
-import type { Topic } from "../lib/types";
+import type { Collection, Topic } from "../lib/types";
+import { COLLECTION_COLORS } from "../lib/collections";
 
 // Local tree node so the picker can render the topic hierarchy from a flat
 // ``Topic[]`` (each caller passes the same flat list it already has).
@@ -12,23 +13,38 @@ interface PickerNode extends Topic {
  * A searchable topic lookup (combobox) that shows topics as a collapsible
  * tree, mirroring the sidebar hierarchy. Originally built to associate an agent
  * with a topic; shared so the Live meeting session picker matches it exactly.
+ *
+ * When `collections` is supplied the picker spans every collection (it is the
+ * app-wide topic lookup, not the sidebar's filtered view), so each root gets a
+ * collection accent dot + name to tell same-named branches apart. A topic's
+ * collection cascades to its subtree, so labelling roots is enough.
  */
 export function TopicPicker({
   topics,
   value,
   onChange,
   disabled,
+  collections,
 }: {
   topics: Topic[];
   value: number | null;
   onChange: (id: number | null) => void;
   disabled?: boolean;
+  collections?: Collection[];
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
   const current = topics.find((t) => t.id === value) ?? null;
+
+  const collectionById = useMemo(() => {
+    const map = new Map<number, Collection>();
+    for (const c of collections ?? []) map.set(c.id, c);
+    return map;
+  }, [collections]);
+  const currentCollection =
+    current?.collection_id != null ? collectionById.get(current.collection_id) : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -58,6 +74,11 @@ export function TopicPicker({
     // While searching we force every matched branch open so matches deep in the
     // tree stay reachable regardless of the persisted collapsed state.
     const isOpen = searching || !collapsed.has(node.id);
+    // Collection cascades down the subtree, so only roots carry the label.
+    const collection =
+      depth === 0 && node.collection_id != null
+        ? collectionById.get(node.collection_id)
+        : undefined;
     return (
       <li key={node.id}>
         <div className="flex items-center gap-0.5" style={{ paddingLeft: depth * 12 }}>
@@ -83,8 +104,19 @@ export function TopicPicker({
               value === node.id ? "text-accent" : ""
             }`}
           >
-            <span className="truncate">{node.title}</span>
-            {value === node.id && <Check size={12} className="shrink-0" />}
+            <span className="flex min-w-0 items-center gap-1.5">
+              {collection && (
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${COLLECTION_COLORS[collection.accent].dot}`}
+                  aria-hidden
+                />
+              )}
+              <span className="truncate">{node.title}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              {collection && <span className="text-[10px] text-muted">{collection.name}</span>}
+              {value === node.id && <Check size={12} />}
+            </span>
           </button>
         </div>
         {hasChildren && isOpen && (
@@ -106,6 +138,12 @@ export function TopicPicker({
         className="flex items-center gap-1 rounded border border-border bg-bg px-2 py-1 text-[11px] disabled:opacity-50"
       >
         <Search size={11} className="text-muted" />
+        {currentCollection && (
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${COLLECTION_COLORS[currentCollection.accent].dot}`}
+            aria-hidden
+          />
+        )}
         <span className={current ? "" : "text-muted"}>{current ? current.title : "None"}</span>
         <ChevronDown size={11} className="text-muted" />
       </button>
