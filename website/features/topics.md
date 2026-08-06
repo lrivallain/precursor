@@ -27,6 +27,9 @@ the GitHub API.
 
 Precursor can also **write back** to GitHub — create or update the issue, and
 post comments — from the composer's GitHub actions and the shared draft panel.
+Those draft editors render Markdown, so they carry a **formatting toolbar** and
+shortcuts (<kbd>⌘/Ctrl</kbd> + <kbd>B</kbd> / <kbd>I</kbd> / <kbd>K</kbd>, …) that
+format the selected text in place.
 
 ## Tree organization
 

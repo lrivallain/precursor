@@ -284,6 +284,7 @@ export function SummarySection({
             value={text}
             onValueChange={setText}
             refineKind="summary"
+            markdown
             containerClassName="h-full"
             placeholder="The generated summary appears here…"
             className="h-full min-h-[12rem] w-full resize-none rounded border border-border bg-surface px-3 py-2 font-mono text-[13px] outline-none focus:border-accent"
