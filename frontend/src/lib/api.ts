@@ -66,6 +66,7 @@ import type {
   Collection,
   CollectionCreate,
   CollectionUpdate,
+  CopilotQuota,
   Role,
   RoleCreate,
   RoleUpdate,
@@ -744,6 +745,8 @@ export const api = {
   me: {
     // Current user
     get: () => request<Me>(`/api/me`),
+    // Copilot AI-credit usage for the persona menu (null when unavailable).
+    copilot: () => request<CopilotQuota | null>(`/api/me/copilot`),
   },
 
   meetings: {
