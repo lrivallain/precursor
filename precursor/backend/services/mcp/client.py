@@ -18,7 +18,7 @@ import logging
 import os
 import shutil
 import sys
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -203,12 +203,97 @@ _PLAYWRIGHT_STDIO_ARGS: tuple[str, ...] = (
 )
 
 
+def build_playwright_args(
+    base_args: Iterable[str],
+    *,
+    browser: str,
+    profile_dir: str,
+    supports_browser_flag: bool = True,
+) -> list[str]:
+    """Assemble the ``npx @playwright/mcp`` argv from the resolved browser + profile.
+
+    ``browser`` == ``"default"`` (or blank) omits ``--browser`` entirely so the
+    installed ``@playwright/mcp`` picks its own default. That's the explicit
+    escape hatch for a build that predates the flag and rejects it with "unknown
+    option" (e.g. a stale registry mirror), which otherwise stops the server from
+    starting at all.
+
+    ``supports_browser_flag=False`` drops ``--browser`` for *any* channel — the
+    automatic counterpart, set from :func:`playwright_supports_browser_flag` once
+    we've confirmed the resolved binary can't accept the flag, so the default
+    ``msedge`` still starts on those builds instead of failing outright.
+    """
+    args = list(base_args)
+    channel = (browser or "").strip()
+    if supports_browser_flag and channel and channel != "default":
+        args += ["--browser", channel]
+    override = (profile_dir or "").strip()
+    if override:
+        os.makedirs(override, exist_ok=True)
+        args += ["--user-data-dir", override]
+    return args
+
+
 def npx_available() -> tuple[bool, str]:
     """Return ``(ok, detail)`` — whether the ``npx`` launcher is on PATH."""
     path = shutil.which("npx")
     if path is None:
         return False, "npx not found on PATH"
     return True, path
+
+
+# Cache for the one-shot ``--browser`` capability probe (see below). ``None``
+# means "not probed yet"; a bool is the resolved answer for this process.
+_playwright_browser_flag_support: bool | None = None
+
+
+async def playwright_supports_browser_flag() -> bool:
+    """Whether the resolved ``@playwright/mcp`` accepts ``--browser``. Cached.
+
+    Some builds predate the flag — notably the ``1.52`` alpha a stale registry
+    mirror can pin as ``@latest`` — and abort startup with
+    ``error: unknown option '--browser'``. We probe ``--help`` once and cache the
+    result so we never hand the launcher an argument it will reject.
+
+    On any probe failure (npx missing, timeout, non-zero exit) we assume the flag
+    *is* supported and return ``True``: that preserves the status-quo behaviour
+    and the SSO-friendly ``msedge`` default. We only report ``False`` when
+    ``--help`` ran and positively lacked ``--browser``, so the flag is dropped
+    solely for builds we've confirmed can't accept it.
+    """
+    global _playwright_browser_flag_support
+    if _playwright_browser_flag_support is not None:
+        return _playwright_browser_flag_support
+    ok, _ = npx_available()
+    if not ok:
+        return True
+    supported = True
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _PLAYWRIGHT_STDIO_COMMAND,
+            *_PLAYWRIGHT_STDIO_ARGS,
+            "--help",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
+            return True
+        if proc.returncode == 0:
+            supported = "--browser" in stdout.decode("utf-8", "replace")
+    except Exception:  # pragma: no cover - defensive: treat probe faults as "supported"
+        return True
+    _playwright_browser_flag_support = supported
+    if not supported:
+        logger.info(
+            "Resolved @playwright/mcp does not support --browser; launching with "
+            "its default browser (the channel selection is ignored on this build)."
+        )
+    return supported
 
 
 def playwright_preflight_error() -> str | None:
@@ -337,17 +422,20 @@ class MCPClientManager:
                 # Browser channel. Default ``msedge`` so the server drives
                 # Microsoft Edge and can ride the corporate Edge SSO/WAM broker —
                 # the way authenticated Entra scraping actually works on a managed
-                # machine. Override to ``chromium`` where Edge isn't installed.
+                # machine. Override to ``chromium`` where Edge isn't installed, or
+                # ``default`` where the resolved ``@playwright/mcp`` predates
+                # ``--browser``. A DB override applied at startup can replace this
+                # env-derived default (see ``configure_playwright``).
                 channel = (settings.playwright_browser or "msedge").strip()
-                args += ["--browser", channel]
-                # Only pin ``--user-data-dir`` when an override is set. Left empty
-                # (default), ``@playwright/mcp`` uses its own shared machine-wide
-                # profile, reusing any sign-in already onboarded there (incl. via
-                # other Playwright-MCP tools) instead of forcing a fresh sign-in.
-                override = settings.playwright_profile_dir.strip()
-                if override:
-                    os.makedirs(override, exist_ok=True)
-                    args += ["--user-data-dir", override]
+                # ``--user-data-dir`` is only pinned when an override is set. Left
+                # empty (default), ``@playwright/mcp`` uses its own shared
+                # machine-wide profile, reusing any sign-in already onboarded
+                # there instead of forcing a fresh one.
+                args = build_playwright_args(
+                    args,
+                    browser=channel,
+                    profile_dir=settings.playwright_profile_dir,
+                )
             self._servers[spec.name] = MCPServerEntry(
                 name=spec.name,
                 transport=spec.transport,
@@ -497,6 +585,31 @@ class MCPClientManager:
         entry.auth_provider = auth_provider
         entry.state = "disconnected"
         entry.error = None if url else TENANT_REQUIRED_MESSAGE
+        entry.tools = []
+
+    def configure_playwright(
+        self, *, browser: str, profile_dir: str, supports_browser_flag: bool = True
+    ) -> None:
+        """Rebuild the built-in ``playwright`` entry's argv for a browser channel.
+
+        Called on startup and whenever the ``playwright_browser`` setting changes
+        so a DB override replaces the env-derived default. Mutates the entry in
+        place and resets its transient state; the caller retires any warm worker
+        so the next probe relaunches ``npx`` with the new args.
+        ``supports_browser_flag=False`` drops ``--browser`` regardless of channel
+        for builds that can't accept it.
+        """
+        entry = self._servers.get("playwright")
+        if entry is None:
+            return
+        entry.args = build_playwright_args(
+            _PLAYWRIGHT_STDIO_ARGS,
+            browser=browser,
+            profile_dir=profile_dir,
+            supports_browser_flag=supports_browser_flag,
+        )
+        entry.state = "disconnected"
+        entry.error = None
         entry.tools = []
 
     async def retire_worker(self, name: str) -> None:
@@ -872,3 +985,25 @@ class ActiveTools:
 @lru_cache
 def get_mcp_client_manager() -> MCPClientManager:
     return MCPClientManager()
+
+
+async def configure_playwright_server() -> None:
+    """Apply the resolved ``playwright_browser`` setting to the built-in entry.
+
+    Called on startup and whenever the setting changes: resolves the DB override
+    (falling back to the env default) and rebuilds the ``playwright`` argv, then
+    retires any warm worker so the change takes effect on the next probe.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.app_settings import resolve_playwright_browser
+
+    manager = get_mcp_client_manager()
+    async with SessionLocal() as session:
+        browser = await resolve_playwright_browser(session)
+    supports = await playwright_supports_browser_flag()
+    manager.configure_playwright(
+        browser=browser,
+        profile_dir=get_settings().playwright_profile_dir,
+        supports_browser_flag=supports,
+    )
+    await manager.retire_worker("playwright")

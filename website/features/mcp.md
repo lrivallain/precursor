@@ -51,8 +51,20 @@ Two things make **authenticated** endpoints (e.g. an internal
 bundled Chromium, so the browser can ride the **corporate Edge SSO / WAM broker** —
 the same mechanism that lets a managed machine sign in to Microsoft sites with
 little or no interaction. (This mirrors the internal CSU cockpit scrapers, which
-drive Edge for exactly this reason.) Set `PRECURSOR_PLAYWRIGHT_BROWSER=chromium`
-(or `chrome`, `firefox`, `webkit`) on machines without Edge installed.
+drive Edge for exactly this reason.) Pick a different browser in **Settings → MCP
+→ Playwright browser** (or set `PRECURSOR_PLAYWRIGHT_BROWSER=chromium`, `chrome`,
+`firefox`, `webkit`) on machines without Edge installed — the Settings choice is a
+DB override that wins over the env default and applies without a restart.
+
+::: tip `unknown option '--browser'` — handled automatically
+If the `@playwright/mcp` your `npx` resolves is an **older build that predates the
+`--browser` flag** (common behind a stale registry mirror), Precursor **detects
+this on startup** — it probes the resolved package once and **omits `--browser`
+automatically**, so the server launches with its own default browser instead of
+failing with `error: unknown option '--browser'`. You don't have to do anything.
+If you'd rather force this behavior explicitly, choose **Default** in the browser
+selector (or `PRECURSOR_PLAYWRIGHT_BROWSER=default`), which never passes the flag.
+:::
 
 **2. A persistent browser profile.** By default Precursor pins **nothing**, so
 `@playwright/mcp` uses its **own shared, machine-wide profile** (e.g.

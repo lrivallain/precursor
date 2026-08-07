@@ -113,6 +113,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.agent365 import configure_agent365_servers
 
     await configure_agent365_servers()
+    from precursor.backend.services.mcp.client import configure_playwright_server
+
+    await configure_playwright_server()
     discover(app)
     from precursor.backend.services.scheduler import get_scheduler
 

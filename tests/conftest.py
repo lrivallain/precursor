@@ -49,3 +49,22 @@ def _clean_skills_dir() -> None:
     """Empty the throwaway skills dir before each test for isolation."""
     shutil.rmtree(_skills_dir, ignore_errors=True)
     os.makedirs(_skills_dir, exist_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def _stub_playwright_browser_probe():
+    """Keep the Playwright ``--browser`` capability probe off the network.
+
+    ``configure_playwright_server`` (run on every app startup) shells out to
+    ``npx @playwright/mcp --help`` to learn whether the resolved build accepts
+    ``--browser``. Priming the module cache to ``True`` short-circuits that probe
+    so tests never spawn ``npx`` and the SSO-friendly ``msedge`` default the
+    built-in tests assert is preserved. Tests exercising the probe itself reset
+    the cache to ``None`` explicitly.
+    """
+    from precursor.backend.services.mcp import client as mcp_client
+
+    prev = mcp_client._playwright_browser_flag_support
+    mcp_client._playwright_browser_flag_support = True
+    yield
+    mcp_client._playwright_browser_flag_support = prev

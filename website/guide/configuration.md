@@ -77,10 +77,12 @@ Precursor's **Settings** panel is organized into tabs:
 
 - **Model** — active provider + credentials, default chat model.
 - **GitHub** — token, and issue-context TTL behavior.
-- **MCP** — enable/disable [tool servers](/features/mcp), set the Microsoft
-  tenant GUID the Agent 365 servers (`workiq-teams`, `workiq-user`) address, and
-  toggle which of your own conversation sections are exposed by the built-in MCP
-  server (`mcp_expose`, off by default).
+- **MCP** — enable/disable [tool servers](/features/mcp), pick the browser the
+  `playwright` server drives (**Playwright browser** — `msedge` by default, or
+  `Default` to omit `--browser` for older `@playwright/mcp` builds), set the
+  Microsoft tenant GUID the Agent 365 servers (`workiq-teams`, `workiq-user`)
+  address, and toggle which of your own conversation sections are exposed by the
+  built-in MCP server (`mcp_expose`, off by default).
 - **Collections** — create, edit, and delete
   [collections](/features/collections) (name, description, colour accent, and an
   optional repository override).

@@ -199,6 +199,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // HTTP (localhost) transport for the built-in "precursor" MCP server.
   const [httpEnabled, setHttpEnabled] = useState(false);
   const [workiqTenant, setWorkiqTenant] = useState("");
+  // Browser channel the built-in Playwright MCP server drives (MCP tab).
+  const [playwrightBrowser, setPlaywrightBrowser] = useState("msedge");
   const [saving, setSaving] = useState(false);
   const [mcpEditing, setMcpEditing] = useState<MCPServerStatus | "new" | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -300,6 +302,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       // A discovered tenant shows as a placeholder rather than typed input, so
       // saving doesn't silently pin it into the database.
       setWorkiqTenant(s.workiq_tenant_discovered ? "" : s.workiq_tenant_id);
+      setPlaywrightBrowser(s.playwright_browser);
       settingsStore.set(s);
       await refreshMcp();
       try {
@@ -393,6 +396,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         workiq_tenant_id: workiqTenant.trim(),
+        playwright_browser: playwrightBrowser,
         backup_enabled: backupEnabled,
         backup_dir: backupDir,
         backup_retention: backupRetention,
@@ -1158,6 +1162,10 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                       : ""
                   }
                 />
+                <PlaywrightCard
+                  browser={playwrightBrowser}
+                  setBrowser={setPlaywrightBrowser}
+                />
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[11px] text-muted">
                     Enable an MCP server to expose its tools to the chat. The
@@ -1811,6 +1819,71 @@ function Agent365Card({
             <div className="text-[11px] text-muted">
               Until a tenant is known those two servers stay unconfigured. Save
               settings to apply.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Browser channel the built-in "playwright" MCP server drives (--browser).
+const PLAYWRIGHT_BROWSER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "default", label: "Default (let @playwright/mcp choose)" },
+  { value: "msedge", label: "Microsoft Edge" },
+  { value: "chromium", label: "Chromium" },
+  { value: "chrome", label: "Google Chrome" },
+  { value: "firefox", label: "Firefox" },
+  { value: "webkit", label: "WebKit" },
+];
+
+function PlaywrightCard({
+  browser,
+  setBrowser,
+}: {
+  browser: string;
+  setBrowser: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label =
+    PLAYWRIGHT_BROWSER_OPTIONS.find((o) => o.value === browser)?.label ?? browser;
+  return (
+    <div className="border border-border rounded mb-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 w-full px-2 py-1.5 text-left"
+      >
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="text-sm flex-1">Playwright browser</span>
+        <span className="text-[11px] text-muted">{label}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-2 space-y-2">
+          <p className="text-[11px] text-muted">
+            The built-in <span className="font-mono">playwright</span> server
+            launches this browser (passed as{" "}
+            <span className="font-mono">--browser</span>). Edge is the default so
+            it can ride the corporate SSO broker. Save settings to apply.
+          </p>
+          <select
+            value={browser}
+            onChange={(e) => setBrowser(e.target.value)}
+            className="w-full px-2 py-1 rounded border border-border bg-surface text-sm"
+          >
+            {PLAYWRIGHT_BROWSER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {browser === "default" && (
+            <div className="text-[11px] text-muted">
+              <span className="font-mono">--browser</span> is omitted entirely.
+              Use this if the server fails to start with{" "}
+              <span className="font-mono">unknown option '--browser'</span> — some
+              builds of <span className="font-mono">@playwright/mcp</span> predate
+              the flag.
             </div>
           )}
         </div>

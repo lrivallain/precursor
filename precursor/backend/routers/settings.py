@@ -259,6 +259,16 @@ async def update_settings(
         except Exception:
             logger.exception("Agent 365 reconfigure failed after settings update")
 
+    # Re-point the built-in Playwright server at the chosen browser channel so it
+    # takes effect without a restart (retiring the warm worker, if any).
+    if "playwright_browser" in data:
+        from precursor.backend.services.mcp.client import configure_playwright_server
+
+        try:
+            await configure_playwright_server()
+        except Exception:
+            logger.exception("Playwright reconfigure failed after settings update")
+
     refreshed = await _load_all(session)
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)

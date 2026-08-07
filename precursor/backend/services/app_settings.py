@@ -69,6 +69,20 @@ DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
 # unauthenticated and only answers on the app's loopback bind.
 DEFAULT_MCP_HTTP_ENABLED = False
 
+# Browser channels the built-in ``playwright`` server can drive (``--browser``).
+# ``default`` is a deliberate sentinel: it omits ``--browser`` entirely so the
+# ``@playwright/mcp`` build picks its own default. That's the escape hatch for
+# environments whose resolved ``@playwright/mcp`` predates the ``--browser`` flag
+# (e.g. a stale registry mirror), where passing it fails with "unknown option".
+PLAYWRIGHT_BROWSERS: tuple[str, ...] = (
+    "default",
+    "msedge",
+    "chromium",
+    "chrome",
+    "firefox",
+    "webkit",
+)
+
 
 async def _get_db_value(session: AsyncSession, key: str) -> Any | None:
     row = await session.get(AppSetting, key)
@@ -480,6 +494,28 @@ async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
     )
 
 
+async def resolve_playwright_browser(session: AsyncSession) -> str:
+    """Browser channel the built-in ``playwright`` server drives (``--browser``).
+
+    DB override on top of the ``playwright_browser`` env default, constrained to
+    ``PLAYWRIGHT_BROWSERS``. ``default`` omits the flag (see the constant) — the
+    escape hatch for a ``@playwright/mcp`` build that doesn't understand it.
+    """
+
+    def _env_default() -> str:
+        default = (get_settings().playwright_browser or "").strip()
+        return default if default in PLAYWRIGHT_BROWSERS else "msedge"
+
+    return await resolve(
+        session,
+        SettingSpec(
+            "playwright_browser",
+            _str_in(PLAYWRIGHT_BROWSERS),
+            default_factory=_env_default,
+        ),
+    )
+
+
 async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
     """All effective "System" settings (env defaults + DB overrides) for the UI."""
     cfg = await resolve_cmd_runner_config(session)
@@ -497,6 +533,7 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
         "cmd_runner_memory": cfg.memory,
         "cmd_runner_pids_limit": cfg.pids_limit,
         "cmd_runner_cpus": cfg.cpus,
+        "playwright_browser": await resolve_playwright_browser(session),
     }
 
 
