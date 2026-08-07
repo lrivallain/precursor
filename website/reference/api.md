@@ -56,6 +56,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events. |
 | `chats` | Quick throwaway chats, including read/unread state. |
 | `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed). |
+| `me` | The connected GitHub identity for the sidebar persona, plus `GET /api/me/copilot` for Copilot AI-credit usage (both degrade to `null` when no token is configured). |
 | `github` | Issue/label/comment operations behind topic linking. |
 | `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. |
 | `skills` / `memories` | Skill enablement and long-term memory. |

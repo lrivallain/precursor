@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, Info, Settings as SettingsIcon, User } from "lucide-react";
+import { Archive, Info, Settings as SettingsIcon, Sparkles, User } from "lucide-react";
 import { api } from "../lib/api";
-import type { Me } from "../lib/types";
+import type { CopilotQuota, Me } from "../lib/types";
 import { AboutModal } from "./AboutModal";
 
 interface Props {
@@ -14,6 +14,8 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
   const [me, setMe] = useState<Me | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [quota, setQuota] = useState<CopilotQuota | null>(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -48,6 +50,30 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);
+
+  // Lazily pull Copilot credit usage only once the connected user opens the
+  // menu — keeps it off the initial render and off the network for guests. The
+  // backend caches briefly, so refetching on each open stays cheap and fresh.
+  const connected = !!me?.github;
+  useEffect(() => {
+    if (!menuOpen || !connected) return;
+    let cancelled = false;
+    setQuotaLoading(true);
+    api.me
+      .copilot()
+      .then((q) => {
+        if (!cancelled) setQuota(q);
+      })
+      .catch(() => {
+        if (!cancelled) setQuota(null);
+      })
+      .finally(() => {
+        if (!cancelled) setQuotaLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [menuOpen, connected]);
 
   const label = me?.github?.name || me?.github?.login || "Guest";
   const sub = me?.github
@@ -118,6 +144,9 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         {menuOpen && (
           <PersonaMenuPopover
             anchor="collapsed"
+            quota={quota}
+            quotaLoading={quotaLoading}
+            connected={connected}
             onArchive={chooseArchive}
             onAbout={chooseAbout}
           />
@@ -162,6 +191,9 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
       {menuOpen && (
         <PersonaMenuPopover
           anchor="expanded"
+          quota={quota}
+          quotaLoading={quotaLoading}
+          connected={connected}
           onArchive={chooseArchive}
           onAbout={chooseAbout}
         />
@@ -173,11 +205,21 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
 
 interface PopoverProps {
   anchor: "expanded" | "collapsed";
+  quota: CopilotQuota | null;
+  quotaLoading: boolean;
+  connected: boolean;
   onArchive: () => void;
   onAbout: () => void;
 }
 
-function PersonaMenuPopover({ anchor, onArchive, onAbout }: PopoverProps) {
+function PersonaMenuPopover({
+  anchor,
+  quota,
+  quotaLoading,
+  connected,
+  onArchive,
+  onAbout,
+}: PopoverProps) {
   // Expanded sidebar: popover floats above the persona row, anchored to its
   // left edge. Collapsed sidebar: it sits to the right of the rail so it does
   // not get clipped by the narrow column.
@@ -191,6 +233,9 @@ function PersonaMenuPopover({ anchor, onArchive, onAbout }: PopoverProps) {
       aria-label="User menu"
       className={`absolute ${position} z-40 rounded-md border border-border bg-bg shadow-lg py-1 text-sm`}
     >
+      {connected && (
+        <CopilotUsage quota={quota} loading={quotaLoading} />
+      )}
       <button
         type="button"
         role="menuitem"
@@ -211,6 +256,91 @@ function PersonaMenuPopover({ anchor, onArchive, onAbout }: PopoverProps) {
       </button>
     </div>
   );
+}
+
+/**
+ * Copilot "AI credits" usage for the connected account: a labelled progress bar
+ * plus the next reset date. Hidden entirely when the account has no metered
+ * quota (no Copilot seat); unlimited plans show a badge instead of a bar.
+ */
+function CopilotUsage({
+  quota,
+  loading,
+}: {
+  quota: CopilotQuota | null;
+  loading: boolean;
+}) {
+  // Nothing to show once we know there is no metered allowance. While the first
+  // fetch is in flight we render a slim skeleton so the menu does not jump.
+  if (!quota && loading) {
+    return (
+      <div className="px-3 pt-2 pb-3 border-b border-border">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted mb-2">
+          <Sparkles size={12} />
+          <span>AI credits</span>
+        </div>
+        <div className="h-1.5 rounded-full bg-surface animate-pulse" />
+      </div>
+    );
+  }
+  if (!quota) return null;
+
+  const resetLabel = formatResetDate(quota.reset_date);
+  return (
+    <div className="px-3 pt-2 pb-3 border-b border-border">
+      <div className="flex items-center justify-between gap-2 text-[11px] mb-1.5">
+        <span className="flex items-center gap-1.5 text-muted">
+          <Sparkles size={12} />
+          <span>AI credits</span>
+        </span>
+        <span className="tabular-nums text-text">
+          {quota.unlimited ? "Unlimited" : `${quota.percent_used}% used`}
+        </span>
+      </div>
+      {!quota.unlimited && (
+        <div
+          className="h-1.5 rounded-full bg-surface overflow-hidden"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={quota.percent_used}
+          aria-label="AI credits used"
+        >
+          <div
+            className={`h-full rounded-full ${usageBarClass(quota.percent_used)}`}
+            style={{ width: `${Math.max(0, Math.min(100, quota.percent_used))}%` }}
+          />
+        </div>
+      )}
+      {resetLabel && (
+        <div className="mt-1.5 text-[11px] text-muted">Resets {resetLabel}</div>
+      )}
+    </div>
+  );
+}
+
+// Warm the bar as the allowance runs low so a near-empty balance reads at a
+// glance: accent normally, amber past 75%, red past 90%.
+function usageBarClass(percentUsed: number): string {
+  if (percentUsed >= 90) return "bg-red-500";
+  if (percentUsed >= 75) return "bg-amber-500";
+  return "bg-accent";
+}
+
+// "2026-09-01" → "Sep 1, 2026". Parse the parts as a local date so the day does
+// not slip a step in negative UTC offsets. Falls back to the raw string.
+function formatResetDate(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return value;
+  const [, y, m, d] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function Avatar({ url, alt }: { url: string | null; alt: string }) {

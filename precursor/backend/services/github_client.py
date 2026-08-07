@@ -495,6 +495,22 @@ class GitHubClient:
             "html_url": u.get("html_url"),
         }
 
+    async def get_copilot_quota(self) -> dict[str, Any] | None:
+        """Return the token user's Copilot quota snapshot, or ``None``.
+
+        Hits the same ``/copilot_internal/user`` endpoint the Copilot editors
+        use — it exposes ``quota_snapshots`` (chat / completions / premium
+        interactions) plus the top-level ``quota_reset_date``. Accounts with no
+        Copilot seat get a 403/404, which we treat as "no quota to show" rather
+        than an error so the persona degrades quietly.
+        """
+        r = await self._client.get("/copilot_internal/user")
+        if r.status_code in (403, 404):
+            return None
+        r.raise_for_status()
+        payload = r.json()
+        return payload if isinstance(payload, dict) else None
+
     @staticmethod
     def _issue_summary(issue: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -11,6 +11,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Copilot AI-credit usage in the persona menu.** When you're connected with a
+  GitHub account, opening the sidebar persona menu now shows your Copilot **AI
+  credits** — a progress bar with the percentage used and the next reset date.
+  It's fed by a new `GET /api/me/copilot` endpoint that reads the account's
+  `premium_interactions` quota from GitHub with your own token and is fetched
+  lazily on menu open (so `/api/me` stays fast). The bar warms amber past 75%
+  and red past 90%; unlimited plans show an **Unlimited** badge, and accounts
+  with no Copilot seat simply omit the section.
 - **Choose the Playwright browser from Settings.** The MCP tab now has a
   **Playwright browser** selector (`msedge` by default, plus `chromium`, `chrome`,
   `firefox`, `webkit`, and `Default`) backed by a DB-overridable

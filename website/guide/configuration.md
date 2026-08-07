@@ -52,6 +52,13 @@ the chat flow stays usable offline.
 The resolved source is surfaced to the UI as `settings | gh-cli | none`; the
 token value itself is never returned.
 
+When a token resolves to a real GitHub account, the sidebar **persona menu**
+also shows your Copilot **AI credits** — a progress bar with the percentage
+used and the next reset date, read from your account's `premium_interactions`
+quota via `GET /api/me/copilot`. It's fetched only when you open the menu;
+accounts on an unlimited plan show an **Unlimited** badge and those without a
+Copilot seat omit the bar entirely.
+
 ### Which repository issues go to
 
 **Settings → GitHub** also holds the default `owner/name` repository used when a

@@ -721,6 +721,20 @@ export interface Me {
   github_token_source: "env" | "gh-cli" | "settings" | "none";
 }
 
+// Copilot "AI credits" (premium interactions) allowance for the connected
+// account. Mirrors the CopilotQuota Pydantic model. `percent_used` drives the
+// persona progress bar; `unlimited` plans have nothing to fill.
+export interface CopilotQuota {
+  plan: string | null;
+  unlimited: boolean;
+  percent_used: number;
+  percent_remaining: number;
+  used: number;
+  entitlement: number;
+  remaining: number;
+  reset_date: string | null;
+}
+
 export interface Skill {
   name: string;
   description: string | null;
