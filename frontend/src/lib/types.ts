@@ -359,6 +359,9 @@ export interface Settings {
   workiq_tenant_id: string;
   // True when the tenant above was read off a stored token rather than typed.
   workiq_tenant_discovered: boolean;
+  // Browser channel the built-in 'playwright' server drives. "default" omits
+  // --browser so @playwright/mcp picks its own default.
+  playwright_browser: string;
   // System settings (effective: env default with DB override applied).
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
@@ -419,6 +422,7 @@ export interface SettingsUpdate {
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   workiq_tenant_id?: string;
+  playwright_browser?: string;
   llm_max_input_tokens?: number;
   llm_max_tool_result_tokens?: number;
   scheduled_run_timeout_seconds?: number;

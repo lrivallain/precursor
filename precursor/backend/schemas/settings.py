@@ -57,6 +57,9 @@ class SettingsPayload(BaseModel):
     mcp_http_enabled: bool | None = None
     # Entra tenant GUID for the Agent 365 MCP servers (workiq-teams / workiq-user).
     workiq_tenant_id: str | None = None
+    # Browser channel the built-in 'playwright' server drives (--browser).
+    # "default" omits the flag entirely (escape hatch for builds without it).
+    playwright_browser: str | None = None
     # --- System settings (env default + DB override) ---
     # Prompt budgeting.
     llm_max_input_tokens: int | None = None
@@ -137,6 +140,9 @@ class SettingsRead(BaseModel):
     workiq_tenant_id: str = ""
     # True when the tenant above came from a signed-in token rather than config.
     workiq_tenant_discovered: bool = False
+    # Effective browser channel the built-in 'playwright' server drives. "default"
+    # means --browser is omitted so @playwright/mcp picks its own default.
+    playwright_browser: str = "msedge"
     # --- System settings (effective: env default with DB override applied) ---
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000

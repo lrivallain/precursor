@@ -11,6 +11,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Choose the Playwright browser from Settings.** The MCP tab now has a
+  **Playwright browser** selector (`msedge` by default, plus `chromium`, `chrome`,
+  `firefox`, `webkit`, and `Default`) backed by a DB-overridable
+  `playwright_browser` setting that wins over the `PRECURSOR_PLAYWRIGHT_BROWSER`
+  env default and applies live — the warm worker is retired so the next call
+  relaunches with the new channel. The new **Default** choice **omits `--browser`
+  entirely**, the escape hatch for environments whose resolved `@playwright/mcp`
+  predates the flag and fails to start with `error: unknown option '--browser'`.
+- **Playwright `--browser` support is now auto-detected.** On startup Precursor
+  probes the resolved `@playwright/mcp` once and **omits `--browser` automatically**
+  when the build predates the flag (e.g. behind a stale registry mirror), so the
+  server launches instead of failing with `error: unknown option '--browser'` — no
+  configuration needed. The **Default** selector remains as an explicit override.
 - **Kanban issue comments now show when they were posted.** The issue/PR
   preview modal renders each comment's timestamp (localized medium date + short
   time) next to the author, with an *(edited)* hint when the comment was updated
