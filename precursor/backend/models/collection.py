@@ -12,7 +12,7 @@ Git-backed Markdown folders (see ``models/workspace.py``).
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -49,6 +49,17 @@ class Collection(Base, TimestampMixin):
     # to the global `github_repo` setting. A topic's own `github_repo` still
     # wins over this.
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Default assistant role applied to *new* topics created in this collection
+    # when the caller doesn't pick one explicitly. Null means "use the built-in
+    # default role". Cleared to NULL when the referenced role is deleted (the
+    # FK is enforced at the app layer, not the DB — see the migration).
+    default_role_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("roles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     accent: Mapped[str] = mapped_column(
         String(32),

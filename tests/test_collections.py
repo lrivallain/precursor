@@ -198,3 +198,86 @@ def test_repo_precedence_topic_then_collection_then_global() -> None:
         # A topic-level repo always wins.
         client.patch(f"/api/topics/{topic['id']}", json={"github_repo": "acme/topic"})
         assert anyio.run(resolve, topic["id"]) == "acme/topic"
+
+
+def _make_role(client: TestClient, name: str, prompt: str = "") -> dict:
+    r = client.post("/api/roles", json={"name": name, "system_prompt": prompt})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_collection_default_role_create_update_and_validation() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "drole-reviewer", "Be strict.")
+
+        # Set at creation…
+        col = _make(client, "DRole create", default_role_id=role["id"])
+        assert col["default_role_id"] == role["id"]
+
+        # …clearable via an explicit null…
+        cleared = client.patch(f"/api/collections/{col['id']}", json={"default_role_id": None})
+        assert cleared.status_code == 200
+        assert cleared.json()["default_role_id"] is None
+
+        # …and settable via update.
+        updated = client.patch(
+            f"/api/collections/{col['id']}", json={"default_role_id": role["id"]}
+        )
+        assert updated.status_code == 200
+        assert updated.json()["default_role_id"] == role["id"]
+
+        # An unknown role id is rejected on both create and update.
+        assert (
+            client.post(
+                "/api/collections", json={"name": "DRole bad", "default_role_id": 999999}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.patch(
+                f"/api/collections/{col['id']}", json={"default_role_id": 999999}
+            ).status_code
+            == 400
+        )
+
+
+def test_new_topic_inherits_collection_default_role() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "drole-inherit")
+        col = _make(client, "DRole inherit", default_role_id=role["id"])
+
+        # A new topic in the collection picks up the default role…
+        inherited = client.post(
+            "/api/topics", json={"title": "Inherits role", "collection_id": col["id"]}
+        ).json()
+        assert inherited["role_id"] == role["id"]
+
+        # …a child topic in the same collection does too…
+        child = client.post(
+            "/api/topics",
+            json={"title": "Child inherits role", "parent_id": inherited["id"]},
+        ).json()
+        assert child["role_id"] == role["id"]
+
+        # …but an explicit role on create still wins.
+        other = _make_role(client, "drole-explicit")
+        explicit = client.post(
+            "/api/topics",
+            json={"title": "Explicit role", "collection_id": col["id"], "role_id": other["id"]},
+        ).json()
+        assert explicit["role_id"] == other["id"]
+
+
+def test_deleting_a_role_clears_collection_default() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "drole-doomed")
+        col = _make(client, "DRole delete", default_role_id=role["id"])
+        assert col["default_role_id"] == role["id"]
+
+        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
+
+        after = client.get(f"/api/collections/{col['id']}").json()
+        assert after["default_role_id"] is None

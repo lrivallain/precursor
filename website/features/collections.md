@@ -85,6 +85,20 @@ chain:
 That makes a collection a natural "this client's work goes to this repo" switch,
 while a single topic can still opt out.
 
+## Per-collection default role
+
+A collection can nominate a default [Assistant Role](/features/topics) — the
+persona new topics start with. When you create a topic in a collection, it
+inherits that collection's **Default role** unless you pick a different one; a
+collection with no default leaves new topics on the built-in default role.
+Sub-topics follow the same rule as their siblings, so a whole collection can lean
+into one persona (say, a *code-review* role for your platform work) without you
+setting it per topic.
+
+Set it from **Settings → Collections** on each collection's editor. Deleting a
+role that a collection points at simply reverts that collection to the built-in
+default — no topic already created is affected.
+
 ## Managing collections
 
 **Settings → Collections** lists every collection with its topic count, repo, and

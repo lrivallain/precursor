@@ -20,6 +20,7 @@ from precursor.backend.schemas.schedule import (
 )
 from precursor.backend.services.collections import (
     move_subtree_to_collection,
+    resolve_collection_default_role_id,
     resolve_collection_id,
 )
 from precursor.backend.services.events import (
@@ -163,6 +164,11 @@ async def create_topic(
         data["collection_id"] = parent.collection_id
     else:
         data["collection_id"] = await resolve_collection_id(session, payload.collection_id)
+
+    # When no role is picked, a new topic inherits its collection's default
+    # Assistant Role (null leaves it on the built-in default role).
+    if data.get("role_id") is None:
+        data["role_id"] = await resolve_collection_default_role_id(session, data["collection_id"])
 
     if create_linked_issue:
         # Create the issue first so a GitHub failure aborts before the topic is
