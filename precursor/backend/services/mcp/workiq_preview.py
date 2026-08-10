@@ -274,6 +274,13 @@ _CALLBACK_TIMEOUT_SECONDS = 180.0
 # and let the visible banner take over. Keep this comfortably short.
 _SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS = 20.0
 
+# How long an interactive retry waits for a *preempted* in-flight sign-in to
+# release the family lock before giving up. Cancelling makes the parked loopback
+# unwind near-instantly (it is awaiting the cancel event) and close its server,
+# so a few seconds comfortably covers the SDK's teardown; if the lock still isn't
+# free by then the prior flow is genuinely completing and we report the conflict.
+_PREEMPT_LOCK_TIMEOUT_SECONDS = 5.0
+
 # Serializes interactive sign-ins so two triggers can't open competing browser
 # flows fighting over a profile's single loopback redirect port. Keyed by
 # *auth family*: servers sharing one token (the Agent 365 pair) share a sign-in,
@@ -296,6 +303,18 @@ def _lock_for(profile: WorkIQOAuthProfile) -> asyncio.Lock:
         lock = asyncio.Lock()
         _reauth_locks[profile.auth_family] = lock
     return lock
+
+
+async def _wait_lock_free(lock: asyncio.Lock) -> None:
+    """Block until ``lock``'s current holder releases it.
+
+    :class:`asyncio.Lock` exposes no "wait until free" primitive, so we queue on
+    it and let go the instant we win it — the caller then re-acquires it for the
+    actual critical section. Used to take over the family lock after signalling a
+    stale in-flight sign-in to abort (see :func:`reauthenticate_workiq`).
+    """
+    await lock.acquire()
+    lock.release()
 
 
 def cancel_reauthenticate_workiq(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> bool:
@@ -1236,11 +1255,36 @@ async def reauthenticate_workiq(
     hard error) when it couldn't complete so the caller surfaces the manual
     sign-in banner as a last resort.
 
-    Raises :class:`WorkIQAuthInProgressError` if a sign-in is already running.
+    Raises :class:`WorkIQAuthInProgressError` if a sign-in is already running and
+    it cannot be preempted. A silent/auto pass never disturbs an in-flight flow;
+    an explicit interactive retry preempts a *stale* one (its popup/tab gone, so
+    the abandon-cancel never fired) by signalling it to abort and taking over.
     """
     lock = _lock_for(profile)
     if lock.locked():
-        raise WorkIQAuthInProgressError(f"A {profile.label} sign-in is already in progress.")
+        # A sign-in is already parked on this family's lock. A silent/auto pass
+        # must not disturb it — report the conflict. An explicit interactive
+        # retry (a human clicked "Sign in" again) most likely means the prior
+        # flow is a stale orphan: its popup was closed / tab reloaded / OS browser
+        # walked away, so the SPA's abandon-cancel never fired and it is parked on
+        # the loopback for up to ``_CALLBACK_TIMEOUT_SECONDS``. Preempt it — signal
+        # the loopback to unwind and free the port, then take over once the lock
+        # releases. ``cancel_reauthenticate_workiq`` is a no-op once the redirect
+        # has arrived, so a genuinely near-complete sign-in is still left to finish
+        # and we fall through to the conflict below.
+        interactive = not (silent_only or auto)
+        if not (interactive and cancel_reauthenticate_workiq(profile)):
+            raise WorkIQAuthInProgressError(
+                f"A {profile.label} sign-in is already in progress."
+            )
+        try:
+            await asyncio.wait_for(_wait_lock_free(lock), _PREEMPT_LOCK_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            # The prior holder didn't release in time — its redirect landed
+            # mid-cancel and it is genuinely completing. Leave it be.
+            raise WorkIQAuthInProgressError(
+                f"A {profile.label} sign-in is already in progress."
+            ) from exc
     async with lock:
         # Pre-select the last account, but read it before clearing tokens.
         login_hint = await get_workiq_login_hint(profile)

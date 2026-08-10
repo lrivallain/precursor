@@ -152,16 +152,21 @@ export async function signInWorkiq(name = "workiq"): Promise<MCPServerStatus | n
   // popup path's abandonment semantics.
   if (isStandalonePWA()) {
     authLogStart(name);
+    const stopUnloadWatch = watchForUnload(name);
     authLog(name, "manual sign-in start — standalone PWA, backend opens OS browser");
-    const status = await api.mcp.reauthenticateWorkiq(name, { usePopup: false });
-    authLog(
-      name,
-      status.interaction_required
-        ? "manual sign-in did not complete (interaction_required)"
-        : "manual sign-in succeeded",
-      { state: status.state },
-    );
-    return status.interaction_required ? null : status;
+    try {
+      const status = await api.mcp.reauthenticateWorkiq(name, { usePopup: false });
+      authLog(
+        name,
+        status.interaction_required
+          ? "manual sign-in did not complete (interaction_required)"
+          : "manual sign-in succeeded",
+        { state: status.state },
+      );
+      return status.interaction_required ? null : status;
+    } finally {
+      stopUnloadWatch();
+    }
   }
 
   authLogStart(name);
@@ -177,6 +182,7 @@ export async function signInWorkiq(name = "workiq"): Promise<MCPServerStatus | n
   );
   let settled = false;
   const stopWatch = watchForAbandon(name, popup, () => settled);
+  const stopUnloadWatch = watchForUnload(name);
   try {
     const status = await api.mcp.reauthenticateWorkiq(name, { usePopup });
     authLog(name, "manual sign-in succeeded", { state: status.state });
@@ -200,6 +206,7 @@ export async function signInWorkiq(name = "workiq"): Promise<MCPServerStatus | n
   } finally {
     settled = true;
     stopWatch();
+    stopUnloadWatch();
     if (pendingPopup === popup) pendingPopup = null;
   }
 }
@@ -247,6 +254,34 @@ function watchForAbandon(
     window.clearInterval(poll);
     if (graceTimer !== undefined) window.clearTimeout(graceTimer);
   };
+}
+
+/**
+ * Fire a best-effort cancel if the page is torn down mid sign-in.
+ *
+ * A reload, tab/window close or navigation kills the JS context (and with it the
+ * abandon watcher) before the sign-in settles — and an OS-browser flow has no
+ * popup to watch in the first place. Without a signal the backend keeps the
+ * family lock parked on the loopback for the full callback timeout, so the next
+ * window's sign-in is refused with a 409 until it expires. ``sendBeacon`` posts
+ * the cancel even as the page unloads, where an in-flight ``fetch`` would be
+ * aborted. Returns a stopper to call once the flow resolves normally.
+ */
+function watchForUnload(name: string): () => void {
+  const onUnload = () => {
+    try {
+      navigator.sendBeacon(
+        `/api/mcp/servers/${encodeURIComponent(name)}/reauthenticate/cancel`,
+      );
+    } catch {
+      // Best-effort: nothing to do if the beacon can't be queued.
+    }
+  };
+  // ``pagehide`` fires on both navigation and bfcache eviction; keep it as the
+  // primary hook and skip ``beforeunload`` to avoid a spurious "leave site?"
+  // prompt.
+  window.addEventListener("pagehide", onUnload);
+  return () => window.removeEventListener("pagehide", onUnload);
 }
 
 function openSilentFrame(): HTMLIFrameElement {
