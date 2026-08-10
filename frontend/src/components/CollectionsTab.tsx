@@ -3,6 +3,7 @@ import { Layers, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { Collection, CollectionAccent } from "../lib/types";
 import { COLLECTION_ACCENTS, collectionColor } from "../lib/collections";
+import { rolesStore, useRoles } from "../lib/rolesStore";
 
 interface Props {
   /** Notifies the app so the sidebar switcher and tree stay in sync. */
@@ -14,6 +15,11 @@ export function CollectionsTab({ onChanged }: Props) {
   const [editing, setEditing] = useState<Collection | "new" | null>(null);
   const [deleting, setDeleting] = useState<Collection | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const roles = useRoles();
+  useEffect(() => {
+    void rolesStore.ensureLoaded();
+  }, []);
 
   async function load(): Promise<void> {
     try {
@@ -64,6 +70,7 @@ export function CollectionsTab({ onChanged }: Props) {
         <ul className="space-y-1.5">
           {collections.map((c) => {
             const color = collectionColor(c.accent);
+            const defaultRole = roles.find((r) => r.id === c.default_role_id);
             return (
               <li
                 key={c.id}
@@ -81,6 +88,7 @@ export function CollectionsTab({ onChanged }: Props) {
                   <div className="text-[11px] text-muted truncate">
                     {[
                       c.github_repo || "Inherits the global GitHub repository",
+                      defaultRole ? `Role: ${defaultRole.name}` : null,
                       c.description,
                     ]
                       .filter(Boolean)
@@ -151,8 +159,19 @@ function CollectionEditor({ collection, onClose, onSaved }: EditorProps) {
   const [description, setDescription] = useState(collection?.description ?? "");
   const [repo, setRepo] = useState(collection?.github_repo ?? "");
   const [accent, setAccent] = useState<CollectionAccent>(collection?.accent ?? "sky");
+  const [defaultRoleId, setDefaultRoleId] = useState<number | null>(
+    collection?.default_role_id ?? null,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const roles = useRoles();
+  useEffect(() => {
+    void rolesStore.ensureLoaded();
+  }, []);
+  // The built-in default role is represented by the null option, so it isn't
+  // offered a second time in the list.
+  const selectableRoles = roles.filter((r) => !r.is_default);
 
   async function save(): Promise<void> {
     setSaving(true);
@@ -161,6 +180,7 @@ function CollectionEditor({ collection, onClose, onSaved }: EditorProps) {
       description: description.trim() || null,
       github_repo: repo.trim() || null,
       accent,
+      default_role_id: defaultRoleId,
     };
     try {
       if (collection) {
@@ -248,6 +268,28 @@ function CollectionEditor({ collection, onClose, onSaved }: EditorProps) {
             <span className="text-[11px] text-muted">
               Issues created from a topic in this collection land here unless the
               topic sets its own repository.
+            </span>
+          </label>
+
+          <label className="block space-y-1">
+            <span className="text-xs text-muted">Default role</span>
+            <select
+              value={defaultRoleId ?? ""}
+              onChange={(e) =>
+                setDefaultRoleId(e.target.value ? Number(e.target.value) : null)
+              }
+              className="w-full px-2 py-1.5 text-sm bg-surface border border-border rounded outline-none focus:border-accent"
+            >
+              <option value="">Default role</option>
+              {selectableRoles.map((role) => (
+                <option key={role.id} value={role.id}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-[11px] text-muted">
+              New topics created in this collection start with this Assistant
+              Role unless you pick another one.
             </span>
           </label>
 

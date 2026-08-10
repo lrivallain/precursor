@@ -11,6 +11,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Per-collection default role.** A [collection](website/features/collections.md)
+  can now nominate a default **Assistant Role** — new topics created in it start
+  with that persona unless the caller picks another one, so a whole collection
+  can lean into one role without setting it per topic. Set it from **Settings →
+  Collections**; a new nullable `default_role_id` on the collection (schema, API,
+  and a migration) drives it, and deleting a role reverts any collection that
+  pointed at it back to the built-in default.
 - **Copilot AI-credit usage in the persona menu.** When you're connected with a
   GitHub account, opening the sidebar persona menu now shows your Copilot **AI
   credits** — a progress bar with the percentage used and the next reset date.

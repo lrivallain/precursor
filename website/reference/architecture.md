@@ -93,7 +93,8 @@ Highlights:
   when it has an enabled `TopicSchedule`. Its optional `collection_id` places it
   in a [collection](/features/collections).
 - **`Collection`** — a named group of topics (name, slug, description, colour
-  accent, optional GitHub repo override). A protected **General** collection is
+  accent, optional GitHub repo override, optional default Assistant Role for new
+  topics). A protected **General** collection is
   seeded on first boot and every existing topic is backfilled into it.
 - **`Message`** — per-topic, cascade delete; roles `user` / `assistant` /
   `system` / `tool`. Large `tool` results can be age-pruned in place.

@@ -16,6 +16,9 @@ class CollectionBase(BaseModel):
     github_repo: str | None = Field(default=None, max_length=255)
     accent: str = Field(default=DEFAULT_COLLECTION_ACCENT, max_length=32)
     icon: str | None = Field(default=None, max_length=64)
+    # Default Assistant Role for new topics in this collection; null = built-in
+    # default role.
+    default_role_id: int | None = None
 
     @field_validator("accent")
     @classmethod
@@ -36,6 +39,9 @@ class CollectionUpdate(BaseModel):
     accent: str | None = Field(default=None, max_length=32)
     icon: str | None = Field(default=None, max_length=64)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
+    # Send explicit null to clear the collection's default role; omit to leave
+    # it unchanged (relies on `exclude_unset=True` in the router).
+    default_role_id: int | None = None
 
     @field_validator("accent")
     @classmethod
