@@ -1274,9 +1274,7 @@ async def reauthenticate_workiq(
         # and we fall through to the conflict below.
         interactive = not (silent_only or auto)
         if not (interactive and cancel_reauthenticate_workiq(profile)):
-            raise WorkIQAuthInProgressError(
-                f"A {profile.label} sign-in is already in progress."
-            )
+            raise WorkIQAuthInProgressError(f"A {profile.label} sign-in is already in progress.")
         try:
             await asyncio.wait_for(_wait_lock_free(lock), _PREEMPT_LOCK_TIMEOUT_SECONDS)
         except TimeoutError as exc:
