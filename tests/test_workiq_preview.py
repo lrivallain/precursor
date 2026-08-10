@@ -23,6 +23,15 @@ def _workiq(servers: list[dict]) -> dict:
     return next(s for s in servers if s["name"] == "workiq")
 
 
+async def _mock_no_op(*_args, **_kwargs) -> None:
+    """Async stand-in for side-effecting coroutines the sign-in body awaits."""
+    return None
+
+
+async def _mock_login_hint(*_args, **_kwargs) -> str:
+    return "user@example.com"
+
+
 def test_preview_field_exposed_per_server() -> None:
     app = create_app()
     with TestClient(app) as client:
@@ -315,6 +324,79 @@ async def test_reauthenticate_single_flight() -> None:
     async with wp._lock_for(wp.PREVIEW_PROFILE):
         with pytest.raises(wp.WorkIQAuthInProgressError):
             await wp.reauthenticate_workiq()
+
+
+async def test_interactive_retry_preempts_stale_signin(monkeypatch) -> None:
+    """An explicit interactive retry takes over a stale, parked sign-in.
+
+    Regression: an orphaned flow (popup closed / tab reloaded / OS browser gone)
+    stays parked on the family lock awaiting its loopback, so its abandon-cancel
+    never fires and every retry hit a 409 until the 180s callback timeout. A human
+    clicking "Sign in" again must now preempt it — signal the parked flow to abort
+    and take over once the lock frees — instead of being stranded.
+    """
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    profile = wp.PREVIEW_PROFILE
+    lock = wp._lock_for(profile)
+
+    async def _mock_silent(*_args, **_kwargs) -> bool:
+        return True  # short-circuit before any browser/loopback work
+
+    monkeypatch.setattr(wp, "_bind_loopback_profile", lambda p: p)
+    monkeypatch.setattr(wp, "clear_workiq_oauth_tokens", _mock_no_op)
+    monkeypatch.setattr(wp, "get_workiq_login_hint", _mock_login_hint)
+    monkeypatch.setattr(wp, "_try_silent_reauth", _mock_silent)
+
+    # Stand up a stale holder: it owns the lock and is parked awaiting its cancel
+    # event, exactly like a real flow stuck on the loopback callback.
+    cancel = asyncio.Event()
+    wp._active_signin_cancels[profile.auth_family] = cancel
+    await lock.acquire()
+
+    async def _holder() -> None:
+        await cancel.wait()  # unwinds the instant the retry preempts it
+        lock.release()
+
+    holder = asyncio.create_task(_holder())
+    try:
+        # Interactive retry preempts and completes rather than raising.
+        assert await wp.reauthenticate_workiq(open_system_browser=False) is True
+        assert cancel.is_set()
+    finally:
+        if lock.locked():  # pragma: no cover - defensive cleanup
+            lock.release()
+        await holder
+        wp._active_signin_cancels.pop(profile.auth_family, None)
+
+
+async def test_silent_retry_does_not_preempt_stale_signin(monkeypatch) -> None:
+    """A silent/auto pass never disturbs an in-flight flow — it reports the conflict."""
+    import asyncio
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    profile = wp.PREVIEW_PROFILE
+    lock = wp._lock_for(profile)
+
+    async def _must_not_run(*_args, **_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("silent pass preempted a live sign-in")
+
+    monkeypatch.setattr(wp, "_try_silent_reauth", _must_not_run)
+
+    cancel = asyncio.Event()
+    wp._active_signin_cancels[profile.auth_family] = cancel
+    await lock.acquire()
+    try:
+        with pytest.raises(wp.WorkIQAuthInProgressError):
+            await wp.reauthenticate_workiq(silent_only=True)
+        # The live flow's cancel channel is left untouched.
+        assert not cancel.is_set()
+    finally:
+        lock.release()
+        wp._active_signin_cancels.pop(profile.auth_family, None)
 
 
 @contextlib.contextmanager

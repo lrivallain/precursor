@@ -161,6 +161,16 @@ Closing the sign-in popup still **cancels the flow** immediately. Set
 `workiq_loopback_port_fallback=false` to restore the old strict behaviour, where a
 busy port fails fast with "port 12798 is already in use — another Precursor window
 or app is signing in…" rather than moving.
+
+If a sign-in is ever *orphaned* — its popup closed out of band, the tab reloaded,
+or an OS-browser flow (standalone PWA) walked away — the click that would cancel it
+never fires, so the credential's flow would otherwise stay parked until it times
+out and refuse every retry with "a sign-in is already in progress". Precursor
+recovers from that automatically: clicking **Sign in** again **preempts** the stale
+flow (it's told to abort, the port frees, and the new attempt takes over), while a
+sign-in that's genuinely mid-redirect is left to finish. Reloading or closing the
+window also fires a best-effort cancel on unload, so the credential's lock is
+released right away instead of being held hostage.
 :::
 
 #### Quiet when you're not using it

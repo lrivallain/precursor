@@ -402,7 +402,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **Collections leaked their filter into every surface that looks up a topic**:
+- **A stale WorkIQ / Agent 365 sign-in no longer strands you behind a 409.**
+  When a manual sign-in was orphaned — its popup closed, tab reloaded, or the OS
+  browser walked away (the standalone-PWA/OS-browser flow has no popup to watch
+  in the first place) — the backend kept the shared *auth-family* lock parked on
+  the loopback callback for up to 180s, so every retry was refused with **"A
+  WorkIQ … sign-in is already in progress"** with no visible flow to finish or
+  cancel. Now an explicit interactive retry **preempts** the stale flow (it
+  signals it to abort, frees the loopback port, and takes over once the lock
+  releases within ~5s); a genuinely near-complete sign-in whose redirect already
+  landed is still left to finish, and silent/auto background passes never disturb
+  a live flow. The SPA also fires a best-effort `sendBeacon` cancel on page
+  unload (`pagehide`), so a reload or close releases the family lock immediately
+  instead of orphaning it.
   splitting topics into collections narrowed the app's single topic tree to the
   active collection, and that tree is what the rest of the UI reads to *resolve*
   a topic — not just what the sidebar renders. So the **Live session topic
