@@ -132,9 +132,7 @@ async def delete_role(role_id: int, session: AsyncSession = Depends(get_session)
         await session.execute(update(model).where(model.role_id == role_id).values(role_id=None))
     # Collections reference the role via a distinct `default_role_id` column.
     await session.execute(
-        update(Collection)
-        .where(Collection.default_role_id == role_id)
-        .values(default_role_id=None)
+        update(Collection).where(Collection.default_role_id == role_id).values(default_role_id=None)
     )
     await session.delete(role)
     await session.commit()

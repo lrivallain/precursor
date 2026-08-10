@@ -168,9 +168,7 @@ async def create_topic(
     # When no role is picked, a new topic inherits its collection's default
     # Assistant Role (null leaves it on the built-in default role).
     if data.get("role_id") is None:
-        data["role_id"] = await resolve_collection_default_role_id(
-            session, data["collection_id"]
-        )
+        data["role_id"] = await resolve_collection_default_role_id(session, data["collection_id"])
 
     if create_linked_issue:
         # Create the issue first so a GitHub failure aborts before the topic is
