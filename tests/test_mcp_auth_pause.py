@@ -170,6 +170,97 @@ def test_signal_with_no_waiters_is_noop() -> None:
     manager.signal_auth_resolved()  # must not raise
 
 
+def _agent365_names() -> tuple[str, str]:
+    from precursor.backend.services.mcp import agent365
+
+    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS)
+    return teams, user
+
+
+async def test_open_transport_short_circuits_flagged_oauth_server() -> None:
+    """A flagged OAuth connect fast-fails to ``needs_auth`` without connecting.
+
+    ``mark_auth_required`` records the verdict; the next ``_open_transport`` for
+    that credential raises ``WorkIQAuthRequiredError`` immediately instead of
+    driving the doomed OAuth handshake (the seconds-long stall we're removing).
+    """
+    teams, _user = _agent365_names()
+    manager = MCPClientManager()
+    entry = _entry(teams, "disconnected")
+    entry.auth_provider = object()  # stand-in for the non-interactive provider
+    manager._servers[teams] = entry
+
+    manager.mark_auth_required(teams, message="Sign-in expired.")
+    assert entry.state == "needs_auth"
+
+    raised = False
+    try:
+        async with manager._open_transport(teams):
+            pass
+    except WorkIQAuthRequiredError:
+        raised = True
+    assert raised
+    assert entry.state == "needs_auth"
+    assert entry.error == "Sign-in expired."
+
+
+async def test_short_circuit_covers_credential_sibling() -> None:
+    """Flagging one Agent 365 server short-circuits the one sharing its token."""
+    teams, user = _agent365_names()
+    manager = MCPClientManager()
+    sibling = _entry(user, "disconnected")
+    sibling.auth_provider = object()
+    manager._servers[user] = sibling
+
+    manager.mark_auth_required(teams)  # flag the *other* server on the credential
+
+    raised = False
+    try:
+        async with manager._open_transport(user):
+            pass
+    except WorkIQAuthRequiredError:
+        raised = True
+    assert raised
+    assert sibling.state == "needs_auth"
+
+
+async def test_clear_auth_required_lets_connect_proceed() -> None:
+    """Clearing the verdict removes the short-circuit for the credential."""
+    teams, _user = _agent365_names()
+    manager = MCPClientManager()
+    entry = _entry(teams, "disconnected")
+    entry.auth_provider = object()
+    manager._servers[teams] = entry
+
+    manager.mark_auth_required(teams)
+    assert manager._auth_short_circuited(teams)
+    manager.clear_auth_required(teams)
+    assert not manager._auth_short_circuited(teams)
+
+
+def test_signal_auth_resolved_clears_short_circuit() -> None:
+    teams, _user = _agent365_names()
+    manager = MCPClientManager()
+    manager.mark_auth_required(teams)
+    assert manager._auth_short_circuit
+
+    manager.signal_auth_resolved()
+    assert not manager._auth_short_circuit
+
+
+def test_short_circuit_ignores_non_oauth_server() -> None:
+    """A plain server with a stray flag is never fast-failed as OAuth."""
+    manager = MCPClientManager()
+    entry = _entry("byo", "ready")
+    entry.auth_provider = None  # non-OAuth server has no provider
+    manager._servers["byo"] = entry
+
+    manager.mark_auth_required("byo")
+    # No auth_provider → the short-circuit branch is skipped entirely; the flag
+    # is inert for a plain server.
+    assert manager._auth_short_circuited("byo")
+
+
 def _oauth_flow_error_record(exc: BaseException) -> logging.LogRecord:
     """Build the log record the SDK's ``logger.exception("OAuth flow error")`` emits."""
     try:

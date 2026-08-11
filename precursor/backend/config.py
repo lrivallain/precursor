@@ -127,6 +127,14 @@ class Settings(BaseSettings):
     # start, so a freshly started app still keeps everything warm for one window
     # rather than going cold until the first call. Set to 0 to always keep warm.
     workiq_keepalive_idle_after_seconds: int = 21_600
+    # Even for an *idle* credential, surface a genuine lapse proactively: once its
+    # stored access token has actually expired, the keep-alive probes it once and,
+    # if it now needs an interactive sign-in, raises the re-authenticate banner
+    # (and flags the turn path to fast-fail the doomed connect). This trades a
+    # little of the anti-nag silence above for not discovering a dead session as a
+    # slow, silent stall on the next request. Set False to keep idle credentials
+    # completely silent until the user touches them.
+    workiq_keepalive_surface_idle_lapse: bool = True
 
     # WorkIQ interactive re-auth UX (services/mcp/workiq_preview.py). We always
     # pre-fill the Entra account picker with the last signed-in user

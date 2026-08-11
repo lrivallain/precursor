@@ -192,6 +192,34 @@ started Precursor keeps everything warm rather than going quiet until your first
 tool call. Set `workiq_keepalive_idle_after_seconds=0` to disable the back-off
 and keep every signed-in credential warm indefinitely.
 
+#### Surfaced the moment it lapses, not on your next request
+
+Backing off from *idle* credentials used to have a sharp edge: a session you
+weren't using could quietly die, and you'd only discover it when your next
+request stalled for several seconds while the doomed OAuth handshake ran before
+finally raising the banner. That "why is a simple request taking so long?" delay
+was the tell that a server needed re-authenticating — surfaced too late, and only
+if you thought to check **Settings → MCP**.
+
+Precursor now surfaces the lapse **proactively** instead:
+
+- **The keep-alive raises it for you.** Even for an idle credential, once its
+  stored access token has *actually* expired the ticker probes it once. If the
+  refresh token is dead, it publishes the same `McpAuthBanner` you'd get from a
+  live turn — so you see "…needs you to sign in" without touching Settings. A
+  still-refreshable idle session recovers silently, no prompt. This only fires on
+  a genuine, network-free-detected expiry, so it never nags for a session that's
+  merely resting.
+- **The next request is instant, not stalled.** A detected lapse also records a
+  verdict in the client pool, so the *first* turn that touches that server
+  fast-fails straight to the sign-in prompt instead of paying the multi-second
+  handshake against a token that can only fail. Even with the keep-alive off, the
+  first failed connect records the verdict so the *second* request is instant.
+
+This trades a little of the anti-nag silence above for not discovering a dead
+session the slow way. Set `workiq_keepalive_surface_idle_lapse=false` to keep idle
+credentials completely silent until you touch them yourself.
+
 #### Tracing a sign-in
 
 When the banner appears anyway, the useful question is *which* leg gave up — and

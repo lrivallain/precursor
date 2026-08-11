@@ -412,6 +412,15 @@ class MCPClientManager:
         # re-authenticate endpoint sets them so the paused turn wakes and
         # retries acquiring its tools instead of answering without them.
         self._auth_waiters: set[asyncio.Event] = set()
+        # Credentials known to need an interactive sign-in *right now*, keyed by
+        # ``credential_key`` so one dead token flags every server sharing it. A
+        # flagged OAuth connect is short-circuited to ``needs_auth`` in
+        # ``_open_transport`` instead of paying the full OAuth discovery+refresh
+        # handshake against a token that can only fail — that handshake latency is
+        # what made the first request after a lapse stall for seconds. Set by the
+        # keep-alive (proactively) and by a failed connect; cleared when a fresh
+        # provider is installed or a sign-in resolves.
+        self._auth_short_circuit: set[str] = set()
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -474,8 +483,45 @@ class MCPClientManager:
 
     def signal_auth_resolved(self) -> None:
         """Wake any turns paused waiting for an interactive MCP sign-in."""
+        # A sign-in completed somewhere; drop every short-circuit verdict so the
+        # next connect re-verifies against the (hopefully) fresh token rather than
+        # staying pinned to ``needs_auth``. Over-broad but self-healing: a token
+        # that is still dead simply re-flags itself on its next failed connect.
+        self._auth_short_circuit.clear()
         for event in list(self._auth_waiters):
             event.set()
+
+    def mark_auth_required(self, name: str, *, message: str | None = None) -> None:
+        """Record that ``name``'s credential needs an interactive sign-in.
+
+        Lets a later connect for the same credential surface ``needs_auth``
+        immediately (see ``_open_transport``) instead of re-discovering it the
+        slow way. Also flips the entry to ``needs_auth`` so the Settings UI and
+        ``auth_blocked_servers`` reflect the lapse even before any connect.
+        """
+        from precursor.backend.services.mcp.oauth_registry import credential_key
+
+        self._auth_short_circuit.add(credential_key(name))
+        entry = self._servers.get(name)
+        if entry is not None:
+            entry.state = "needs_auth"
+            if message:
+                entry.error = message
+
+    def clear_auth_required(self, name: str) -> None:
+        """Forget a prior ``mark_auth_required`` for ``name``'s credential.
+
+        Called when a fresh provider is installed or a silent refresh succeeds,
+        so a subsequent connect is allowed to proceed for real.
+        """
+        from precursor.backend.services.mcp.oauth_registry import credential_key
+
+        self._auth_short_circuit.discard(credential_key(name))
+
+    def _auth_short_circuited(self, name: str) -> bool:
+        from precursor.backend.services.mcp.oauth_registry import credential_key
+
+        return credential_key(name) in self._auth_short_circuit
 
     async def wait_for_auth(self, timeout: float) -> None:
         """Block until :meth:`signal_auth_resolved` fires or ``timeout`` elapses.
@@ -566,6 +612,9 @@ class MCPClientManager:
         entry.state = "disconnected"
         entry.error = None
         entry.tools = []
+        # A fresh provider (or a revert to stdio) means "signable now" — drop any
+        # short-circuit verdict so the reauth probe actually connects.
+        self.clear_auth_required("workiq")
 
     def configure_agent365(
         self, name: str, *, url: str | None, auth_provider: httpx.Auth | None
@@ -586,6 +635,10 @@ class MCPClientManager:
         entry.state = "disconnected"
         entry.error = None if url else TENANT_REQUIRED_MESSAGE
         entry.tools = []
+        # Installing a fresh provider means the credential is signable again —
+        # drop any short-circuit verdict so the reauth probe connects for real
+        # instead of being fast-failed back to ``needs_auth``.
+        self.clear_auth_required(name)
 
     def configure_playwright(
         self, *, browser: str, profile_dir: str, supports_browser_flag: bool = True
@@ -645,6 +698,24 @@ class MCPClientManager:
         entry = self._servers.get(name)
         if entry is None:
             raise KeyError(f"Unknown MCP server: {name}")
+
+        # Fast-fail a connect we already know needs an interactive sign-in. The
+        # non-interactive OAuth provider would reach the same verdict, but only
+        # after the streamable-HTTP transport runs the full OAuth discovery +
+        # refresh handshake against a dead token — several seconds the user waits
+        # before the re-authenticate banner appears. The keep-alive (and any
+        # prior failed connect) records the verdict, so surface ``needs_auth`` at
+        # once instead. Gated on an OAuth server with a provider so plain servers
+        # are never affected.
+        if entry.auth_provider is not None and self._auth_short_circuited(name):
+            from precursor.backend.services.mcp.oauth_registry import is_oauth_server
+            from precursor.backend.services.mcp.workiq_preview import WorkIQAuthRequiredError
+
+            if is_oauth_server(name):
+                entry.state = "needs_auth"
+                message = entry.error or "Sign-in required to use this server."
+                entry.error = message
+                raise WorkIQAuthRequiredError(message)
 
         entry.state = "connecting"
         entry.error = None
@@ -709,6 +780,11 @@ class MCPClientManager:
             if auth_exc is not None:
                 entry.state = "needs_auth"
                 entry.error = str(auth_exc)
+                # Record the verdict so the *next* connect for this credential
+                # short-circuits instantly instead of stalling on the same doomed
+                # handshake — this is what makes the second request after a lapse
+                # fast even when the keep-alive is disabled.
+                self.mark_auth_required(name)
             else:
                 entry.state = "error"
                 entry.error = str(exc)
