@@ -11,6 +11,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A lapsed idle MCP sign-in surfaces itself, instead of stalling your next
+  request.** WorkIQ / [Agent 365](website/features/mcp.md#agent-365-workiq-teams-and-workiq-user)
+  credentials that had gone idle (per the keep-alive back-off) used to die
+  quietly — you'd only find out when a simple request stalled for seconds on a
+  doomed OAuth handshake before the sign-in banner finally appeared, or by
+  manually opening **Settings → MCP**. Now the keep-alive **probes an idle token
+  once it has genuinely expired** and raises the `McpAuthBanner` proactively if
+  its refresh token is dead (a still-refreshable session recovers silently), and
+  a detected lapse records a verdict so the **first turn** that touches the
+  server **fast-fails straight to the prompt** rather than paying the multi-second
+  connect. New `workiq_keepalive_surface_idle_lapse` knob (default `true`,
+  `PRECURSOR_WORKIQ_KEEPALIVE_SURFACE_IDLE_LAPSE`) opts back into fully silent
+  idle credentials.
 - **Per-collection default role.** A [collection](website/features/collections.md)
   can now nominate a default **Assistant Role** — new topics created in it start
   with that persona unless the caller picks another one, so a whole collection

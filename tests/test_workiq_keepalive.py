@@ -29,6 +29,20 @@ class _FakeStorage:
         return type(self).token
 
 
+class _FakeManager:
+    """Records the short-circuit verdict the keep-alive feeds the client pool."""
+
+    def __init__(self) -> None:
+        self.marked: list[str] = []
+        self.cleared: list[str] = []
+
+    def mark_auth_required(self, name: str, *, message: str | None = None) -> None:
+        self.marked.append(name)
+
+    def clear_auth_required(self, name: str) -> None:
+        self.cleared.append(name)
+
+
 @pytest.fixture
 def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     """Patch the preview seams the ticker calls and record refresh calls."""
@@ -38,6 +52,7 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
         "refresh_result": ("tok", None),
         "refresh_calls": 0,
         "auth_banner_calls": [],
+        "manager": _FakeManager(),
     }
     _FakeStorage.token = object()
     reset_usage()
@@ -62,6 +77,7 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     monkeypatch.setattr(ka, "_stored_token_expiry", _stored_expiry)
     monkeypatch.setattr(ka, "resolve_workiq_bearer_token", _resolve_bearer)
     monkeypatch.setattr(ka, "publish_mcp_auth_required", _publish)
+    monkeypatch.setattr(ka, "get_mcp_client_manager", lambda: state["manager"])
     # The Agent 365 profiles resolve their tenant from the DB; keep this unit
     # test on the preview profile alone.
     monkeypatch.setattr(agent365, "AGENT365_SERVERS", ())
@@ -131,6 +147,91 @@ async def test_skips_idle_credential_entirely(patched: dict, monkeypatch) -> Non
     usage.mark_server_used("workiq")
     await keepalive._tick_once()
     assert patched["refresh_calls"] == 1
+
+
+def _force_idle(keepalive: ka.WorkIQKeepAlive, monkeypatch) -> None:
+    """Push the usage clock past the idle window so every credential reads idle."""
+    from precursor.backend.services.mcp import usage
+
+    idle_after = keepalive._settings.workiq_keepalive_idle_after_seconds
+    base = usage.time.monotonic()
+    monkeypatch.setattr(usage.time, "monotonic", lambda: base + idle_after + 60)
+
+
+async def test_surfaces_idle_lapse_when_token_expired(patched: dict, monkeypatch) -> None:
+    """An idle credential whose token has actually expired is surfaced.
+
+    Unlike the unknown-expiry idle case (left alone), a demonstrably expired
+    access token is probed once; a dead refresh token raises the banner and flags
+    the turn path so the next request fast-fails instead of stalling.
+    """
+    patched["expiry"] = datetime.now(UTC) - timedelta(minutes=5)  # already expired
+    patched["refresh_result"] = None  # silent refresh needs interactive sign-in
+    keepalive = ka.WorkIQKeepAlive()
+    _force_idle(keepalive, monkeypatch)
+
+    await keepalive._tick_once()
+    await keepalive._tick_once()  # still failing, but already notified
+
+    assert patched["refresh_calls"] == 1  # probed once, then skipped via the latch
+    assert patched["auth_banner_calls"] == ["workiq"]
+    assert patched["manager"].marked == ["workiq"]
+
+
+async def test_recovers_idle_lapse_silently(patched: dict, monkeypatch) -> None:
+    """An idle credential that still refreshes clears the verdict, no banner."""
+    patched["expiry"] = datetime.now(UTC) - timedelta(minutes=5)
+    patched["refresh_result"] = ("tok", None)  # silent refresh still works
+    keepalive = ka.WorkIQKeepAlive()
+    _force_idle(keepalive, monkeypatch)
+
+    await keepalive._tick_once()
+
+    assert patched["refresh_calls"] == 1
+    assert patched["auth_banner_calls"] == []
+    assert patched["manager"].cleared == ["workiq"]
+
+
+async def test_idle_lapse_left_alone_when_expiry_unknown(patched: dict, monkeypatch) -> None:
+    """A legacy idle token with no derivable expiry is not probed or prompted."""
+    patched["expiry"] = None
+    patched["refresh_result"] = None
+    keepalive = ka.WorkIQKeepAlive()
+    _force_idle(keepalive, monkeypatch)
+
+    await keepalive._tick_once()
+
+    assert patched["refresh_calls"] == 0
+    assert patched["auth_banner_calls"] == []
+    assert patched["manager"].marked == []
+
+
+async def test_idle_lapse_opt_out(patched: dict, monkeypatch) -> None:
+    """Disabling the knob keeps idle credentials completely silent."""
+    patched["expiry"] = datetime.now(UTC) - timedelta(minutes=5)
+    patched["refresh_result"] = None
+    keepalive = ka.WorkIQKeepAlive()
+    keepalive._settings = keepalive._settings.model_copy(
+        update={"workiq_keepalive_surface_idle_lapse": False}
+    )
+    _force_idle(keepalive, monkeypatch)
+
+    await keepalive._tick_once()
+
+    assert patched["refresh_calls"] == 0
+    assert patched["auth_banner_calls"] == []
+    assert patched["manager"].marked == []
+
+
+async def test_active_refresh_failure_flags_manager(patched: dict) -> None:
+    """A failed refresh for an active credential also feeds the manager verdict."""
+    patched["expiry"] = None
+    patched["refresh_result"] = None
+    keepalive = ka.WorkIQKeepAlive()
+
+    await keepalive._tick_once()
+
+    assert patched["manager"].marked == ["workiq"]
 
 
 async def test_raises_auth_banner_once_when_refresh_fails(patched: dict) -> None:
