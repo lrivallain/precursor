@@ -86,6 +86,19 @@ from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
 
+# An agent reaching one of these has ended its turn, which is what a workflow
+# waits on to advance. ``needs_approval`` is included because the coordinator
+# uses that pass to surface the approve/deny card on the workflow board, not
+# because it moves the run on.
+_RESTING_STATUSES = (
+    "idle",
+    "completed",
+    "failed",
+    "blocked",
+    "cancelled",
+    "needs_approval",
+)
+
 # Slash commands the system intercepts inside an agent session map to real actions
 # (rename/clear/archive) handled in ``AgentManager.run_command`` rather than being
 # forwarded to the SDK as prompt text. Every *other* slash command is rejected.
@@ -1770,12 +1783,18 @@ class AgentManager:
         exception there would otherwise be swallowed and leave the agent stuck on
         its "sending…" spinner. Record it as a ``failed`` status with the error
         text and publish, mirroring how the SDK's own ``ErrorData`` is surfaced.
+
+        This lands *outside* the event seam, so the workflow advance is enqueued
+        here explicitly: a step whose dispatch blew up emits no further events,
+        and without this its run would sit in ``running`` until the watchdog (if
+        one is configured at all) noticed.
         """
         logger.exception("agent %s: turn dispatch failed", agent_id)
         message = str(exc).strip() or exc.__class__.__name__
         with contextlib.suppress(Exception):
             await self._patch(agent_id, status="failed", error=message[:2000])
             await self._publish(agent_id)
+            self.enqueue(self._advance_workflows(agent_id))
 
     async def list_models(self) -> list[dict[str, Any]]:
         """Return the runtime's available models, or empty.
@@ -2093,6 +2112,13 @@ class AgentManager:
         # (e.g. on topic link) and process restart, where the SDK would otherwise
         # drop it (``get_events`` only replays ``SessionStartData`` on resume).
         await self._ensure_loaded(agent_id)
+        # The status *before* this event is handled, read up front rather than
+        # around the final patch below: handlers reached from here (``_on_idle``,
+        # and ``_enforce_budget`` via ``_record_usage``) commit status changes of
+        # their own mid-flight, and those are transitions the workflow seam must
+        # still see.
+        before = await self._load(agent_id)
+        before_status = before.status if before is not None else None
         normalised = normalize_event(event)
         normalised.at = datetime.now(UTC)
         self._events.setdefault(agent_id, []).append(normalised)
@@ -2163,15 +2189,17 @@ class AgentManager:
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
         )
-        # Workflow coordination advances whenever this agent reaches a
-        # resting/terminal state — a workflow chains plain agents itself.
-        if agent is not None and agent.status in (
-            "idle",
-            "completed",
-            "failed",
-            "blocked",
-            "cancelled",
-            "needs_approval",
+        # Workflow coordination advances when this agent *transitions into* a
+        # resting/terminal state — a workflow chains plain agents itself. Testing
+        # the status alone would re-fire for every subsequent event an already
+        # resting agent emits (pending-message, MCP-status and tool-list updates
+        # all arrive after a turn ends), and each of those advances raced the
+        # others into re-entering the same step: duplicate trace rows, a second
+        # real ``start_task``, and double-counted tokens.
+        if (
+            agent is not None
+            and agent.status != before_status
+            and agent.status in _RESTING_STATUSES
         ):
             self.enqueue(self._advance_workflows(agent_id))
 
