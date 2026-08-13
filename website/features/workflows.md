@@ -327,6 +327,32 @@ agent's session on its next run. The agent itself carries the same three toggles
 as its baseline (editable from the step modal); the step overrides them for the
 duration of its turn.
 
+## Tool approvals for the whole pipeline
+
+A step's agent can stop mid-run to ask permission for a tool call — and until
+someone answers, the **entire run is parked**. For a workflow fired by a schedule
+or a webhook there is nobody there to answer, so it stalls until the
+[watchdog](#the-stall-watchdog) kills it.
+
+**Tool approvals** in the workflow's settings sets the policy for every step's
+agent while the pipeline runs — the same **Manual / Balanced / Autonomous**
+choice an individual agent has. Like the [role](#one-voice-for-the-whole-pipeline)
+it is applied to whichever agent is about to run rather than written onto the
+agent row, so a shared agent keeps its own policy everywhere else it is used.
+Leave it on *each agent's own policy* to change nothing.
+
+::: tip A gate you can answer from the board
+When a step does stop at a permission request, the approve / deny card appears
+**on the workflow board**. That matters most for an [inline
+step](#inline-steps-one-off-work-that-isnt-an-agent): its agent is hidden from
+the Agents section, so the board is the only place its decision can be made.
+
+Answering it also puts the paused run **back in flight**. Resolving the gate only
+un-parks the *agent*; the block had stopped the coordinator too, so without this
+the approved step would finish its turn into a pipeline that had stopped
+listening. The continuing turn is recorded as a fresh attempt in the run trace.
+:::
+
 ## One voice for the whole pipeline
 
 A workflow can select an **Assistant role**, applied to every step's agent while
@@ -429,6 +455,38 @@ self-explanatory rather than a mystery result. Runs started **on a schedule**
 carry no brief by design; a **webhook** may supply one by posting a body
 (`{"input": "…"}`, or any JSON/text payload, handed over verbatim).
 
+## Getting a stopped run moving again
+
+A run stops for two different reasons, and each has its own way forward.
+
+- **Blocked** — a step's agent raised a question it couldn't answer alone. The
+  run parks and the control turns amber, showing the question with a box to
+  answer it. The answer is injected into the step's kickoff, so the retry has
+  what it was missing; resuming without one simply re-runs the step.
+- **Failed** — the step that broke wears a **Retry this step** button on its own
+  card. It re-drives *that step* as a fresh attempt on the **same run** and
+  carries on from there, so the good steps before it are neither thrown away nor
+  paid for twice. The attempt is appended to the run trace with a bumped
+  attempt badge, exactly like a gate loop-back. **Guidance** in the toolbar adds
+  a note for the retry when the agent can't diagnose the failure itself.
+
+Re-driving a step first **releases whatever parked it** — an unanswered
+permission gate is rejected and the old turn aborted — so the retry starts on an
+idle session instead of queueing behind the thing it was meant to fix.
+
+## What a step actually did
+
+Every attempt in the run trace carries an **Activity** section: the same
+timeline the [Agents](/features/agents) cockpit renders — tool calls with their
+arguments and output, reasoning, assistant messages, lifecycle hooks — sliced to
+that attempt's own window. It's the difference between "the step stalled" and
+"the step asked to run `workiq-do_action` and nobody approved it".
+
+Activity is fetched on demand, so opening one attempt doesn't load the rest. In
+a finished attempt, a tool call that never terminated is reported as
+**interrupted** (or **never approved**) rather than left spinning — nothing can
+still be running in an attempt that has ended.
+
 ## Archiving
 
 A workflow archives like a topic, chat or agent: **Archive** on the detail board
@@ -474,7 +532,10 @@ Workflows live under `/api/workflows`:
 | `GET /api/workflows/{id}/runs` | List persisted run traces (`?limit`) |
 | `PATCH /api/workflows/{id}` | Update fields / replace steps |
 | `DELETE /api/workflows/{id}` | Delete |
-| `POST /api/workflows/{id}/run` \| `/pause` \| `/resume` \| `/cancel` | Lifecycle. `run` takes an optional `{ "input": "…" }` brief |
+| `POST /api/workflows/{id}/run` \| `/pause` \| `/resume` \| `/cancel` | Lifecycle. `run` and `resume` take an optional `{ "input": "…" }` — a run brief, and an answer to whatever blocked the step |
+| `POST /api/workflows/{id}/retry` | Re-drive one step of a stopped run (`{ "position": N, "input": "…" }`) |
+| `POST /api/workflows/{id}/permission` | Answer a step's tool-permission gate (`{ "request_id": "…", "decision": "approve-once\|approve-always\|deny" }`) and resume the run |
+| `GET /api/workflows/{id}/run-steps/{stepRunId}/events` | One attempt's agent activity (tool calls, reasoning) |
 | `POST /api/workflows/{id}/approve` \| `/reject` | Clear or bounce a human approval checkpoint (`{ "note": "…", "action": "rework\|stop\|skip" }`) |
 | `POST /api/workflows/{id}/archive` \| `/unarchive` | Archive toggle |
 | `PUT /api/workflows/{id}/schedule` | Configure the schedule |

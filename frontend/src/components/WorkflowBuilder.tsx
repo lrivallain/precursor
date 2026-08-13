@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Loader2, ShieldCheck, X } from "lucide-react";
 import { api } from "../lib/api";
 import { EmojiPicker } from "./EmojiPicker";
-import type { Role, Workflow } from "../lib/types";
+import type { AgentApprovalPolicy, Role, Workflow } from "../lib/types";
+import { APPROVAL_POLICIES } from "./AgentsSettings";
 
 interface Props {
   /** Existing workflow to edit, or null to create a fresh one. */
@@ -31,6 +32,13 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
   // each step's agent at launch rather than stamped onto the shared agent rows.
   const [roleId, setRoleId] = useState<number | null>(workflow?.role_id ?? null);
   const [roles, setRoles] = useState<Role[]>([]);
+  // Workflow-wide tool-approval policy. What makes an *unattended* pipeline
+  // actually unattended: a step that stops at a permission gate parks the whole
+  // run until a human answers, which a scheduled or webhook-fired workflow has
+  // nobody to do. Null keeps each agent's own setting.
+  const [approvalPolicy, setApprovalPolicy] = useState<AgentApprovalPolicy | null>(
+    workflow?.approval_policy ?? null,
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +66,7 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
             max_loops: maxLoops,
             step_timeout_seconds: timeoutMin > 0 ? timeoutMin * 60 : 0,
             role_id: roleId ?? 0,
+            approval_policy: approvalPolicy,
           })
         : await api.workflows.create({
             name: name.trim(),
@@ -67,6 +76,7 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
             max_loops: maxLoops,
             step_timeout_seconds: timeoutMin > 0 ? timeoutMin * 60 : null,
             role_id: roleId,
+            approval_policy: approvalPolicy,
           });
       onSaved(saved);
     } catch {
@@ -185,6 +195,29 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
               {roles.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-sm text-fg">
+              Tool approvals
+              <span className="ml-1 text-[11px] text-muted">
+                a gate nobody answers stalls the whole run
+              </span>
+            </span>
+            <select
+              value={approvalPolicy ?? ""}
+              onChange={(e) =>
+                setApprovalPolicy((e.target.value || null) as AgentApprovalPolicy | null)
+              }
+              className="max-w-[14rem] rounded-lg border border-border bg-bg/40 px-2 py-1 text-sm outline-none focus:border-indigo-500"
+            >
+              <option value="">Each agent&apos;s own policy</option>
+              {APPROVAL_POLICIES.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
                 </option>
               ))}
             </select>

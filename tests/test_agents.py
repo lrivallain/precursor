@@ -3991,3 +3991,580 @@ async def test_agent_list_carries_workflow_count() -> None:
         listed = {a["id"] for a in client.get("/api/agents").json()}
         assert {used_id, spare_id} <= listed
         assert inline_id not in listed
+
+
+# --- Getting a stopped run moving again --------------------------------------
+#
+# Two dead ends the pipeline used to have no answer for. A step's agent *blocks*
+# on a question it can't resolve, and resuming re-drove it blind — straight back
+# into the same question. Or a step *fails* under the `fail` policy, and the only
+# way forward was re-running the whole pipeline from step 1, discarding every
+# good step before the bad one (and paying for them again).
+
+
+async def test_resume_injects_the_humans_answer_into_the_blocked_step() -> None:
+    """Resuming a blocked step carries the answer, quoting what it asked."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    await _open_run_for(wf_id)
+
+    # The step's agent parks itself on a question, which pauses the run.
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agents[0])
+        assert agent is not None
+        agent.blocked_question = "Which sheet should I use?"
+        await session.commit()
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "blocked")
+    assert mgr.calls == []
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None and wf.status == "paused"
+
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.resume_workflow(session, mgr2, wf_id, guidance="  Use the EMEA sheet.  ")
+
+    # Same step re-driven, now carrying both the question and its answer.
+    assert [c[0] for c in mgr2.calls] == [agents[0]]
+    context = mgr2.calls[0][1] or ""
+    assert "Which sheet should I use?" in context
+    assert "Use the EMEA sheet." in context
+    assert "Do not ask it again" in context
+
+
+async def test_resume_without_an_answer_still_just_resumes() -> None:
+    """A plain pause needs no guidance — the bodyless resume is unchanged."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    await _open_run_for(wf_id)
+    async with SessionLocal() as session:
+        await wf_mod.pause_workflow(session, wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.resume_workflow(session, mgr, wf_id)
+
+    assert [c[0] for c in mgr.calls] == [agents[0]]
+    assert "a human answered it" not in (mgr.calls[0][1] or "")
+
+
+async def test_retry_step_reopens_the_run_at_the_failed_step() -> None:
+    """A failed run picks back up at the step that broke, as a new attempt."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "failed")
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None and wf.status == "failed" and wf.error
+
+    # Retry with no position: the step whose failure stopped the run.
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr2, wf_id, guidance="Use the v2 endpoint.")
+
+    assert [c[0] for c in mgr2.calls] == [agents[0]]
+    assert "Use the v2 endpoint." in (mgr2.calls[0][1] or "")
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        assert wf.status == "running"
+        # The stale outcome is cleared — the run is going again, not finished.
+        assert wf.error is None
+        assert wf.finished_at is None
+
+    # Same run, with the retry appended as a second attempt at that position
+    # rather than starting a fresh run that discards the trace.
+    steps = await _run_steps(run_id)
+    step0 = [s for s in steps if s.position == 0]
+    assert [s.attempt for s in step0] == [1, 2]
+    assert step0[0].status == "failed"
+    assert step0[1].status == "running"
+
+
+async def test_retry_step_targets_an_explicit_position() -> None:
+    """Retrying names its step, so an earlier one can be redone deliberately."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task", "task"])
+    await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "failed")
+
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr2, wf_id, position=1)
+    assert [c[0] for c in mgr2.calls] == [agents[1]]
+
+
+async def test_retry_step_resets_the_spent_retry_budget() -> None:
+    """A manual retry starts fresh instead of inheriting an exhausted counter."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(
+        kinds=["task", "task"],
+        step_kwargs=[{"on_error": "retry", "max_retries": 1}, {}],
+    )
+    await _open_run_for(wf_id)
+
+    # Burn the automatic budget: first failure retries, second stops the run.
+    for _ in range(2):
+        mgr = _FakeWorkflowManager()
+        async with SessionLocal() as session:
+            wf = await wf_mod._load_workflow(session, wf_id)
+            assert wf is not None
+            await wf_mod._advance_one(session, mgr, wf, agents[0], "failed")
+
+    async with SessionLocal() as session:
+        step = (
+            (
+                await session.execute(
+                    select(WorkflowStep).where(
+                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert step.retry_count == 1
+
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr2, wf_id)
+
+    async with SessionLocal() as session:
+        step = (
+            (
+                await session.execute(
+                    select(WorkflowStep).where(
+                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert step.retry_count == 0
+
+
+async def test_retry_step_refuses_while_the_run_is_live() -> None:
+    """Retrying under a running coordinator would race it, so it's a no-op."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, _agents = await _seed_linear_workflow(kinds=["task", "task"])
+    await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr, wf_id)
+    assert mgr.calls == []
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None and wf.status == "running"
+
+
+async def test_retry_and_resume_endpoints_accept_an_optional_body() -> None:
+    """Both take a body or none, so scripted callers keep working."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    try:
+        with TestClient(create_app()) as client:
+            await _set_agents_enabled(True)
+            wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+            await _open_run_for(wf_id)
+
+            mgr = _FakeWorkflowManager()
+            async with SessionLocal() as session:
+                wf = await wf_mod._load_workflow(session, wf_id)
+                assert wf is not None
+                await wf_mod._advance_one(session, mgr, wf, agents[0], "failed")
+
+            assert (
+                client.post(f"/api/workflows/{wf_id}/retry", json={"input": "try v2"}).status_code
+                == 200
+            )
+            async with SessionLocal() as session:
+                wf = await session.get(Workflow, wf_id)
+                assert wf is not None and wf.status == "running"
+
+            # Bodyless resume on a paused run.
+            async with SessionLocal() as session:
+                await wf_mod.pause_workflow(session, wf_id)
+            assert client.post(f"/api/workflows/{wf_id}/resume").status_code == 200
+    finally:
+        # Leave the shared scratch DB with agents off: a later app startup
+        # would otherwise try to launch the real Copilot runtime and hang.
+        await _set_agents_enabled(False)
+
+
+async def test_step_attempt_events_are_sliced_to_their_own_attempt() -> None:
+    """Each attempt shows its own activity, not the agent's whole history.
+
+    Events are archived per *agent*, so a step re-driven four times has one
+    continuous stream. Without slicing, every trace row would replay all of it
+    and the one attempt you're debugging would be indistinguishable.
+    """
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord
+    from precursor.backend.models.workflow import WorkflowRunStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task"])
+    run_id = await _open_run_for(wf_id)
+    agent_id = agents[0]
+    assert agent_id is not None
+
+    base = datetime.now(UTC).replace(microsecond=0)
+
+    async with SessionLocal() as session:
+        # Attempt 1 ran and finished; attempt 2 is still open.
+        first = (
+            (await session.execute(select(WorkflowRunStep).where(WorkflowRunStep.run_id == run_id)))
+            .scalars()
+            .one()
+        )
+        first.started_at = base
+        first.finished_at = base + timedelta(seconds=30)
+        second = WorkflowRunStep(
+            run_id=run_id,
+            position=0,
+            kind="task",
+            label="Step 0",
+            agent_id=agent_id,
+            attempt=2,
+            status="running",
+            started_at=base + timedelta(seconds=60),
+        )
+        session.add(second)
+        for offset, kind in (
+            (-600, "before_the_run"),  # an earlier, unrelated turn
+            (5, "reasoning"),
+            (10, "ToolExecutionStartData"),
+            (70, "assistant_message"),  # belongs to attempt 2
+        ):
+            session.add(
+                AgentEventRecord(
+                    agent_session_id=agent_id,
+                    payload=json.dumps({"kind": kind}),
+                    created_at=base + timedelta(seconds=offset),
+                )
+            )
+        await session.commit()
+        first_id, second_id = first.id, second.id
+
+    async with SessionLocal() as session:
+        one = await wf_mod.step_attempt_events(session, wf_id, first_id)
+        two = await wf_mod.step_attempt_events(session, wf_id, second_id)
+
+    assert one is not None and two is not None
+    # Bounded at both ends: the earlier turn and attempt 2's work are excluded.
+    assert [e["kind"] for e in one] == ["reasoning", "ToolExecutionStartData"]
+    # An open attempt has no upper bound, so it collects everything since it began.
+    assert [e["kind"] for e in two] == ["assistant_message"]
+    # Every event carries a timestamp so the UI can order and label it.
+    assert all(e.get("at") for e in one)
+
+
+async def test_step_attempt_events_reject_a_foreign_workflow() -> None:
+    """An attempt id from another workflow is a 404, not someone else's trace."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowRunStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    mine, _ = await _seed_linear_workflow(kinds=["task"])
+    theirs, _ = await _seed_linear_workflow(kinds=["task"])
+    their_run = await _open_run_for(theirs)
+
+    async with SessionLocal() as session:
+        their_step = (
+            (
+                await session.execute(
+                    select(WorkflowRunStep).where(WorkflowRunStep.run_id == their_run)
+                )
+            )
+            .scalars()
+            .one()
+        )
+        step_id = their_step.id
+
+    async with SessionLocal() as session:
+        assert await wf_mod.step_attempt_events(session, mine, step_id) is None
+        assert await wf_mod.step_attempt_events(session, theirs, step_id) is not None
+
+
+async def test_workflow_approval_policy_applies_to_each_step_agent() -> None:
+    """The pipeline's stance wins for the run, without rewriting shared agents.
+
+    A step that stops at a permission gate parks the whole run until a human
+    answers — which a scheduled or webhook-fired workflow has nobody to do. The
+    policy is therefore set once on the workflow and pushed onto whichever agent
+    is about to run, rather than stamped onto agents that are used elsewhere too.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    agent_id = agents[0]
+    assert agent_id is not None
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        agent.approval_policy = "manual"
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        wf.approval_policy = "autonomous"
+        await session.commit()
+
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        step = (
+            (
+                await session.execute(
+                    select(WorkflowStep).where(
+                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        await wf_mod._apply_step_overrides(session, wf, step)
+        await session.commit()
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.approval_policy == "autonomous"
+
+    # A workflow that states no policy leaves the agent's own alone.
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        wf.approval_policy = None
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        agent.approval_policy = "manual"
+        await session.commit()
+
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        step = (
+            (
+                await session.execute(
+                    select(WorkflowStep).where(
+                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        await wf_mod._apply_step_overrides(session, wf, step)
+        await session.commit()
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.approval_policy == "manual"
+
+
+async def test_workflow_read_surfaces_a_steps_parked_permission() -> None:
+    """The board must be able to answer a gate on an *inline* step.
+
+    An inline step's agent is hidden from the Agents roster, so if the workflow
+    payload doesn't carry the pending request there is nowhere in the app to
+    approve it and the step stalls until the watchdog kills it.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowStep
+    from precursor.backend.services.agents.manager import get_agent_manager
+
+    await _ensure_schema()
+    try:
+        with TestClient(create_app()) as client:
+            await _set_agents_enabled(True)
+            wf_id, agents = await _seed_linear_workflow(kinds=["task"])
+            agent_id = agents[0]
+            assert agent_id is not None
+            async with SessionLocal() as session:
+                step = (
+                    (
+                        await session.execute(
+                            select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id)
+                        )
+                    )
+                    .scalars()
+                    .one()
+                )
+                step.kind = "inline"
+                await session.commit()
+
+            # Stand in for a live session parked on a tool-permission request.
+            mgr = get_agent_manager()
+            original = mgr.live_activity
+            mgr.live_activity = lambda ids: {  # type: ignore[method-assign]
+                aid: {
+                    "active_tool": None,
+                    "active_tool_count": 0,
+                    "active_narration": "sending the email",
+                    "pending_permission": {
+                        "request_id": "req-1",
+                        "title": "Run workiq-do_action",
+                        "data": {"tool": "workiq-do_action", "server": "workiq"},
+                    },
+                }
+                for aid in ids
+            }
+            try:
+                body = client.get(f"/api/workflows/{wf_id}").json()
+            finally:
+                mgr.live_activity = original  # type: ignore[method-assign]
+
+        agent = body["steps"][0]["agent"]
+        assert agent["pending_permission"]["request_id"] == "req-1"
+        # The whole payload travels — the board has no event stream to mine it from.
+        assert agent["pending_permission"]["data"]["tool"] == "workiq-do_action"
+        # Live narration rides along too (it was silently null before).
+        assert agent["active_narration"] == "sending the email"
+    finally:
+        await _set_agents_enabled(False)
+
+
+async def test_approving_a_steps_permission_puts_the_run_back_in_flight() -> None:
+    """Resolving the gate must un-pause the workflow, not just the agent.
+
+    The block paused the run and closed the step's trace, and
+    ``advance_for_agent`` only ever looks at *running* workflows. Without this,
+    an approved agent finishes its turn into a pipeline that stopped listening —
+    the board sits on "Blocked" forever and the run never moves.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+    agent_id = agents[0]
+    assert agent_id is not None
+
+    # The step's agent parks on a tool-permission request → run pauses.
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agent_id, "needs_approval")
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None and wf.status == "paused"
+    assert [s.status for s in await _run_steps(run_id)] == ["blocked"]
+
+    class _PermissionManager(_FakeWorkflowManager):
+        def __init__(self) -> None:
+            super().__init__()
+            self.resolved: list[tuple[int, str, str]] = []
+
+        async def resolve_permission(self, aid: int, request_id: str, decision: str) -> bool:
+            self.resolved.append((aid, request_id, decision))
+            return True
+
+    pm = _PermissionManager()
+    async with SessionLocal() as session:
+        wf, ok = await wf_mod.resolve_step_permission(
+            session, pm, wf_id, request_id="req-1", decision="approve-once"
+        )
+    assert ok is True
+    assert pm.resolved == [(agent_id, "req-1", "approve-once")]
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        # Listening again, and pointed back at the step that was parked.
+        assert wf.status == "running"
+
+    # The continuing turn has an open trace to record into, appended as a new
+    # attempt rather than reopening the one closed as blocked.
+    steps = await _run_steps(run_id)
+    assert [s.status for s in steps] == ["blocked", "running"]
+    assert [s.attempt for s in steps] == [1, 2]
+
+    # And the coordinator now advances when that turn lands.
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr2, wf, agent_id, "idle")
+    assert [c[0] for c in mgr2.calls] == [agents[1]]
+
+
+async def test_resolving_a_stale_permission_reports_it_rather_than_pretending() -> None:
+    """A card for a gate that's gone must say so, not silently do nothing."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, _agents = await _seed_linear_workflow(kinds=["task"])
+    await _open_run_for(wf_id)
+
+    class _NoMatchManager(_FakeWorkflowManager):
+        async def resolve_permission(self, aid: int, request_id: str, decision: str) -> bool:
+            return False
+
+    async with SessionLocal() as session:
+        wf, ok = await wf_mod.resolve_step_permission(
+            session, _NoMatchManager(), wf_id, request_id="gone", decision="deny"
+        )
+    assert ok is False
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        # Untouched: nothing was resolved, so nothing is resumed.
+        assert wf is not None and wf.status == "running"

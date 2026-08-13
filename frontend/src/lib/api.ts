@@ -518,6 +518,11 @@ export const api = {
       const qs = limit ? `?limit=${limit}` : "";
       return request<WorkflowRun[]>(`/api/workflows/${id}/runs${qs}`);
     },
+    // The agent's activity for one step *attempt* — tool calls, reasoning,
+    // errors. Sliced to the attempt's window, so an agent re-driven several
+    // times doesn't replay its whole history under every trace row.
+    stepEvents: (id: number, stepRunId: number) =>
+      request<AgentEvent[]>(`/api/workflows/${id}/run-steps/${stepRunId}/events`),
     create: (data: WorkflowCreate) =>
       request<Workflow>(`/api/workflows`, {
         method: "POST",
@@ -549,7 +554,38 @@ export const api = {
         }),
       }),
     pause: (id: number) => request<Workflow>(`/api/workflows/${id}/pause`, { method: "POST" }),
-    resume: (id: number) => request<Workflow>(`/api/workflows/${id}/resume`, { method: "POST" }),
+    // Resume a paused run. `input` answers whatever parked it — when the pause
+    // came from a step's agent blocking on a question, re-driving it blind would
+    // just hit the same question again.
+    resume: (id: number, input?: string | null) =>
+      request<Workflow>(`/api/workflows/${id}/resume`, {
+        method: "POST",
+        body: JSON.stringify({ input: input?.trim() ? input.trim() : null }),
+      }),
+    // Answer the tool-permission gate parking a step. Goes through the workflow
+    // (not the agent) because resolving it must also un-pause the run: the block
+    // stopped the coordinator, so an approved agent would otherwise finish its
+    // turn into a pipeline that had stopped listening.
+    resolvePermission: (
+      id: number,
+      requestId: string,
+      decision: AgentPermissionDecisionValue,
+    ) =>
+      request<Workflow>(`/api/workflows/${id}/permission`, {
+        method: "POST",
+        body: JSON.stringify({ request_id: requestId, decision }),
+      }),
+    // Re-drive one step of a stopped run as a fresh attempt, in place — instead
+    // of re-running the whole pipeline and paying for the good steps twice.
+    // Omit `position` to retry the step whose failure stopped the run.
+    retry: (id: number, opts?: { position?: number | null; input?: string | null }) =>
+      request<Workflow>(`/api/workflows/${id}/retry`, {
+        method: "POST",
+        body: JSON.stringify({
+          position: opts?.position ?? null,
+          input: opts?.input?.trim() ? opts.input.trim() : null,
+        }),
+      }),
     cancel: (id: number) => request<Workflow>(`/api/workflows/${id}/cancel`, { method: "POST" }),
     listArchived: () => request<Workflow[]>(`/api/workflows/archived`),
     archive: (id: number) => request<Workflow>(`/api/workflows/${id}/archive`, { method: "POST" }),

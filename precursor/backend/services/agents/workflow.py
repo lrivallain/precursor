@@ -26,8 +26,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -180,6 +180,24 @@ def _rejection_preamble(feedback: str) -> str:
         f"Their feedback: {feedback.strip()}\n\n"
         "Produce a new version that addresses this feedback directly."
     )
+
+
+def _unblock_preamble(guidance: str, question: str | None = None) -> str:
+    """The human's answer to whatever parked this step.
+
+    A step blocks when its agent raises a question it can't resolve alone.
+    Echoing the question back alongside the answer keeps the exchange legible in
+    the trace — and stops the retry from re-asking the thing it was just told.
+    """
+    parts = ["### You asked a question and a human answered it"]
+    if question and question.strip():
+        parts.append(f"You asked: {question.strip()}")
+    parts.append(f"Their answer: {guidance.strip()}")
+    parts.append(
+        "Treat this as settled and carry on. Do not ask it again — complete your "
+        "step with this answer."
+    )
+    return "\n\n".join(parts)
 
 
 def _approval_notes_preamble(notes: str) -> str:
@@ -433,6 +451,8 @@ async def _build_context(
     earlier_agent_ids: list[int] | None = None,
     fail_reason: str | None = None,
     human_feedback: str | None = None,
+    unblock_guidance: str | None = None,
+    blocked_question: str | None = None,
     run_input: str | None = None,
     approval_notes: str | None = None,
 ) -> str | None:
@@ -445,6 +465,8 @@ async def _build_context(
         parts.append(_run_input_preamble(run_input))
     if approval_notes:
         parts.append(_approval_notes_preamble(approval_notes))
+    if unblock_guidance:
+        parts.append(_unblock_preamble(unblock_guidance, blocked_question))
     if human_feedback:
         parts.append(_rejection_preamble(human_feedback))
     if fail_reason:
@@ -682,6 +704,12 @@ async def _finalize_run(
     run.status = status
     if status in ("completed", "failed", "cancelled"):
         run.finished_at = datetime.now(UTC)
+    else:
+        # Re-opened (resumed or retried): a run that is going again hasn't
+        # finished, and must not keep a stale outcome from the attempt that
+        # stopped it.
+        run.finished_at = None
+        run.error = None
     if result_summary is not None:
         run.result_summary = result_summary[:2000]
     if error is not None:
@@ -782,6 +810,11 @@ async def _apply_step_overrides(
         agent.use_memory = step.use_memory
     if workflow.role_id is not None:
         agent.role_id = workflow.role_id
+    if workflow.approval_policy is not None:
+        # The pipeline's tool-approval stance wins for the duration of the run.
+        # Applied here rather than written onto the agent permanently, so a
+        # shared agent keeps its own policy everywhere else it is used.
+        agent.approval_policy = workflow.approval_policy
 
 
 def _selected_source_positions(step: WorkflowStep, max_position: int) -> list[int]:
@@ -807,6 +840,7 @@ async def _enter_step(
     *,
     fail_reason: str | None = None,
     human_feedback: str | None = None,
+    unblock_guidance: str | None = None,
 ) -> None:
     """Drive the run into ``steps[idx]``: park for a human, or launch its agent."""
     step = steps[idx]
@@ -823,6 +857,13 @@ async def _enter_step(
 
     if step.agent_id is None:
         return
+
+    # What the agent parked itself on, read *before* the launch clears it, so the
+    # guidance below can quote the question it answers.
+    blocked_question: str | None = None
+    if unblock_guidance:
+        parked = await session.get(AgentSession, step.agent_id)
+        blocked_question = parked.blocked_question if parked else None
 
     # Capability overrides + the workflow's role land on the agent before the
     # session is (re)built, so the toggles apply to the turn we're about to run.
@@ -860,6 +901,8 @@ async def _enter_step(
         earlier_agent_ids=earlier_ids,
         fail_reason=fail_reason,
         human_feedback=human_feedback,
+        unblock_guidance=unblock_guidance,
+        blocked_question=blocked_question,
         run_input=await _run_input(session, workflow),
         approval_notes=await _approval_notes(session, workflow),
     )
@@ -1224,9 +1267,20 @@ async def pause_workflow(session: AsyncSession, workflow_id: int) -> Workflow | 
 
 
 async def resume_workflow(
-    session: AsyncSession, manager: AgentManager, workflow_id: int
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow_id: int,
+    *,
+    guidance: str | None = None,
 ) -> Workflow | None:
-    """Resume a paused workflow by re-driving its current step's agent."""
+    """Resume a paused workflow by re-driving its current step's agent.
+
+    ``guidance`` is the answer to whatever parked the run. A pause is usually
+    just a pause, but a run also parks when a step's agent **blocks** on a
+    question — and re-driving that step unchanged would strand it on the same
+    question. Supplying guidance injects the answer into the step's kickoff so
+    the retry can actually get past it.
+    """
     workflow = await _load_workflow(session, workflow_id)
     if workflow is None:
         return None
@@ -1247,8 +1301,264 @@ async def resume_workflow(
     # ``_enter_step`` re-derives the step's context (and parks again if the
     # resumed step is an approval checkpoint).
     idx = next((i for i, s in enumerate(steps) if s.id == current.id), 0)
-    await _enter_step(session, manager, workflow, steps, idx)
+    await _enter_step(
+        session,
+        manager,
+        workflow,
+        steps,
+        idx,
+        unblock_guidance=(guidance.strip() if guidance and guidance.strip() else None),
+    )
     return workflow
+
+
+async def resolve_step_permission(
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow_id: int,
+    *,
+    request_id: str,
+    decision: str,
+) -> tuple[Workflow | None, bool]:
+    """Answer the tool-permission gate parking a step, and let the run carry on.
+
+    Resolving the gate in the runtime is only half of it. The block paused the
+    *workflow* and closed the step's trace, and ``advance_for_agent`` only ever
+    looks at ``running`` workflows — so an approved agent would happily finish
+    its turn into a pipeline that had stopped listening, leaving the board stuck
+    on "Blocked" forever. Putting the run back to ``running`` and opening a trace
+    for the continuing attempt restores the seam, so the coordinator advances
+    when the turn lands.
+
+    Returns ``(workflow, resolved)``. ``resolved`` is False when no live request
+    matched — a stale card from a gate that has since been cancelled or answered
+    elsewhere — so the caller can say so rather than silently doing nothing.
+    """
+    workflow = await _load_workflow(session, workflow_id)
+    if workflow is None:
+        return None, False
+
+    steps = _ordered_steps(workflow)
+    # The parked agent is whichever step is holding the run. Fall back to
+    # scanning, because the cursor can lag a publish.
+    current = next((s for s in steps if s.id == workflow.current_step_id), None)
+    candidates = [current] if current and current.agent_id else [s for s in steps if s.agent_id]
+    resolved = False
+    agent_id: int | None = None
+    for step in candidates:
+        if step is None or step.agent_id is None:
+            continue
+        if await manager.resolve_permission(step.agent_id, request_id, decision):
+            resolved = True
+            agent_id = step.agent_id
+            target = step
+            break
+    if not resolved or agent_id is None:
+        return workflow, False
+
+    if workflow.status == "paused":
+        workflow.status = "running"
+        workflow.current_step_id = target.id
+        await _finalize_run(session, workflow, status="running")
+        # The blocked attempt's trace was closed when the run parked; the turn
+        # now continuing is a new one, so give it somewhere to record.
+        run_id = workflow.current_run_id
+        if run_id is not None:
+            prior = await session.execute(
+                select(func.count(WorkflowRunStep.id)).where(
+                    WorkflowRunStep.run_id == run_id,
+                    WorkflowRunStep.position == target.position,
+                )
+            )
+            agent = await session.get(AgentSession, agent_id)
+            session.add(
+                WorkflowRunStep(
+                    run_id=run_id,
+                    position=target.position,
+                    kind=target.kind,
+                    label=_step_label(target),
+                    agent_id=agent_id,
+                    attempt=int(prior.scalar() or 0) + 1,
+                    status="running",
+                    input_context=(
+                        f"Permission {'granted' if decision != 'deny' else 'denied'} by a human; "
+                        "the step continued from where it stopped."
+                    ),
+                    started_at=datetime.now(UTC),
+                    token_baseline_in=agent.total_input_tokens if agent else 0,
+                    token_baseline_out=agent.total_output_tokens if agent else 0,
+                )
+            )
+        await session.commit()
+        await _publish(workflow)
+    return workflow, True
+
+
+async def retry_step(
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow_id: int,
+    *,
+    position: int | None = None,
+    guidance: str | None = None,
+) -> Workflow | None:
+    """Re-drive one step of a stopped run as a fresh attempt, in place.
+
+    When a step fails under the ``fail`` policy the whole run stops — and the
+    only way back was to run the pipeline again from step 1, throwing away every
+    good step before the bad one (and paying for them twice). This picks the run
+    back up at the step that broke: it re-enters that step, which appends a new
+    attempt to the *same* run trace, and carries on through the rest of the
+    pipeline from there.
+
+    ``position`` targets a specific step; omitted, it retries the one that
+    stopped the run. ``guidance`` is optional human input injected into the
+    retry, for a failure the agent can't diagnose on its own.
+    """
+    workflow = await _load_workflow(session, workflow_id)
+    if workflow is None:
+        return None
+    # Only a stopped run can be picked back up: retrying a step underneath a
+    # live run would race the coordinator that is still driving it.
+    if workflow.status not in ("failed", "cancelled"):
+        return workflow
+
+    steps = _ordered_steps(workflow)
+    if not steps:
+        return workflow
+
+    target_idx: int | None = None
+    if position is not None:
+        target_idx = next((i for i, s in enumerate(steps) if s.position == position), None)
+    else:
+        failed_pos = await _last_failed_position(session, workflow)
+        if failed_pos is not None:
+            target_idx = next((i for i, s in enumerate(steps) if s.position == failed_pos), None)
+    if target_idx is None:
+        return workflow
+
+    step = steps[target_idx]
+    # An approval checkpoint has no agent to re-drive; re-entering it just parks
+    # the run for the human again, which is the right behaviour.
+    if not _is_runnable(step) and step.kind != "approval":
+        return workflow
+
+    # A retry is a fresh attempt at the same step, so the exhausted automatic
+    # retry budget resets — otherwise the manual retry would inherit a spent
+    # counter and give up immediately on its next failure.
+    step.retry_count = 0
+    workflow.status = "running"
+    workflow.error = None
+    workflow.finished_at = None
+    await _finalize_run(session, workflow, status="running")
+    await session.commit()
+    await _publish(workflow)
+
+    await _enter_step(
+        session,
+        manager,
+        workflow,
+        steps,
+        target_idx,
+        unblock_guidance=(guidance.strip() if guidance and guidance.strip() else None),
+    )
+    return workflow
+
+
+async def step_attempt_events(
+    session: AsyncSession, workflow_id: int, step_run_id: int
+) -> list[dict[str, Any]] | None:
+    """The agent's normalised event stream for one step *attempt*.
+
+    A trace row tells you what a step received and produced, but not *how* it
+    got there — which is exactly what you need when a step blocks or stalls with
+    no output at all. The events (tool calls, reasoning, errors) live per agent
+    in ``agent_events``, so an agent re-driven four times has one continuous
+    stream; this slices it to the attempt's own window so each row shows only
+    its own work.
+
+    Returns ``None`` when the attempt doesn't belong to the workflow (a 404 for
+    the caller), and an empty list when it simply has no archived activity.
+    """
+    run_step = await session.get(WorkflowRunStep, step_run_id)
+    if run_step is None:
+        return None
+    run = await session.get(WorkflowRun, run_step.run_id)
+    if run is None or run.workflow_id != workflow_id:
+        return None
+    if run_step.agent_id is None or run_step.started_at is None:
+        return []
+
+    # A small lead-in: the trace row is written immediately *before* the agent is
+    # enqueued, but clock granularity (and a re-used session's first event)
+    # shouldn't drop the opening events of the attempt.
+    start = run_step.started_at - timedelta(seconds=2)
+    stmt = (
+        select(AgentEventRecord.payload, AgentEventRecord.created_at)
+        .where(
+            AgentEventRecord.agent_session_id == run_step.agent_id,
+            AgentEventRecord.created_at >= start,
+        )
+        .order_by(AgentEventRecord.id)
+    )
+    if run_step.finished_at is not None:
+        # A finished attempt is bounded — but not at exactly ``finished_at``.
+        # The events that *cause* the finalization (the permission request that
+        # blocked it, the error that failed it) are archived microseconds after
+        # the status change that closed the row, so cutting there drops the very
+        # evidence you opened the trace for. Extend to the next attempt on this
+        # agent instead, which is the true boundary; only when there is no next
+        # attempt do we fall back to a grace window.
+        next_start = (
+            await session.execute(
+                select(WorkflowRunStep.started_at)
+                .where(
+                    WorkflowRunStep.agent_id == run_step.agent_id,
+                    WorkflowRunStep.id != run_step.id,
+                    WorkflowRunStep.started_at > run_step.started_at,
+                )
+                .order_by(WorkflowRunStep.started_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        end = next_start or (run_step.finished_at + timedelta(seconds=30))
+        stmt = stmt.where(AgentEventRecord.created_at < end)
+
+    events: list[dict[str, Any]] = []
+    for payload, created_at in (await session.execute(stmt)).all():
+        try:
+            data = json.loads(payload)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        # Older rows predate the payload carrying its own timestamp; fall back to
+        # the row's so the UI can always order and label them.
+        if not data.get("at") and created_at is not None:
+            data["at"] = created_at.isoformat()
+        events.append(data)
+    return events
+
+
+async def _last_failed_position(session: AsyncSession, workflow: Workflow) -> int | None:
+    """Position of the step whose failure stopped the current run.
+
+    Read from the run trace rather than ``current_step_id``, which the failure
+    path clears on its way out.
+    """
+    if workflow.current_run_id is None:
+        return None
+    result = await session.execute(
+        select(WorkflowRunStep.position)
+        .where(
+            WorkflowRunStep.run_id == workflow.current_run_id,
+            WorkflowRunStep.status.in_(("failed", "cancelled")),
+        )
+        .order_by(WorkflowRunStep.id.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    return int(row) if row is not None else None
 
 
 # --- Human approval ---------------------------------------------------------

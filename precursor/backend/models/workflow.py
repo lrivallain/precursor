@@ -152,6 +152,15 @@ class Workflow(Base, TimestampMixin):
         ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Tool-approval policy applied to every step's agent while the workflow runs
+    # ("manual" / "balanced" / "autonomous"). Null leaves each agent's own
+    # setting alone. This is the lever that makes an *unattended* pipeline
+    # actually unattended: a step that stops at a permission gate parks the whole
+    # run until a human answers, which defeats a scheduled or webhook-fired
+    # workflow. Set once here rather than on every shared agent, which would
+    # change how those agents behave outside this pipeline too.
+    approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # Run bookkeeping for the gallery + metrics.
     run_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

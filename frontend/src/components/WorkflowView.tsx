@@ -12,6 +12,7 @@ import {
   Download,
   FileInput,
   GripVertical,
+  HelpCircle,
   History,
   ListOrdered,
   Loader2,
@@ -22,13 +23,15 @@ import {
   RotateCcw,
   SkipForward,
   ShieldCheck,
+  ShieldQuestion,
   Trash2,
   UserCheck,
   Webhook,
   Workflow as WorkflowIcon,
 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, apiErrorMessage } from "../lib/api";
 import { CopyableMarkdown } from "./CopyableMarkdown";
+import { PermissionBody } from "./AgentPermissionBody";
 import type {
   AgentModelInfo,
   AgentSession,
@@ -211,6 +214,14 @@ export function WorkflowView({
   // Human approval checkpoint: the note travels with the decision — as a remark
   // on approve, as the rework feedback on reject.
   const [approvalNote, setApprovalNote] = useState("");
+  // Guidance carried by a resume or a step retry. A run parks when its agent
+  // blocks on a question, and stops when a step fails; in both cases re-driving
+  // the step unchanged tends to reproduce what stopped it, so the operator gets
+  // a way to say what the agent was missing.
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [guidance, setGuidance] = useState("");
+  const [showGuidance, setShowGuidance] = useState(false);
+  const guidanceRef = useRef<HTMLTextAreaElement | null>(null);
   // Inline step authoring. Editing replaces the whole step list server-side (and
   // would null a running workflow's cursor), so it's an explicit mode with an
   // explicit save, and it's refused while a run is in flight.
@@ -346,10 +357,14 @@ export function WorkflowView({
   const act = useCallback(
     async (label: string, fn: () => Promise<Workflow>) => {
       setBusy(label);
+      setActionError(null);
       try {
         onChanged(await fn());
-      } catch {
-        // Errors surface via the section's global reload; swallow here.
+      } catch (e) {
+        // Most lifecycle failures are transient and self-correct on the next
+        // reload, but a refused *decision* must be said out loud — silently
+        // doing nothing looks exactly like an approval that didn't stick.
+        setActionError(apiErrorMessage(e, "That didn't work. Try again."));
       } finally {
         setBusy(null);
       }
@@ -447,6 +462,59 @@ export function WorkflowView({
     : null;
   const awaitingApproval = workflowAwaitsApproval(workflow);
   const approvalStep = awaitingApproval ? currentStep : null;
+
+  // A tool-permission gate parking a step. Scanned across every step rather
+  // than only the current one, because the cursor can lag the runtime by a
+  // publish, and a gate nobody can answer is what silently stalls a run.
+  const permissionStep =
+    workflow.steps.find((s) => s.agent?.pending_permission?.request_id) ?? null;
+  const pendingPermission = permissionStep?.agent?.pending_permission ?? null;
+  const permissionData = (pendingPermission?.data ?? {}) as Record<string, unknown>;
+
+  // A pause is either a plain "hold it" or an agent parking on a question it
+  // couldn't answer. Only the second wants an answer before resuming, so the
+  // control changes colour and grows an input rather than looking identical in
+  // both cases. The agent's own status is the signal — the workflow is merely
+  // "paused" either way.
+  const blockedAgent =
+    workflow.status === "paused" &&
+    currentStep?.agent &&
+    (currentStep.agent.status === "blocked" || currentStep.agent.status === "needs_approval")
+      ? currentStep.agent
+      : null;
+
+  // A blocked run opens its answer box unprompted: the agent asked a question,
+  // and hiding both the question and the field to answer it behind a chevron
+  // would make "Resume" look like the whole story when it usually isn't.
+  const blockedAgentId = blockedAgent?.id ?? null;
+  useEffect(() => {
+    if (blockedAgentId != null) setShowGuidance(true);
+  }, [blockedAgentId]);
+
+  // The step whose failure stopped the run, so it can be re-driven on its own
+  // instead of replaying the whole pipeline. Read from the trace, because the
+  // failure path clears the workflow's step cursor on its way out.
+  const failedStep =
+    workflow.status === "failed"
+      ? [...(selectedRun?.step_runs ?? [])]
+          .reverse()
+          .find((s) => s.status === "failed" || s.status === "cancelled") ?? null
+      : null;
+  const retryLabel = failedStep
+    ? `${failedStep.label || `Step ${failedStep.position + 1}`}`
+    : null;
+
+  // Re-drive one step as a fresh attempt, carrying whatever guidance the
+  // operator typed. Shared by the card action and (potentially) any other
+  // surface that wants to restart a specific step.
+  async function runRetry(position: number): Promise<void> {
+    await act("retry", async () => {
+      const wf = await api.workflows.retry(workflow.id, { position, input: guidance });
+      setGuidance("");
+      setShowGuidance(false);
+      return wf;
+    });
+  }
 
   // Which run the step strip reflects. Normally the selected one, so scrolling
   // the run picker replays how the strip looked then. But while a run is *live*,
@@ -618,6 +686,38 @@ export function WorkflowView({
         {/* Human approval checkpoint — the run is parked waiting on a decision.
             Deliberately above the lifecycle bar: it's the only thing that moves
             the pipeline while it's here. */}
+        {actionError && (
+          <p className="mt-2 text-xs text-red-500">{actionError}</p>
+        )}
+
+        {/* A tool-permission gate parking the current step. This has to live on
+            the board: an inline step's vessel is hidden from the Agents roster,
+            so without it the decision cannot be made anywhere in the app and the
+            step stalls until the watchdog kills it. */}
+        {pendingPermission && (
+          <div className="mt-3 rounded-xl border border-orange-500/40 bg-orange-500/[0.07] p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <ShieldQuestion size={14} className="text-orange-500" />
+              <span className="text-sm font-medium text-fg">
+                {currentStep ? stepLabel(currentStep) : "A step"} needs permission
+              </span>
+              {pendingPermission.title && (
+                <span className="truncate text-xs text-muted">{pendingPermission.title}</span>
+              )}
+            </div>
+            <PermissionBody
+              data={permissionData}
+              requestId={pendingPermission.request_id}
+              busy={busy != null}
+              onDecision={(requestId, decision) =>
+                void act("permission", () =>
+                  api.workflows.resolvePermission(workflow.id, requestId, decision),
+                )
+              }
+            />
+          </div>
+        )}
+
         {awaitingApproval && (
           <div className="mt-3 rounded-xl border border-violet-500/40 bg-violet-500/[0.07] p-3">
             <div className="mb-2 flex items-center gap-2">
@@ -749,14 +849,76 @@ export function WorkflowView({
             </button>
           )}
           {workflow.status === "paused" && (
+            <div
+              className={`flex items-stretch overflow-hidden rounded-lg border ${
+                blockedAgent ? "border-amber-500 bg-amber-500" : "border-border"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  void act("resume", async () => {
+                    const wf = await api.workflows.resume(workflow.id, guidance);
+                    setGuidance("");
+                    setShowGuidance(false);
+                    return wf;
+                  })
+                }
+                disabled={busy != null}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition disabled:opacity-40 ${
+                  blockedAgent
+                    ? "text-white hover:bg-amber-600"
+                    : "text-fg hover:bg-white/5"
+                }`}
+              >
+                {busy === "resume" ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : blockedAgent && guidance.trim() ? (
+                  <HelpCircle size={14} />
+                ) : (
+                  <Play size={14} />
+                )}
+                {/* Only claim to answer when there is an answer: resuming a
+                    blocked step with an empty box just re-drives it, which is a
+                    different (and often futile) act. */}
+                {blockedAgent && guidance.trim() ? "Answer & resume" : "Resume"}
+              </button>
+              {blockedAgent && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGuidance((v) => !v);
+                    window.setTimeout(() => guidanceRef.current?.focus(), 0);
+                  }}
+                  className="border-l border-white/25 px-1.5 text-white transition hover:bg-amber-600"
+                  title={showGuidance ? "Hide answer" : "Answer what it asked"}
+                  aria-expanded={showGuidance}
+                  aria-label="Answer the blocked step"
+                >
+                  <ChevronDown
+                    size={14}
+                    className={`transition-transform ${showGuidance ? "rotate-180" : ""}`}
+                  />
+                </button>
+              )}
+            </div>
+          )}
+          {failedStep && (
             <button
               type="button"
-              onClick={() => void act("resume", () => api.workflows.resume(workflow.id))}
-              disabled={busy != null}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-fg transition hover:bg-white/5 disabled:opacity-40"
+              onClick={() => {
+                setShowGuidance((v) => !v);
+                window.setTimeout(() => guidanceRef.current?.focus(), 0);
+              }}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition ${
+                showGuidance
+                  ? "border-amber-500/50 bg-amber-500/10 text-amber-500"
+                  : "border-border text-muted hover:border-amber-500/50 hover:text-amber-500"
+              }`}
+              title="Add guidance for the retry — the retry itself is on the failed step"
+              aria-expanded={showGuidance}
             >
-              {busy === "resume" ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              Resume
+              <HelpCircle size={14} /> Guidance
             </button>
           )}
           {active && (
@@ -833,6 +995,58 @@ export function WorkflowView({
             </span>
           )}
         </div>
+
+        {showGuidance && (blockedAgent || failedStep) && (
+          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <HelpCircle size={13} className="text-amber-500" />
+              <span className="text-xs font-medium text-fg">
+                {blockedAgent ? "Answer the question" : `Guidance for ${retryLabel}`}
+              </span>
+              <span className="text-[11px] text-muted">
+                {blockedAgent
+                  ? "Optional — resuming without one just re-runs the step"
+                  : "Optional — what the last attempt got wrong"}
+              </span>
+            </div>
+            {blockedAgent?.blocked_question && (
+              <p className="mb-2 rounded-lg border border-border bg-bg/60 px-3 py-2 text-xs text-muted">
+                {blockedAgent.blocked_question}
+              </p>
+            )}
+            {!blockedAgent && workflow.error && (
+              <p className="mb-2 rounded-lg border border-border bg-bg/60 px-3 py-2 text-xs text-red-500">
+                {workflow.error}
+              </p>
+            )}
+            <textarea
+              ref={guidanceRef}
+              value={guidance}
+              onChange={(e) => setGuidance(e.target.value.slice(0, 8000))}
+              rows={3}
+              placeholder={
+                blockedAgent
+                  ? "e.g. Use the EMEA sheet — ignore the archived tabs."
+                  : "e.g. The API needs the v2 endpoint; the v1 one is retired."
+              }
+              className="w-full resize-y rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-fg outline-none transition placeholder:text-muted/70 focus:border-amber-500"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {guidance && (
+                <button
+                  type="button"
+                  onClick={() => setGuidance("")}
+                  className="text-xs text-muted transition hover:text-fg"
+                >
+                  Clear
+                </button>
+              )}
+              <span className="ml-auto text-[10px] tabular-nums text-muted">
+                {guidance.length}/8000
+              </span>
+            </div>
+          </div>
+        )}
 
         {showBrief && !active && (
           <div className="mt-3 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.04] p-3">
@@ -1069,6 +1283,10 @@ export function WorkflowView({
               const holo =
                 state === "active" &&
                 (workflow.status === "running" || workflow.status === "awaiting_approval");
+              // The step that stopped the run wears its own retry: the failure is
+              // legible right there on the card, so the fix belongs there too
+              // rather than in a toolbar that doesn't say which step it means.
+              const isFailed = failedStep != null && failedStep.position === step.position;
               return (
                 <div key={step.id} className="flex items-stretch gap-1">
                   <button
@@ -1150,6 +1368,40 @@ export function WorkflowView({
                     )}
                     {!step.agent && !approval && (
                       <p className="mt-1.5 text-[11px] text-red-500">Agent missing</p>
+                    )}
+                    {isFailed && (
+                      // Pinned to the card's bottom edge (mt-auto) so the retry
+                      // sits on the same baseline across the strip rather than
+                      // floating wherever this card's text happens to end.
+                      // Nested inside the card (itself a button), so it has to be
+                      // a role="button" span — the codebase's existing pattern
+                      // for an action living inside a clickable card.
+                      <span className="mt-auto block pt-2">
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runRetry(step.position);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void runRetry(step.position);
+                            }
+                          }}
+                          title="Run this step again as a new attempt and carry on from here — the steps before it are kept"
+                          className="flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-amber-600"
+                        >
+                          {busy === "retry" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <RotateCcw size={12} />
+                          )}
+                          Retry this step
+                        </span>
+                      </span>
                     )}
                   </button>
                   {idx < workflow.steps.length - 1 && (
@@ -1277,7 +1529,11 @@ export function WorkflowView({
               />
             </button>
             {showTrace && (
-              <WorkflowRunTrace run={selectedRun} onOpenAgent={onOpenInAgents} />
+              <WorkflowRunTrace
+                run={selectedRun}
+                workflowId={workflow.id}
+                onOpenAgent={onOpenInAgents}
+              />
             )}
           </div>
         )}
