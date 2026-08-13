@@ -19,11 +19,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   each step actually needed exactly one. The step modal now has a **Servers**
   row listing every enabled server with its tool count: leave it on **All** for
   the old behaviour, name the ones the step may see, or select none to run it
-  with no tools at all. It is a real allowlist rather than a prompt-level
-  request — the servers you didn't pick are never attached, so the step cannot
-  reach them and pays nothing for their schemas. Changing the selection rebuilds
-  that step's session, and unknown names are carried through export/import so a
-  workflow still imports onto a machine with a different server set.
+  with no tools at all. Precursor's own server is listed and scoped alongside
+  the rest — it needs no enabling, but it is one of the larger catalogues on a
+  normal install and a step that only needs `fetch` shouldn't pay for topic,
+  memory and schedule tools it will never call. It is a real allowlist rather
+  than a prompt-level request — the servers you didn't pick are never attached,
+  so the step cannot reach them and pays nothing for their schemas. Changing the
+  selection rebuilds that step's session, and unknown names are carried through
+  export/import so a workflow still imports onto a machine with a different
+  server set.
 
 - **See what a workflow step actually did.** Every attempt in the run trace now
   carries an **Activity** section rendering the same timeline the Agents cockpit

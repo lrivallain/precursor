@@ -259,9 +259,11 @@ async def test_expected_mcp_fingerprint_tracks_scope_and_steadies_tools_off() ->
     """The rebuild decision must see a scope change — and *not* see a false one.
 
     A shared agent moving from a ``fetch``-only step to a ``my-http``-only one
-    would otherwise reuse the old catalogue. Conversely a tools-off agent stores
-    the off sentinel, so comparing it against the raw enabled set made every
-    dispatch rebuild a session that was already correct.
+    would otherwise reuse the old catalogue. That includes the first-party
+    ``precursor`` server, which is exempt from the enabled toggle but not from
+    the allowlist. Conversely a tools-off agent stores the off sentinel, so
+    comparing it against the raw enabled set made every dispatch rebuild a
+    session that was already correct.
     """
     from precursor.backend.models import AgentSession
     from precursor.backend.services.agents.manager import (
@@ -285,11 +287,21 @@ async def test_expected_mcp_fingerprint_tracks_scope_and_steadies_tools_off() ->
 
         agent.use_mcp = True
         agent.mcp_servers = None
-        assert await mgr._expected_mcp_fingerprint(agent) == frozenset({"fetch", "my-http"})
+        assert await mgr._expected_mcp_fingerprint(agent) == frozenset(
+            {"fetch", "my-http", "precursor"}
+        )
 
         agent.mcp_servers = "fetch"
         narrowed = await mgr._expected_mcp_fingerprint(agent)
+        # Scoping away from precursor drops it: it ignores the enabled toggle,
+        # not the allowlist.
         assert narrowed == frozenset({"fetch"})
+
+        # ...and naming it puts it back, so a step that only re-points the
+        # first-party server still reads as a change.
+        agent.mcp_servers = "fetch,precursor"
+        assert await mgr._expected_mcp_fingerprint(agent) == frozenset({"fetch", "precursor"})
+        assert await mgr._expected_mcp_fingerprint(agent) != narrowed
 
         # Re-pointing the same agent at another step's scope reads as a change.
         agent.mcp_servers = "my-http"

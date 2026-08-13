@@ -881,11 +881,20 @@ class AgentManager:
         raw comparison did not: its stored fingerprint is the off sentinel, so it
         never matched the enabled set and every dispatch tore down and rebuilt a
         session that was already correct.
+
+        ``precursor`` is folded in here rather than in
+        :meth:`_enabled_catalog_fingerprint`, which answers a narrower question
+        (what the user's toggles enable). The first-party server ignores those
+        toggles but *is* scopable, so a step that only re-points precursor still
+        has to read as a change.
         """
         scope = parse_mcp_scope(agent.mcp_servers)
         if not agent.use_mcp or (scope is not None and not scope):
             return _MCP_OFF_FINGERPRINT
-        return await self._enabled_catalog_fingerprint(scope)
+        catalog = await self._enabled_catalog_fingerprint(scope)
+        if scope is None or "precursor" in scope:
+            return catalog | {"precursor"}
+        return catalog
 
     async def _catalog_mcp_configs(
         self,
@@ -1151,24 +1160,30 @@ class AgentManager:
         # scope says the same thing in the other vocabulary, and means it.
         scope = parse_mcp_scope(agent.mcp_servers)
         scoped_to_nothing = scope is not None and not scope
-        mcp = self._precursor_mcp_config() if agent.use_mcp and not scoped_to_nothing else None
+        tools_on = agent.use_mcp and not scoped_to_nothing
         oauth_expires_at: datetime | None = None
         auth_required: list[str] = []
-        mcp_fingerprint: frozenset[str] | None = None
-        if mcp is not None:
-            # Attach every enabled catalog server the scope allows (built-in +
-            # user-defined). _catalog_mcp_configs already excludes 'precursor',
-            # so the first-party full-access entry can't be shadowed.
+        if tools_on:
+            mcp: dict[str, Any] = {}
+            # ``precursor`` ignores the mcp_enabled toggle (it's first-party and
+            # always available) but is not exempt from the scope: it's one of the
+            # larger catalogues on a normal install, and a step that just needs
+            # `fetch` shouldn't pay for topic, memory and schedule tools it will
+            # never call. Attached here rather than via _catalog_mcp_configs so
+            # it keeps its full-access env.
+            if scope is None or "precursor" in scope:
+                mcp.update(self._precursor_mcp_config() or {})
+            # Every enabled catalog server the scope allows (built-in +
+            # user-defined). _catalog_mcp_configs already skips 'precursor', so
+            # the first-party full-access entry above can't be shadowed.
             catalog, oauth_expires_at, auth_required = await self._catalog_mcp_configs(scope)
             mcp.update(catalog)
-            kwargs["mcp_servers"] = mcp
-            # Snapshot the attachable set so a later toggle — or a step with a
-            # different scope reusing this agent — rebuilds the session.
-            mcp_fingerprint = await self._enabled_catalog_fingerprint(scope)
-        if mcp_fingerprint is None:
-            # Off is still a distinct state: mark it so flipping MCP back on
-            # rebuilds the session instead of reusing a tool-less one.
-            mcp_fingerprint = _MCP_OFF_FINGERPRINT
+            if mcp:
+                kwargs["mcp_servers"] = mcp
+        # Snapshot what this session carries so a later toggle — or a step with a
+        # different scope reusing this agent — rebuilds it. Computed by the same
+        # method the reuse check compares against, so the two can't drift.
+        mcp_fingerprint = await self._expected_mcp_fingerprint(agent)
         preamble = await self._system_preamble(agent)
         if preamble:
             # Append (don't replace) so the agent keeps its SDK base instructions

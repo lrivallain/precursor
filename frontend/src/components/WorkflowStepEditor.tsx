@@ -345,13 +345,18 @@ export function WorkflowStepEditModal({
         ? "Quality gate"
         : `Step ${index + 1}`;
   const idx = index;
-  // ``precursor`` is first-party and always attached with the tools on, so it is
-  // not a scoping choice; disabled servers can't attach either way.
-  const scopableServers = mcpServers.filter((s) => s.enabled && s.name !== "precursor");
+  // ``precursor`` ignores the Settings → MCP toggle — it's first-party and
+  // attaches whenever tools are on — so it's listed regardless of `enabled`.
+  // It is not exempt from the scope, though, and is one of the larger
+  // catalogues on a normal install, so hiding it would hide a real cost.
+  const scopableServers = mcpServers.filter((s) => s.enabled || s.name === "precursor");
   // The catalogue always has the built-ins in it, so an empty array means the
   // fetch hasn't landed yet — worth distinguishing from "nothing is enabled",
   // which is a state the author has to act on.
   const serversLoaded = mcpServers.length > 0;
+  // ``precursor`` is always on offer, so it can't stand in for a populated
+  // catalogue: having only it still means nothing has been enabled.
+  const onlyFirstParty = scopableServers.every((s) => s.name === "precursor");
   // Names the step asked for that this install can't attach — either not
   // registered here, or registered and switched off. Surfaced rather than
   // silently dropped, because they are meaningful on the machine the workflow
@@ -779,16 +784,17 @@ export function WorkflowStepEditModal({
                       </button>
                     );
                   })}
-                  {/* Nothing to pick from is a setup problem, not an empty list:
-                      say so instead of leaving a lone "All" that looks broken.
-                      A deliberate empty scope outranks it — that one is a choice. */}
+                  {/* Nothing but the first-party server to pick from is a setup
+                      gap, not an empty list: say so instead of leaving a row
+                      that looks broken. A deliberate empty scope outranks it —
+                      that one is a choice. */}
                   {step.mcpServers !== null && step.mcpServers.length === 0 ? (
                     <span className="text-muted/70">no tools at all, same as Tools off</span>
                   ) : (
                     serversLoaded &&
-                    scopableServers.length === 0 && (
+                    onlyFirstParty && (
                       <span className="text-muted/70">
-                        no servers enabled — turn them on in Settings → MCP
+                        no other servers enabled — turn them on in Settings → MCP
                       </span>
                     )
                   )}

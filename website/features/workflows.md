@@ -338,14 +338,23 @@ over 95% of the run's tokens while each step actually needed exactly one server.
 So a step with tools on can also name **which servers** it may see. The
 **Servers** row in the step modal lists every server you've enabled in
 **Settings → MCP**, with its tool count, so the cost is visible where the choice
-is made. Enable a server there first — until you do, the row has nothing to
-offer but **All**, and says so.
+is made. Enable a server there first — until you do, the row has only
+Precursor's own server to offer, and says so.
 
 | Selection | The step gets |
 | --- | --- |
 | **All** (default) | Every enabled server — the behaviour before this existed. |
-| One or more servers | Only those, plus Precursor's own first-party server. |
+| One or more servers | Only those. |
 | Nothing selected | No tool servers at all — identical to **Tools: off**. |
+
+Precursor's own first-party server is listed alongside the rest and is scoped
+like any of them. It doesn't need enabling in **Settings → MCP** — it attaches
+whenever a step has tools on — but it is one of the larger catalogues on a
+normal install, so a step that only needs `fetch` shouldn't be paying for topic,
+memory and schedule tools it will never call. Leave it selected if the step
+writes back into Precursor (posting to a topic, storing a memory, setting a
+reminder); a step's result is handed to the next step from the transcript either
+way, so dropping it doesn't break the pipeline.
 
 This is a real allowlist, not a request: the servers you didn't pick are never
 attached to the session, so the step *cannot* call them and their schemas cost
