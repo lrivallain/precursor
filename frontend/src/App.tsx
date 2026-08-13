@@ -405,9 +405,16 @@ export default function App() {
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
-  const [settingsCategory, setSettingsCategory] = useState<"collections" | undefined>(
-    undefined,
-  );
+  const [settingsCategory, setSettingsCategory] = useState<
+    "collections" | "agents" | undefined
+  >(undefined);
+  // AgentView's "Open Settings" only ever appears in its "Agents mode is off"
+  // state, so it lands on the Agents category rather than making the user hunt
+  // for the toggle it just told them to flip.
+  const openAgentSettings = useCallback(() => {
+    setSettingsCategory("agents");
+    setGlobalSettingsOpen(true);
+  }, []);
   // Collections filter the topic tree; the selection is per-browser, not in the URL.
   const [collections, setCollections] = useState<Collection[]>([]);
   const [activeCollectionId, setActiveCollectionId] = useState<number | null>(null);
@@ -2607,7 +2614,7 @@ export default function App() {
                   unavailableReason={agentsUnavailableReason}
                   onReload={() => void loadAgents()}
                   onSelect={selectAgentFromHome}
-                  onOpenSettings={() => setGlobalSettingsOpen(true)}
+                  onOpenSettings={openAgentSettings}
                   draftTopicId={null}
                 />
               }
@@ -2806,7 +2813,7 @@ export default function App() {
               unavailableReason={agentsUnavailableReason}
               onReload={() => void loadAgents()}
               onSelect={(id) => setActiveAgentId(id)}
-              onOpenSettings={() => setGlobalSettingsOpen(true)}
+              onOpenSettings={openAgentSettings}
               draftTopicId={agentDraftTopicId}
             />
           )}

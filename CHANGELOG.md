@@ -53,6 +53,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **"Open Settings" from the Agents-off screen now lands on Agents.** The button
+  told you to turn the feature on and then dropped you on Appearance, leaving you
+  to find the right category yourself. It opens Settings directly on **Agents**,
+  where the toggle it just pointed at is.
+
 - **Switching a step's kind or agent source no longer strands its agent.**
   Converting an inline step to an agent-backed one kept the reference to its
   private vessel, which the save then swept as an orphan — leaving a step reading
