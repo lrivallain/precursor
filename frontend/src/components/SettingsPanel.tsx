@@ -1738,6 +1738,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "agent_state",
+    label: "Agent state",
+    hint: "Read & write an agent's durable scratchpad (cursors it keeps between runs).",
+    danger: true,
+  },
+  {
     key: "post_message",
     label: "Post message",
     hint: "Let callers post to a topic and run a full assistant turn.",
@@ -1919,7 +1925,11 @@ function McpExposeCard({
   const [open, setOpen] = useState(false);
   const anyOn = EXPOSE_SECTIONS.some((s) => expose[s.key]);
   const anyWriteOn =
-    expose.memory_write || expose.post_message || expose.schedules || expose.reminders;
+    expose.memory_write ||
+    expose.agent_state ||
+    expose.post_message ||
+    expose.schedules ||
+    expose.reminders;
   return (
     <div className="border border-border rounded mb-4">
       <button

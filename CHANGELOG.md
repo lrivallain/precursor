@@ -46,6 +46,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   export/import so a workflow still imports onto a machine with a different
   server set.
 
+- **Agents can remember things between runs.** A new **State** store gives every
+  agent a private key/value scratchpad that *survives re-runs* — the missing
+  third surface next to long-term **memory** (global, and injected into every
+  turn) and **artifacts** (per-agent, but wiped at the start of each fresh run).
+  A scheduled or webhook-triggered agent can now save its cursor — the last id it
+  processed, the items it already saw — and resume next run instead of redoing
+  the work. Agents read and write it with four first-party MCP tools
+  (`state_list`, `state_get`, `state_set`, `state_delete`) that default to the
+  calling agent, and **only the key index reaches the prompt**: bodies stay in the
+  database until a tool asks for one, so a large saved cursor costs nothing per
+  turn. The insights sidebar lists the saved keys, expands one to show its body,
+  and offers per-key delete plus a reset for when a cursor goes bad
+  (`GET|PUT /api/agents/{id}/state`, `DELETE /api/agents/{id}/state[/{key}]`).
+  Serving the tools to *external* MCP hosts is a separate opt-in under
+  **Settings → MCP servers → Precursor capabilities → Agent state**.
+
 - **See what a workflow step actually did.** Every attempt in the run trace now
   carries an **Activity** section rendering the same timeline the Agents cockpit
   does — tool calls with their arguments and output, reasoning, assistant

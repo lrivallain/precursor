@@ -353,6 +353,16 @@ the server preflights Docker availability against the effective jail setting.
   (store/update on the topic/chat/agent surfaces; `/memory-list` on topic/chat),
   or by the model itself through the `list_memories`/`store_memory`/`update_memory`
   MCP tools.
+- **Agent state** (`AgentState`, `services/agent_state.py`, `/api/agents/{id}/state`)
+  — an agent's *private* key/value scratchpad that survives re-runs, distinct from
+  both of the neighbouring stores: `Memory` is global and always injected, while
+  `AgentArtifact` is a published deliverable that `_clear_artifacts` wipes at the
+  start of every fresh run. It's what a scheduled or webhook-triggered agent uses
+  to remember a cursor between runs. Only the **key index** is injected into the
+  agent's preamble; bodies are fetched on demand through the
+  `state_list`/`state_get`/`state_set`/`state_delete` MCP tools, which resolve the
+  calling agent from the `PRECURSOR_AGENT_ID` env the manager stamps into the
+  first-party MCP subprocess.
 
 ## SPA
 

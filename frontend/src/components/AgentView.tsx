@@ -12,6 +12,7 @@ import {
   Code2,
   Copy,
   CornerDownRight,
+  Database,
   ExternalLink,
   Eye,
   HelpCircle,
@@ -22,6 +23,7 @@ import {
   PlayCircle,
   Plus,
   Radar,
+  RotateCcw,
   Settings as SettingsIcon,
   ShieldCheck,
   ShieldQuestion,
@@ -66,6 +68,7 @@ import type {
   AgentEvent,
   AgentPermissionDecisionValue,
   AgentSession,
+  AgentState,
   AgentTrigger,
   Collection,
   Me,
@@ -221,9 +224,10 @@ function AgentInsightsPanel({
 }
 
 // Per-agent orchestration cockpit shown in the insights sidebar: the shared
-// artifacts this agent published to the blackboard and its external webhook
-// triggers. Everything a running agent exposes lives here so the single-agent
-// view doubles as an orchestration surface rather than an isolated transcript.
+// artifacts this agent published to the blackboard, its durable cross-run state
+// and its external webhook triggers. Everything a running agent exposes lives
+// here so the single-agent view doubles as an orchestration surface rather than
+// an isolated transcript.
 function AgentOrchestrationSection({
   agent,
 }: {
@@ -231,13 +235,16 @@ function AgentOrchestrationSection({
 }) {
   const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [triggers, setTriggers] = useState<AgentTrigger[]>([]);
+  const [state, setState] = useState<AgentState[]>([]);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
   const [viewing, setViewing] = useState<AgentArtifact | null>(null);
+  const [expandedState, setExpandedState] = useState<string | null>(null);
 
   const loadOrch = useCallback(() => {
     void api.agents.listArtifacts(agent.id).then(setArtifacts).catch(() => setArtifacts([]));
     void api.agents.listTriggers(agent.id).then(setTriggers).catch(() => setTriggers([]));
+    void api.agents.listState(agent.id).then(setState).catch(() => setState([]));
   }, [agent.id]);
 
   useEffect(() => {
@@ -300,6 +307,30 @@ function AgentOrchestrationSection({
     });
   }
 
+  async function removeStateKey(key: string): Promise<void> {
+    setBusy(true);
+    try {
+      await api.agents.deleteState(agent.id, key);
+      setState((prev) => prev.filter((s) => s.key !== key));
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetState(): Promise<void> {
+    setBusy(true);
+    try {
+      await api.agents.clearState(agent.id);
+      setState([]);
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Shared artifacts (blackboard) */}
@@ -338,6 +369,72 @@ function AgentOrchestrationSection({
                 )}
               </div>
             </button>
+          ))
+        )}
+      </div>
+
+      {/* Durable state (private cross-run scratchpad) */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <Database size={14} />
+            <span>State</span>
+            {state.length > 0 && <span className="text-[11px] text-muted">({state.length})</span>}
+          </div>
+          {state.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void resetState()}
+              disabled={busy}
+              className="rounded p-0.5 text-muted hover:bg-surface hover:text-red-500 disabled:opacity-50"
+              data-tooltip="Reset saved state"
+              aria-label="Reset saved state"
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
+        </div>
+        {state.length === 0 ? (
+          <p className="text-[11px] text-muted">
+            Nothing saved. Unlike artifacts, state survives re-runs — an agent stores its cursor
+            here to resume where it left off.
+          </p>
+        ) : (
+          state.map((s) => (
+            <div key={s.key} className="rounded border border-border bg-surface/50">
+              <div className="flex items-center gap-1.5 px-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => setExpandedState((k) => (k === s.key ? null : s.key))}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                  aria-expanded={expandedState === s.key}
+                  title={expandedState === s.key ? "Hide value" : "Show value"}
+                >
+                  <ChevronRight
+                    size={11}
+                    className={`shrink-0 text-muted transition-transform ${
+                      expandedState === s.key ? "rotate-90" : ""
+                    }`}
+                  />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10px]">{s.key}</span>
+                  <span className="shrink-0 text-[10px] text-muted">{s.value.length}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void removeStateKey(s.key)}
+                  disabled={busy}
+                  className="rounded p-0.5 text-muted hover:text-red-500 disabled:opacity-50"
+                  aria-label={`Delete state key ${s.key}`}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+              {expandedState === s.key && (
+                <pre className="max-h-40 overflow-auto border-t border-border px-2 py-1 font-mono text-[10px] whitespace-pre-wrap break-words text-muted">
+                  {s.value || "(empty)"}
+                </pre>
+              )}
+            </div>
           ))
         )}
       </div>

@@ -35,6 +35,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from precursor.backend.models.agent_artifact import AgentArtifact
     from precursor.backend.models.agent_schedule import AgentSchedule
+    from precursor.backend.models.agent_state import AgentState
     from precursor.backend.models.agent_trigger import AgentTrigger
     from precursor.backend.models.chat import Chat
     from precursor.backend.models.topic import Topic
@@ -265,4 +266,17 @@ class AgentSession(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="AgentArtifact.created_at.desc()",
         lazy="selectin",
+    )
+
+    # Private cross-run scratchpad. Unlike ``artifacts`` this is deliberately
+    # *not* eager-loaded: state bodies can be sizeable and nothing in the agent
+    # serialisation needs them, so they're fetched only through the state API.
+    # The cascade still resolves on delete because ``AsyncSession.delete`` is
+    # awaited (it loads unloaded cascades), which also keeps cleanup correct on
+    # SQLite, where ``ON DELETE CASCADE`` is inert with foreign keys off.
+    states: Mapped[list[AgentState]] = relationship(
+        "AgentState",
+        back_populates="agent",
+        cascade="all, delete-orphan",
+        order_by="AgentState.key",
     )

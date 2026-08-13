@@ -18,6 +18,7 @@ import type {
   AgentScheduleUpdate,
   AgentSession,
   AgentSessionCreate,
+  AgentState,
   AgentTrigger,
   AgentTriggerCreate,
   AppVersion,
@@ -489,6 +490,23 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+
+    // --- State (private cross-run scratchpad) -----------------------------
+    // Distinct from artifacts: state is private bookkeeping that *survives*
+    // re-runs, so this surface is mostly for inspecting (or resetting) a
+    // recurring agent's saved cursor.
+    listState: (id: number) => request<AgentState[]>(`/api/agents/${id}/state`),
+    setState: (id: number, key: string, value: string) =>
+      request<AgentState>(`/api/agents/${id}/state`, {
+        method: "PUT",
+        body: JSON.stringify({ key, value }),
+      }),
+    deleteState: (id: number, key: string) =>
+      request<void>(`/api/agents/${id}/state/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+      }),
+    clearState: (id: number) =>
+      request<void>(`/api/agents/${id}/state`, { method: "DELETE" }),
 
     // --- Triggers (external webhooks) -------------------------------------
     listTriggers: (id: number) =>

@@ -8,6 +8,12 @@ from precursor.backend.models.agent_blueprint import AgentBlueprint
 from precursor.backend.models.agent_event import AgentEventRecord
 from precursor.backend.models.agent_schedule import AgentSchedule
 from precursor.backend.models.agent_session import AgentSession
+from precursor.backend.models.agent_state import (
+    AGENT_STATE_MAX_KEY,
+    AGENT_STATE_MAX_KEYS,
+    AGENT_STATE_MAX_VALUE,
+    AgentState,
+)
 from precursor.backend.models.agent_trigger import (
     AGENT_TRIGGER_TYPES,
     AgentTrigger,
@@ -51,6 +57,9 @@ from precursor.backend.models.workspace import Workspace
 
 __all__ = [
     "AGENT_ARTIFACT_KINDS",
+    "AGENT_STATE_MAX_KEY",
+    "AGENT_STATE_MAX_KEYS",
+    "AGENT_STATE_MAX_VALUE",
     "AGENT_TRIGGER_TYPES",
     "COLLECTION_ACCENTS",
     "DEFAULT_COLLECTION_ACCENT",
@@ -61,6 +70,7 @@ __all__ = [
     "AgentEventRecord",
     "AgentSchedule",
     "AgentSession",
+    "AgentState",
     "AgentTrigger",
     "AppSetting",
     "Attachment",

@@ -27,6 +27,7 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
     "search": ["search"],
     "skills": ["list_skills", "get_skill"],
     "memory": ["list_memories"],
+    "agent_state": ["state_list", "state_get", "state_set", "state_delete"],
     "post_message": ["post_message"],
     "schedules": [
         "list_schedules",

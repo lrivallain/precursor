@@ -307,7 +307,9 @@ than pointing at an unusable URL.
 Precursor runs a `FastMCP` server named **`precursor`** that exposes its own
 data to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 (meeting) sessions, cross-entity search, skills, memory (read + write),
-`post_message` (runs a full turn), schedules, and reminders.
+[agent state](/features/agents#durable-state-the-private-scratchpad) (an agent's
+durable cross-run scratchpad, read + write), `post_message` (runs a full turn),
+schedules, and reminders.
 
 **Search spans every surface** — the same ⌘K palette engine — so a host can find
 a topic, chat, agent task or meeting by content and then follow the hit's

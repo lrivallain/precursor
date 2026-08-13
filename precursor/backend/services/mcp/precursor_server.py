@@ -23,6 +23,8 @@ Sections → tools:
 - ``skills``       → list_skills, get_skill
 - ``memory``       → list_memories
 - ``memory_write`` → store_memory, update_memory (write — edits long-term memory)
+- ``agent_state``  → state_list, state_get, state_set, state_delete (read/write —
+                     an agent's private scratchpad that survives re-runs)
 - ``post_message`` → post_message (write — runs a full assistant turn)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
@@ -741,6 +743,139 @@ async def update_memory(
         except LookupError:
             return {"error": f"Memory {memory_id} not found"}
         return {"id": memory.id, "kind": memory.kind, "content": memory.content}
+
+
+# --------------------------------------------------------------------------
+# agent_state (read/write) — an agent's private scratchpad across runs
+# --------------------------------------------------------------------------
+def _self_agent_id() -> int | None:
+    """The agent this server was launched for, when it was launched by one.
+
+    ``AgentManager`` stamps ``PRECURSOR_AGENT_ID`` into the stdio subprocess env
+    so an agent can call ``state_set("cursor", …)`` without knowing its own row
+    id. An external MCP host gets no default and must pass ``agent_id``.
+    """
+    raw = os.environ.get("PRECURSOR_AGENT_ID")
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        return None
+
+
+async def _resolve_state_agent(agent_id: int | None) -> tuple[int | None, str | None]:
+    """Resolve + validate the target agent. Returns ``(id, error)``."""
+    resolved = agent_id if agent_id is not None else _self_agent_id()
+    if resolved is None:
+        return None, (
+            "No agent in context. Pass agent_id explicitly (see list_agents) — "
+            "the implicit default only exists inside an agent session."
+        )
+    async with SessionLocal() as session:
+        exists = await session.get(AgentSession, resolved)
+    if exists is None:
+        return None, f"Agent {resolved} not found"
+    return resolved, None
+
+
+@mcp.tool()
+async def state_list(agent_id: int | None = None) -> dict[str, Any]:
+    """List the keys an agent has saved in its durable state — **keys only**.
+
+    This is the agent's private scratchpad: unlike artifacts (wiped on every
+    fresh run) and memories (global, injected everywhere), state survives
+    re-runs and belongs to one agent. Bodies are omitted on purpose — call
+    ``state_get`` for the one you need.
+
+    ``agent_id`` defaults to the calling agent when running inside a session.
+    """
+    if not await _section_enabled("agent_state"):
+        return {"error": _GATED.format(section="agent_state")}
+    from precursor.backend.services import agent_state as state_service
+
+    resolved, error = await _resolve_state_agent(agent_id)
+    if error is not None:
+        return {"error": error}
+    async with SessionLocal() as session:
+        entries = await state_service.list_state_keys(session, resolved)  # type: ignore[arg-type]
+    return {
+        "agent_id": resolved,
+        "keys": [{"key": e.key, "size": e.size, "updated_at": _iso(e.updated_at)} for e in entries],
+        "count": len(entries),
+    }
+
+
+@mcp.tool()
+async def state_get(key: str, agent_id: int | None = None) -> dict[str, Any]:
+    """Read one durable state entry saved by a previous run.
+
+    Returns ``found: false`` (not an error) when the key was never written, so a
+    first run can branch on it without special-casing failures.
+    """
+    if not await _section_enabled("agent_state"):
+        return {"error": _GATED.format(section="agent_state")}
+    from precursor.backend.services import agent_state as state_service
+
+    resolved, error = await _resolve_state_agent(agent_id)
+    if error is not None:
+        return {"error": error}
+    async with SessionLocal() as session:
+        row = await state_service.get_state(session, resolved, key.strip().lower())  # type: ignore[arg-type]
+    if row is None:
+        return {"agent_id": resolved, "key": key, "found": False}
+    return {
+        "agent_id": resolved,
+        "key": row.key,
+        "value": row.value,
+        "found": True,
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+@mcp.tool()
+async def state_set(key: str, value: str, agent_id: int | None = None) -> dict[str, Any]:
+    """Save (upsert) a durable state entry that survives this agent's re-runs.
+
+    Use it for cross-run bookkeeping — a cursor, the ids you already processed,
+    a counter, a digest of the payload you last acted on — so the next run
+    resumes instead of redoing work. ``value`` is opaque text; JSON is the
+    convention. Writing an existing ``key`` replaces it.
+
+    Keep bodies small: this is for bookkeeping, not payloads. Park large or
+    binary content in a workspace file and store the path here instead.
+    """
+    if not await _section_enabled("agent_state"):
+        return {"error": _GATED.format(section="agent_state")}
+    from precursor.backend.schemas import AgentStateWrite
+    from precursor.backend.services import agent_state as state_service
+
+    resolved, error = await _resolve_state_agent(agent_id)
+    if error is not None:
+        return {"error": error}
+    try:
+        payload = AgentStateWrite(key=key, value=value)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    async with SessionLocal() as session:
+        try:
+            row, created = await state_service.set_state(session, resolved, payload)  # type: ignore[arg-type]
+        except ValueError as exc:
+            return {"error": str(exc)}
+    return {"agent_id": resolved, "key": row.key, "created": created, "size": len(row.value)}
+
+
+@mcp.tool()
+async def state_delete(key: str, agent_id: int | None = None) -> dict[str, Any]:
+    """Delete one durable state entry. Returns ``deleted: false`` if absent."""
+    if not await _section_enabled("agent_state"):
+        return {"error": _GATED.format(section="agent_state")}
+    from precursor.backend.services import agent_state as state_service
+
+    resolved, error = await _resolve_state_agent(agent_id)
+    if error is not None:
+        return {"error": error}
+    async with SessionLocal() as session:
+        removed = await state_service.delete_state(session, resolved, key.strip().lower())  # type: ignore[arg-type]
+    return {"agent_id": resolved, "key": key, "deleted": removed}
 
 
 # --------------------------------------------------------------------------
