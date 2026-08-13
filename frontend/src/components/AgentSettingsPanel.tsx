@@ -1,11 +1,30 @@
-import { useEffect, useState } from "react";
-import { Archive, CalendarClock, Play, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Archive,
+  CalendarClock,
+  Coins,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  Workflow as WorkflowIcon,
+  X,
+} from "lucide-react";
 import { api } from "../lib/api";
-import type { AgentSession, Collection, Topic } from "../lib/types";
+import type {
+  AgentApprovalPolicy,
+  AgentSession,
+  Collection,
+  Topic,
+  WorkflowSummary,
+} from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { useSettings } from "../lib/settingsStore";
 import { RefineTextarea } from "./RefineTextarea";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { TopicPicker } from "./AgentView";
+import { Select } from "./Select";
+import { APPROVAL_POLICIES } from "./AgentsSettings";
 import {
   defaultRecurrence,
   recurrenceFromSchedule,
@@ -19,6 +38,8 @@ interface Props {
   onClose: () => void;
   onSaved: (agent: AgentSession) => void;
   onArchived: () => void;
+  /** Jump to a workflow that uses this agent. */
+  onOpenWorkflow?: (workflowId: number) => void;
   onDeleted: () => void;
 }
 
@@ -28,14 +49,51 @@ interface Props {
 // the associated-topic picker. Renaming and linking reuse the same endpoints
 // the header/timeline already drive. Editing the task re-establishes the SDK
 // session server-side so the new instructions actually take effect.
-export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDeleted }: Props) {
+export function AgentSettingsPanel({
+  agent,
+  onClose,
+  onSaved,
+  onArchived,
+  onDeleted,
+  onOpenWorkflow,
+}: Props) {
+  // Which pipelines reference this agent. Null while loading.
+  const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
+  const [showWorkflows, setShowWorkflows] = useState(false);
+
+  useEffect(() => {
+    setWorkflows(null);
+    setShowWorkflows(false);
+    void api.agents
+      .workflows(agent.id)
+      .then(setWorkflows)
+      .catch(() => setWorkflows([]));
+  }, [agent.id]);
+
   const confirmAction = useConfirm();
+  const settings = useSettings();
   const [title, setTitle] = useState(agent.title);
   const [task, setTask] = useState(agent.task_prompt);
   const [topicId, setTopicId] = useState<number | null>(agent.topic_id);
+  // Per-agent approval-policy override; "" = inherit the global default.
+  const [approvalPolicy, setApprovalPolicy] = useState<AgentApprovalPolicy | "">(
+    agent.approval_policy ?? "",
+  );
+  const globalPolicyLabel = useMemo(() => {
+    const found = APPROVAL_POLICIES.find((p) => p.value === settings?.agents_approval_policy);
+    return found ? found.label.split("—")[0].trim() : "";
+  }, [settings?.agents_approval_policy]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  // Governance: token ceiling (empty = ungoverned) and auto-retry budget.
+  const [tokenBudget, setTokenBudget] = useState<string>(
+    agent.token_budget != null ? String(agent.token_budget) : "",
+  );
+  const [maxRetries, setMaxRetries] = useState<number>(agent.max_retries ?? 0);
   const [saving, setSaving] = useState(false);
+  // True only while the in-flight save is a "Save & run" (so the two footer
+  // buttons can show distinct busy labels).
+  const [savingRun, setSavingRun] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +114,9 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
 
   // The task can't be replayed while a turn is in flight; the server rejects it.
   const taskLocked = ["pending", "running", "needs_approval"].includes(agent.status);
+  // POST /{id}/start rejects an already-active agent, so "Save & run" is only
+  // offered when the agent isn't mid-turn.
+  const isActive = ["pending", "running", "needs_approval", "interrupted"].includes(agent.status);
 
   useEffect(() => {
     void api.topics.list()
@@ -66,25 +127,60 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
       .catch(() => setCollections([]));
   }, []);
 
-  async function save(): Promise<void> {
+  // Persist every edited field. `run` additionally launches the objective once
+  // the save lands (the "Save & run" button): a plain Save is *only* a save —
+  // editing the task primes the new instructions but never starts a turn.
+  async function save(options?: { run?: boolean }): Promise<void> {
+    const run = options?.run ?? false;
     const trimmedTitle = title.trim();
     const trimmedTask = task.trim();
     if (!trimmedTitle || saving) return;
     setSaving(true);
+    setSavingRun(run);
     setError(null);
     try {
-      const patch: { title?: string; task?: string } = {};
+      const patch: {
+        title?: string;
+        task?: string;
+        approval_policy?: AgentApprovalPolicy | null;
+        token_budget?: number | null;
+        max_retries?: number;
+      } = {};
       if (trimmedTitle !== agent.title) patch.title = trimmedTitle;
       if (trimmedTask && trimmedTask !== agent.task_prompt) patch.task = trimmedTask;
-      if (patch.title !== undefined || patch.task !== undefined) {
+      // Send when changed, including a reset to inherit (null). model_fields_set
+      // on the backend distinguishes "omitted" from an explicit null.
+      const nextPolicy = approvalPolicy || null;
+      if (nextPolicy !== (agent.approval_policy ?? null)) patch.approval_policy = nextPolicy;
+      // Governance: empty budget field clears the ceiling (null); a parsed
+      // integer sets it. Retries send whenever the number changed.
+      const trimmedBudget = tokenBudget.trim();
+      const nextBudget = trimmedBudget === "" ? null : Math.max(0, Math.floor(Number(trimmedBudget)));
+      if (!Number.isNaN(nextBudget as number) && nextBudget !== (agent.token_budget ?? null)) {
+        patch.token_budget = nextBudget;
+      }
+      if (maxRetries !== (agent.max_retries ?? 0)) patch.max_retries = maxRetries;
+      if (
+        patch.title !== undefined ||
+        patch.task !== undefined ||
+        patch.approval_policy !== undefined ||
+        patch.token_budget !== undefined ||
+        patch.max_retries !== undefined
+      ) {
         await api.agents.update(agent.id, patch);
       }
       if (topicId !== agent.topic_id) {
         await api.agents.link(agent.id, { topic_id: topicId, chat_id: null });
       }
       await persistSchedule();
-      // Re-fetch so the returned agent reflects title/task/link *and* the
-      // embedded schedule summary (selectin-loaded server-side).
+      // "Save & run" launches the (freshly saved) objective. `start` clears the
+      // prior run's artifacts and replays the task, so it doubles as the "run it
+      // now" action whether or not the instructions changed.
+      if (run) {
+        await api.agents.start(agent.id);
+      }
+      // Re-fetch so the returned agent reflects title/task/link, the embedded
+      // schedule summary (selectin-loaded server-side), and the new run status.
       const updated = await api.agents.get(agent.id);
       onSaved(updated);
       onClose();
@@ -92,6 +188,7 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+      setSavingRun(false);
     }
   }
 
@@ -198,6 +295,46 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
               </div>
             </section>
 
+            {/* Agents are shared, so knowing an edit here ripples into N
+                pipelines matters before you make one. */}
+            <section>
+              <button
+                type="button"
+                onClick={() => setShowWorkflows((v) => !v)}
+                disabled={workflows === null || workflows.length === 0}
+                className="flex w-full items-center justify-between text-left disabled:cursor-default"
+              >
+                <span className="block text-xs text-muted">Used in workflows</span>
+                <span
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${
+                    workflows && workflows.length > 0
+                      ? "bg-accent/15 text-accent"
+                      : "text-muted"
+                  }`}
+                >
+                  <WorkflowIcon size={12} />
+                  {workflows === null ? "…" : workflows.length}
+                </span>
+              </button>
+              {showWorkflows && workflows && workflows.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                  {workflows.map((w) => (
+                    <li key={w.id}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenWorkflow?.(w.id)}
+                        className="flex w-full items-center gap-1.5 rounded border border-border bg-surface px-2 py-1 text-left text-xs transition hover:border-accent/50"
+                      >
+                        {w.icon ? <span>{w.icon}</span> : <WorkflowIcon size={12} />}
+                        <span className="truncate">{w.name}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted">{w.status}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             <section>
               <label className="block text-xs text-muted mb-1">Instructions (task)</label>
               <RefineTextarea
@@ -222,6 +359,78 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
               <p className="text-[11px] text-muted mt-1">
                 The agent reads this topic's context and posts its prompt + answer back here when it
                 finishes. Changing it re-injects the new topic context on the next turn.
+              </p>
+            </section>
+
+            <section>
+              <label className="flex items-center gap-1.5 text-xs text-muted mb-1">
+                <ShieldCheck size={13} />
+                Approval policy
+              </label>
+              <Select
+                fullWidth
+                size="sm"
+                ariaLabel="Approval policy for this agent"
+                disabled={saving}
+                value={approvalPolicy}
+                onChange={(v) => setApprovalPolicy(v as AgentApprovalPolicy | "")}
+                options={[
+                  {
+                    value: "",
+                    label: `Inherit global default${
+                      globalPolicyLabel ? ` — ${globalPolicyLabel}` : ""
+                    }`,
+                  },
+                  ...APPROVAL_POLICIES.map((p) => ({ value: p.value, label: p.label })),
+                ]}
+              />
+              <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                {approvalPolicy
+                  ? (APPROVAL_POLICIES.find((p) => p.value === approvalPolicy)?.hint ?? "")
+                  : "Falls back to the global default set in Settings. Takes effect on the agent's next turn — no session rebuild."}
+              </p>
+            </section>
+
+            <section className="pt-4 border-t border-border space-y-4">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted">
+                <Coins size={13} />
+                Governance
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-muted mb-1">Token budget</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={tokenBudget}
+                    onChange={(e) => setTokenBudget(e.target.value)}
+                    placeholder="Unlimited"
+                    disabled={saving}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <label className="flex items-center gap-1 text-xs text-muted mb-1">
+                    <RefreshCw size={11} />
+                    Max retries
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={1}
+                    value={maxRetries}
+                    onChange={(e) => setMaxRetries(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                    disabled={saving}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-60"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-muted leading-relaxed">
+                When the agent's cumulative tokens cross the budget, it parks itself in the inbox for
+                your approval instead of spending more. Retries auto-recover a failed run with
+                exponential backoff before it is marked failed for good.
               </p>
             </section>
 
@@ -323,9 +532,22 @@ export function AgentSettingsPanel({ agent, onClose, onSaved, onArchived, onDele
           <button
             onClick={() => void save()}
             disabled={!title.trim() || saving}
-            className="px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
+            className="px-3 py-1.5 rounded border border-border text-sm hover:bg-surface disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save"}
+            {saving && !savingRun ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={() => void save({ run: true })}
+            disabled={!title.trim() || saving || isActive}
+            title={
+              isActive
+                ? "Agent is already active — stop it before running again"
+                : "Save changes and run the objective now"
+            }
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
+          >
+            <Play size={14} />
+            {savingRun ? "Starting…" : "Save & run"}
           </button>
         </footer>
       </div>

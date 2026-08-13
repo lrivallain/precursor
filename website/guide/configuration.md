@@ -94,7 +94,14 @@ Precursor's **Settings** panel is organized into tabs:
   [collections](/features/collections) (name, description, colour accent, and an
   optional repository override).
 - **Agents** — turn [Agents mode](/features/agents) on/off; reports whether the
-  native runtime resolved on your platform.
+  native runtime resolved on your platform. Sets the **global approval policy**
+  (`manual` / `balanced` / `autonomous`) that gates agent actions — each agent
+  can [override it per session](/features/agents#approval-policy-per-agent).
+  Per-agent **orchestration governance** (token budget, max retries) lives in
+  each agent's settings drawer, and reusable
+  [blueprints](/features/agents#blueprints-reusable-templates) are managed here
+  too; the fleet-wide concurrency cap and retry backoff are
+  [`.env` knobs](#process-level-configuration-env).
 - **Live / Speech-to-text** — enable the section, pick the fast model + reasoning
   effort for live insights, set how many days to keep a session's transcript
   (`live_transcript_retention_days`, `7` by default; `0` keeps forever), and set

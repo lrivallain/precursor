@@ -56,3 +56,44 @@ export function notifyIfUnfocused({ title, body, tag }: NotifyOptions): boolean 
     return false;
   }
 }
+
+interface NotifyNowOptions extends NotifyOptions {
+  /**
+   * Invoked when the user clicks the notification (after the window is
+   * focused). Use it to deep-link — e.g. select the waiting agent.
+   */
+  onClick?: () => void;
+  /**
+   * Keep the notification on screen until the user acts on it. Suited to
+   * out-of-band "an agent is blocked waiting for you" prompts.
+   */
+  requireInteraction?: boolean;
+}
+
+/**
+ * Show a notification regardless of window focus — the out-of-band signal for
+ * events that need the human even when they're looking at another part of the
+ * app (idea 5: "Claude is waiting for you"). Clicking focuses the window and
+ * runs `onClick` so we can jump straight to the blocked agent. Returns true if
+ * shown.
+ */
+export function notifyNow({
+  title,
+  body,
+  tag,
+  onClick,
+  requireInteraction,
+}: NotifyNowOptions): boolean {
+  if (!supported() || Notification.permission !== "granted") return false;
+  try {
+    const n = new Notification(title, { body, tag, requireInteraction });
+    n.onclick = () => {
+      window.focus();
+      onClick?.();
+      n.close();
+    };
+    return true;
+  } catch {
+    return false;
+  }
+}

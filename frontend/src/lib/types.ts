@@ -145,9 +145,11 @@ export interface ReminderCreate {
 
 export type AgentStatus =
   | "pending"
+  | "waiting"
   | "running"
   | "idle"
   | "needs_approval"
+  | "blocked"
   | "completed"
   | "failed"
   | "cancelled"
@@ -163,14 +165,51 @@ export interface AgentSession {
   result_summary: string | null;
   error: string | null;
   model: string | null;
+  // --- Autonomy / mission state (mirrors backend) ---
+  // When on, the agent runs a goal loop toward `task_prompt` (its objective),
+  // continuing on its own between turns and pausing only by exception.
+  autonomy_enabled: boolean;
+  // Max autonomous continuation steps before it hands back to the human.
+  max_steps: number;
+  // Steps taken toward the current objective run (reset on fresh human intent).
+  step_count: number;
+  // Agent's self-reported mission progress (0–100) + label; null when unknown.
+  progress: number | null;
+  progress_label: string | null;
+  // When `status === "blocked"`, the question the agent raised for a human.
+  blocked_question: string | null;
+  // Per-agent approval-policy override; null = inherit the global default.
+  approval_policy: AgentApprovalPolicy | null;
+  // --- Fleet governance / budgets / retry (mirrors backend) ---
+  // Cap on cumulative tokens before the governor parks the agent; null = none.
+  token_budget: number | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  // Auto-retry budget after a failed turn (0 = off) and attempts used so far.
+  max_retries: number;
+  retry_count: number;
+  // Scheduler due time for the next backoff retry (null when not retrying).
+  next_retry_at: string | null;
+  // Provenance: the blueprint this agent was stamped from, if any.
+  blueprint_id: number | null;
+  // When the agent reached a terminal state (completed/failed/cancelled).
+  finished_at: string | null;
   topic_id: number | null;
   chat_id: number | null;
   // Assistant Role appended to the agent's system preamble. Null resolves to
   // the default role (no persona).
   role_id: number | null;
+  /** True when the agent is a workflow step's private execution vessel. */
+  inline: boolean;
+  /** What this agent may draw on (all default on). */
+  use_mcp: boolean;
+  use_skills: boolean;
+  use_memory: boolean;
   last_activity_at: string | null;
   archived_at: string | null;
   last_read_at: string | null;
+  /** Live (non-archived) workflows that use this agent. */
+  workflow_count: number;
   // Assistant replies produced since the user last opened the session
   // (computed server-side; mirrors Chat.unread_count).
   unread_count: number;
@@ -179,6 +218,54 @@ export interface AgentSession {
   // Recurrence config + run state when the agent re-runs on a cadence (null
   // when unscheduled). Mirrors backend AgentScheduleSummary.
   schedule: AgentScheduleSummary | null;
+  // Live in-flight activity derived from the manager's in-memory event cache
+  // (null/0 when the agent isn't running in-process). Drives the dashboard
+  // cockpit's "what is it doing right now" indicators; not persisted.
+  active_tool: string | null;
+  // Distinct tool calls running in parallel right now — the sub-agent fan-out
+  // cluster indicator (>1 means parallel work in flight).
+  active_tool_count: number;
+  // One-line plain-language hint of what the agent is doing right now, distilled
+  // from its own in-flight commentary (null when idle / not live in-process).
+  active_narration: string | null;
+  // Oldest unresolved permission request blocking the agent (null when not
+  // waiting). Deep-links the out-of-band "agent is waiting" signal.
+  pending_permission: AgentPendingPermission | null;
+  // --- Orchestration relations (eager-loaded by the router) ---
+  // External webhook triggers registered on this agent.
+  triggers: AgentTrigger[];
+  // Published blackboard outputs, newest first.
+  artifacts: AgentArtifact[];
+}
+
+// An external webhook trigger on an agent (mirrors backend AgentTriggerRead).
+export interface AgentTrigger {
+  id: number;
+  agent_id: number;
+  type: string;
+  token: string;
+  enabled: boolean;
+  last_fired_at: string | null;
+  created_at: string;
+}
+
+// A published blackboard output (mirrors backend AgentArtifactRead).
+export interface AgentArtifact {
+  id: number;
+  agent_id: number;
+  key: string | null;
+  kind: string;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// The parked approval blocking a live agent (mirrors backend
+// AgentPendingPermission).
+export interface AgentPendingPermission {
+  request_id: string | null;
+  title: string | null;
 }
 
 // Lightweight schedule view embedded in AgentSession (mirrors backend
@@ -229,6 +316,17 @@ export interface AgentSessionCreate {
   topic_id?: number | null;
   chat_id?: number | null;
   role_id?: number | null;
+  autonomy_enabled?: boolean;
+  max_steps?: number;
+  approval_policy?: AgentApprovalPolicy | null;
+  // Fleet governance (all optional; omit to leave unset/ungoverned).
+  token_budget?: number | null;
+  max_retries?: number;
+  // Stamp from a blueprint (fields above still override).
+  blueprint_id?: number | null;
+  // Launch immediately (default). `false` parks it in the `waiting` state until
+  // a trigger fires (a parent completing, a webhook, or a manual "Start now").
+  start?: boolean;
 }
 
 // A normalised SDK event, shaped for the workflow-step timeline.
@@ -264,6 +362,331 @@ export interface AgentPermissionGrant {
 export interface AgentLink {
   topic_id?: number | null;
   chat_id?: number | null;
+}
+
+// --- Orchestrator: blueprints, inbox, metrics ------------------------------
+// A reusable agent template (mirrors backend AgentBlueprintRead).
+export interface AgentBlueprint {
+  id: number;
+  name: string;
+  description: string | null;
+  task_prompt: string;
+  model: string | null;
+  role_id: number | null;
+  approval_policy: AgentApprovalPolicy | null;
+  autonomy_enabled: boolean;
+  max_steps: number;
+  token_budget: number | null;
+  max_retries: number;
+  icon: string | null;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentBlueprintCreate {
+  name: string;
+  description?: string | null;
+  task_prompt?: string;
+  model?: string | null;
+  role_id?: number | null;
+  approval_policy?: AgentApprovalPolicy | null;
+  autonomy_enabled?: boolean;
+  max_steps?: number;
+  token_budget?: number | null;
+  max_retries?: number;
+  icon?: string | null;
+  color?: string | null;
+}
+
+export interface AgentBlueprintInstantiate {
+  title?: string | null;
+  task?: string | null;
+  topic_id?: number | null;
+  chat_id?: number | null;
+  start?: boolean;
+}
+
+// Partial update payload for a blueprint (mirrors backend AgentBlueprintUpdate).
+export interface AgentBlueprintUpdate {
+  name?: string;
+  description?: string | null;
+  task_prompt?: string;
+  model?: string | null;
+  role_id?: number | null;
+  approval_policy?: AgentApprovalPolicy | null;
+  autonomy_enabled?: boolean;
+  max_steps?: number;
+  token_budget?: number | null;
+  max_retries?: number;
+  icon?: string | null;
+  color?: string | null;
+}
+
+// Attach an external trigger to an agent (mirrors backend AgentTriggerCreate).
+export interface AgentTriggerCreate {
+  type?: "webhook";
+  enabled?: boolean;
+}
+
+// One thing waiting on a human (mirrors backend AgentInboxItem).
+export interface AgentInboxItem {
+  agent_id: number;
+  title: string;
+  kind: "blocked" | "needs_approval" | "budget";
+  detail: string | null;
+  request_id: string | null;
+  at: string | null;
+}
+
+export interface AgentStatusCount {
+  status: AgentStatus;
+  count: number;
+}
+
+// Fleet-wide rollup for the dashboard header (mirrors backend AgentMetrics).
+export interface AgentMetrics {
+  total: number;
+  active: number;
+  waiting: number;
+  completed: number;
+  failed: number;
+  by_status: AgentStatusCount[];
+  total_input_tokens: number;
+  total_output_tokens: number;
+  running_now: number;
+  max_concurrent: number;
+}
+
+// A published artifact create payload (mirrors backend AgentArtifactCreate).
+export interface AgentArtifactCreate {
+  title: string;
+  content?: string;
+  kind?: "text" | "markdown" | "json" | "link";
+  key?: string | null;
+}
+
+// --- Workflows (reusable agent-sequence orchestrator) ---
+// A workflow owns the *chaining* of otherwise-independent agents. It serialises
+// as its ordered steps, each embedding a compact live agent summary. Live
+// progress arrives via the `workflow.changed` SSE event. Mirrors the backend
+// `schemas/workflow.py`.
+
+export type WorkflowStatus =
+  | "draft"
+  | "idle"
+  | "running"
+  | "paused"
+  | "awaiting_approval"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+// Just enough of a step's agent to render its node + drive the strip.
+export interface WorkflowAgentSummary {
+  id: number;
+  copilot_session_id: string | null;
+  title: string;
+  status: string;
+  /** The agent's objective — lets an inline step be edited from the board. */
+  task_prompt: string;
+  /** True when this agent is a step's private vessel, not a reusable unit. */
+  inline: boolean;
+  progress: number | null;
+  progress_label: string | null;
+  result_summary: string | null;
+  active_narration: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+/**
+ * What a step *is*. `task` runs a reusable agent you picked; `inline` runs a
+ * one-off prompt owned by the step (its agent is hidden and dies with it);
+ * `gate` votes PASS/FAIL; `approval` parks the run for a human.
+ */
+export type WorkflowStepKind = "task" | "inline" | "gate" | "approval";
+
+/** What to do when a step's agent fails or its watchdog fires. */
+export type WorkflowStepErrorPolicy = "fail" | "retry" | "continue";
+
+/** What a human rejection at an approval checkpoint does next. */
+export type WorkflowStepRejectPolicy = "rework" | "stop" | "skip";
+
+/** How a step sources the context it is handed. */
+export type WorkflowStepContextMode = "auto" | "selected" | "none";
+
+export interface WorkflowStep {
+  id: number;
+  workflow_id: number;
+  position: number;
+  agent_id: number | null;
+  /** Step behaviour: "task" produces, "gate" checks with PASS/FAIL loop-back. */
+  kind: WorkflowStepKind;
+  /** For a gate: the position to re-drive on FAIL (null = previous step). */
+  on_fail_position: number | null;
+  /** Per-run re-drive counter, badged in the strip while a gate loops. */
+  attempt_count: number;
+  /** Extra mandate layered on the agent's objective, for this step only. */
+  instructions: string | null;
+  /** What to do when this step fails or stalls. */
+  on_error: WorkflowStepErrorPolicy;
+  max_retries: number;
+  retry_count: number;
+  /** For an approval step: what a rejection does next. */
+  on_reject: WorkflowStepRejectPolicy;
+  /** What this step inherits, and from which earlier steps ("0,2"). */
+  context_mode: WorkflowStepContextMode;
+  context_sources: string | null;
+  /** Capability overrides; null = inherit the agent's own setting. */
+  use_mcp: boolean | null;
+  use_skills: boolean | null;
+  use_memory: boolean | null;
+  /** Optional label override; falls back to the agent's title in the UI. */
+  name: string | null;
+  /** Embedded live agent state; null when the referenced agent was deleted. */
+  agent: WorkflowAgentSummary | null;
+}
+
+/** One step *attempt* within a run — the durable trace of what a step saw
+ *  (`input_context`) and produced (`output_summary`). Gate loop-backs append a
+ *  new attempt row rather than overwriting the prior one. */
+export interface WorkflowRunStep {
+  id: number;
+  run_id: number;
+  position: number;
+  kind: WorkflowStepKind;
+  label: string | null;
+  agent_id: number | null;
+  /** True when that agent is private to its step, so it isn't in the Agents list. */
+  agent_inline: boolean;
+  attempt: number;
+  status: string;
+  input_context: string | null;
+  output_summary: string | null;
+  gate_verdict: string | null;
+  /** Token spend for this attempt (delta across the step's turn). */
+  input_tokens: number;
+  output_tokens: number;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** One execution of a workflow, with its ordered per-step attempt traces. */
+export interface WorkflowRun {
+  id: number;
+  workflow_id: number;
+  run_number: number;
+  status: string;
+  trigger: string;
+  started_at: string | null;
+  finished_at: string | null;
+  result_summary: string | null;
+  error: string | null;
+  /** Per-run brief supplied at trigger time; null when run without one. */
+  input: string | null;
+  /** Cumulative token spend across every attempt in this run. */
+  total_input_tokens: number;
+  total_output_tokens: number;
+  step_runs: WorkflowRunStep[];
+}
+
+/** Just enough of a workflow to name and link it from another surface. */
+export interface WorkflowSummary {
+  id: number;
+  name: string;
+  icon: string | null;
+  status: WorkflowStatus;
+}
+
+export interface Workflow {
+  id: number;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  color: string | null;
+  status: WorkflowStatus;
+  current_step_id: number | null;
+  current_run_id: number | null;
+  clear_artifacts: boolean;
+  max_loops: number;
+  /** Seconds a step may run before the watchdog stops it (null = disabled). */
+  step_timeout_seconds: number | null;
+  /** Assistant Role applied to every step's agent while the workflow runs. */
+  role_id: number | null;
+  run_count: number;
+  last_run_at: string | null;
+  finished_at: string | null;
+  result_summary: string | null;
+  error: string | null;
+  // Scheduling
+  schedule_enabled: boolean;
+  interval_seconds: number | null;
+  run_at_minute: number | null;
+  timezone: string;
+  days_of_week: number;
+  next_run_at: string | null;
+  webhook_token: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  steps: WorkflowStep[];
+}
+
+// One step in a create/replace payload. Either reference an existing agent by
+// `agent_id` OR create one inline from `task` (+ optional title/model).
+export interface WorkflowStepInput {
+  agent_id?: number | null;
+  name?: string | null;
+  task?: string | null;
+  title?: string | null;
+  model?: string | null;
+  kind?: WorkflowStepKind;
+  on_fail_position?: number | null;
+  instructions?: string | null;
+  on_error?: WorkflowStepErrorPolicy;
+  max_retries?: number;
+  on_reject?: WorkflowStepRejectPolicy;
+  context_mode?: WorkflowStepContextMode;
+  context_sources?: string | null;
+  use_mcp?: boolean | null;
+  use_skills?: boolean | null;
+  use_memory?: boolean | null;
+}
+
+export interface WorkflowCreate {
+  name: string;
+  description?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  clear_artifacts?: boolean;
+  max_loops?: number;
+  step_timeout_seconds?: number | null;
+  role_id?: number | null;
+  steps?: WorkflowStepInput[];
+}
+
+export interface WorkflowUpdate {
+  name?: string | null;
+  description?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  clear_artifacts?: boolean | null;
+  max_loops?: number | null;
+  /** Seconds before the stall watchdog fires; 0 disables it. */
+  step_timeout_seconds?: number | null;
+  /** Assistant Role for the whole workflow; 0 clears it. */
+  role_id?: number | null;
+  /** When provided, replaces the entire ordered step list. Omit to leave untouched. */
+  steps?: WorkflowStepInput[] | null;
+}
+
+export interface WorkflowScheduleUpdate {
+  schedule_enabled?: boolean | null;
+  interval_seconds?: number | null;
+  run_at_minute?: number | null;
+  timezone?: string | null;
+  days_of_week?: number | null;
 }
 
 export interface Attachment {
@@ -382,6 +805,10 @@ export interface Settings {
   // model for new agent sessions.
   agents_enabled: boolean;
   agents_available: boolean;
+  // Whether the agents manager actually started its runtime in this process.
+  // Distinct from agents_available (a stateless capability probe): a degraded
+  // runtime reports available=true but runtime_started=false.
+  agents_runtime_started: boolean;
   agents_unavailable_reason: string | null;
   agents_default_model: string;
   agents_reasoning_effort: string;
@@ -389,6 +816,12 @@ export interface Settings {
   agents_approval_policy: AgentApprovalPolicy;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
+  // Workflow defaults: what a new step may draw on, and the stall watchdog a
+  // new workflow starts with (0 = off). All overridable per workflow/step.
+  workflows_default_use_mcp: boolean;
+  workflows_default_use_skills: boolean;
+  workflows_default_use_memory: boolean;
+  workflows_default_step_timeout_seconds: number;
   // Folder backup (DB + blobs) into a user-picked directory, e.g. a
   // OneDrive-synced folder. Last-run fields are read-only status.
   backup_enabled: boolean;
@@ -443,6 +876,10 @@ export interface SettingsUpdate {
   agents_approval_policy?: AgentApprovalPolicy;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
+  workflows_default_use_mcp?: boolean;
+  workflows_default_use_skills?: boolean;
+  workflows_default_use_memory?: boolean;
+  workflows_default_step_timeout_seconds?: number;
   backup_enabled?: boolean;
   backup_dir?: string;
   backup_retention?: number;

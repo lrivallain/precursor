@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
+  AlertCircle,
   AlignLeft,
   AudioLines,
   BookOpen,
@@ -17,12 +18,14 @@ import {
   StickyNote,
   Type,
   User,
+  Workflow,
 } from "lucide-react";
 import type { SidebarMode } from "./Sidebar";
 import { SECTION_COLORS } from "../lib/sections";
 import { Modal } from "./Modal";
 import { api } from "../lib/api";
-import type { SearchField, SearchResult, SearchSection } from "../lib/types";
+import type { AgentSession, SearchField, SearchResult, SearchSection } from "../lib/types";
+import { agentNeedsAttention, sortAgentsByUrgency } from "../lib/agents";
 
 /**
  * A single jump target in the palette. `mode` drives the icon tint (via
@@ -49,6 +52,13 @@ interface Props {
   onGoHome: () => void;
   /** Open a specific content hit (topic/chat/agent/live session). */
   onOpenResult: (result: SearchResult, query: string) => void;
+  /**
+   * Live agent sessions, so the palette can float agents that need the human
+   * (urgency-first) as quick-jump rows above the section switcher (idea 6).
+   */
+  agents?: AgentSession[];
+  /** Jump straight to a specific agent session. */
+  onOpenAgent?: (id: number) => void;
   liveEnabled?: boolean;
   kanbanEnabled?: boolean;
   /**
@@ -137,6 +147,8 @@ export function CommandPalette({
   onNavigate,
   onGoHome,
   onOpenResult,
+  agents = [],
+  onOpenAgent,
   liveEnabled = true,
   kanbanEnabled = false,
   initialQuery = "",
@@ -153,7 +165,31 @@ export function CommandPalette({
       onNavigate(mode);
       onClose();
     };
+    // Attention router: agents blocked/failed/interrupted float to the very top
+    // of the palette, urgency-first, so ⌘K is also a triage queue.
+    const attention: PaletteItem[] = onOpenAgent
+      ? sortAgentsByUrgency(agents.filter(agentNeedsAttention)).map((a) => ({
+          id: `agent-attn-${a.id}`,
+          label: a.title,
+          hint:
+            a.status === "needs_approval"
+              ? a.pending_permission?.title
+                ? `Waiting: ${a.pending_permission.title}`
+                : "Waiting for approval"
+              : a.status === "failed"
+                ? "Failed — needs attention"
+                : "Interrupted",
+          keywords: "agent waiting approval attention blocked failed",
+          icon: AlertCircle,
+          mode: "agents" as const,
+          run: () => {
+            onOpenAgent(a.id);
+            onClose();
+          },
+        }))
+      : [];
     const all: PaletteItem[] = [
+      ...attention,
       {
         id: "home",
         label: "Home",
@@ -214,6 +250,15 @@ export function CommandPalette({
         mode: "agents",
         run: nav("agents"),
       },
+      {
+        id: "workflows",
+        label: "Workflows",
+        hint: "Chain agents into pipelines",
+        keywords: "workflows pipelines automation orchestration sequence agents",
+        icon: Workflow,
+        mode: "workflows",
+        run: nav("workflows"),
+      },
       ...(kanbanEnabled
         ? [
             {
@@ -240,7 +285,7 @@ export function CommandPalette({
       },
     ];
     return all;
-  }, [liveEnabled, kanbanEnabled, onNavigate, onGoHome, onClose]);
+  }, [liveEnabled, kanbanEnabled, onNavigate, onGoHome, onClose, agents, onOpenAgent]);
 
   const sections = useMemo(() => {
     const q = query.trim().toLowerCase();

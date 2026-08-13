@@ -8,6 +8,7 @@ import {
   MessagesSquare,
   Radio,
   SquareKanban,
+  Workflow as WorkflowIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
@@ -227,6 +228,14 @@ export function HomePage({
       newLabel: "New agent",
       openLabel: "Browse agents",
       icon: <Bot size={20} />,
+    },
+    {
+      mode: "workflows",
+      title: "Workflows",
+      description:
+        "Chain agents into a reusable pipeline that runs itself — with gates, approvals and a full run history.",
+      openLabel: "Browse workflows",
+      icon: <WorkflowIcon size={20} />,
     },
     {
       mode: "workspaces",

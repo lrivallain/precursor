@@ -53,7 +53,7 @@ from precursor.backend.models import (
     Topic,
 )
 from precursor.backend.schemas.agent import AgentEvent
-from precursor.backend.services.agents import runtime
+from precursor.backend.services.agents import fleet, runtime
 from precursor.backend.services.agents.event_normalizer import normalize_event
 from precursor.backend.services.agents.permissions import (
     describe_permission,
@@ -61,6 +61,7 @@ from precursor.backend.services.agents.permissions import (
     should_auto_approve,
 )
 from precursor.backend.services.app_settings import (
+    AGENTS_APPROVAL_POLICIES,
     resolve_agents_approval_policy,
     resolve_agents_context_tier,
     resolve_agents_default_model,
@@ -113,6 +114,299 @@ _START_TIMEOUT_SECONDS = 30.0
 
 # How often the watchdog sweeps for stalled running sessions.
 _WATCHDOG_INTERVAL_SECONDS = 60.0
+
+# --- Autonomy goal loop --------------------------------------------------------
+# When an autonomous agent finishes a turn without declaring completion, we nudge
+# it to take the next step toward its objective with this message. It's phrased so
+# the model keeps pursuing the durable goal rather than treating it as a new task.
+_CONTINUE_NUDGE = (
+    "Continue working autonomously toward your objective. Narrate what you're "
+    "about to do in one short plain sentence, then take the next concrete step "
+    "now. When the objective is fully met, reply with a line "
+    "'OBJECTIVE_COMPLETE: <2-3 sentence summary>'. If you are blocked on a "
+    "decision only the human can make, reply with 'NEED_INPUT: <your question>'. "
+    "Otherwise keep going and report progress several times across the run with "
+    "'PROGRESS: <0-100> | <what you just did>'. Publish durable results other "
+    "agents may need — one as you finish each phase — with 'ARTIFACT: <title> | "
+    "<content>' for a short value, or a multi-line block 'ARTIFACT: <title>' … "
+    "'END_ARTIFACT' for a substantial deliverable so its full body is captured."
+)
+
+# After this many consecutive no-progress continuation steps, the loop stops and
+# parks the agent as ``blocked`` so a human can course-correct instead of letting
+# it spin. Kept small — autonomy is about steady progress, not infinite retries.
+_STALL_LIMIT = 3
+
+# Appended when an agent has skills switched off. Skills live as files the SDK
+# discovers on disk, so there's no kwarg to withhold them — this is a directive,
+# not a sandbox. It exists so a focused step ("just translate this") doesn't
+# detour through a stored skill that was written for a different context.
+_NO_SKILLS_INSTRUCTION = (
+    "Do not invoke any stored skill for this task. Solve it directly with your own "
+    "reasoning and the material you have been given."
+)
+
+# Appended to an autonomous agent's system preamble. It teaches the sentinel
+# protocol the goal loop reads back — the agent controls its own lifecycle by
+# emitting these lines, so it can run unattended and only pull the human in when
+# it genuinely needs a decision.
+_AUTONOMY_PROTOCOL = (
+    "You are running in AUTONOMOUS mode. Your task above is a durable OBJECTIVE, "
+    "not a single question: keep working toward it across multiple turns without "
+    "waiting to be prompted each time. After each step you will be nudged to "
+    "continue automatically. As you work, narrate what you're doing in one short "
+    "plain sentence before each action, so the human can follow along live from "
+    "the dashboard.\n\n"
+    "Use these control lines to steer your own lifecycle (put each on its own "
+    "line, exactly as shown):\n"
+    "- 'PROGRESS: <0-100> | <what you just accomplished>' — report several times "
+    "across the run (early, middle, and late — not only at the end) so the human "
+    "can watch from the dashboard.\n"
+    "- 'NEED_INPUT: <question>' — only when you are truly blocked on a decision "
+    "or approval that only the human can give. You will pause until they answer.\n"
+    "- 'OBJECTIVE_COMPLETE: <2-3 sentence summary>' — when the objective is fully "
+    "met. This ends the mission.\n\n"
+    "Share durable outputs with the rest of the fleet using ARTIFACT directives "
+    "so agents that depend on you receive them as their input; publish one as you "
+    "finish each phase or reach a finding.\n"
+    "- For a short single-line value: 'ARTIFACT: <title> | <content>'.\n"
+    "- For a SUBSTANTIAL or multi-line deliverable (an inventory, a draft, a "
+    "review), always use a block so nothing is truncated: put the title on the "
+    "ARTIFACT line with NO pipe, then the full Markdown body on the following "
+    "lines, then a closing 'END_ARTIFACT' line. For example:\n"
+    "    ARTIFACT: Release notes\n"
+    "    ## Highlights\n"
+    "    - First thing\n"
+    "    - Second thing\n"
+    "    END_ARTIFACT\n"
+    "Put the ENTIRE deliverable inside the artifact (inline body or block) — it "
+    "is the real output other agents and the human consume, so never leave it "
+    "only in your surrounding prose, and do not append PROGRESS/OBJECTIVE_COMPLETE "
+    "onto the artifact body.\n\n"
+    "Prefer making progress over asking. Don't ask for confirmation on steps you "
+    "can safely take yourself. Stop only when complete or genuinely blocked. The "
+    "control lines above are required output: always emit the relevant one even "
+    "when base guidance would have you end tersely without a status or recap, "
+    "since the system reads them to follow and resurface your mission."
+)
+
+# Sentinel directives an autonomous agent embeds in its assistant messages to
+# drive its own lifecycle. Parsed only when ``autonomy_enabled`` so a normal
+# agent that happens to type these words is unaffected.
+#
+# Anchored to the *start of a line* (``re.M``) so a directive quoted or explained
+# mid-sentence in prose — e.g. an agent narrating "I don't need to emit
+# **NEED_INPUT:** to your dashboard" — never misfires and falsely blocks the run.
+# ``_DIR_LEAD`` tolerates leading markdown/quote decoration (blockquote, list
+# marker, bold/italic, inline code) on the directive line; ``_DIR_POST`` eats the
+# closing emphasis of a ``**LABEL:**`` so a stray ``**`` doesn't leak into — and
+# unbalance the Markdown of — the captured question/summary.
+_DIR_LEAD = r"^[ \t>*_`-]*"
+_DIR_POST = r"[ \t*_`]*"
+_DIRECTIVE_COMPLETE_RE = re.compile(
+    _DIR_LEAD + r"OBJECTIVE[_ ]COMPLETE\s*:" + _DIR_POST + r"(.+)", re.I | re.M
+)
+_DIRECTIVE_NEED_INPUT_RE = re.compile(
+    _DIR_LEAD + r"NEED[_ ]INPUT\s*:" + _DIR_POST + r"(.+)", re.I | re.M
+)
+_DIRECTIVE_PROGRESS_RE = re.compile(
+    _DIR_LEAD + r"PROGRESS\s*:\s*(\d{1,3})\s*(?:\|\s*(.+))?", re.I | re.M
+)
+# Publish a durable named output to the shared fleet blackboard. Two shapes are
+# accepted (see ``_extract_artifacts``): a one-line ``ARTIFACT: <title> | <body>``
+# for short values, and a multi-line block that starts with ``ARTIFACT: <title>``
+# (no pipe) and runs until an ``END_ARTIFACT`` terminator or the next directive —
+# so a substantial deliverable (a list, a draft, a review) is captured whole.
+_ARTIFACT_HEADER_RE = re.compile(r"^\s*ARTIFACT\s*:\s*(.*)$", re.I)
+_ARTIFACT_END_RE = re.compile(r"^\s*(?:END[_ ]ARTIFACT|/ARTIFACT|ARTIFACT[_ ]END)\s*$", re.I)
+
+# An ordered-list marker (" 1. ", "2. ", …) with a following space, anchored to a
+# word boundary so decimals/prices/versions like "3.50" or "v2.0" (no space after
+# the dot) are never matched.
+_ORDERED_MARKER_RE = re.compile(r"(?:(?<=\s)|^)(\d{1,2})\.\s")
+
+
+def _split_inline_ordered_list(text: str) -> str:
+    """Break a numbered list packed onto one physical line into separate lines.
+
+    A single ``ARTIFACT:`` directive is one line, so a model that writes
+    "1. a 2. b 3. c" yields a run-on Markdown paragraph. We split *only* a
+    strictly sequential ``1, 2, 3, …`` run so incidental "2." tokens (decimals,
+    versions, prices) are left untouched.
+    """
+    markers = list(_ORDERED_MARKER_RE.finditer(text))
+    nums = [int(m.group(1)) for m in markers]
+    if len(nums) < 2 or nums != list(range(1, len(nums) + 1)):
+        return text
+    pieces: list[str] = []
+    prev = 0
+    for i, m in enumerate(markers):
+        if i == 0:
+            continue
+        pieces.append(text[prev : m.start()].rstrip())
+        prev = m.start()
+    pieces.append(text[prev:])
+    return "\n".join(p for p in pieces if p).strip()
+
+
+def _normalize_artifact_content(content: str) -> str:
+    """Coax single-line ``ARTIFACT:`` content into well-formed Markdown.
+
+    A model can't press Enter inside a one-line directive, so multi-line
+    deliverables (lists, paragraphs) collapse. We let it express breaks with an
+    escaped ``\\n`` (unescaped here) and, as a safety net, break a packed
+    sequential inline numbered list onto its own lines so it renders as a real
+    list instead of a run-on line.
+    """
+    if "\\n" in content or "\\t" in content or "\\r" in content:
+        content = (
+            content.replace("\\r\\n", "\n")
+            .replace("\\r", "\n")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+        )
+    if "\n" not in content:
+        content = _split_inline_ordered_list(content)
+    return content
+
+
+# Control directives never read as "what the agent is doing" — skip them when
+# distilling a live narration line so a mission's control channel doesn't leak
+# into the dashboard's plain-language activity hint.
+_NARRATION_SKIP_RE = re.compile(
+    r"^\s*(PROGRESS|NEED[_ ]INPUT|OBJECTIVE[_ ]COMPLETE|ARTIFACT)\s*:", re.I
+)
+
+
+def _clean_narration(text: str) -> str | None:
+    """Distil an assistant message into a one-line "what it's doing now" label.
+
+    The Copilot base prompt has the model emit short natural-language *commentary
+    preambles* before it acts (e.g. "Let me check the migration script"). Those
+    arrive as ordinary assistant text; surfacing the first meaningful line as a
+    live narration makes a working agent far more monitorable from the dashboard
+    than a bare tool name. We take the first prose line, drop control directives
+    and light markdown noise, and cap the length.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or _NARRATION_SKIP_RE.match(line):
+            continue
+        line = re.sub(r"^[#>*\-\s]+", "", line)  # leading heading/list markers
+        line = re.sub(r"[*_`]+", "", line).strip()  # inline emphasis/code ticks
+        if line:
+            return line[:160]
+    return None
+
+
+def _strip_trailing_directives(content: str) -> str:
+    """Drop trailing control-directive lines a model glued onto artifact content.
+
+    A model sometimes appends its ``OBJECTIVE_COMPLETE:``/``PROGRESS:`` line to
+    the same inline ``ARTIFACT:`` body (often via an escaped ``\\n``), so the
+    published artifact ends with a stray control line. We peel those off the tail
+    so the stored deliverable is just the deliverable.
+    """
+    lines = content.split("\n")
+    while lines and (not lines[-1].strip() or _NARRATION_SKIP_RE.match(lines[-1])):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+# Whole-line control directives (anywhere in the text) plus an ``ARTIFACT`` block
+# terminator. Used to scrub a value that will be *shown to the user* as a result,
+# so the agent's control channel never leaks into its displayed deliverable.
+_CONTROL_LINE_RE = re.compile(
+    r"^[ \t>*_`-]*(?:OBJECTIVE[_ ]COMPLETE|NEED[_ ]INPUT|PROGRESS|ARTIFACT|"
+    r"END[_ ]ARTIFACT|/ARTIFACT|ARTIFACT[_ ]END)\b.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_control_directives(text: str) -> str:
+    """Remove control-directive lines from a value surfaced to the user.
+
+    Directives (``OBJECTIVE_COMPLETE`` / ``NEED_INPUT`` / ``PROGRESS`` /
+    ``ARTIFACT`` …) are the agent's control channel, not part of the deliverable.
+    We keep the raw assistant message for parsing, forwarding, and gate verdicts,
+    but scrub these tokens from anything stored as a displayed *result* so a step's
+    output reads as the work itself — not the plumbing that produced it.
+    """
+    cleaned = _CONTROL_LINE_RE.sub("", text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse blank runs the removal left
+    return cleaned.strip()
+
+
+def _extract_artifacts(text: str) -> list[dict[str, str]]:
+    """Pull every published artifact from an assistant message.
+
+    Supports two shapes so a substantial deliverable is never truncated:
+
+    * **Inline** — ``ARTIFACT: <title> | <body>`` on one line, for short values.
+    * **Block** — a line ``ARTIFACT: <title>`` with no ``|``, then the full
+      Markdown body on the following lines, terminated by an ``END_ARTIFACT``
+      line, the next control directive, or end of message. This is what lets a
+      research inventory, a draft, or a review land whole rather than as a bare
+      heading with the real content stranded in prose.
+    """
+    lines = text.splitlines()
+    artifacts: list[dict[str, str]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        header = _ARTIFACT_HEADER_RE.match(lines[i])
+        if header is None:
+            i += 1
+            continue
+        rest = header.group(1).strip()
+        if "|" in rest:  # inline: 'title | body' on this single line
+            title, _, body = rest.partition("|")
+            title, body = title.strip(), _normalize_artifact_content(body.strip())
+            i += 1
+        else:  # block: 'ARTIFACT: title' then body lines until a terminator
+            title = rest
+            i += 1
+            collected: list[str] = []
+            while i < n:
+                if _ARTIFACT_END_RE.match(lines[i]):
+                    i += 1
+                    break
+                if _NARRATION_SKIP_RE.match(lines[i]):  # next directive ends it
+                    break
+                collected.append(lines[i])
+                i += 1
+            body = "\n".join(collected).strip()
+        body = _strip_trailing_directives(body)
+        if title and body:
+            artifacts.append({"title": title[:200], "content": body[:100000]})
+    return artifacts
+
+
+def parse_agent_directives(text: str | None) -> dict[str, Any]:
+    """Extract autonomy control directives from an assistant message.
+
+    Returns a dict that may contain ``complete`` (summary str), ``blocked``
+    (question str), ``progress`` (``{"value": int, "label": str | None}``),
+    and/or ``artifacts`` (``list[{"title": str, "content": str}]``).
+    Completion and a raised question are mutually exclusive in effect (completion
+    wins), but progress and artifacts can accompany either. Empty dict when
+    nothing matched.
+    """
+    result: dict[str, Any] = {}
+    if not text:
+        return result
+    if (m := _DIRECTIVE_COMPLETE_RE.search(text)) is not None:
+        result["complete"] = m.group(1).strip()
+    if (m := _DIRECTIVE_NEED_INPUT_RE.search(text)) is not None:
+        result["blocked"] = m.group(1).strip()
+    if (m := _DIRECTIVE_PROGRESS_RE.search(text)) is not None:
+        value = max(0, min(100, int(m.group(1))))
+        label = (m.group(2) or "").strip() or None
+        result["progress"] = {"value": value, "label": label}
+    artifacts = _extract_artifacts(text)
+    if artifacts:
+        result["artifacts"] = artifacts
+    return result
+
 
 # Long-lived agent SDK sessions bake an OAuth bearer header in at create time
 # (the SDK can't refresh a static header). We rebuild the session a little before
@@ -222,6 +516,17 @@ class _LiveSession:
     # skip a redundant model switch when the selection hasn't drifted, so every
     # next turn can cheaply reconcile to the current selection.
     model_signature: tuple[str, str | None, str] | None = None
+    # --- Autonomy goal-loop state (in-memory, per live session) --------------
+    # The last directive block parsed from an assistant message (complete /
+    # blocked / progress). Retained for debugging and to avoid double-handling.
+    directive: dict[str, Any] | None = None
+    # The most recent PROGRESS value the agent self-reported; a fresh value
+    # resets the stall counter, a repeated one advances it.
+    last_progress: int | None = None
+    # Consecutive autonomous steps that produced no measurable progress. When it
+    # crosses ``_STALL_LIMIT`` the loop parks the agent as ``blocked`` rather
+    # than churning silently.
+    stall_count: int = 0
 
 
 class AgentManager:
@@ -244,6 +549,15 @@ class AgentManager:
         # in arrival order — otherwise an idle handler can race ahead of the
         # assistant-message handler and post a stale answer back to the topic.
         self._event_locks: dict[int, asyncio.Lock] = {}
+        # Per-agent locks serialising session build/resume. ``_ensure_live`` does a
+        # check-then-create (read ``_live``, ``create_session``, write ``_live``);
+        # without this lock two concurrent callers — e.g. ``start_task`` racing the
+        # timeline's ``get_events`` when the detail page is open at startup — both
+        # see no cached session and each issue a ``session.create`` for the same
+        # ``copilot_session_id``. The duplicate create leaves the CLI's permission
+        # responder mis-wired, so every tool call is denied non-interactively
+        # ("Permission denied and could not request permission from user").
+        self._live_locks: dict[int, asyncio.Lock] = {}
         # Per-agent set of OAuth servers we've already surfaced a sign-in prompt
         # for, so a held session doesn't re-announce ``mcp_auth_required`` on
         # every rebuild/tool error. Cleared once the server attaches with valid
@@ -264,6 +578,13 @@ class AgentManager:
         async with self._lock:
             if self._ready:
                 return
+            # Un-stick agents that were mid-turn when the process last died. This
+            # runs on every boot BEFORE we try to bring the SDK client up (and
+            # regardless of whether it succeeds), because a reload can orphan a
+            # ``running`` row with no live task behind it: if the client then
+            # fails to start, ``_ready`` stays False, the watchdog never runs,
+            # and the row would otherwise stay pinned in ``running`` forever.
+            await self._mark_interrupted_on_boot()
             async with SessionLocal() as session:
                 enabled = await resolve_agents_enabled(session)
             ok, detail = runtime.agents_available()
@@ -290,7 +611,6 @@ class AgentManager:
                 return
             self._ready = True
             logger.info("Agents runtime started (%s).", detail)
-        await self._mark_interrupted_on_boot()
         if self._watchdog_task is None or self._watchdog_task.done():
             self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
@@ -656,14 +976,28 @@ class AgentManager:
         async with SessionLocal() as session:
             role_prompt = (await resolve_role_prompt(session, agent.role_id)).strip()
             custom = (await resolve_agents_system_prompt(session)).strip()
-            memory = await build_memory_prompt(session)
+            # Long-term memory is standing context, not always wanted: a pure
+            # transform step ("translate this") is better off not consulting it.
+            memory = await build_memory_prompt(session) if agent.use_memory else ""
         persona = (
             f"Active assistant role — adopt this persona for the whole task:\n{role_prompt}"
             if role_prompt
             else ""
         )
         topic = await self._topic_context(agent)
-        parts = [p for p in (persona, custom, memory, topic, SUGGESTIONS_INSTRUCTION) if p]
+        autonomy = _AUTONOMY_PROTOCOL if agent.autonomy_enabled else ""
+        # Follow-up "suggest" chips are for a human replying turn-by-turn. An
+        # autonomous agent drives itself via the control directives and runs
+        # unattended, so inviting user-facing follow-ups there just burns tokens
+        # and pulls against the "keep going, don't ask" autonomy contract (and the
+        # base prompt's "don't offer to continue" tone rule). Only plain agents,
+        # which the user converses with, get the suggestions instruction.
+        suggestions = "" if agent.autonomy_enabled else SUGGESTIONS_INSTRUCTION
+        # Skills are files the SDK discovers on disk, so this is a *directive*
+        # rather than a hard sandbox — it tells the agent to solve the task
+        # directly instead of reaching for a stored skill.
+        skills = "" if agent.use_skills else _NO_SKILLS_INSTRUCTION
+        parts = [p for p in (persona, custom, memory, topic, autonomy, skills, suggestions) if p]
         return "\n\n".join(parts) if parts else None
 
     # ------------------------------------------------------------------ sessions
@@ -677,8 +1011,19 @@ class AgentManager:
         re-mints the token while resuming the same conversation via
         ``copilot_session_id``. We never refresh mid-turn — only when the agent is
         idle, so an in-flight run is left untouched until its next dispatch.
+
+        The whole check-then-create runs under a per-agent lock so concurrent
+        callers (e.g. ``start_task`` racing the timeline's ``get_events`` when the
+        agent detail page is open at startup) can't each fire a ``session.create``
+        for the same ``copilot_session_id`` — a duplicate create leaves the CLI's
+        permission responder mis-wired and every tool call is then denied.
         """
         self._require_ready()
+        lock = self._live_locks.setdefault(agent.id, asyncio.Lock())
+        async with lock:
+            return await self._ensure_live_locked(agent)
+
+    async def _ensure_live_locked(self, agent: AgentSession) -> _LiveSession:
         live = self._live.get(agent.id)
         if live is not None:
             oauth_stale = self._oauth_stale(live)
@@ -717,6 +1062,7 @@ class AgentManager:
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
         model = agent.model or default_model
+        model = await self._sanitize_model(agent.id, model)
         if model:
             kwargs["model"] = model
         if effort:
@@ -725,7 +1071,11 @@ class AgentManager:
             kwargs["context_tier"] = tier
         if agent.copilot_session_id:
             kwargs["session_id"] = agent.copilot_session_id
-        mcp = self._precursor_mcp_config()
+        # An agent with MCP switched off gets no tool servers at all — not even
+        # the first-party one. Whole catalogues of tool schemas are a large,
+        # fixed context cost, so a step that only has to transform text pays
+        # nothing for tools it will never call.
+        mcp = self._precursor_mcp_config() if agent.use_mcp else None
         oauth_expires_at: datetime | None = None
         auth_required: list[str] = []
         mcp_fingerprint: frozenset[str] | None = None
@@ -738,6 +1088,10 @@ class AgentManager:
             kwargs["mcp_servers"] = mcp
             # Snapshot the enabled set so a later toggle rebuilds this session.
             mcp_fingerprint = await self._enabled_catalog_fingerprint()
+        if mcp_fingerprint is None:
+            # Off is still a distinct state: mark it so flipping MCP back on
+            # rebuilds the session instead of reusing a tool-less one.
+            mcp_fingerprint = frozenset({"\x00mcp-off"})
         preamble = await self._system_preamble(agent)
         if preamble:
             # Append (don't replace) so the agent keeps its SDK base instructions
@@ -876,21 +1230,46 @@ class AgentManager:
             await self.teardown_session(agent_id, forget=False)
             self._auth_announced.pop(agent_id, None)
 
-    async def start_task(self, agent_id: int) -> None:
-        agent = await self._load(agent_id)
-        if agent is None:
-            return
-        live = await self._ensure_live(agent)
-        await self._sync_selected_model(agent)
-        live.approval_policy = await self._approval_policy()
-        prompt = (agent.task_prompt or "").strip() or None
-        live.pending_prompt = prompt
-        live.pending_answer = None
-        await self._patch(agent_id, status="running", error=None, active_prompt=prompt)
-        await publish_agent_changed(
-            agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
-        )
-        await live.sdk_session.send(agent.task_prompt)
+    async def start_task(self, agent_id: int, extra_context: str | None = None) -> None:
+        try:
+            agent = await self._load(agent_id)
+            if agent is None:
+                return
+            # A fresh objective run starts from a clean blackboard: drop any
+            # artifacts a previous run published so the new turn's deliverables
+            # replace them rather than piling up beside stale ones. A no-op on a
+            # first run (nothing published yet).
+            await self._clear_artifacts(agent_id)
+            live = await self._ensure_live(agent)
+            await self._sync_selected_model(agent)
+            live.approval_policy = await self._approval_policy(agent)
+            prompt = (agent.task_prompt or "").strip() or None
+            live.pending_prompt = prompt
+            live.pending_answer = None
+            # Fresh human intent → reset the autonomy budget and stall tracking so
+            # the objective run starts from a clean step count.
+            live.stall_count = 0
+            live.last_progress = None
+            await self._patch(
+                agent_id,
+                status="running",
+                error=None,
+                active_prompt=prompt,
+                step_count=0,
+                blocked_question=None,
+            )
+            await publish_agent_changed(
+                agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+            )
+            # Fleet dependents receive their upstreams' published artifacts as a
+            # kickoff preamble ahead of the durable objective, so results flow
+            # down the DAG without a human relaying them.
+            sent = agent.task_prompt
+            if extra_context:
+                sent = f"{extra_context}\n\n---\n\n{agent.task_prompt}"
+            await live.sdk_session.send(sent)
+        except Exception as exc:
+            await self._fail_turn(agent_id, exc)
 
     async def restart_with_task(self, agent_id: int) -> None:
         """Re-establish the SDK session after the task prompt was edited.
@@ -910,20 +1289,34 @@ class AgentManager:
         await self.start_task(agent_id)
 
     async def send_message(self, agent_id: int, text: str) -> None:
-        agent = await self._load(agent_id)
-        if agent is None:
-            return
-        live = await self._ensure_live(agent)
-        await self._sync_selected_model(agent)
-        live.approval_policy = await self._approval_policy()
-        prompt = text.strip() or None
-        live.pending_prompt = prompt
-        live.pending_answer = None
-        await self._patch(agent_id, status="running", active_prompt=prompt)
-        await publish_agent_changed(
-            agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
-        )
-        await live.sdk_session.send(text)
+        try:
+            agent = await self._load(agent_id)
+            if agent is None:
+                return
+            live = await self._ensure_live(agent)
+            await self._sync_selected_model(agent)
+            live.approval_policy = await self._approval_policy(agent)
+            prompt = text.strip() or None
+            live.pending_prompt = prompt
+            live.pending_answer = None
+            # A human message is fresh intent: reset the autonomy budget and, if
+            # the agent had parked itself with a question, clear that block — this
+            # message is the answer that unsticks it.
+            live.stall_count = 0
+            live.last_progress = None
+            await self._patch(
+                agent_id,
+                status="running",
+                active_prompt=prompt,
+                step_count=0,
+                blocked_question=None,
+            )
+            await publish_agent_changed(
+                agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+            )
+            await live.sdk_session.send(text)
+        except Exception as exc:
+            await self._fail_turn(agent_id, exc)
 
     async def resume(self, agent_id: int) -> None:
         """Re-run the in-flight turn of an interrupted session.
@@ -938,16 +1331,19 @@ class AgentManager:
         prompt = (agent.active_prompt or "").strip()
         if not prompt:
             return
-        live = await self._ensure_live(agent)
-        await self._sync_selected_model(agent)
-        live.approval_policy = await self._approval_policy()
-        live.pending_prompt = prompt
-        live.pending_answer = None
-        await self._patch(agent_id, status="running", error=None)
-        await publish_agent_changed(
-            agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
-        )
-        await live.sdk_session.send(prompt)
+        try:
+            live = await self._ensure_live(agent)
+            await self._sync_selected_model(agent)
+            live.approval_policy = await self._approval_policy(agent)
+            live.pending_prompt = prompt
+            live.pending_answer = None
+            await self._patch(agent_id, status="running", error=None)
+            await publish_agent_changed(
+                agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+            )
+            await live.sdk_session.send(prompt)
+        except Exception as exc:
+            await self._fail_turn(agent_id, exc)
 
     async def cancel(self, agent_id: int) -> None:
         live = self._live.get(agent_id)
@@ -995,6 +1391,76 @@ class AgentManager:
             for grant in live.grants:
                 out.append({"agent_id": agent_id, **grant})
         out.sort(key=lambda g: g.get("at") or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return out
+
+    def live_activity(self, agent_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """Snapshot each agent's in-flight work for the dashboard cockpit.
+
+        Reads the in-memory event cache (no DB, no ``await``) to derive, per
+        agent: the currently running tool, how many tool calls are running in
+        parallel (the "sub-agent fan-out" cluster), a plain-language **narration**
+        line distilled from the agent's own commentary this turn, and the oldest
+        unresolved permission request. Everything resets at turn boundaries so a
+        dropped completion event can't leave a tool "running" across turns.
+        Agents not live in-process report an empty snapshot.
+        """
+        out: dict[int, dict[str, Any]] = {}
+        for aid in agent_ids:
+            running: dict[str, str | None] = {}
+            order: list[str] = []
+            # Rolling live-narration state, reset at every turn boundary so a
+            # resting agent shows nothing and each turn narrates itself.
+            narration_msg: str | None = None  # last completed assistant message
+            delta_buf: list[str] = []  # deltas since that message (newer text)
+            delta_len = 0
+            for ev in self._events.get(aid, ()):
+                if ev.kind in ("turn_start", "turn_end", "idle", "aborted"):
+                    running.clear()
+                    order.clear()
+                    narration_msg = None
+                    delta_buf = []
+                    delta_len = 0
+                    continue
+                if ev.kind == "assistant_message":
+                    if ev.text:
+                        narration_msg = ev.text
+                    delta_buf = []
+                    delta_len = 0
+                    continue
+                if ev.kind == "assistant_delta":
+                    # Accumulate just enough of the streaming message to recover
+                    # its first line; stop once we clearly have it so a long
+                    # answer can't make this scan quadratic across polls.
+                    if ev.text and delta_len < 400:
+                        delta_buf.append(ev.text)
+                        delta_len += len(ev.text)
+                    continue
+                rid = ev.request_id
+                if not rid:
+                    continue
+                if ev.tool_status == "running":
+                    if rid not in running:
+                        order.append(rid)
+                    running[rid] = ev.tool_name
+                elif ev.tool_status in ("done", "error"):
+                    running.pop(rid, None)
+                    if rid in order:
+                        order.remove(rid)
+            # In-flight deltas are newer than the last completed message, so
+            # prefer them; fall back to the last full message otherwise.
+            raw_narration = "".join(delta_buf) if delta_buf else narration_msg
+            narration = _clean_narration(raw_narration) if raw_narration else None
+            live = self._live.get(aid)
+            pending: dict[str, Any] | None = None
+            if live is not None and live.pending_info:
+                info = next(iter(live.pending_info.values()))
+                pending = {"request_id": info.get("request_id"), "title": info.get("title")}
+            out[aid] = {
+                "active_tool": running.get(order[-1]) if order else None,
+                "active_tool_count": len(order),
+                "active_narration": narration,
+                "pending_permission": pending,
+            }
         return out
 
     async def reset_permissions(self) -> int:
@@ -1060,6 +1526,7 @@ class AgentManager:
             self._events.pop(agent_id, None)
             self._loaded.discard(agent_id)
             self._event_locks.pop(agent_id, None)
+            self._live_locks.pop(agent_id, None)
             self._auth_announced.pop(agent_id, None)
             # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
             # pragma is on, so clear the archive explicitly (the codebase manages
@@ -1076,9 +1543,11 @@ class AgentManager:
         """Erase an agent's conversation and start its SDK context from scratch.
 
         Disconnects + forgets the live session and wipes the archived timeline
-        (``teardown_session(forget=True)``), then resets the in-flight/status
-        fields back to idle so the next message opens a brand-new SDK session
-        with no prior history resumed.
+        (``teardown_session(forget=True)``), clears the agent's published
+        artifacts (a cleared context should also freshen the blackboard, so a
+        ``/clear`` doesn't leave stale deliverables from the discarded run beside
+        the new one), then resets the in-flight/status fields back to idle so the
+        next message opens a brand-new SDK session with no prior history resumed.
 
         ``keep_id`` selects what happens to the public handle:
 
@@ -1096,6 +1565,13 @@ class AgentManager:
             old_id = agent.copilot_session_id if agent else None
 
         await self.teardown_session(agent_id, forget=True)
+
+        # A freshened context starts from a clean blackboard too: drop the prior
+        # run's artifacts so a `/clear` (or a scheduled rerun via `keep_id`)
+        # doesn't leave stale deliverables next to the new turn's outputs. The
+        # trailing `_publish` re-broadcasts `agent.changed`, so the sidebar and
+        # in-chat deliverables refetch and empty on their own.
+        await self._clear_artifacts(agent_id)
 
         patch: dict[str, Any] = {
             "status": "idle",
@@ -1211,6 +1687,49 @@ class AgentManager:
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
         )
+
+    async def _available_model_ids(self) -> set[str]:
+        """Model ids the runtime currently offers (empty when unavailable).
+
+        Guards against a stale persisted default: the SDK's catalogue rotates
+        over time, so a model that was valid when it was saved can vanish, and
+        passing a now-unknown id to ``create_session`` fails the whole turn.
+        """
+        return {m["id"] for m in await self.list_models()}
+
+    async def _sanitize_model(self, agent_id: int, model: str) -> str:
+        """Return ``model`` if the runtime still offers it, else ``"auto"``.
+
+        Only downgrades when we actually have a catalogue to check against: an
+        empty catalogue (runtime momentarily down) leaves the selection intact
+        so we never mask a transient failure as a model change. ``"auto"`` is
+        always accepted, so it's the safe fallback for a vanished pin.
+        """
+        if not model or model == "auto":
+            return model
+        available = await self._available_model_ids()
+        if available and model not in available:
+            logger.warning(
+                "agent %s: model %r is no longer offered by the runtime — falling back to 'auto'",
+                agent_id,
+                model,
+            )
+            return "auto"
+        return model
+
+    async def _fail_turn(self, agent_id: int, exc: BaseException) -> None:
+        """Mark a turn as failed so a dispatch error is visible, not a silent hang.
+
+        Turn dispatch runs as a detached background task (:meth:`enqueue`), so an
+        exception there would otherwise be swallowed and leave the agent stuck on
+        its "sending…" spinner. Record it as a ``failed`` status with the error
+        text and publish, mirroring how the SDK's own ``ErrorData`` is surfaced.
+        """
+        logger.exception("agent %s: turn dispatch failed", agent_id)
+        message = str(exc).strip() or exc.__class__.__name__
+        with contextlib.suppress(Exception):
+            await self._patch(agent_id, status="failed", error=message[:2000])
+            await self._publish(agent_id)
 
     async def list_models(self) -> list[dict[str, Any]]:
         """Return the runtime's available models, or empty.
@@ -1400,7 +1919,12 @@ class AgentManager:
 
         return handler
 
-    async def _approval_policy(self) -> str:
+    async def _approval_policy(self, agent: AgentSession | None = None) -> str:
+        # A per-agent override wins over the global default when it's a valid
+        # policy; ``None``/unset falls through to the DB-backed global setting.
+        override = getattr(agent, "approval_policy", None)
+        if override in AGENTS_APPROVAL_POLICIES:
+            return str(override)
         try:
             async with SessionLocal() as session:
                 return await resolve_agents_approval_policy(session)
@@ -1545,7 +2069,10 @@ class AgentManager:
         if name == "AssistantMessageData":
             content = getattr(data, "content", None)
             if content:
-                patch["result_summary"] = str(content)[:2000]
+                # Scrub control directives from the *displayed* summary; keep the
+                # raw message in ``pending_answer`` for the topic repost and for
+                # directive/gate parsing downstream.
+                patch["result_summary"] = strip_control_directives(str(content))[:2000]
                 # Keep the full answer for the topic/chat repost — the summary
                 # column is capped for the agent list.
                 live = self._live.get(agent_id)
@@ -1555,24 +2082,33 @@ class AgentManager:
             await self._record_usage(agent_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
             agent = await self._load(agent_id)
-            # Don't let a trailing idle event mask a turn that just errored or
-            # was paused/cancelled — those statuses are sticky so the failure
-            # stays visible (and the in-flight prompt stays resumable).
+            # Don't let a trailing idle event mask a turn that just errored, was
+            # paused/cancelled, or already reached a terminal/blocked resting
+            # state — those statuses are sticky so the outcome stays visible (and
+            # any in-flight prompt stays resumable).
             if agent is not None and agent.status not in (
                 "needs_approval",
                 "cancelled",
                 "failed",
+                "blocked",
+                "completed",
             ):
-                patch["status"] = "idle"
-                # The turn has finished — drop the durable in-flight prompt so a
-                # later resume can't re-run an already-completed turn.
-                patch["active_prompt"] = None
-                await self._notify_back(agent)
+                # The goal loop decides the resting status (idle/blocked/completed)
+                # or continues autonomously; it mutates ``patch`` and reposts only
+                # at rest transitions.
+                await self._on_idle(agent, patch)
         elif name in ("AbortData",):
             patch["status"] = "cancelled"
+            patch["finished_at"] = datetime.now(UTC)
         elif name in ("ErrorData", "SessionErrorData"):
             patch["status"] = "failed"
             patch["error"] = str(getattr(data, "message", name))[:2000]
+            patch["finished_at"] = datetime.now(UTC)
+            # Auto-recovery: if a retry budget remains, arm a backoff re-run the
+            # scheduler will pick up. Keeps a flaky turn from parking the fleet.
+            failed_agent = await self._load(agent_id)
+            if failed_agent is not None and failed_agent.retry_count < failed_agent.max_retries:
+                patch["next_retry_at"] = self._retry_due_at(failed_agent.retry_count)
 
         await self._patch(agent_id, **patch)
         agent = await self._load(agent_id)
@@ -1581,6 +2117,17 @@ class AgentManager:
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
         )
+        # Workflow coordination advances whenever this agent reaches a
+        # resting/terminal state — a workflow chains plain agents itself.
+        if agent is not None and agent.status in (
+            "idle",
+            "completed",
+            "failed",
+            "blocked",
+            "cancelled",
+            "needs_approval",
+        ):
+            self.enqueue(self._advance_workflows(agent_id))
 
     async def _record_usage(self, agent_id: int, data: Any) -> None:
         """Meter an ``AssistantUsageData`` round into the shared usage ledger.
@@ -1613,6 +2160,193 @@ class AgentManager:
                 await session.commit()
         except Exception:
             logger.debug("failed to record agent usage for %s", agent_id, exc_info=True)
+
+        # Accumulate the running totals on the agent row (drives the budget cap
+        # and aggregate observability). Kept in a separate write so a usage-ledger
+        # failure above doesn't lose the meter, and vice versa.
+        await self._patch(
+            agent_id,
+            total_input_tokens=agent.total_input_tokens + prompt_tokens,
+            total_output_tokens=agent.total_output_tokens + completion_tokens,
+        )
+        await self._enforce_budget(agent_id)
+
+    async def _enforce_budget(self, agent_id: int) -> None:
+        """Park an agent as ``blocked`` once it burns through its token budget.
+
+        The governor is a *soft* cap checked after each metered round: an
+        in-flight turn finishes, but the next autonomous step won't start. Null
+        budget = ungoverned. Already-terminal/blocked agents are left alone so we
+        don't clobber a completion that landed in the same turn.
+        """
+        agent = await self._load(agent_id)
+        if agent is None or agent.token_budget is None:
+            return
+        spent = agent.total_input_tokens + agent.total_output_tokens
+        if spent < agent.token_budget:
+            return
+        if agent.status not in ("running", "needs_approval"):
+            return
+        await self._patch(
+            agent_id,
+            status="blocked",
+            active_prompt=None,
+            blocked_question=(
+                f"I've reached my token budget ({agent.token_budget:,} tokens; "
+                f"{spent:,} spent). Review my progress and raise the budget or "
+                "adjust the objective to continue."
+            ),
+        )
+        await publish_agent_changed(
+            agent_session_id=agent_id,
+            topic_id=agent.topic_id,
+            chat_id=agent.chat_id,
+        )
+
+    async def _on_idle(self, agent: AgentSession, patch: dict[str, Any]) -> None:
+        """Resolve what a finished turn means for an agent's mission.
+
+        This is the goal loop. For a **plain** agent it just rests at ``idle`` and
+        reposts the exchange (unchanged behaviour). For an **autonomous** agent it
+        reads the control directives the model embedded in its last message and:
+
+        * ``OBJECTIVE_COMPLETE`` → terminal ``completed`` (one final repost);
+        * ``NEED_INPUT`` → ``blocked`` on the raised question (repost);
+        * otherwise, if the step budget remains and it isn't stalling, it keeps
+          going — status stays ``running``, the step count ticks up, and the next
+          step is enqueued with **no** repost (so a whole multi-step mission lands
+          as a single objective→result exchange when it finally rests);
+        * budget exhausted or stalled → ``blocked`` for a human to course-correct.
+
+        Progress (``PROGRESS: n | label``) is applied whenever present and resets
+        the stall counter on a fresh value. Mutates ``patch`` in place.
+        """
+        live = self._live.get(agent.id)
+        directives = (
+            parse_agent_directives(live.pending_answer)
+            if live is not None and agent.autonomy_enabled
+            else {}
+        )
+        if live is not None:
+            live.directive = directives or None
+
+        # A progress report applies regardless of the terminal decision below, and
+        # a *new* value clears the stall counter (the agent is genuinely moving).
+        progress = directives.get("progress")
+        if progress is not None:
+            patch["progress"] = progress["value"]
+            patch["progress_label"] = progress["label"]
+            if live is not None and progress["value"] != live.last_progress:
+                live.last_progress = progress["value"]
+                live.stall_count = 0
+
+        # Published artifacts land on the blackboard regardless of the terminal
+        # decision below, so mid-mission outputs are shared as soon as they're
+        # emitted (not only at completion).
+        artifacts = directives.get("artifacts")
+        if artifacts:
+            await self._persist_artifacts(agent.id, artifacts, kind="output")
+
+        # 1) Objective met — terminal. The single repost carries the summary.
+        if directives.get("complete"):
+            # The OBJECTIVE_COMPLETE reason is a *meta* description of the work
+            # ("Told the user a joke"); the actual deliverable is the message's
+            # prose — the joke itself. Prefer that prose as the displayed result,
+            # falling back to the reason only when the final turn was
+            # directives-only (a bare OBJECTIVE_COMPLETE with no body).
+            reason = strip_control_directives(str(directives["complete"]))[:2000]
+            body = (
+                strip_control_directives(str(live.pending_answer))[:2000]
+                if live is not None and live.pending_answer
+                else ""
+            )
+            summary = body or reason
+            patch["status"] = "completed"
+            patch["result_summary"] = summary
+            patch["active_prompt"] = None
+            patch["progress"] = 100
+            patch["step_count"] = 0
+            patch["finished_at"] = datetime.now(UTC)
+            if live is not None:
+                live.stall_count = 0
+            # Auto-capture the outcome as a result artifact so downstream agents
+            # get the deliverable even when the model didn't emit an ARTIFACT line.
+            if summary:
+                await self._persist_artifacts(
+                    agent.id, [{"title": "Result", "content": summary}], kind="result"
+                )
+            await self._notify_back(agent)
+            return
+
+        # 2) Agent raised a decision only the human can make — park it.
+        if directives.get("blocked"):
+            patch["status"] = "blocked"
+            patch["blocked_question"] = str(directives["blocked"])[:2000]
+            patch["active_prompt"] = None
+            await self._notify_back(agent)
+            return
+
+        # 3) Autonomous continuation — keep pursuing the objective if allowed.
+        if agent.autonomy_enabled:
+            if live is not None and live.stall_count >= _STALL_LIMIT:
+                patch["status"] = "blocked"
+                patch["blocked_question"] = (
+                    "I've taken several steps without measurable progress toward "
+                    "the objective. Please review and advise on how to proceed."
+                )
+                patch["active_prompt"] = None
+                await self._notify_back(agent)
+                return
+            if agent.step_count < agent.max_steps:
+                # Keep going. No repost — the mission is still in flight; the
+                # single objective→result exchange lands when it rests.
+                patch["status"] = "running"
+                patch["step_count"] = agent.step_count + 1
+                # No progress advance this step counts toward a stall.
+                if live is not None and progress is None:
+                    live.stall_count += 1
+                self.enqueue(self._advance_goal_loop(agent.id))
+                return
+            # Budget spent without completing — hand back rather than run forever.
+            patch["status"] = "blocked"
+            patch["blocked_question"] = (
+                f"I've reached the step budget ({agent.max_steps} steps) for this "
+                "objective without completing it. Review my progress and tell me "
+                "whether to continue, adjust the objective, or stop."
+            )
+            patch["active_prompt"] = None
+            await self._notify_back(agent)
+            return
+
+        # 4) Plain agent: rest at idle and repost this turn's exchange.
+        patch["status"] = "idle"
+        patch["active_prompt"] = None
+        await self._notify_back(agent)
+
+    async def _advance_goal_loop(self, agent_id: int) -> None:
+        """Take the next autonomous step toward the objective.
+
+        Enqueued (never called inline) from the idle handler — we must not
+        ``send`` from inside the locked event handler. Reloads the agent,
+        re-checks it's still an autonomous run that should continue, refreshes the
+        per-turn approval policy, and nudges the SDK session to keep working.
+        ``pending_prompt`` is deliberately left untouched so the eventual single
+        repost still shows the objective + final answer.
+        """
+        try:
+            agent = await self._load(agent_id)
+            if agent is None or not agent.autonomy_enabled or agent.status != "running":
+                return
+            live = self._live.get(agent_id)
+            if live is None:
+                return
+            live.approval_policy = await self._approval_policy(agent)
+            # Reset the per-turn answer buffer so the next directive parse reads
+            # only the upcoming step's message.
+            live.pending_answer = None
+            await live.sdk_session.send(_CONTINUE_NUDGE)
+        except Exception as exc:
+            await self._fail_turn(agent_id, exc)
 
     async def _notify_back(self, agent: AgentSession) -> None:
         """Post the just-finished turn's exchange into the linked container.
@@ -1707,6 +2441,145 @@ class AgentManager:
             for key, value in values.items():
                 setattr(agent, key, value)
             await session.commit()
+
+    # ---------------------------------------------------------------- fleet ----
+
+    async def _persist_artifacts(
+        self, agent_id: int, artifacts: list[dict[str, str]], *, kind: str
+    ) -> None:
+        """Write published outputs to the shared blackboard (``agent_artifacts``).
+
+        ``kind`` here is the *provenance* — ``"result"`` for the auto-captured
+        completion summary, ``"output"`` for a model-emitted ``ARTIFACT:`` line —
+        stored on the row's ``key`` so downstream injection and the UI can tell
+        them apart. The stored ``kind`` column is a rendering hint (kept as plain
+        ``text``). De-duplicates an identical ``result`` so a completion that
+        reposts the same summary doesn't stack duplicates. Best-effort: a
+        blackboard write must never break the turn.
+        """
+        from precursor.backend.models.agent_artifact import AgentArtifact
+
+        try:
+            async with SessionLocal() as session:
+                for art in artifacts:
+                    title = (art.get("title") or "Untitled").strip()[:200]
+                    content = (art.get("content") or "").strip()[:100000]
+                    if not content:
+                        continue
+                    if kind == "result":
+                        existing = await session.execute(
+                            select(AgentArtifact.id).where(
+                                AgentArtifact.agent_id == agent_id,
+                                AgentArtifact.key == "result",
+                                AgentArtifact.content == content,
+                            )
+                        )
+                        if existing.first() is not None:
+                            continue
+                    session.add(
+                        AgentArtifact(
+                            agent_id=agent_id,
+                            key=kind,
+                            kind="text",
+                            title=title,
+                            content=content,
+                        )
+                    )
+                await session.commit()
+        except Exception:
+            logger.debug("failed to persist artifacts for %s", agent_id, exc_info=True)
+
+    async def _clear_artifacts(self, agent_id: int) -> None:
+        """Wipe an agent's published artifacts ahead of a fresh objective run.
+
+        A re-run (manual restart, retry, edited task, a webhook re-trigger, or an
+        upstream re-driving an already-completed dependent) should start with a
+        clean blackboard so the new turn's outputs replace the previous run's
+        rather than accumulating. Best-effort and idempotent — a no-op on first
+        run. Deliberately *not* called from :meth:`send_message`: a conversational
+        follow-up keeps the existing artifacts.
+        """
+        from precursor.backend.models.agent_artifact import AgentArtifact
+
+        try:
+            async with SessionLocal() as session:
+                await session.execute(
+                    delete(AgentArtifact).where(AgentArtifact.agent_id == agent_id)
+                )
+                await session.commit()
+        except Exception:
+            logger.debug("failed to clear artifacts for %s", agent_id, exc_info=True)
+
+    def _retry_due_at(self, retry_count: int) -> datetime:
+        """Next-attempt time with exponential backoff off the base interval."""
+        settings = get_settings()
+        base = max(1, settings.agents_retry_backoff_seconds)
+        delay = base * (2**retry_count)
+        return datetime.now(UTC) + timedelta(seconds=delay)
+
+    async def _advance_workflows(self, agent_id: int) -> None:
+        """Advance any running workflow whose current step is this agent.
+
+        Enqueued from the completion seam when an agent reaches a resting or
+        terminal state. Delegates to the workflow coordinator (imported lazily to
+        avoid a circular import) in a fresh session so the advance commits
+        independently of the turn that triggered it.
+        """
+        try:
+            from precursor.backend.services.agents import workflow as workflow_svc
+
+            async with SessionLocal() as session:
+                await workflow_svc.advance_for_agent(session, self, agent_id)
+        except Exception:
+            logger.debug("failed to advance workflows after %s", agent_id, exc_info=True)
+
+    async def release_ready_fleet(self) -> None:
+        """Sweep for orphaned ``pending`` agents and start them.
+
+        ``pending`` is a brief transient: :func:`_spawn_agent` creates an agent
+        ``pending`` and enqueues its ``start_task``. This backstop starts any
+        ``pending`` agent whose ``start_task`` was lost (e.g. the app restarted
+        mid-spawn), respecting the concurrency governor. ``waiting`` agents are
+        parked deliberately for a manual/webhook trigger and are never swept.
+        """
+        if not self.ready:
+            return
+        try:
+            settings = get_settings()
+            async with SessionLocal() as session:
+                rows = await session.execute(
+                    select(AgentSession.id).where(
+                        AgentSession.status == "pending",
+                        AgentSession.archived_at.is_(None),
+                    )
+                )
+                candidates = [int(r) for r in rows.scalars().all()]
+            for agent_id in candidates:
+                async with SessionLocal() as session:
+                    if await fleet.running_count(session) >= settings.agents_max_concurrent:
+                        break
+                await self.start_task(agent_id)
+        except Exception:
+            logger.debug("fleet sweep failed", exc_info=True)
+
+    async def retry_agent(self, agent_id: int) -> None:
+        """Re-run a failed agent, counting the attempt against its retry budget.
+
+        Invoked by the scheduler when ``next_retry_at`` comes due. Clears the
+        retry arming and error, bumps ``retry_count``, then replays the task.
+        """
+        agent = await self._load(agent_id)
+        if agent is None or agent.status != "failed":
+            return
+        if agent.retry_count >= agent.max_retries:
+            return
+        await self._patch(
+            agent_id,
+            retry_count=agent.retry_count + 1,
+            next_retry_at=None,
+            error=None,
+        )
+        await self.restart_with_task(agent_id)
 
 
 # Map SDK event class names → coarse workflow step kinds for the UI.

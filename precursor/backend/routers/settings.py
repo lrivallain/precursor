@@ -39,6 +39,8 @@ from precursor.backend.services.app_settings import (
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
     resolve_system_settings,
+    resolve_workflows_default_capabilities,
+    resolve_workflows_default_step_timeout,
     resolve_workiq_tenant_id,
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
@@ -149,9 +151,15 @@ async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, A
 
 async def _agents_block(session: AsyncSession) -> dict[str, Any]:
     ok, detail = agents_available()
+    # ``agents_available`` is a stateless capability probe (SDK package + CLI
+    # binary present). ``agents_runtime_started`` reflects whether the manager
+    # actually brought its SDK client + watchdog up in *this* process — it can be
+    # False even when available is True (e.g. the client failed to start on a
+    # reload), which is exactly when agents silently stop being driven.
     return {
         "agents_enabled": await resolve_agents_enabled(session),
         "agents_available": ok,
+        "agents_runtime_started": get_agent_manager().ready,
         "agents_unavailable_reason": None if ok else detail,
         "agents_default_model": await resolve_agents_default_model(session),
         "agents_reasoning_effort": await resolve_agents_reasoning_effort(session),
@@ -159,6 +167,13 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_approval_policy": await resolve_agents_approval_policy(session),
         "agents_system_prompt": await resolve_agents_system_prompt(session),
         "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
+        **{
+            f"workflows_default_{k}": v
+            for k, v in (await resolve_workflows_default_capabilities(session)).items()
+        },
+        "workflows_default_step_timeout_seconds": await resolve_workflows_default_step_timeout(
+            session
+        ),
     }
 
 

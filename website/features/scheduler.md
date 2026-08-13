@@ -39,6 +39,11 @@ transcript first while keeping the same uuid so the schedule keeps resolving:
   (plus an optional one-off extra). This keeps the instructions in **one** place
   (the agent), so the recurring prompt shrinks to a tiny nudge.
 
+When a scheduled agent pauses mid-run for an approval, you don't have to be
+watching: it raises the [out-of-band "agent needs you"
+signal](/features/agents#the-agent-needs-you-signal) — a focus-independent
+notification, a 🔔 in the tab title, and top billing in the ⌘K palette.
+
 ## `/guard` — gate a run behind a cheap probe
 
 A scheduled prompt can be prefixed with one or more `/guard` directives that gate

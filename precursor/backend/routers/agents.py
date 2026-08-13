@@ -11,21 +11,46 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentEventRecord, AgentSchedule, AgentSession, Chat, Topic
+from precursor.backend.models import (
+    AgentArtifact,
+    AgentBlueprint,
+    AgentEventRecord,
+    AgentSchedule,
+    AgentSession,
+    AgentTrigger,
+    Chat,
+    Topic,
+    Workflow,
+    WorkflowStep,
+)
 from precursor.backend.schemas.agent import (
+    AgentArtifactCreate,
+    AgentArtifactRead,
+    AgentBlueprintCreate,
+    AgentBlueprintInstantiate,
+    AgentBlueprintRead,
+    AgentBlueprintUpdate,
     AgentEvent,
+    AgentInboxItem,
     AgentLinkRequest,
+    AgentMetrics,
     AgentModelInfo,
+    AgentPendingPermission,
     AgentPermissionDecision,
     AgentPermissionGrant,
     AgentSendRequest,
     AgentSessionCreate,
     AgentSessionRead,
+    AgentStatusCount,
+    AgentTriggerCreate,
+    AgentTriggerRead,
     AgentUpdateRequest,
 )
 from precursor.backend.schemas.agent_schedule import (
@@ -33,7 +58,8 @@ from precursor.backend.schemas.agent_schedule import (
     AgentScheduleRead,
     AgentScheduleUpdate,
 )
-from precursor.backend.services.agents import runtime
+from precursor.backend.schemas.workflow import WorkflowSummary
+from precursor.backend.services.agents import fleet, runtime
 from precursor.backend.services.agents.manager import get_agent_manager, parse_agent_command
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
@@ -109,9 +135,43 @@ async def _unread_counts(session: AsyncSession, agent_ids: list[int]) -> dict[in
     return {row[0]: row[1] for row in result.all()}
 
 
-def _to_read(agent: AgentSession, unread: int) -> AgentSessionRead:
+async def _workflow_counts(session: AsyncSession, agent_ids: list[int]) -> dict[int, int]:
+    """Map agent id -> number of live workflows referencing it.
+
+    One grouped query for the whole list rather than a request per card. Archived
+    workflows don't count as live references, matching
+    ``GET /api/agents/{id}/workflows``.
+    """
+    if not agent_ids:
+        return {}
+    result = await session.execute(
+        select(WorkflowStep.agent_id, func.count(func.distinct(Workflow.id)))
+        .join(Workflow, Workflow.id == WorkflowStep.workflow_id)
+        .where(
+            WorkflowStep.agent_id.in_(agent_ids),
+            Workflow.archived_at.is_(None),
+        )
+        .group_by(WorkflowStep.agent_id)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
+def _to_read(
+    agent: AgentSession,
+    unread: int,
+    activity: dict[str, Any] | None = None,
+    workflow_count: int = 0,
+) -> AgentSessionRead:
     read = AgentSessionRead.model_validate(agent)
     read.unread_count = unread
+    read.workflow_count = workflow_count
+    if activity:
+        read.active_tool = activity.get("active_tool")
+        read.active_tool_count = activity.get("active_tool_count", 0)
+        read.active_narration = activity.get("active_narration")
+        pending = activity.get("pending_permission")
+        if pending:
+            read.pending_permission = AgentPendingPermission.model_validate(pending)
     return read
 
 
@@ -136,15 +196,252 @@ async def reset_agent_permissions() -> dict[str, int]:
     return {"cleared": cleared}
 
 
+# --------------------------------------------------------------- observability
+#
+# Fleet-wide rollups for the dashboard header and the unified "blocked inbox".
+# Declared before the ``/{agent_id}`` routes so the literal paths win the match.
+
+
+def _is_budget_park(agent: AgentSession) -> bool:
+    """True when a blocked agent was parked by the token-budget governor.
+
+    A budget park and a raised question both land on ``status="blocked"``; the
+    distinguishing signal is that the governor only fires when the accrued spend
+    has reached the configured ceiling.
+    """
+    return (
+        agent.status == "blocked"
+        and agent.token_budget is not None
+        and agent.total_input_tokens + agent.total_output_tokens >= agent.token_budget
+    )
+
+
+@router.get("/metrics", response_model=AgentMetrics)
+async def get_agent_metrics(session: AsyncSession = Depends(get_session)) -> AgentMetrics:
+    """Status counts + token totals + concurrency headroom for the header."""
+    rows = (
+        await session.execute(
+            select(
+                AgentSession.status,
+                func.count(AgentSession.id),
+                func.coalesce(func.sum(AgentSession.total_input_tokens), 0),
+                func.coalesce(func.sum(AgentSession.total_output_tokens), 0),
+            )
+            .where(AgentSession.archived_at.is_(None))
+            .where(AgentSession.inline.is_(False))
+            .group_by(AgentSession.status)
+        )
+    ).all()
+    by_status = [AgentStatusCount(status=r[0], count=int(r[1])) for r in rows]
+    counts = {r[0]: int(r[1]) for r in rows}
+    total_in = sum(int(r[2]) for r in rows)
+    total_out = sum(int(r[3]) for r in rows)
+    return AgentMetrics(
+        total=sum(counts.values()),
+        active=counts.get("running", 0) + counts.get("needs_approval", 0),
+        waiting=counts.get("blocked", 0),
+        completed=counts.get("completed", 0),
+        failed=counts.get("failed", 0),
+        by_status=by_status,
+        total_input_tokens=total_in,
+        total_output_tokens=total_out,
+        running_now=await fleet.running_count(session),
+        max_concurrent=get_settings().agents_max_concurrent,
+    )
+
+
+@router.get("/inbox", response_model=list[AgentInboxItem])
+async def get_agent_inbox(session: AsyncSession = Depends(get_session)) -> list[AgentInboxItem]:
+    """Everything waiting on a human: raised questions, permission gates, budget parks.
+
+    Aggregates the persisted ``blocked``/``needs_approval`` rows and enriches
+    ``needs_approval`` with the live parked permission (title + ``request_id``)
+    from the manager so the UI can deep-link straight to the approval card.
+    """
+    agents = list(
+        (
+            await session.execute(
+                select(AgentSession)
+                .where(AgentSession.archived_at.is_(None))
+                .where(AgentSession.status.in_(("blocked", "needs_approval")))
+                .order_by(AgentSession.last_activity_at.desc().nullslast())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    activity = get_agent_manager().live_activity([a.id for a in agents])
+    items: list[AgentInboxItem] = []
+    for agent in agents:
+        if agent.status == "needs_approval":
+            pending = (activity.get(agent.id) or {}).get("pending_permission") or {}
+            items.append(
+                AgentInboxItem(
+                    agent_id=agent.id,
+                    title=agent.title,
+                    kind="needs_approval",
+                    detail=pending.get("title"),
+                    request_id=pending.get("request_id"),
+                    at=agent.last_activity_at,
+                )
+            )
+        elif _is_budget_park(agent):
+            items.append(
+                AgentInboxItem(
+                    agent_id=agent.id,
+                    title=agent.title,
+                    kind="budget",
+                    detail=agent.blocked_question,
+                    at=agent.last_activity_at,
+                )
+            )
+        else:
+            items.append(
+                AgentInboxItem(
+                    agent_id=agent.id,
+                    title=agent.title,
+                    kind="blocked",
+                    detail=agent.blocked_question,
+                    at=agent.last_activity_at,
+                )
+            )
+    return items
+
+
+# ------------------------------------------------------------------ blueprints
+
+
+@router.get("/blueprints", response_model=list[AgentBlueprintRead])
+async def list_blueprints(
+    session: AsyncSession = Depends(get_session),
+) -> list[AgentBlueprint]:
+    result = await session.execute(select(AgentBlueprint).order_by(AgentBlueprint.name.asc()))
+    return list(result.scalars().all())
+
+
+@router.post("/blueprints", response_model=AgentBlueprintRead, status_code=status.HTTP_201_CREATED)
+async def create_blueprint(
+    payload: AgentBlueprintCreate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentBlueprint:
+    blueprint = AgentBlueprint(**payload.model_dump())
+    session.add(blueprint)
+    await session.commit()
+    await session.refresh(blueprint)
+    return blueprint
+
+
+@router.patch("/blueprints/{blueprint_id}", response_model=AgentBlueprintRead)
+async def update_blueprint(
+    blueprint_id: int,
+    payload: AgentBlueprintUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentBlueprint:
+    blueprint = await session.get(AgentBlueprint, blueprint_id)
+    if blueprint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(blueprint, field, value)
+    await session.commit()
+    await session.refresh(blueprint)
+    return blueprint
+
+
+@router.delete("/blueprints/{blueprint_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_blueprint(blueprint_id: int, session: AsyncSession = Depends(get_session)) -> None:
+    blueprint = await session.get(AgentBlueprint, blueprint_id)
+    if blueprint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+    await session.delete(blueprint)
+    await session.commit()
+
+
+@router.post(
+    "/blueprints/{blueprint_id}/instantiate",
+    response_model=AgentSessionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def instantiate_blueprint(
+    blueprint_id: int,
+    payload: AgentBlueprintInstantiate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentSession:
+    """Spawn a fresh agent seeded from a blueprint (with optional overrides)."""
+    await _require_runtime(session)
+    blueprint = await session.get(AgentBlueprint, blueprint_id)
+    if blueprint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+    await _validate_container(session, topic_id=payload.topic_id, chat_id=payload.chat_id)
+
+    task_prompt = (payload.task or blueprint.task_prompt).strip()
+    if not task_prompt:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Blueprint has no task to run")
+    title = (payload.title or blueprint.name or task_prompt).strip()[:200] or "Agent task"
+    return await _spawn_agent(
+        session,
+        title=title,
+        task_prompt=task_prompt,
+        model=blueprint.model,
+        topic_id=payload.topic_id,
+        chat_id=payload.chat_id,
+        role_id=blueprint.role_id,
+        autonomy_enabled=blueprint.autonomy_enabled,
+        max_steps=blueprint.max_steps,
+        approval_policy=blueprint.approval_policy,
+        token_budget=blueprint.token_budget,
+        max_retries=blueprint.max_retries,
+        blueprint_id=blueprint.id,
+        start=payload.start,
+    )
+
+
+# --------------------------------------------------------------------- webhook
+
+
+@router.post("/hooks/{token}", response_model=AgentSessionRead)
+async def fire_agent_webhook(
+    token: str, session: AsyncSession = Depends(get_session)
+) -> AgentSession:
+    """Kick an agent from an external event. The URL token is the only credential.
+
+    Resolves the (enabled) trigger by its secret slug, records the fire, and
+    re-runs the target agent's task in the background. Mirrors how CI/GitHub
+    webhooks are addressed; a bad or disabled token 404s to avoid leaking which
+    tokens exist.
+    """
+    await _require_runtime(session)
+    trigger = (
+        await session.execute(
+            select(AgentTrigger).where(AgentTrigger.token == token, AgentTrigger.enabled.is_(True))
+        )
+    ).scalar_one_or_none()
+    if trigger is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown or disabled trigger")
+    agent = await session.get(AgentSession, trigger.agent_id)
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent session not found")
+    trigger.last_fired_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(agent)
+    mgr = get_agent_manager()
+    mgr.enqueue(mgr.restart_with_task(agent.id))
+    return agent
+
+
 @router.get("", response_model=list[AgentSessionRead])
 async def list_agents(
     topic_id: int | None = None,
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentSessionRead]:
+    # Inline agents are execution vessels owned by a workflow step, not units the
+    # user manages, so they stay out of the roster. They are deliberately still
+    # listed by ``/attention`` below: a blocked inline step must remain
+    # discoverable and resolvable, or a workflow could wedge invisibly.
     stmt = (
         select(AgentSession)
         .where(AgentSession.archived_at.is_(None))
+        .where(AgentSession.inline.is_(False))
         .order_by(AgentSession.created_at.desc())
     )
     if topic_id is not None:
@@ -153,8 +450,13 @@ async def list_agents(
         stmt = stmt.where(AgentSession.chat_id == chat_id)
     result = await session.execute(stmt)
     agents = list(result.scalars().all())
-    unread = await _unread_counts(session, [a.id for a in agents])
-    return [_to_read(a, unread.get(a.id, 0)) for a in agents]
+    ids = [a.id for a in agents]
+    unread = await _unread_counts(session, ids)
+    workflows = await _workflow_counts(session, ids)
+    activity = get_agent_manager().live_activity(ids)
+    return [
+        _to_read(a, unread.get(a.id, 0), activity.get(a.id), workflows.get(a.id, 0)) for a in agents
+    ]
 
 
 @router.get("/archived", response_model=list[AgentSessionRead])
@@ -169,23 +471,44 @@ async def list_archived_agents(
     return list(result.scalars().all())
 
 
-@router.post("", response_model=AgentSessionRead, status_code=status.HTTP_201_CREATED)
-async def create_agent(
-    payload: AgentSessionCreate,
-    session: AsyncSession = Depends(get_session),
+async def _spawn_agent(
+    session: AsyncSession,
+    *,
+    title: str,
+    task_prompt: str,
+    model: str | None,
+    topic_id: int | None,
+    chat_id: int | None,
+    role_id: int | None,
+    autonomy_enabled: bool,
+    max_steps: int,
+    approval_policy: str | None,
+    token_budget: int | None,
+    max_retries: int,
+    blueprint_id: int | None,
+    start: bool,
 ) -> AgentSession:
-    await _require_runtime(session)
-    await _validate_container(session, topic_id=payload.topic_id, chat_id=payload.chat_id)
+    """Persist a new agent row and launch it when ``start``.
 
-    title = (payload.title or payload.task).strip()[:200] or "Agent task"
+    ``start=False`` parks the agent in the ``waiting`` state instead of ``pending``:
+    it is armed but idle until a trigger fires (a webhook or a manual "Start now").
+    A ``waiting`` agent is never swept up automatically — only its explicit trigger
+    launches it.
+    """
     agent = AgentSession(
         title=title,
-        task_prompt=payload.task,
-        model=payload.model,
-        topic_id=payload.topic_id,
-        chat_id=payload.chat_id,
-        role_id=payload.role_id,
-        status="pending",
+        task_prompt=task_prompt,
+        model=model,
+        topic_id=topic_id,
+        chat_id=chat_id,
+        role_id=role_id,
+        autonomy_enabled=autonomy_enabled,
+        max_steps=max_steps,
+        approval_policy=approval_policy,
+        token_budget=token_budget,
+        max_retries=max_retries,
+        blueprint_id=blueprint_id,
+        status="pending" if start else "waiting",
     )
     session.add(agent)
     await session.commit()
@@ -194,10 +517,76 @@ async def create_agent(
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
     )
-    # Kick off the task in the background; the manager streams progress via the bus.
-    mgr = get_agent_manager()
-    mgr.enqueue(mgr.start_task(agent.id))
+    if start:
+        mgr = get_agent_manager()
+        mgr.enqueue(mgr.start_task(agent.id))
     return agent
+
+
+@router.post("", response_model=AgentSessionRead, status_code=status.HTTP_201_CREATED)
+async def create_agent(
+    payload: AgentSessionCreate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentSession:
+    await _require_runtime(session)
+    await _validate_container(session, topic_id=payload.topic_id, chat_id=payload.chat_id)
+
+    # A blueprint seeds the defaults; explicit payload fields still win over it.
+    blueprint: AgentBlueprint | None = None
+    if payload.blueprint_id is not None:
+        blueprint = await session.get(AgentBlueprint, payload.blueprint_id)
+        if blueprint is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+
+    task_prompt = payload.task or (blueprint.task_prompt if blueprint else "")
+    if not task_prompt.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Agent task is required")
+
+    title = (payload.title or task_prompt).strip()[:200] or "Agent task"
+    return await _spawn_agent(
+        session,
+        title=title,
+        task_prompt=task_prompt,
+        model=payload.model or (blueprint.model if blueprint else None),
+        topic_id=payload.topic_id,
+        chat_id=payload.chat_id,
+        role_id=payload.role_id
+        if payload.role_id is not None
+        else (blueprint.role_id if blueprint else None),
+        autonomy_enabled=payload.autonomy_enabled
+        or (blueprint.autonomy_enabled if blueprint else False),
+        max_steps=payload.max_steps,
+        approval_policy=payload.approval_policy
+        or (blueprint.approval_policy if blueprint else None),
+        token_budget=payload.token_budget
+        if payload.token_budget is not None
+        else (blueprint.token_budget if blueprint else None),
+        max_retries=payload.max_retries or (blueprint.max_retries if blueprint else 0),
+        blueprint_id=payload.blueprint_id,
+        start=payload.start,
+    )
+
+
+@router.get("/{agent_id}/workflows", response_model=list[WorkflowSummary])
+async def list_agent_workflows(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[WorkflowSummary]:
+    """Which workflows reference this agent.
+
+    Agents are shared and reusable, so before editing or deleting one it matters
+    whether it is wired into a pipeline — and which. Archived workflows are left
+    out; a private inline vessel never appears here because it is not listed in
+    the Agents section to begin with.
+    """
+    agent = await _get_or_404(session, agent_id)
+    result = await session.execute(
+        select(Workflow)
+        .join(WorkflowStep, WorkflowStep.workflow_id == Workflow.id)
+        .where(WorkflowStep.agent_id == agent.id, Workflow.archived_at.is_(None))
+        .order_by(Workflow.name)
+    )
+    return [WorkflowSummary.model_validate(w) for w in result.scalars().unique().all()]
 
 
 @router.get("/{agent_id}", response_model=AgentSessionRead)
@@ -206,7 +595,11 @@ async def get_agent(
 ) -> AgentSessionRead:
     agent = await _get_or_404(session, agent_id)
     unread = await _unread_counts(session, [agent.id])
-    return _to_read(agent, unread.get(agent.id, 0))
+    workflows = await _workflow_counts(session, [agent.id])
+    activity = get_agent_manager().live_activity([agent.id])
+    return _to_read(
+        agent, unread.get(agent.id, 0), activity.get(agent.id), workflows.get(agent.id, 0)
+    )
 
 
 @router.get("/{agent_id}/events", response_model=list[AgentEvent])
@@ -295,6 +688,24 @@ async def cancel_agent(agent_id: str, session: AsyncSession = Depends(get_sessio
     return agent
 
 
+@router.post("/{agent_id}/start", response_model=AgentSessionRead)
+async def start_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> AgentSession:
+    """Manually launch a parked (or re-launch a finished) agent's objective.
+
+    The counterpart to creating an agent with ``start=false``: it arms a
+    ``waiting`` agent on demand. Also valid on a terminal agent (``completed`` /
+    ``failed`` / ``cancelled``) to re-run it. A fresh objective run clears the
+    previous run's artifacts (handled in the manager).
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    if agent.status in ("running", "needs_approval", "interrupted"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Agent is already active; nothing to start")
+    mgr = get_agent_manager()
+    mgr.enqueue(mgr.start_task(agent.id))
+    return agent
+
+
 @router.post("/{agent_id}/permission", response_model=AgentSessionRead)
 async def resolve_permission(
     agent_id: str,
@@ -327,9 +738,12 @@ async def update_agent(
 
     Editing the task can't take effect on a live session: the task prompt is
     delivered only once (``start_task``) and a resumed session keeps the old
-    instructions in its history. So a *changed* task re-establishes the SDK
-    session — replaying the new prompt — while preserving ``copilot_session_id``
-    so scheduled ``/agent <uuid>`` references keep resolving. Rejected mid-run to
+    instructions in its history. So a *changed* task drops the cached SDK
+    session to *prime* the new prompt for the next run — it is **not** replayed
+    here. Saving is only a save; the caller launches the new objective
+    explicitly via ``POST /{id}/start`` ("Save & run"), which clears the prior
+    run's artifacts and re-runs. ``copilot_session_id`` is preserved so
+    scheduled ``/agent <uuid>`` references keep resolving. Rejected mid-run to
     avoid racing an active turn.
     """
     agent = await _get_or_404(session, agent_id)
@@ -345,28 +759,72 @@ async def update_agent(
         agent.role_id = payload.role_id
         role_changed = True
 
-    restart = False
+    # Retuning the step budget is a plain field write — no session rebuild.
+    if payload.max_steps is not None:
+        agent.max_steps = payload.max_steps
+
+    # Governance retune — plain field writes, effective on the next metered
+    # round / retry. ``token_budget=None`` is meaningful (ungovern), so key off
+    # ``model_fields_set`` to tell an explicit clear from an omitted field.
+    if "token_budget" in payload.model_fields_set:
+        agent.token_budget = payload.token_budget
+        # Un-park a budget-blocked agent when its ceiling is raised or removed.
+        if agent.status == "blocked" and (
+            agent.token_budget is None
+            or agent.total_input_tokens + agent.total_output_tokens < agent.token_budget
+        ):
+            agent.status = "idle"
+            agent.blocked_question = None
+    if payload.max_retries is not None:
+        agent.max_retries = payload.max_retries
+
+    # The approval policy is read fresh into the live session at the start of
+    # every turn (not baked into the preamble), so changing it is a plain field
+    # write that needs no teardown — it takes effect on the next turn. ``None``
+    # means "inherit the global default", so we key off ``model_fields_set`` to
+    # distinguish an explicit reset-to-inherit from an omitted field.
+    if "approval_policy" in payload.model_fields_set:
+        agent.approval_policy = payload.approval_policy
+
+    # Toggling autonomy changes the system preamble (the autonomy protocol block
+    # is injected only when enabled), which is baked in at session build time.
+    # Tear the live session down so the new preamble takes on the next run.
+    autonomy_changed = False
+    if payload.autonomy_enabled is not None and payload.autonomy_enabled != agent.autonomy_enabled:
+        agent.autonomy_enabled = payload.autonomy_enabled
+        autonomy_changed = True
+
+    # Capability toggles change what's baked into the session (tool servers,
+    # memory/skills preamble), so a flip must rebuild it like a role change does.
+    caps_changed = False
+    for field in ("use_mcp", "use_skills", "use_memory"):
+        value = getattr(payload, field)
+        if value is not None and value != getattr(agent, field):
+            setattr(agent, field, value)
+            caps_changed = True
+
+    task_changed = False
     if payload.task is not None:
         new_task = payload.task.strip()
         if new_task and new_task != agent.task_prompt:
-            if agent.status in {"pending", "running", "needs_approval"}:
+            if agent.status in {"pending", "running", "needs_approval", "interrupted"}:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
                     "Stop the agent before editing its instructions",
                 )
             await _require_runtime(session)
             agent.task_prompt = new_task
-            restart = True
+            task_changed = True
 
     await session.commit()
     await session.refresh(agent)
 
-    if restart:
-        mgr = get_agent_manager()
-        mgr.enqueue(mgr.restart_with_task(agent.id))
-    elif role_changed:
-        # No task replay needed — just drop the cached SDK session so the new
-        # persona is re-injected the next time the agent runs or resumes.
+    # Editing the task (or role / autonomy / capabilities) only *primes* the
+    # change: drop the cached SDK session so the new instructions / persona /
+    # protocol / tool set are re-injected on the next run. Saving never launches
+    # a turn on its own — the caller runs the new objective explicitly via
+    # POST /{id}/start ("Save & run").
+    if task_changed or role_changed or autonomy_changed or caps_changed:
         await get_agent_manager().teardown_session(agent.id)
 
     await publish_agent_changed(
@@ -614,6 +1072,165 @@ async def delete_agent_schedule(
     agent = await _get_or_404(session, agent_id)
     schedule = await _get_schedule_or_404(session, agent.id)
     await session.delete(schedule)
+    await session.commit()
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+
+
+# ---------------------------------------------------- artifacts (the blackboard)
+
+
+@router.get("/{agent_id}/artifacts", response_model=list[AgentArtifactRead])
+async def list_agent_artifacts(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> list[AgentArtifact]:
+    agent = await _get_or_404(session, agent_id)
+    result = await session.execute(
+        select(AgentArtifact)
+        .where(AgentArtifact.agent_id == agent.id)
+        .order_by(AgentArtifact.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/{agent_id}/artifacts",
+    response_model=AgentArtifactRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_artifact(
+    agent_id: str,
+    payload: AgentArtifactCreate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentArtifact:
+    """Publish an artifact to an agent's blackboard by hand (also done by the
+    ``ARTIFACT:`` directive during a run). Downstream agents receive it as
+    upstream context when they start."""
+    agent = await _get_or_404(session, agent_id)
+    artifact = AgentArtifact(
+        agent_id=agent.id,
+        title=payload.title.strip()[:200],
+        content=payload.content,
+        kind=payload.kind,
+        key=payload.key,
+    )
+    session.add(artifact)
+    await session.commit()
+    await session.refresh(artifact)
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+    return artifact
+
+
+async def _get_artifact_or_404(
+    session: AsyncSession, agent_id: str, artifact_id: int
+) -> AgentArtifact:
+    """Resolve one artifact scoped to its owning agent (404 on either miss)."""
+    agent = await _get_or_404(session, agent_id)
+    artifact = await session.get(AgentArtifact, artifact_id)
+    if artifact is None or artifact.agent_id != agent.id:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return artifact
+
+
+@router.get("/{agent_id}/artifacts/{artifact_id}", response_model=AgentArtifactRead)
+async def get_agent_artifact(
+    agent_id: str,
+    artifact_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> AgentArtifact:
+    """Fetch a single artifact by id. Backs the artifact permalink/viewer so a
+    published output is addressable on its own, not only via the list."""
+    return await _get_artifact_or_404(session, agent_id, artifact_id)
+
+
+# Map an artifact's rendering ``kind`` to the content-type served by the raw
+# endpoint. Unknown kinds fall back to plain text (``link`` never reaches here —
+# it redirects to its URL instead).
+_ARTIFACT_RAW_MEDIA = {
+    "text": "text/plain; charset=utf-8",
+    "markdown": "text/markdown; charset=utf-8",
+    "json": "application/json; charset=utf-8",
+}
+
+
+@router.get("/{agent_id}/artifacts/{artifact_id}/raw")
+async def get_agent_artifact_raw(
+    agent_id: str,
+    artifact_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Serve an artifact's raw body with a kind-appropriate content-type so it
+    can be linked to, downloaded, or consumed programmatically. A ``link``
+    artifact (whose content *is* a URL) redirects to that URL instead."""
+    artifact = await _get_artifact_or_404(session, agent_id, artifact_id)
+    if artifact.kind == "link":
+        target = (artifact.content or "").strip()
+        if not target:
+            raise HTTPException(status_code=404, detail="Artifact link is empty")
+        return RedirectResponse(url=target, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    media = _ARTIFACT_RAW_MEDIA.get(artifact.kind, "text/plain; charset=utf-8")
+    return Response(content=artifact.content or "", media_type=media)
+
+
+# ------------------------------------------------------------------- triggers
+
+
+@router.get("/{agent_id}/triggers", response_model=list[AgentTriggerRead])
+async def list_agent_triggers(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> list[AgentTrigger]:
+    agent = await _get_or_404(session, agent_id)
+    result = await session.execute(
+        select(AgentTrigger)
+        .where(AgentTrigger.agent_id == agent.id)
+        .order_by(AgentTrigger.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/{agent_id}/triggers",
+    response_model=AgentTriggerRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_trigger(
+    agent_id: str,
+    payload: AgentTriggerCreate,
+    session: AsyncSession = Depends(get_session),
+) -> AgentTrigger:
+    """Mint a webhook trigger for an agent. The returned ``token`` addresses the
+    public ``POST /api/agents/hooks/{token}`` endpoint that fires it."""
+    agent = await _get_or_404(session, agent_id)
+    trigger = AgentTrigger(agent_id=agent.id, type=payload.type, enabled=payload.enabled)
+    session.add(trigger)
+    await session.commit()
+    await session.refresh(trigger)
+    await publish_agent_changed(
+        agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
+    )
+    return trigger
+
+
+@router.delete("/{agent_id}/triggers/{trigger_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_trigger(
+    agent_id: str,
+    trigger_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    agent = await _get_or_404(session, agent_id)
+    trigger = (
+        await session.execute(
+            select(AgentTrigger).where(
+                AgentTrigger.id == trigger_id, AgentTrigger.agent_id == agent.id
+            )
+        )
+    ).scalar_one_or_none()
+    if trigger is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trigger not found")
+    await session.delete(trigger)
     await session.commit()
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id

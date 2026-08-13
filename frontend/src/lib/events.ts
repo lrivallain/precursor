@@ -30,7 +30,14 @@ export type BusEvent =
       topic_id?: number | null;
       chat_id?: number | null;
     }
-  | { type: "meeting.changed"; meeting_session_id?: number | null };
+  | { type: "meeting.changed"; meeting_session_id?: number | null }
+  | {
+      type: "workflow.changed";
+      workflow_id?: number | null;
+      /** Run state at the moment of the change, so the client can notify on it. */
+      workflow_status?: string | null;
+      workflow_name?: string | null;
+    };
 
 type Handler = (event: BusEvent) => void;
 
@@ -46,6 +53,9 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     chat_id?: number | null;
     agent_session_id?: number | null;
     meeting_session_id?: number | null;
+    workflow_id?: number | null;
+    status?: string | null;
+    name?: string | null;
   };
   try {
     payload = JSON.parse(raw);
@@ -59,6 +69,9 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     chat_id: payload.chat_id ?? null,
     agent_session_id: payload.agent_session_id ?? null,
     meeting_session_id: payload.meeting_session_id ?? null,
+    workflow_id: payload.workflow_id ?? null,
+    workflow_status: payload.status ?? null,
+    workflow_name: payload.name ?? null,
   } as BusEvent;
   for (const h of handlers) {
     try {
@@ -95,6 +108,9 @@ function connect(): void {
   );
   source.addEventListener("meeting.changed", (e) =>
     dispatch("meeting.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("workflow.changed", (e) =>
+    dispatch("workflow.changed", (e as MessageEvent).data),
   );
   // A background run (e.g. a scheduled /guard probe) found an MCP server parked
   // in needs_auth. Drive the app-global re-authenticate banner directly — this

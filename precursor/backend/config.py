@@ -233,7 +233,10 @@ class Settings(BaseSettings):
     # persists each session's state under ``agents_home`` (its ``COPILOT_HOME``).
     agents_enabled: bool = False
     # Model used for new agent sessions when the caller doesn't specify one.
-    agents_default_model: str = "claude-sonnet-4.5"
+    # ``auto`` lets the runtime pick a current model, so this never goes stale as
+    # the SDK's model catalogue rotates (a pinned id that later vanishes would
+    # otherwise fail every turn at ``create_session``).
+    agents_default_model: str = "auto"
     # Default approval policy gating an agent's actions. One of:
     #   "manual"     — ask before every action (most cautious)
     #   "balanced"   — auto-approve read-only actions, ask for writes/shell/etc.
@@ -247,6 +250,26 @@ class Settings(BaseSettings):
     # event before the watchdog marks it ``interrupted`` (resumable). Guards
     # against a stuck/runaway turn pinning a session in "running" forever.
     agents_watchdog_timeout_seconds: int = 600
+    # --- Workflow defaults --------------------------------------------------
+    # What a newly-created workflow step may draw on. These seed the per-step
+    # capability toggles (each step can still override). Tool schemas are a large
+    # fixed per-turn cost, so a fleet that mostly transforms text can default
+    # them off here rather than switching every step by hand.
+    workflows_default_use_mcp: bool = True
+    workflows_default_use_skills: bool = True
+    workflows_default_use_memory: bool = True
+    # Seconds a workflow step may run before the stall watchdog stops it and
+    # applies the step's failure policy. 0 = no watchdog (the safe default).
+    workflows_default_step_timeout_seconds: int = 0
+    # --- Fleet orchestration governance -------------------------------------
+    # Max agents the concurrency governor lets execute a turn at once. Extra
+    # ready agents queue on a semaphore so a big fleet can't stampede the host
+    # or the model rate limit. 0/negative disables the cap (unbounded).
+    agents_max_concurrent: int = 3
+    # Base backoff (seconds) for auto-retry of a ``failed`` agent. Grows
+    # exponentially per attempt (base * 2**(retry_count-1)); the scheduler ticker
+    # re-runs agents once ``next_retry_at`` is due.
+    agents_retry_backoff_seconds: int = 60
 
     @cached_property
     def agents_home(self) -> str:
