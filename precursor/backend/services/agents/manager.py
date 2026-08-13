@@ -456,6 +456,26 @@ def parse_mcp_scope(raw: str | None) -> frozenset[str] | None:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+#: The built-in server, attached from :meth:`AgentManager._precursor_mcp_config`
+#: rather than from the enabled catalogue.
+_PRECURSOR_SERVER = "precursor"
+
+
+def scope_includes_precursor(scope: frozenset[str] | None) -> bool:
+    """Whether a parsed scope lets the first-party ``precursor`` server attach.
+
+    It is exempt from the **Settings → MCP** enabled toggle — it's first-party
+    and always available — but not from a step's allowlist: it carries one of
+    the larger tool catalogues on a normal install, so a step scoped to one
+    server shouldn't pay for topic, memory and schedule schemas it can't need.
+
+    Shared between the attach path and the session fingerprint so the two can't
+    disagree about whether it's there; if they did, a step that re-points only
+    this server would reuse the wrong catalogue.
+    """
+    return scope is None or _PRECURSOR_SERVER in scope
+
+
 # Cap the tool result/error text we archive per event. Tool output (e.g. a
 # fetched page) can be huge; the timeline only needs enough to show "what was
 # done / why it failed", and the model already got the full payload live.
@@ -892,8 +912,8 @@ class AgentManager:
         if not agent.use_mcp or (scope is not None and not scope):
             return _MCP_OFF_FINGERPRINT
         catalog = await self._enabled_catalog_fingerprint(scope)
-        if scope is None or "precursor" in scope:
-            return catalog | {"precursor"}
+        if scope_includes_precursor(scope):
+            return catalog | {_PRECURSOR_SERVER}
         return catalog
 
     async def _catalog_mcp_configs(
@@ -1166,12 +1186,10 @@ class AgentManager:
         if tools_on:
             mcp: dict[str, Any] = {}
             # ``precursor`` ignores the mcp_enabled toggle (it's first-party and
-            # always available) but is not exempt from the scope: it's one of the
-            # larger catalogues on a normal install, and a step that just needs
-            # `fetch` shouldn't pay for topic, memory and schedule tools it will
-            # never call. Attached here rather than via _catalog_mcp_configs so
-            # it keeps its full-access env.
-            if scope is None or "precursor" in scope:
+            # always available) but is not exempt from the scope — see
+            # scope_includes_precursor. Attached here rather than via
+            # _catalog_mcp_configs so it keeps its full-access env.
+            if scope_includes_precursor(scope):
                 mcp.update(self._precursor_mcp_config() or {})
             # Every enabled catalog server the scope allows (built-in +
             # user-defined). _catalog_mcp_configs already skips 'precursor', so

@@ -255,6 +255,28 @@ async def test_catalog_mcp_configs_honours_a_server_scope() -> None:
         await _set_mcp_enabled({})
 
 
+def test_scope_includes_precursor_is_the_single_rule() -> None:
+    """The attach path and the fingerprint must agree on the first-party server.
+
+    Both ask this one question. If they ever answered it differently, a step
+    that re-pointed *only* ``precursor`` would keep the previous catalogue.
+    """
+    from precursor.backend.services.agents.manager import (
+        parse_mcp_scope,
+        scope_includes_precursor,
+    )
+
+    # No scope at all: everything attaches, precursor included.
+    assert scope_includes_precursor(parse_mcp_scope(None)) is True
+    # Named explicitly, alone or alongside others.
+    assert scope_includes_precursor(parse_mcp_scope("precursor")) is True
+    assert scope_includes_precursor(parse_mcp_scope("fetch, precursor")) is True
+    # Scoped to other servers: the first-party one is dropped like any other.
+    assert scope_includes_precursor(parse_mcp_scope("fetch")) is False
+    # Explicitly empty means no tools at all.
+    assert scope_includes_precursor(parse_mcp_scope("")) is False
+
+
 async def test_expected_mcp_fingerprint_tracks_scope_and_steadies_tools_off() -> None:
     """The rebuild decision must see a scope change — and *not* see a false one.
 
