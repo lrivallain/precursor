@@ -430,6 +430,52 @@ _OAUTH_REFRESH_MARGIN = timedelta(minutes=5)
 # (legacy token saved before we stamped issue time, or no ``expires_in``).
 _OAUTH_FALLBACK_TTL = timedelta(minutes=30)
 
+# Sentinel fingerprint for "this session has no MCP servers at all", so that
+# switching tools back on rebuilds it rather than reusing a tool-less session.
+# Not a valid server name, so it can never collide with a real catalogue.
+_MCP_OFF_FINGERPRINT = frozenset({"\x00mcp-off"})
+
+
+def parse_mcp_scope(raw: str | None) -> frozenset[str] | None:
+    """Parse an ``mcp_servers`` CSV into the set of servers a session may see.
+
+    Tri-state, and the empty case is *not* the same as the absent one:
+
+    * ``None`` → ``None``: no scope, attach every enabled server (the behaviour
+      before per-step scoping existed).
+    * ``"fetch, workiq"`` → ``{"fetch", "workiq"}``: only those.
+    * ``""`` (or all-blank) → ``frozenset()``: no servers at all, which the
+      caller treats exactly like ``use_mcp=False``.
+
+    Names are never validated against the registry here: a workflow travels
+    between machines with different servers installed, and an unknown name
+    should simply match nothing rather than fail the run.
+    """
+    if raw is None:
+        return None
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+#: The built-in server, attached from :meth:`AgentManager._precursor_mcp_config`
+#: rather than from the enabled catalogue.
+_PRECURSOR_SERVER = "precursor"
+
+
+def scope_includes_precursor(scope: frozenset[str] | None) -> bool:
+    """Whether a parsed scope lets the first-party ``precursor`` server attach.
+
+    It is exempt from the **Settings → MCP** enabled toggle — it's first-party
+    and always available — but not from a step's allowlist: it carries one of
+    the larger tool catalogues on a normal install, so a step scoped to one
+    server shouldn't pay for topic, memory and schedule schemas it can't need.
+
+    Shared between the attach path and the session fingerprint so the two can't
+    disagree about whether it's there; if they did, a step that re-points only
+    this server would reuse the wrong catalogue.
+    """
+    return scope is None or _PRECURSOR_SERVER in scope
+
+
 # Cap the tool result/error text we archive per event. Tool output (e.g. a
 # fetched page) can be huge; the timeline only needs enough to show "what was
 # done / why it failed", and the model already got the full payload live.
@@ -815,7 +861,9 @@ class AgentManager:
             )
         raise ValueError(f"unsupported transport {entry.transport!r}")
 
-    async def _enabled_catalog_fingerprint(self) -> frozenset[str]:
+    async def _enabled_catalog_fingerprint(
+        self, scope: frozenset[str] | None = None
+    ) -> frozenset[str]:
         """Names of catalog MCP servers currently enabled *and* registered.
 
         Excludes ``precursor`` (always attached with full access). Computed the
@@ -823,6 +871,10 @@ class AgentManager:
         deliberately reflects the user's toggles rather than which servers
         actually attached — an OAuth server skipped for missing credentials must
         not read as a change and trigger an endless rebuild loop.
+
+        ``scope`` narrows it to a per-agent allowlist (see :func:`parse_mcp_scope`)
+        so that re-pointing a shared agent at a differently-scoped workflow step
+        reads as a change and rebuilds the session.
         """
         from precursor.backend.services.app_settings import resolve_mcp_enabled
         from precursor.backend.services.mcp.client import get_mcp_client_manager
@@ -833,11 +885,40 @@ class AgentManager:
         return frozenset(
             name
             for name, on in enabled.items()
-            if on and name != "precursor" and name in registered
+            if on
+            and name != "precursor"
+            and name in registered
+            and (scope is None or name in scope)
         )
+
+    async def _expected_mcp_fingerprint(self, agent: AgentSession) -> frozenset[str]:
+        """The fingerprint a session created for ``agent`` right now would carry.
+
+        Comparing a live session against *this* — rather than against the raw
+        enabled set — is what makes both halves of the tool configuration
+        rebuild-sensitive: flipping ``use_mcp``, and narrowing or widening the
+        per-step server scope. It also keeps a tools-off agent stable, which the
+        raw comparison did not: its stored fingerprint is the off sentinel, so it
+        never matched the enabled set and every dispatch tore down and rebuilt a
+        session that was already correct.
+
+        ``precursor`` is folded in here rather than in
+        :meth:`_enabled_catalog_fingerprint`, which answers a narrower question
+        (what the user's toggles enable). The first-party server ignores those
+        toggles but *is* scopable, so a step that only re-points precursor still
+        has to read as a change.
+        """
+        scope = parse_mcp_scope(agent.mcp_servers)
+        if not agent.use_mcp or (scope is not None and not scope):
+            return _MCP_OFF_FINGERPRINT
+        catalog = await self._enabled_catalog_fingerprint(scope)
+        if scope_includes_precursor(scope):
+            return catalog | {_PRECURSOR_SERVER}
+        return catalog
 
     async def _catalog_mcp_configs(
         self,
+        scope: frozenset[str] | None = None,
     ) -> tuple[dict[str, Any], datetime | None, list[str]]:
         """SDK configs for every catalog MCP server the user has *enabled*.
 
@@ -846,6 +927,9 @@ class AgentManager:
         their ``mcp_enabled`` toggle is on, so an agent can call the same tools.
         ``precursor`` is excluded here — it's attached separately with full
         access in :meth:`_precursor_mcp_config`.
+
+        ``scope``, when given, narrows that to an allowlist of server names (a
+        workflow step's ``mcp_servers``); ``None`` attaches everything enabled.
 
         Returns ``(configs, oauth_expires_at, auth_required)``: ``oauth_expires_at``
         is the soonest expiry across any OAuth-protected server whose bearer token
@@ -879,6 +963,11 @@ class AgentManager:
             # 'precursor' is first-party and attached with full access elsewhere;
             # never gate or duplicate it here.
             if entry.name == "precursor":
+                continue
+            # Out of the caller's allowlist. Filtered *before* the credential
+            # check below so a step scoped away from an OAuth server doesn't
+            # raise a sign-in prompt for tools it was never going to use.
+            if scope is not None and entry.name not in scope:
                 continue
             if not enabled.get(entry.name, False):
                 continue
@@ -1042,7 +1131,7 @@ class AgentManager:
             oauth_stale = self._oauth_stale(live)
             catalog_changed = (
                 live.mcp_fingerprint is not None
-                and live.mcp_fingerprint != await self._enabled_catalog_fingerprint()
+                and live.mcp_fingerprint != await self._expected_mcp_fingerprint(agent)
             )
             if not oauth_stale and not catalog_changed:
                 return live
@@ -1087,24 +1176,32 @@ class AgentManager:
         # An agent with MCP switched off gets no tool servers at all — not even
         # the first-party one. Whole catalogues of tool schemas are a large,
         # fixed context cost, so a step that only has to transform text pays
-        # nothing for tools it will never call.
-        mcp = self._precursor_mcp_config() if agent.use_mcp else None
+        # nothing for tools it will never call. An explicitly *empty* server
+        # scope says the same thing in the other vocabulary, and means it.
+        scope = parse_mcp_scope(agent.mcp_servers)
+        scoped_to_nothing = scope is not None and not scope
+        tools_on = agent.use_mcp and not scoped_to_nothing
         oauth_expires_at: datetime | None = None
         auth_required: list[str] = []
-        mcp_fingerprint: frozenset[str] | None = None
-        if mcp is not None:
-            # Attach every enabled catalog server (built-in + user-defined).
-            # _catalog_mcp_configs already excludes 'precursor', so the
-            # first-party full-access entry can't be shadowed.
-            catalog, oauth_expires_at, auth_required = await self._catalog_mcp_configs()
+        if tools_on:
+            mcp: dict[str, Any] = {}
+            # ``precursor`` ignores the mcp_enabled toggle (it's first-party and
+            # always available) but is not exempt from the scope — see
+            # scope_includes_precursor. Attached here rather than via
+            # _catalog_mcp_configs so it keeps its full-access env.
+            if scope_includes_precursor(scope):
+                mcp.update(self._precursor_mcp_config() or {})
+            # Every enabled catalog server the scope allows (built-in +
+            # user-defined). _catalog_mcp_configs already skips 'precursor', so
+            # the first-party full-access entry above can't be shadowed.
+            catalog, oauth_expires_at, auth_required = await self._catalog_mcp_configs(scope)
             mcp.update(catalog)
-            kwargs["mcp_servers"] = mcp
-            # Snapshot the enabled set so a later toggle rebuilds this session.
-            mcp_fingerprint = await self._enabled_catalog_fingerprint()
-        if mcp_fingerprint is None:
-            # Off is still a distinct state: mark it so flipping MCP back on
-            # rebuilds the session instead of reusing a tool-less one.
-            mcp_fingerprint = frozenset({"\x00mcp-off"})
+            if mcp:
+                kwargs["mcp_servers"] = mcp
+        # Snapshot what this session carries so a later toggle — or a step with a
+        # different scope reusing this agent — rebuilds it. Computed by the same
+        # method the reuse check compares against, so the two can't drift.
+        mcp_fingerprint = await self._expected_mcp_fingerprint(agent)
         preamble = await self._system_preamble(agent)
         if preamble:
             # Append (don't replace) so the agent keeps its SDK base instructions

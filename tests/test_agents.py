@@ -189,6 +189,161 @@ async def test_enabled_catalog_fingerprint_tracks_toggles() -> None:
         await _set_mcp_enabled({})
 
 
+def test_parse_mcp_scope_distinguishes_absent_from_empty() -> None:
+    """Null and empty are different scopes, and neither validates names.
+
+    Null is "no scope, attach everything enabled"; an empty string is the
+    deliberate "attach nothing" a step uses to shed tool schemas entirely.
+    """
+    from precursor.backend.services.agents.manager import parse_mcp_scope
+
+    assert parse_mcp_scope(None) is None
+    assert parse_mcp_scope("") == frozenset()
+    assert parse_mcp_scope("  ,  ") == frozenset()
+    assert parse_mcp_scope(" fetch , workiq ,fetch") == frozenset({"fetch", "workiq"})
+    # A name this install has never heard of is kept, not rejected: workflows
+    # travel between machines with different servers registered.
+    assert parse_mcp_scope("ghost") == frozenset({"ghost"})
+
+
+async def test_catalog_mcp_configs_honours_a_server_scope() -> None:
+    """A scoped step sees only its own servers — and no sign-in prompt for the rest.
+
+    The whole point of the allowlist is the context cost of tool schemas, so a
+    server outside the scope must not attach; and because the OAuth check runs
+    after the scope filter, being scoped away from an unauthenticated server
+    can't raise a spurious sign-in banner for tools it would never call.
+    """
+    import pytest
+
+    from precursor.backend.services.agents import runtime
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    if not runtime.sdk_installed():
+        pytest.skip("github-copilot-sdk not installed")
+
+    await _ensure_schema()
+
+    manager = get_mcp_client_manager()
+    manager.register_user_entry(
+        name="my-http",
+        transport="streamable_http",
+        url="https://example.test/mcp",
+    )
+    try:
+        await _set_mcp_enabled({"fetch": True, "workiq": True, "my-http": True, "precursor": True})
+        mgr = AgentManager()
+
+        scoped, _, auth_required = await mgr._catalog_mcp_configs(frozenset({"fetch"}))
+        assert set(scoped) == {"fetch"}
+        # 'workiq' is OAuth-protected and enabled but out of scope, so it is
+        # skipped before the credential check rather than reported as missing.
+        assert "workiq" not in auth_required
+
+        # An empty scope attaches nothing, even though servers are enabled.
+        assert await mgr._catalog_mcp_configs(frozenset()) == ({}, None, [])
+
+        # A name that matches nothing simply attaches nothing.
+        assert (await mgr._catalog_mcp_configs(frozenset({"ghost"})))[0] == {}
+
+        # No scope keeps the pre-existing behaviour.
+        everything, _, _ = await mgr._catalog_mcp_configs()
+        assert {"fetch", "my-http"} <= set(everything)
+    finally:
+        manager.unregister_user_entry("my-http")
+        await _set_mcp_enabled({})
+
+
+def test_scope_includes_precursor_is_the_single_rule() -> None:
+    """The attach path and the fingerprint must agree on the first-party server.
+
+    Both ask this one question. If they ever answered it differently, a step
+    that re-pointed *only* ``precursor`` would keep the previous catalogue.
+    """
+    from precursor.backend.services.agents.manager import (
+        parse_mcp_scope,
+        scope_includes_precursor,
+    )
+
+    # No scope at all: everything attaches, precursor included.
+    assert scope_includes_precursor(parse_mcp_scope(None)) is True
+    # Named explicitly, alone or alongside others.
+    assert scope_includes_precursor(parse_mcp_scope("precursor")) is True
+    assert scope_includes_precursor(parse_mcp_scope("fetch, precursor")) is True
+    # Scoped to other servers: the first-party one is dropped like any other.
+    assert scope_includes_precursor(parse_mcp_scope("fetch")) is False
+    # Explicitly empty means no tools at all.
+    assert scope_includes_precursor(parse_mcp_scope("")) is False
+
+
+async def test_expected_mcp_fingerprint_tracks_scope_and_steadies_tools_off() -> None:
+    """The rebuild decision must see a scope change — and *not* see a false one.
+
+    A shared agent moving from a ``fetch``-only step to a ``my-http``-only one
+    would otherwise reuse the old catalogue. That includes the first-party
+    ``precursor`` server, which is exempt from the enabled toggle but not from
+    the allowlist. Conversely a tools-off agent stores the off sentinel, so
+    comparing it against the raw enabled set made every dispatch rebuild a
+    session that was already correct.
+    """
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import (
+        _MCP_OFF_FINGERPRINT,
+        AgentManager,
+    )
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    await _ensure_schema()
+
+    manager = get_mcp_client_manager()
+    manager.register_user_entry(
+        name="my-http",
+        transport="streamable_http",
+        url="https://example.test/mcp",
+    )
+    mgr = AgentManager()
+    try:
+        await _set_mcp_enabled({"fetch": True, "my-http": True, "precursor": True})
+        agent = AgentSession(title="Scoped", task_prompt="do it", status="idle")
+
+        agent.use_mcp = True
+        agent.mcp_servers = None
+        assert await mgr._expected_mcp_fingerprint(agent) == frozenset(
+            {"fetch", "my-http", "precursor"}
+        )
+
+        agent.mcp_servers = "fetch"
+        narrowed = await mgr._expected_mcp_fingerprint(agent)
+        # Scoping away from precursor drops it: it ignores the enabled toggle,
+        # not the allowlist.
+        assert narrowed == frozenset({"fetch"})
+
+        # ...and naming it puts it back, so a step that only re-points the
+        # first-party server still reads as a change.
+        agent.mcp_servers = "fetch,precursor"
+        assert await mgr._expected_mcp_fingerprint(agent) == frozenset({"fetch", "precursor"})
+        assert await mgr._expected_mcp_fingerprint(agent) != narrowed
+
+        # Re-pointing the same agent at another step's scope reads as a change.
+        agent.mcp_servers = "my-http"
+        assert await mgr._expected_mcp_fingerprint(agent) != narrowed
+
+        # An explicitly empty scope is the same state as tools off.
+        agent.mcp_servers = ""
+        assert await mgr._expected_mcp_fingerprint(agent) == _MCP_OFF_FINGERPRINT
+
+        # Tools off is stable across dispatches whatever the catalogue does.
+        agent.use_mcp = False
+        agent.mcp_servers = None
+        assert await mgr._expected_mcp_fingerprint(agent) == _MCP_OFF_FINGERPRINT
+        await _set_mcp_enabled({"fetch": False, "my-http": True, "precursor": True})
+        assert await mgr._expected_mcp_fingerprint(agent) == _MCP_OFF_FINGERPRINT
+    finally:
+        manager.unregister_user_entry("my-http")
+        await _set_mcp_enabled({})
+
+
 async def test_oauth_bearer_header_skips_non_oauth_servers() -> None:
     """Catalog servers without an OAuth provider never get a bearer header."""
     from precursor.backend.services.agents.manager import AgentManager
@@ -4467,6 +4622,116 @@ async def test_workflow_approval_policy_applies_to_each_step_agent() -> None:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
         assert agent.approval_policy == "manual"
+
+
+async def test_step_mcp_scope_reaches_the_agent_and_is_cleared_again() -> None:
+    """The step's allowlist lands on the agent, and never outlives the step.
+
+    ``_apply_step_overrides`` is the only channel to the runtime — the manager
+    reads the agent row, not the step. It must also *clear* the scope, because a
+    reusable agent that kept step N's narrow allowlist would silently starve
+    step N+1 of the tools it does need.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(
+        kinds=["task", "task"],
+        step_kwargs=[{"mcp_servers": "fetch,workiq"}, {}],
+    )
+    agent_id = agents[0]
+    assert agent_id is not None
+
+    async def _apply(position: int) -> None:
+        async with SessionLocal() as session:
+            wf = await wf_mod._load_workflow(session, wf_id)
+            assert wf is not None
+            step = (
+                (
+                    await session.execute(
+                        select(WorkflowStep).where(
+                            WorkflowStep.workflow_id == wf_id,
+                            WorkflowStep.position == position,
+                        )
+                    )
+                )
+                .scalars()
+                .one()
+            )
+            step.agent_id = agent_id  # the shared-agent case
+            await wf_mod._apply_step_overrides(session, wf, step)
+            await session.commit()
+
+    await _apply(0)
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.mcp_servers == "fetch,workiq"
+
+    await _apply(1)
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.mcp_servers is None
+
+
+async def test_step_mcp_scope_round_trips_through_the_api() -> None:
+    """Authoring a scope must survive the write, including the "no tools" state.
+
+    Empty string and NULL are different answers here — "attach nothing" versus
+    "attach everything enabled" — so the router's usual blank-to-NULL
+    normalisation would erase the very state the feature exists to express.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowStep
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        wf_id = await _make_workflow(
+            client,
+            [{"kind": "inline", "task": "Fetch it", "mcp_servers": " fetch , workiq , fetch "}],
+            name="Scoped",
+        )
+        async with SessionLocal() as session:
+            step = (
+                await session.execute(select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id))
+            ).scalar_one()
+            # Normalised on write: trimmed, de-duplicated, order preserved.
+            assert step.mcp_servers == "fetch,workiq"
+
+        body = client.get(f"/api/workflows/{wf_id}").json()
+        assert body["steps"][0]["mcp_servers"] == "fetch,workiq"
+
+        # Explicitly empty survives as empty — this is "run without tools".
+        assert (
+            client.patch(
+                f"/api/workflows/{wf_id}",
+                json={"steps": [{"kind": "inline", "task": "Fetch it", "mcp_servers": ""}]},
+            ).status_code
+            == 200
+        )
+        async with SessionLocal() as session:
+            step = (
+                await session.execute(select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id))
+            ).scalar_one()
+            assert step.mcp_servers == ""
+
+        # Omitting the field means "no scope", not "empty scope".
+        assert (
+            client.patch(
+                f"/api/workflows/{wf_id}",
+                json={"steps": [{"kind": "inline", "task": "Fetch it"}]},
+            ).status_code
+            == 200
+        )
+        async with SessionLocal() as session:
+            step = (
+                await session.execute(select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id))
+            ).scalar_one()
+            assert step.mcp_servers is None
 
 
 async def test_workflow_read_surfaces_a_steps_parked_permission() -> None:

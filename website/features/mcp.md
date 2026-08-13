@@ -35,6 +35,14 @@ You can also add **your own** servers (stdio or streamable-HTTP). A host-depende
 **preflight** gates enabling a server — for example, `cmd-runner` needs Docker
 when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
 
+::: tip Narrow the catalogue per workflow step
+Enabling a server here offers it to everything. Tool schemas are re-sent on
+every turn, so a large registry is a standing context cost. A
+[workflow](/features/workflows#picking-which-tool-servers-a-step-gets) step can
+name the handful of servers it may use — the rest are never attached to that
+step's session.
+:::
+
 ### Playwright — authenticated scraping
 
 `playwright` wraps Microsoft's official

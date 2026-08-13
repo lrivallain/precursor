@@ -68,3 +68,31 @@ def _stub_playwright_browser_probe():
     mcp_client._playwright_browser_flag_support = True
     yield
     mcp_client._playwright_browser_flag_support = prev
+
+
+@pytest.fixture(autouse=True)
+def _no_llm_credentials():
+    """Keep the LLM provider off the network by pretending there's no token.
+
+    ``get_llm_provider`` falls back to ``MockProvider`` when no GitHub token
+    resolves, and every test that doesn't inject its own fake provider was
+    silently relying on that — which only holds while the developer is signed
+    out of ``gh``. Signed in, ``resolve_github_token`` finds a real credential,
+    the tests issue live GitHub Models requests, and they fail against an
+    entitlement the token doesn't have (or, worse, pass slowly while billing
+    someone).
+
+    Only the name bound inside ``services.llm`` is replaced, so the GitHub
+    *data* paths (issues, projects, stats) keep their own resolution and the
+    tests that stub it there are untouched. A test that wants the real
+    selection logic can patch this attribute back.
+    """
+    from precursor.backend.services import llm as llm_module
+
+    async def _no_token(_session):  # type: ignore[no-untyped-def]
+        return ""
+
+    prev = llm_module.resolve_github_token
+    llm_module.resolve_github_token = _no_token  # type: ignore[assignment]
+    yield
+    llm_module.resolve_github_token = prev  # type: ignore[assignment]

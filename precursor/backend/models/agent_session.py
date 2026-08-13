@@ -142,6 +142,13 @@ class AgentSession(Base, TimestampMixin):
     use_memory: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="1"
     )
+    # Narrows ``use_mcp`` from "the whole catalogue" to named servers, comma-
+    # separated. Null = every enabled server. This is written by the workflow
+    # engine from the step about to run (like ``use_mcp`` itself) rather than
+    # edited directly, but it lives on the row so the manager — which only ever
+    # sees the agent — can scope the session, and so the scope survives a
+    # restart or a resume.
+    mcp_servers: Mapped[str | None] = mapped_column(String(400), nullable=True)
 
     # Per-agent approval policy override gating tool calls ("manual" /
     # "balanced" / "autonomous"). ``None`` means inherit the global default

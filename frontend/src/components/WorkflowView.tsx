@@ -35,6 +35,7 @@ import { PermissionBody } from "./AgentPermissionBody";
 import type {
   AgentModelInfo,
   AgentSession,
+  MCPServerStatus,
   Workflow,
   WorkflowRun,
   WorkflowStep,
@@ -229,6 +230,7 @@ export function WorkflowView({
   const [drafts, setDrafts] = useState<DraftStep[]>([]);
   const [stepAgents, setStepAgents] = useState<AgentSession[]>([]);
   const [stepModels, setStepModels] = useState<AgentModelInfo[]>([]);
+  const [stepMcpServers, setStepMcpServers] = useState<MCPServerStatus[]>([]);
   const [savingSteps, setSavingSteps] = useState(false);
   const [stepsError, setStepsError] = useState<string | null>(null);
   // Which draft's settings modal is open, plus the horizontal drag state. The
@@ -403,13 +405,16 @@ export function WorkflowView({
     setDropIndex(null);
   }
 
-  /** Enter step-authoring mode, hydrating drafts + the agent/model catalogues. */
+  /** Enter step-authoring mode, hydrating drafts + the agent/model/server catalogues. */
   function openStepEditor(): void {
     setDrafts(draftsFromWorkflow(workflow));
     setStepsError(null);
     setEditingSteps(true);
     void api.agents.list().then(setStepAgents).catch(() => {});
     void api.agents.listModels().then(setStepModels).catch(() => {});
+    // Non-probing: the step editor only needs names and tool counts, and a probe
+    // would stall the modal behind every unresolved server's handshake.
+    void api.mcp.list(false).then(setStepMcpServers).catch(() => {});
   }
 
   async function saveSteps(): Promise<void> {
@@ -1572,6 +1577,7 @@ export function WorkflowView({
             index={drafts.findIndex((d) => d.key === editingDraftKey)}
             agents={stepAgents}
             models={stepModels}
+            mcpServers={stepMcpServers}
             usedAgentIds={
               new Set(
                 drafts

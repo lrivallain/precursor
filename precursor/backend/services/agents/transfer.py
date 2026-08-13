@@ -199,6 +199,7 @@ async def export_workflow(session: AsyncSession, workflow: Workflow) -> Transfer
                 use_mcp=step.use_mcp,
                 use_skills=step.use_skills,
                 use_memory=step.use_memory,
+                mcp_servers=step.mcp_servers,
             )
         )
 
@@ -391,10 +392,96 @@ async def _model_warnings(session: AsyncSession, doc: TransferDocument) -> list[
     ]
 
 
+async def _mcp_scope_warnings(
+    session: AsyncSession, doc: TransferDocument
+) -> list[TransferWarning]:
+    """Flag per-step server allowlists this install can't honour.
+
+    A scope travels verbatim so a workflow survives the trip between machines,
+    and a name this one doesn't know simply matches nothing rather than failing
+    the import. But quietly attaching fewer servers than the author intended
+    surfaces much later as a step behaving oddly, so say it up front — and
+    separate the two causes, because only one of them is fixable here.
+    """
+    if doc.workflow is None:
+        return []
+    # Imported inside the function: manager imports transfer-adjacent models, so
+    # a module-level import would close a cycle.
+    from precursor.backend.services.agents.manager import (
+        _PRECURSOR_SERVER,
+        parse_mcp_scope,
+    )
+
+    scoped: set[str] = set()
+    for step in doc.workflow.steps:
+        # An explicitly tools-off step never attaches anything, so its scope is
+        # inert and worth no warning. ``None`` defers to the agent, which may
+        # well have them on.
+        if step.use_mcp is False:
+            continue
+        scoped |= parse_mcp_scope(step.mcp_servers) or frozenset()
+    if not scoped:
+        return []
+
+    from precursor.backend.services.app_settings import resolve_mcp_enabled
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    try:
+        registered = {entry.name for entry in get_mcp_client_manager().list_entries()}
+    except Exception:  # pragma: no cover - registry unavailable
+        return []
+    enabled = await resolve_mcp_enabled(session)
+    # The first-party server needs no install and ignores the enabled toggles.
+    registered.add(_PRECURSOR_SERVER)
+
+    warnings: list[TransferWarning] = []
+    absent = sorted(n for n in scoped if n not in registered)
+    if absent:
+        warnings.append(
+            TransferWarning(
+                code="mcp",
+                message=(
+                    f"{_join_names(absent)} isn't installed here - steps scoped to it will run "
+                    "without it. The name is kept, so it works again on a machine that has it."
+                    if len(absent) == 1
+                    else f"{_join_names(absent)} aren't installed here - steps scoped to them "
+                    "will run without them. The names are kept, so they work again on a "
+                    "machine that has them."
+                ),
+            )
+        )
+    off = sorted(
+        n
+        for n in scoped
+        if n in registered and n != _PRECURSOR_SERVER and not enabled.get(n, False)
+    )
+    if off:
+        warnings.append(
+            TransferWarning(
+                code="mcp",
+                message=(
+                    f"{_join_names(off)} {'is' if len(off) == 1 else 'are'} switched off here - "
+                    f"enable {'it' if len(off) == 1 else 'them'} in Settings > MCP or the scoped "
+                    "steps will run without it."
+                ),
+            )
+        )
+    return warnings
+
+
+def _join_names(names: list[str]) -> str:
+    """``['a', 'b', 'c']`` -> ``"'a', 'b' and 'c'"`` for a readable warning."""
+    quoted = [f"'{n}'" for n in names]
+    if len(quoted) == 1:
+        return quoted[0]
+    return f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+
+
 async def preview_document(session: AsyncSession, doc: TransferDocument) -> TransferPreview:
     """Report what importing ``doc`` would collide with, without writing anything."""
     conflicts: list[TransferConflict] = []
     warnings: list[TransferWarning] = await _model_warnings(session, doc)
+    warnings += await _mcp_scope_warnings(session, doc)
 
     for index, incoming in enumerate(doc.agents):
         # A private vessel belongs to its step, so it is always recreated — there
@@ -747,6 +834,9 @@ async def import_document(
                 use_mcp=step.use_mcp,
                 use_skills=step.use_skills,
                 use_memory=step.use_memory,
+                # Kept verbatim, including an explicit empty string: null and
+                # empty are different scopes (all enabled servers vs none).
+                mcp_servers=step.mcp_servers,
             )
         )
     workflow.status = "idle" if incoming_wf.steps else "draft"

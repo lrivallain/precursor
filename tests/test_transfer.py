@@ -206,6 +206,72 @@ async def test_preview_reports_agent_conflict_without_writing() -> None:
     assert await _agent_titles() == before
 
 
+async def test_preview_warns_about_servers_this_install_cant_attach() -> None:
+    """A scope survives the trip; the gap it leaves behind shouldn't be silent.
+
+    Names are carried verbatim so a workflow re-imports cleanly on the machine
+    that has them. The cost is that a step can quietly run with fewer servers
+    than its author gave it, which only shows up much later as odd behaviour —
+    so the preview names both causes, and separates the one the user can fix
+    here from the one they can't.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    await _ensure_schema()
+    await _set_agents_enabled(True)
+
+    manager = get_mcp_client_manager()
+    manager.register_user_entry(
+        name="dormant",
+        transport="streamable_http",
+        url="https://example.test/mcp",
+    )
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, "mcp_enabled")
+        encoded = json.dumps({"dormant": False})
+        if row is None:
+            session.add(AppSetting(key="mcp_enabled", value=encoded))
+        else:
+            row.value = encoded
+        await session.commit()
+
+    doc = yaml.safe_dump(
+        {
+            "kind": "workflow",
+            "agents": [{"title": "Worker", "task_prompt": "work"}],
+            "workflow": {
+                "name": "Ported",
+                "steps": [
+                    {"task": "a", "agent": 0, "mcp_servers": "nowhere,dormant"},
+                    # precursor is first-party: never "missing", never "off".
+                    {"task": "b", "agent": 0, "mcp_servers": "precursor"},
+                    # Tools explicitly off, so this scope can't bite anyone.
+                    {"task": "c", "agent": 0, "use_mcp": False, "mcp_servers": "phantom"},
+                ],
+            },
+        }
+    )
+    try:
+        with TestClient(create_app()) as client:
+            body = client.post("/api/transfer/preview", json={"content": doc}).json()
+    finally:
+        manager.unregister_user_entry("dormant")
+
+    messages = [w["message"] for w in body["warnings"] if w["code"] == "mcp"]
+    absent = next(m for m in messages if "installed" in m)
+    assert "'nowhere'" in absent
+    # A tools-off step's scope is inert — warning about it would be noise.
+    assert "phantom" not in " ".join(messages)
+    off = next(m for m in messages if "switched off" in m)
+    assert "'dormant'" in off and "Settings > MCP" in off
+    # Registered-but-off must not also be reported as missing, and the
+    # first-party server is neither.
+    assert "dormant" not in absent
+    assert "precursor" not in " ".join(messages)
+
+
 async def test_preview_recognises_a_round_tripped_export() -> None:
     """Re-importing a file this install produced targets the very same object."""
     await _ensure_schema()
@@ -365,8 +431,23 @@ async def test_workflow_round_trips_through_yaml() -> None:
                 "description": "three steps",
                 "max_loops": 5,
                 "steps": [
-                    {"task": "gather", "name": "Gather", "reusable": True, "title": "Gatherer"},
-                    {"task": "check it", "name": "Check", "kind": "gate", "on_fail_position": 0},
+                    {
+                        "task": "gather",
+                        "name": "Gather",
+                        "reusable": True,
+                        "title": "Gatherer",
+                        # 'ghost' isn't registered here: a workflow travels to
+                        # machines with a different server set, so import must
+                        # carry names through rather than validate them away.
+                        "mcp_servers": "fetch,ghost",
+                    },
+                    {
+                        "task": "check it",
+                        "name": "Check",
+                        "kind": "gate",
+                        "on_fail_position": 0,
+                        "mcp_servers": "",
+                    },
                     {"name": "Sign off", "kind": "approval", "on_reject": "stop"},
                 ],
             },
@@ -396,6 +477,11 @@ async def test_workflow_round_trips_through_yaml() -> None:
     assert imported["steps"][2]["on_reject"] == "stop"
     # An approval checkpoint runs no agent.
     assert imported["steps"][2]["agent_id"] is None
+    # The server allowlist survives the round trip, and "no tools" (empty)
+    # stays distinct from "no scope" (null).
+    assert imported["steps"][0]["mcp_servers"] == "fetch,ghost"
+    assert imported["steps"][1]["mcp_servers"] == ""
+    assert imported["steps"][2]["mcp_servers"] is None
 
 
 async def test_imported_schedule_arrives_paused() -> None:

@@ -552,6 +552,9 @@ export interface WorkflowStep {
   use_mcp: boolean | null;
   use_skills: boolean | null;
   use_memory: boolean | null;
+  /** Comma-separated MCP server allowlist. Null = every enabled server, an
+   *  empty string = none at all (the same as `use_mcp: false`). */
+  mcp_servers: string | null;
   /** Optional label override; falls back to the agent's title in the UI. */
   name: string | null;
   /** Embedded live agent state; null when the referenced agent was deleted. */
@@ -671,6 +674,8 @@ export interface WorkflowStepInput {
   use_mcp?: boolean | null;
   use_skills?: boolean | null;
   use_memory?: boolean | null;
+  // Null (or omitted) = every enabled server; "" = none at all.
+  mcp_servers?: string | null;
 }
 
 export interface WorkflowCreate {

@@ -312,6 +312,15 @@ class WorkflowStep(Base, TimestampMixin):
     use_skills: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     use_memory: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # Which MCP servers this step may see, comma-separated by name. Tools are
+    # the dominant cost in a step's context — a whole catalogue can be an order
+    # of magnitude more input tokens than the prompt — and a step that can see a
+    # tool eventually reaches for it, whatever the instructions say. Tri-state,
+    # like the toggles above: null = every enabled server (today's behaviour), a
+    # list = only those, and an explicit empty string = none at all, which is
+    # exactly ``use_mcp=False``.
+    mcp_servers: Mapped[str | None] = mapped_column(String(400), nullable=True)
+
     # Optional per-step display label overriding the agent's title in the strip.
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
