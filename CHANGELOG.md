@@ -125,8 +125,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   and rebuilds every run's totals from what is left — **existing runs will show
   lower (correct) token counts** after upgrading, and phantom "Running" rows
   disappear from their traces. Attempts abandoned this way are labelled
-  `Superseded`; genuine repeat attempts (gate loop-backs, `on_error=retry`,
-  manual retries, permission resumes) are untouched.
+  `Superseded`. The repair takes more than closeness in time to act: a candidate
+  must *also* be orphaned or an exact spend twin of the attempt that survived,
+  because a legitimate `on_error=retry` whose first attempt fails within seconds
+  starts inside the same window, and superseding that would delete real spend —
+  the very under-reporting this repair exists to fix. Genuine repeat attempts
+  (gate loop-backs, `on_error=retry`, manual retries, permission resumes) are
+  untouched.
 
 - **A failed turn dispatch tells its workflow.** `_fail_turn` marks the agent
   `failed` outside the event seam, so the run only found out if some later event
