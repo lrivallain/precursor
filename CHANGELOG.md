@@ -56,7 +56,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 - **"Open Settings" from the Agents-off screen now lands on Agents.** The button
   told you to turn the feature on and then dropped you on Appearance, leaving you
   to find the right category yourself. It opens Settings directly on **Agents**,
-  where the toggle it just pointed at is.
+  where the toggle it just pointed at is. The Workflows section's gated state got
+  the same treatment: it used to name the setting in prose ("Enable it in
+  Settings → Agents") without offering a way to get there, and now carries the
+  same button.
 
 - **Switching a step's kind or agent source no longer strands its agent.**
   Converting an inline step to an agent-backed one kept the reference to its

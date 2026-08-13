@@ -2775,6 +2775,7 @@ export default function App() {
                 setActiveWorkflowRunSeg(null);
               }}
               onRunSegChange={setActiveWorkflowRunSeg}
+              onOpenSettings={openAgentSettings}
               onOpenAgent={(agentId) => {
                 setActiveWorkflowId(null);
                 setActiveWorkflowRunSeg(null);
