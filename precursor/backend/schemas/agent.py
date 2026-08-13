@@ -34,6 +34,10 @@ class AgentPendingPermission(BaseModel):
 
     request_id: str | None = None
     title: str | None = None
+    # The full request payload (command / path / url / diff / …), so a surface
+    # that isn't the agent timeline can render the decision card without
+    # replaying the event stream to find it.
+    data: dict[str, Any] | None = None
 
 
 class AgentSessionRead(BaseModel):

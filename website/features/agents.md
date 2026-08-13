@@ -419,3 +419,10 @@ You can also drive an agent from a scheduled topic with slash directives:
 
 See the [scheduler](/features/scheduler) for how these directives — and `/guard`
 gating — fit together.
+
+## Sharing an agent
+
+An agent's definition — prompt, model, persona, budgets and cadence — can be
+**exported to a YAML file** from its settings drawer and imported into another
+install. What travels is the definition only: no run history, and no webhook
+tokens. See [import & export](/features/transfer).

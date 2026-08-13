@@ -266,6 +266,8 @@ export interface AgentArtifact {
 export interface AgentPendingPermission {
   request_id: string | null;
   title: string | null;
+  /** Full request payload, so a non-timeline surface can render the card. */
+  data: Record<string, unknown> | null;
 }
 
 // Lightweight schedule view embedded in AgentSession (mirrors backend
@@ -496,6 +498,14 @@ export interface WorkflowAgentSummary {
   progress_label: string | null;
   result_summary: string | null;
   active_narration: string | null;
+  /** What the agent asked when it parked itself (`status === "blocked"`). */
+  blocked_question: string | null;
+  /**
+   * The tool-permission request parking this step, lifted from the live runtime.
+   * The board has to offer the decision: a gate on an *inline* step is
+   * otherwise unanswerable, since its vessel is hidden from the Agents roster.
+   */
+  pending_permission: AgentPendingPermission | null;
   finished_at: string | null;
   updated_at: string;
 }
@@ -614,6 +624,12 @@ export interface Workflow {
   step_timeout_seconds: number | null;
   /** Assistant Role applied to every step's agent while the workflow runs. */
   role_id: number | null;
+  /**
+   * Tool-approval policy applied to every step's agent while it runs; null
+   * leaves each agent's own setting alone. The lever that makes an unattended
+   * pipeline actually unattended.
+   */
+  approval_policy: AgentApprovalPolicy | null;
   run_count: number;
   last_run_at: string | null;
   finished_at: string | null;
@@ -666,6 +682,7 @@ export interface WorkflowCreate {
   max_loops?: number;
   step_timeout_seconds?: number | null;
   role_id?: number | null;
+  approval_policy?: AgentApprovalPolicy | null;
   steps?: WorkflowStepInput[];
 }
 
@@ -680,6 +697,8 @@ export interface WorkflowUpdate {
   step_timeout_seconds?: number | null;
   /** Assistant Role for the whole workflow; 0 clears it. */
   role_id?: number | null;
+  /** Tool-approval policy for every step; null means inherit each agent's own. */
+  approval_policy?: AgentApprovalPolicy | null;
   /** When provided, replaces the entire ordered step list. Omit to leave untouched. */
   steps?: WorkflowStepInput[] | null;
 }
@@ -690,6 +709,63 @@ export interface WorkflowScheduleUpdate {
   run_at_minute?: number | null;
   timezone?: string | null;
   days_of_week?: number | null;
+}
+
+// --- YAML transfer (export / import of agents and workflows) ----------------
+// A transfer document is the shareable form of one agent or one workflow: its
+// definition, and never its runtime state or per-install secrets. Importing is
+// two-phase because the choice below can only be offered once collisions are
+// known: `preview` reports them, `import` applies the decisions.
+
+export type TransferKind = "agent" | "workflow";
+
+/** What to do with an incoming object whose name already exists here. */
+export type ConflictAction = "replace" | "create" | "link";
+
+export interface TransferConflict {
+  kind: "agent" | "workflow";
+  /** Index into the document's agent list; null for the workflow itself. */
+  index: number | null;
+  name: string;
+  existing_id: number;
+  existing_title: string;
+  /** True when this really is the object the file was exported from. */
+  same_object: boolean;
+  /** Live workflows already using the existing agent — the blast radius of a replace. */
+  workflow_count: number;
+  allowed: ConflictAction[];
+  default: ConflictAction;
+}
+
+export interface TransferWarning {
+  code: string;
+  message: string;
+}
+
+export interface TransferPreview {
+  kind: TransferKind;
+  name: string;
+  agent_count: number;
+  step_count: number;
+  conflicts: TransferConflict[];
+  warnings: TransferWarning[];
+}
+
+export interface TransferResolution {
+  kind: "agent" | "workflow";
+  index: number | null;
+  action: ConflictAction;
+}
+
+export interface TransferImportResult {
+  kind: TransferKind;
+  workflow_id: number | null;
+  agent_id: number | null;
+  name: string;
+  created_agent_ids: number[];
+  replaced_agent_ids: number[];
+  linked_agent_ids: number[];
+  warnings: TransferWarning[];
 }
 
 export interface Attachment {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Workflow as WorkflowIcon } from "lucide-react";
+import { Settings as SettingsIcon, Workflow as WorkflowIcon } from "lucide-react";
 import { api } from "../lib/api";
 import type { Workflow } from "../lib/types";
 import { WorkflowList } from "./WorkflowList";
@@ -19,6 +19,8 @@ interface Props {
   onNavigate: (id: number | null) => void;
   /** Reports the currently-shown run segment back up to drive the URL. */
   onRunSegChange: (seg: string | null) => void;
+  /** Opens Settings on Agents — the toggle this section is gated behind. */
+  onOpenSettings: () => void;
   onOpenAgent: (agentId: number) => void;
 }
 
@@ -37,6 +39,7 @@ export function WorkflowsSection({
   runSeg,
   onNavigate,
   onRunSegChange,
+  onOpenSettings,
   onOpenAgent,
 }: Props) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -84,11 +87,22 @@ export function WorkflowsSection({
 
   if (!enabled) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-        <WorkflowIcon size={22} className="text-muted" />
-        <p className="text-sm text-muted">
-          Workflows require Agents. Enable it in Settings → Agents.
-        </p>
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <WorkflowIcon size={28} className="text-muted" />
+        <div className="max-w-sm space-y-1">
+          <p className="text-sm font-medium">Workflows need Agents mode</p>
+          <p className="text-[12px] text-muted">
+            A workflow chains agents into a repeatable pipeline, so it runs on the same
+            runtime. Turn Agents on in Settings to get started.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm text-white"
+        >
+          <SettingsIcon size={14} /> Open Settings
+        </button>
       </div>
     );
   }
@@ -150,6 +164,13 @@ export function WorkflowsSection({
         setMode({ kind: "view", id: wf.id });
       }}
       onNew={() => setMode({ kind: "builder", id: null })}
+      onImported={(result) => {
+        void load();
+        if (result.workflow_id != null) {
+          onNavigate(result.workflow_id);
+          setMode({ kind: "view", id: result.workflow_id });
+        }
+      }}
       onChanged={upsert}
     />
   );

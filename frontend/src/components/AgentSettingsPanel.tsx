@@ -3,6 +3,7 @@ import {
   Archive,
   CalendarClock,
   Coins,
+  Download,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -491,6 +492,20 @@ export function AgentSettingsPanel({
             {error && <p className="text-xs text-red-500">{error}</p>}
 
             <section className="pt-2 border-t border-border space-y-3">
+              <div>
+                <a
+                  href={api.transfer.exportAgentUrl(agent.id)}
+                  download
+                  className="flex items-center gap-2 text-sm text-muted hover:text-text"
+                >
+                  <Download size={14} />
+                  Export as YAML
+                </a>
+                <p className="text-[11px] text-muted mt-1">
+                  A portable copy of this agent's definition — prompt, persona, budgets and
+                  cadence. No run history, and no webhook tokens.
+                </p>
+              </div>
               <div>
                 <button
                   onClick={() => void archive()}

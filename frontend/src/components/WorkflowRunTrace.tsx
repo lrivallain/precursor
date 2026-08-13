@@ -1,12 +1,16 @@
 import {
   ArrowDownToLine,
   ArrowUpToLine,
+  Activity,
   Coins,
   Loader2,
   ShieldCheck,
   UserCheck,
 } from "lucide-react";
-import type { WorkflowRun } from "../lib/types";
+import { useState } from "react";
+import { api } from "../lib/api";
+import type { AgentEvent, WorkflowRun, WorkflowRunStep } from "../lib/types";
+import { AgentActivity } from "./AgentView";
 import { CopyableMarkdown } from "./CopyableMarkdown";
 import {
   formatTokens,
@@ -18,8 +22,64 @@ import {
 
 interface Props {
   run: WorkflowRun;
+  /** The workflow the run belongs to — needed to fetch per-attempt activity. */
+  workflowId: number;
   /** Deep-link into the full Agents cockpit for a trace's agent. */
   onOpenAgent?: (agentId: number) => void;
+}
+
+/**
+ * What the agent actually *did* during one step attempt.
+ *
+ * The surrounding row says what a step received and produced; when a step blocks
+ * or stalls having produced nothing, that leaves nothing to diagnose from. This
+ * renders the same timeline the Agents cockpit does — tool calls with their
+ * arguments and output, reasoning, errors — fetched lazily, because a run has
+ * many attempts and only the interesting one gets opened.
+ */
+function StepActivity({ workflowId, step }: { workflowId: number; step: WorkflowRunStep }) {
+  const [events, setEvents] = useState<AgentEvent[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load(): Promise<void> {
+    if (events !== null || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setEvents(await api.workflows.stepEvents(workflowId, step.id));
+    } catch {
+      setError("Couldn't load this attempt's activity.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <details
+      className="group mt-1.5"
+      onToggle={(e) => {
+        if ((e.currentTarget as HTMLDetailsElement).open) void load();
+      }}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium text-muted transition hover:text-fg">
+        <Activity size={12} className="text-violet-500" />
+        Activity
+        {loading && <Loader2 size={10} className="animate-spin" />}
+      </summary>
+      <div className="mt-1.5 max-h-[28rem] overflow-y-auto rounded-lg border border-border bg-bg/40 px-2.5 py-2">
+        {error ? (
+          <p className="py-2 text-center text-[11px] text-red-500">{error}</p>
+        ) : events === null ? (
+          <p className="py-2 text-center text-[11px] text-muted">Loading…</p>
+        ) : (
+          // A finished attempt's stream is closed: whatever it left open was
+          // abandoned when the attempt ended, not still going.
+          <AgentActivity events={events} closed={step.finished_at != null} />
+        )}
+      </div>
+    </details>
+  );
 }
 
 /**
@@ -29,7 +89,7 @@ interface Props {
  * scrolls through. A gate loop-back appears as a fresh row with a bumped
  * attempt badge, so retries read as distinct entries rather than mutations.
  */
-export function WorkflowRunTrace({ run, onOpenAgent }: Props) {
+export function WorkflowRunTrace({ run, workflowId, onOpenAgent }: Props) {
   if (run.step_runs.length === 0) {
     return (
       <p className="px-1 py-6 text-center text-xs text-muted">
@@ -150,6 +210,10 @@ export function WorkflowRunTrace({ run, onOpenAgent }: Props) {
               {running && !s.output_summary && (
                 <p className="mt-1.5 text-[11px] italic text-muted">Working…</p>
               )}
+
+              {/* How it got there. Only an agent-backed attempt has activity —
+                  an approval checkpoint never ran one. */}
+              {s.agent_id != null && <StepActivity workflowId={workflowId} step={s} />}
             </div>
           </li>
         );

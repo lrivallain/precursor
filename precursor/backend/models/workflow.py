@@ -93,6 +93,13 @@ class Workflow(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    # Portable identity for YAML export/import — see ``AgentSession.export_id``.
+    # Lets a re-imported file update the workflow it came from rather than
+    # matching it by name. Nullable for legacy rows; minted on first export.
+    export_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+
     name: Mapped[str] = mapped_column(String(200), nullable=False, default="Workflow")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -144,6 +151,15 @@ class Workflow(Base, TimestampMixin):
     role_id: Mapped[int | None] = mapped_column(
         ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # Tool-approval policy applied to every step's agent while the workflow runs
+    # ("manual" / "balanced" / "autonomous"). Null leaves each agent's own
+    # setting alone. This is the lever that makes an *unattended* pipeline
+    # actually unattended: a step that stops at a permission gate parks the whole
+    # run until a human answers, which defeats a scheduled or webhook-fired
+    # workflow. Set once here rather than on every shared agent, which would
+    # change how those agents behave outside this pipeline too.
+    approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # Run bookkeeping for the gallery + metrics.
     run_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

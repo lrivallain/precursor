@@ -63,6 +63,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `schedules` | Topic/agent recurrence and **Run now**. |
 | `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
 | `stt` | Short-lived Azure Speech token minting for live sessions. |
+| `transfer` | [YAML export/import](/features/transfer) of agents and workflows: `GET /workflows/{id}` and `GET /agents/{id}` download a definition; `POST /preview` reports name conflicts without writing; `POST /import` applies them with a per-agent `replace` / `create` / `link` resolution. |
 | `plugins` | Descriptors for frontend extensions contributed by plugins. |
 
 Health and version:

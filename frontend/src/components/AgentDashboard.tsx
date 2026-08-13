@@ -28,6 +28,7 @@ import {
   Plus,
   Radar,
   ShieldQuestion,
+  Upload,
   Workflow as WorkflowIcon,
   Wrench,
   X,
@@ -36,11 +37,13 @@ import type {
   AgentInboxItem,
   AgentMetrics,
   AgentSession,
+  TransferImportResult,
   WorkflowSummary,
 } from "../lib/types";
 import { api } from "../lib/api";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { AgentMedallion } from "./AgentMedallion";
+import { ImportDialog } from "./ImportDialog";
 import {
   AGENT_STATUS_DOT,
   agentIsActive,
@@ -53,6 +56,8 @@ interface AgentDashboardProps {
   agents: AgentSession[];
   onSelect: (id: number) => void;
   onNew: () => void;
+  /** Refresh + focus the agent an imported YAML file produced. */
+  onImported?: (result: TransferImportResult) => void;
   onOpenWorkflow?: (workflowId: number) => void;
 }
 
@@ -105,9 +110,11 @@ export function AgentDashboard({
   agents,
   onSelect,
   onNew,
+  onImported,
   onOpenWorkflow,
 }: AgentDashboardProps) {
   const ordered = useMemo(() => sortAgentsByUrgency(agents), [agents]);
+  const [importing, setImporting] = useState(false);
 
   // Which KPI tile is acting as a filter, if any. Clicking a tile toggles it:
   // click once to narrow to that lane, click again to clear.
@@ -190,7 +197,18 @@ export function AgentDashboard({
               {summary.total}
             </span>
           )}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {onImported && (
+              <button
+                type="button"
+                onClick={() => setImporting(true)}
+                title="Import an agent from a YAML file"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:bg-white/5 hover:text-fg"
+              >
+                <Upload size={15} />
+                Import
+              </button>
+            )}
             <button
               type="button"
               onClick={onNew}
@@ -201,6 +219,14 @@ export function AgentDashboard({
             </button>
           </div>
         </div>
+
+        {importing && onImported && (
+          <ImportDialog
+            expect="agent"
+            onClose={() => setImporting(false)}
+            onImported={onImported}
+          />
+        )}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <StatTile
             icon={AlertCircle}

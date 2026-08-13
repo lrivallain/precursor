@@ -11,6 +11,79 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **See what a workflow step actually did.** Every attempt in the run trace now
+  carries an **Activity** section rendering the same timeline the Agents cockpit
+  does — tool calls with their arguments and output, reasoning, assistant
+  messages, lifecycle hooks — sliced to that attempt's own window (events are
+  archived per agent, so a step re-driven four times shares one stream). Before
+  this, a step that blocked or stalled having produced no output left literally
+  nothing to diagnose from. In a finished attempt a tool call that never
+  terminated is reported as *interrupted* — or *never approved* when it stopped
+  at a permission gate — instead of spinning as though it were still running.
+
+- **Retry a single failed step.** The step whose failure stopped a run wears a
+  **Retry this step** button on its own card: it re-drives that step as a fresh
+  attempt on the **same run** and carries on from there, instead of forcing a
+  re-run of the whole pipeline that discards every good step before the bad one
+  (and pays for them twice). The attempt is appended to the run trace with a
+  bumped attempt badge, like a gate loop-back, and the step's automatic retry
+  budget resets so the manual retry doesn't inherit a spent counter.
+
+- **Answer a blocked step when resuming it.** A run parks when a step's agent
+  raises a question it can't resolve alone; resuming re-drove it blind, straight
+  back into the same question. The Resume control now turns amber and opens a box
+  showing what was asked, and the answer is injected into the step's kickoff.
+  Both `POST /resume` and the new `POST /retry` take an optional `{"input": …}`.
+
+- **A workflow-wide tool-approval policy.** Settings → Workflows gains **Tool
+  approvals** (Manual / Balanced / Autonomous), applied to whichever step's agent
+  is about to run rather than written onto the shared agent row. This is what
+  makes an *unattended* pipeline actually unattended: a step that stops at a
+  permission gate parks the whole run until a human answers, which a scheduled or
+  webhook-fired workflow has nobody to do.
+
+- **A tool-permission gate no longer parks the whole run.** Waiting on a tool
+  decision was treated as a *block*: the workflow paused, the step's trace was
+  closed, and a manual **Resume** was required — so an agent making five tool
+  calls in one step blocked five times, stacking five "Blocked" attempts in the
+  trace. The turn is in fact still alive and continues by itself the moment the
+  gate is answered, so the run now stays `running` with its trace open and only
+  the approve/deny card is surfaced. A question the agent genuinely *raised*
+  (`blocked`) still parks the run, as before. The step timeout still applies, so
+  a gate nobody ever answers is caught by the watchdog instead of parking the
+  pipeline forever.
+
+- **Approve a step's permission request from the workflow board.** A parked
+  tool-permission gate now renders its approve/deny card on the board itself.
+  This was previously impossible to answer at all for an **inline** step, whose
+  agent is hidden from the Agents roster — so the run simply stalled until the
+  watchdog killed it. Answering also puts the paused run back in flight: the
+  block had stopped the coordinator (`advance_for_agent` only looks at *running*
+  workflows), so resolving the gate alone would leave the approved agent
+  finishing its turn into a pipeline that had stopped listening — the board stuck
+  on "Blocked" and the same request raised again on every reload. A decision the
+  runtime can no longer match is now reported as a conflict instead of silently
+  doing nothing.
+
+- **Import and export agents and workflows as YAML.** A workflow exports to a
+  single, readable file — its steps, its wiring, and every agent those steps use
+  — so a pipeline can be committed next to the project it automates or handed to
+  someone else; an agent exports on its own the same way. What travels is the
+  *definition*: runtime state (status, run history, artifacts, token counters,
+  the SDK session handle) is left out, webhook tokens are never exported because
+  they're per-install credentials, and a carried schedule arrives **paused** so a
+  shared file can't start firing on its new owner. Importing is two-phase, since
+  the interesting decision only exists once collisions are known: a preview
+  reports them without writing anything, then each colliding agent is resolved as
+  **use existing** (reference it untouched), **replace** (overwrite its
+  definition in place, so every other workflow using it follows — with the blast
+  radius shown up front) or **create new** (keep both). Objects are stamped with
+  a stable portable id on first export, so re-importing a file that came from
+  this install updates the object it came from rather than guessing from the
+  name; a bare name match defaults to the non-destructive choice instead, which
+  also makes scripted imports safe. New `/api/transfer` router, and
+  `export_id` columns on `agent_sessions` and `workflows`.
+
 - **Create a reusable agent from the step editor.** An Agent step now chooses
   between **Existing agent** (pick one from the Agents section) and **New agent**
   (name it and give it an objective right here) — so building a pipeline no
@@ -33,6 +106,35 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   starts as **Inline**, which is where it effectively started before.
 
 ### Fixed
+
+- **Answering a permission request no longer wedges the agent.** `needs_approval`
+  is a *sticky* status — the idle handler skips it so a trailing idle can't mask
+  a genuinely parked agent — so an agent left sitting in it never reaches
+  `_on_idle`: its turn finished, the workflow was never told, and the step showed
+  "Running" until the watchdog killed it. The reset to `running` now lives in
+  `AgentManager.resolve_permission`, where every caller gets it, rather than only
+  in the agents router (which is why approving from the workflow board silently
+  stalled the run).
+
+- **Re-driving a parked agent no longer queues behind the thing that parked it.**
+  A turn stopped at a permission gate stays *open*, so sending the next prompt
+  into that session just queued it behind a decision nobody was going to make —
+  the "retry" burned its whole watchdog window without running anything and died
+  with the same stall it was meant to fix. Starting a task now rejects any
+  unanswered permission request and aborts the old turn first, so the new prompt
+  lands on an idle session.
+
+- **Live narration reached the workflow board.** `WorkflowAgentSummary` declared
+  `active_narration` but the router returned ORM rows straight to FastAPI, so the
+  field — which only exists in the runtime's in-memory view — was always null.
+
+- **"Open Settings" from the Agents-off screen now lands on Agents.** The button
+  told you to turn the feature on and then dropped you on Appearance, leaving you
+  to find the right category yourself. It opens Settings directly on **Agents**,
+  where the toggle it just pointed at is. The Workflows section's gated state got
+  the same treatment: it used to name the setting in prose ("Enable it in
+  Settings → Agents") without offering a way to get there, and now carries the
+  same button.
 
 - **Switching a step's kind or agent source no longer strands its agent.**
   Converting an inline step to an agent-backed one kept the reference to its

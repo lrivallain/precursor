@@ -90,6 +90,7 @@ export default withMermaid(
             { text: "Live sessions", link: "/features/live-sessions" },
             { text: "Agents", link: "/features/agents" },
             { text: "Workflows", link: "/features/workflows" },
+            { text: "Import & export", link: "/features/transfer" },
             { text: "Workspaces & files", link: "/features/workspaces" },
             { text: "Kanban board", link: "/features/kanban" },
             { text: "Skills & memory", link: "/features/skills-memory" },

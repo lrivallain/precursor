@@ -50,6 +50,9 @@ These work across the sections above:
   PPTX and text/code files text-extracted; content-addressed on disk, deduped.
 - **[Plugins](/features/plugins)** — extend the backend and frontend without
   forking core.
+- **[Import & export](/features/transfer)** — share an agent or a workflow as a
+  plain YAML file, and choose what happens to anything that already exists on
+  import.
 
 ## What's under the hood
 

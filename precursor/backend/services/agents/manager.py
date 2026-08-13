@@ -1230,6 +1230,32 @@ class AgentManager:
             await self.teardown_session(agent_id, forget=False)
             self._auth_announced.pop(agent_id, None)
 
+    async def _release_parked_turn(self, agent_id: int, live: Any) -> None:
+        """Free a session parked on an unanswered permission before re-driving it.
+
+        A turn that stopped at a permission gate is still *open*: the SDK is
+        awaiting a decision that, by the time we're starting a new task, nobody is
+        going to give. Sending the next prompt into that session just queues it
+        behind the gate, so the "retry" burns its whole watchdog window without
+        running anything and dies with the same stall it was meant to fix.
+
+        Rejecting the pending futures lets the old turn unwind, and the abort
+        stops whatever it does next, so the new prompt lands on an idle session.
+        Nothing to do for a session that wasn't parked — the common case.
+        """
+        if not getattr(live, "pending", None):
+            return
+        logger.info(
+            "agent %s: releasing %d unanswered permission request(s) before re-driving",
+            agent_id,
+            len(live.pending),
+        )
+        for fut in list(live.pending.values()):
+            if not fut.done():
+                fut.set_result(self._reject("superseded by a new run"))
+        with contextlib.suppress(Exception):
+            await live.sdk_session.abort()
+
     async def start_task(self, agent_id: int, extra_context: str | None = None) -> None:
         try:
             agent = await self._load(agent_id)
@@ -1241,6 +1267,7 @@ class AgentManager:
             # first run (nothing published yet).
             await self._clear_artifacts(agent_id)
             live = await self._ensure_live(agent)
+            await self._release_parked_turn(agent_id, live)
             await self._sync_selected_model(agent)
             live.approval_policy = await self._approval_policy(agent)
             prompt = (agent.task_prompt or "").strip() or None
@@ -1382,6 +1409,19 @@ class AgentManager:
                 }
             )
         fut.set_result(self._decision(decision))
+        # The turn resumes, so the agent is working again. This *must* happen
+        # here rather than at each call site: ``needs_approval`` is a sticky
+        # status the idle handler deliberately skips (so a trailing idle can't
+        # mask a genuinely parked agent), which means an agent left sitting in it
+        # never reaches ``_on_idle`` — its turn finishes, the workflow is never
+        # told, and the step stays "Running" forever.
+        await self._patch(agent_id, status="running", blocked_question=None)
+        agent = await self._load(agent_id)
+        await publish_agent_changed(
+            agent_session_id=agent_id,
+            topic_id=agent.topic_id if agent else None,
+            chat_id=agent.chat_id if agent else None,
+        )
         return True
 
     def list_permissions(self) -> list[dict[str, Any]]:
@@ -1454,7 +1494,13 @@ class AgentManager:
             pending: dict[str, Any] | None = None
             if live is not None and live.pending_info:
                 info = next(iter(live.pending_info.values()))
-                pending = {"request_id": info.get("request_id"), "title": info.get("title")}
+                pending = {
+                    "request_id": info.get("request_id"),
+                    "title": info.get("title"),
+                    # The whole payload travels: the workflow board renders the
+                    # decision card from it, and it has no event stream to mine.
+                    "data": dict(info),
+                }
             out[aid] = {
                 "active_tool": running.get(order[-1]) if order else None,
                 "active_tool_count": len(order),

@@ -4,11 +4,12 @@ import {
   Pause,
   Play,
   Plus,
+  Upload,
   Webhook,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { Workflow } from "../lib/types";
+import type { TransferImportResult, Workflow } from "../lib/types";
 import {
   WORKFLOW_STATUS_BADGE,
   WORKFLOW_STATUS_DOT,
@@ -20,12 +21,14 @@ import {
   workflowRelativeTime,
 } from "../lib/workflows";
 import { useState } from "react";
+import { ImportDialog } from "./ImportDialog";
 
 interface Props {
   workflows: Workflow[];
   loading: boolean;
   onOpen: (workflow: Workflow) => void;
   onNew: () => void;
+  onImported: (result: TransferImportResult) => void;
   onChanged: (workflow: Workflow) => void;
 }
 
@@ -34,8 +37,9 @@ interface Props {
  * live status, a compact step trail with progress, schedule/webhook badges, and
  * inline run/pause quick controls. Clicking the body opens the detail board.
  */
-export function WorkflowList({ workflows, loading, onOpen, onNew, onChanged }: Props) {
+export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, onChanged }: Props) {
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
 
   async function quick(id: number, fn: () => Promise<Workflow>): Promise<void> {
     setBusyId(id);
@@ -53,14 +57,32 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onChanged }: P
           <h1 className="text-lg font-semibold text-fg">Workflows</h1>
           <p className="text-xs text-muted">Reusable pipelines that chain your agents.</p>
         </div>
-        <button
-          type="button"
-          onClick={onNew}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-600"
-        >
-          <Plus size={15} /> New workflow
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setImporting(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:bg-white/5 hover:text-fg"
+            title="Import a workflow from a YAML file"
+          >
+            <Upload size={15} /> Import
+          </button>
+          <button
+            type="button"
+            onClick={onNew}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-600"
+          >
+            <Plus size={15} /> New workflow
+          </button>
+        </div>
       </div>
+
+      {importing && (
+        <ImportDialog
+          expect="workflow"
+          onClose={() => setImporting(false)}
+          onImported={onImported}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto px-5 py-5">
         {loading ? (

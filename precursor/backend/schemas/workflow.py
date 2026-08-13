@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from precursor.backend.schemas.agent import AgentApprovalPolicy, AgentPendingPermission
 from precursor.backend.schemas.schedule import UtcDateTime
 
 WorkflowStatus = Literal[
@@ -55,6 +56,15 @@ class WorkflowAgentSummary(BaseModel):
     progress_label: str | None = None
     result_summary: str | None = None
     active_narration: str | None = None
+    # The question the agent raised when it parked itself (``status ==
+    # "blocked"``). Carried so the board can show what it is stuck on and let the
+    # operator answer it when resuming, instead of re-driving the step blind.
+    blocked_question: str | None = None
+    # The oldest unresolved tool-permission request parking this step, lifted
+    # from the live runtime. Without it a gate on an *inline* step is
+    # unanswerable: its vessel is hidden from the Agents roster, so the workflow
+    # board is the only place the decision can be made.
+    pending_permission: AgentPendingPermission | None = None
     finished_at: UtcDateTime | None = None
     updated_at: UtcDateTime
 
@@ -191,6 +201,9 @@ class WorkflowRead(BaseModel):
     step_timeout_seconds: int | None = None
     # Assistant Role applied to every step's agent while the workflow runs.
     role_id: int | None = None
+    # Tool-approval policy applied to every step's agent while it runs; null
+    # leaves each agent's own setting alone.
+    approval_policy: AgentApprovalPolicy | None = None
     run_count: int = 0
     last_run_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
@@ -262,6 +275,7 @@ class WorkflowCreate(BaseModel):
     max_loops: int = Field(default=3, ge=1, le=25)
     step_timeout_seconds: int | None = Field(default=None, ge=30, le=86400)
     role_id: int | None = None
+    approval_policy: AgentApprovalPolicy | None = None
     steps: list[WorkflowStepInput] = []
 
 
@@ -276,6 +290,9 @@ class WorkflowUpdate(BaseModel):
     step_timeout_seconds: int | None = Field(default=None, ge=0, le=86400)
     # ``0`` clears the role (mapped to null); omit to leave unchanged.
     role_id: int | None = Field(default=None, ge=0)
+    # ``None`` is meaningful here (inherit each agent's own policy), so the
+    # router keys off ``model_fields_set`` to tell it from "field omitted".
+    approval_policy: AgentApprovalPolicy | None = None
     # When provided, replaces the entire ordered step list (add/remove/reorder
     # in one shot). Omit to leave steps untouched.
     steps: list[WorkflowStepInput] | None = None
@@ -297,6 +314,45 @@ class WorkflowRunRequest(BaseModel):
     ``input: null``) to run the pipeline autonomously as before.
     """
 
+    input: str | None = Field(default=None, max_length=8000)
+
+
+class WorkflowResumeRequest(BaseModel):
+    """Optional body for resuming a paused workflow.
+
+    A run pauses for two very different reasons. A **manual** pause just needs
+    restarting, and sends no body. But a run also parks when its step's agent
+    **blocks** on a question it can't answer alone — and re-driving that step
+    unchanged would strand it on the same question. ``input`` is the answer:
+    guidance injected into the resumed step's kickoff so it can get past what
+    stopped it.
+    """
+
+    input: str | None = Field(default=None, max_length=8000)
+
+
+class WorkflowPermissionDecision(BaseModel):
+    """Answer the tool-permission gate parking a step.
+
+    Distinct from ``WorkflowApprovalRequest``, which clears a human *approval
+    step*. This one resolves a request the agent's runtime raised mid-step —
+    the decision the board has to be able to make, because an inline step's
+    agent is hidden from the Agents roster.
+    """
+
+    request_id: str = Field(min_length=1)
+    decision: Literal["approve-once", "approve-always", "deny"]
+
+
+class WorkflowRetryRequest(BaseModel):
+    """Optional body for retrying a single step of a stopped run.
+
+    ``position`` targets a specific step; omitted, the step whose failure stopped
+    the run is retried. ``input`` is optional human guidance injected into the
+    fresh attempt, for a failure the agent can't diagnose on its own.
+    """
+
+    position: int | None = Field(default=None, ge=0)
     input: str | None = Field(default=None, max_length=8000)
 
 

@@ -412,6 +412,13 @@ interface ToolStep {
   output?: string;
   done?: boolean;
   pending?: { data: Record<string, unknown>; requestId: string | null };
+  /**
+   * A permission request was raised for this call. The archived echo carries no
+   * request id, so it's correlated positionally — it immediately follows the
+   * tool start it gates. In a closed attempt this is what distinguishes "the
+   * tool ran and we lost the result" from "it never ran: nobody answered".
+   */
+  gated?: boolean;
 }
 
 // A raised NEED_INPUT question, surfaced as a prominent amber callout inside the
@@ -1034,22 +1041,37 @@ function ToolBox({
   step,
   busy,
   onDecision,
+  closed = false,
 }: {
   step: ToolStep;
   busy: boolean;
   onDecision: DecisionHandler;
+  /**
+   * The event stream this box belongs to has ended (a finished workflow step
+   * attempt). Nothing can still be running in it, so an unterminated call is
+   * reported for what it is rather than left spinning forever.
+   */
+  closed?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const detailOpen = open;
   const hasDetail = Boolean(step.input || step.output);
+  const unfinished = !step.done && !step.pending;
   const status = step.pending
     ? "awaiting approval"
     : step.done
       ? "done"
-      : "running";
+      : closed
+        ? // A closed attempt that stopped at a gate never ran the call at all;
+          // one that stopped elsewhere was cut off mid-flight.
+          step.gated
+          ? "never approved — attempt ended"
+          : "interrupted — attempt ended"
+        : "running";
   const style = CATEGORY_STYLE.tool;
-  const box = step.pending ? CATEGORY_STYLE.permission.box : style.box;
-  const marker = step.pending ? CATEGORY_STYLE.permission.marker : style.marker;
+  const stale = closed && unfinished;
+  const box = step.pending || stale ? CATEGORY_STYLE.permission.box : style.box;
+  const marker = step.pending || stale ? CATEGORY_STYLE.permission.marker : style.marker;
 
   return (
     <div
@@ -1059,14 +1081,14 @@ function ToolBox({
         <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${marker}`}>
           {status === "running" ? (
             <Loader2 size={13} className="animate-spin" />
-          ) : step.pending ? (
+          ) : step.pending || stale ? (
             <ShieldQuestion size={13} />
           ) : (
             toolIcon(step.toolName)
           )}
         </span>
         <span className="truncate text-[11px] font-semibold">{step.toolName || "Tool"}</span>
-        <span className="text-[10px] text-muted">{status}</span>
+        <span className={`text-[10px] ${stale ? "text-orange-500" : "text-muted"}`}>{status}</span>
         {hasDetail && (
           <button
             type="button"
@@ -1198,6 +1220,10 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
   // fallback if a start never comes.
   const placed = new Set<ToolStep>();
   const unplaced: ToolStep[] = [];
+  // The last tool call that hasn't terminated — what a bare permission echo
+  // refers to. The archived `PermissionRequestedData` carries no request id, so
+  // this positional link is the only way to know a call stopped at a gate.
+  let openTool: ToolStep | null = null;
 
   const pick = (data: Record<string, unknown> | null, ...keys: string[]): string | undefined => {
     if (!data) return undefined;
@@ -1212,8 +1238,14 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     const kind = ev.kind.toLowerCase();
     const cat = classify(ev);
     if (cat === "skip") continue;
-    // Permission echoes carry no actionable content — drop them as noise.
-    if (kind.includes("permissioncompleted") || kind.includes("permissionrequested")) continue;
+    // Permission echoes carry no actionable content of their own, but a
+    // *request* marks the call before it as gated — the difference between a
+    // tool that ran and one that only ever asked.
+    if (kind.includes("permissionrequested")) {
+      if (openTool) openTool.gated = true;
+      continue;
+    }
+    if (kind.includes("permissioncompleted")) continue;
 
     const isToolish = cat === "tool" || cat === "permission";
     if (isToolish) {
@@ -1251,6 +1283,8 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
       if (kind === "permission_request") {
         step.pending = { data: (ev.data ?? {}) as Record<string, unknown>, requestId: ev.request_id };
       }
+      // Track what a following bare permission echo would refer to.
+      openTool = step.done ? null : step;
       continue;
     }
 
@@ -1357,6 +1391,107 @@ function computeModelByEvent(events: AgentEvent[]): Map<AgentEvent, string> {
 // worth is revealed. Keeps very long agent runs from rendering thousands of
 // nodes up front.
 const AGENT_SEGMENT_WINDOW = 40;
+
+/**
+ * The agent workflow timeline, read-only.
+ *
+ * The same rows the Agents cockpit renders — tool boxes with their arguments and
+ * output, reasoning, assistant messages, lifecycle hooks — built by the same
+ * ``buildRows``, so a workflow step's activity is described exactly as a
+ * standalone agent's is rather than by a lookalike that drifts from it. What's
+ * dropped is only what needs a live session: approving a parked permission,
+ * suggestion chips, and the reply affordance.
+ */
+export function AgentActivity({
+  events,
+  model = null,
+  autonomy = false,
+  closed = false,
+}: {
+  events: AgentEvent[];
+  /** Session model, used when a turn reported no usage event of its own. */
+  model?: string | null;
+  /** Gates directive parsing, matching the cockpit's behaviour. */
+  autonomy?: boolean;
+  /**
+   * This stream has ended — a finished workflow step attempt. Tool calls left
+   * unterminated by it are reported as interrupted (or never approved) rather
+   * than spinning as though they were still going.
+   */
+  closed?: boolean;
+}) {
+  const rows = useMemo(() => buildRows(events), [events]);
+  const elapsedByEvent = useMemo(() => computeElapsedByEvent(events), [events]);
+  const modelByEvent = useMemo(() => computeModelByEvent(events), [events]);
+
+  // Segment exactly as the cockpit does: lifecycle hooks accumulate and are
+  // attached to the connector *before* the next real row, so they read as side
+  // information between steps rather than as steps themselves.
+  const { segments, trailingHooks } = useMemo(() => {
+    const segs: { row: WorkflowRow; hooks: AgentEvent[] }[] = [];
+    let pendingHooks: AgentEvent[] = [];
+    for (const r of rows) {
+      if (r.type === "hook") {
+        pendingHooks.push(r.ev);
+        continue;
+      }
+      segs.push({ row: r, hooks: pendingHooks });
+      pendingHooks = [];
+    }
+    return { segments: segs, trailingHooks: pendingHooks };
+  }, [rows]);
+
+  if (segments.length === 0 && trailingHooks.length === 0) {
+    return (
+      <p className="py-2 text-center text-[11px] text-muted">
+        No activity was recorded for this attempt.
+      </p>
+    );
+  }
+
+  return (
+    // Same width the cockpit gives its timeline. The spine is centred on this
+    // column, so letting it stretch to the full trace width would fling the
+    // left- and right-aligned bubbles away from the arrows that connect them.
+    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col items-center">
+      {segments.map((seg, idx) => {
+        const align =
+          seg.row.type === "node" && seg.row.cat === "user"
+            ? "justify-end"
+            : seg.row.type === "node" && seg.row.cat === "assistant"
+              ? "justify-start"
+              : "justify-center";
+        return (
+          <Fragment key={idx}>
+            {idx === 0 ? (
+              seg.hooks.length > 0 && <HookGutter hooks={seg.hooks} />
+            ) : (
+              <StepConnector hooks={seg.hooks} />
+            )}
+            <div className={`flex w-full ${align}`}>
+              {seg.row.type === "tool" ? (
+                // Read-only: a historical attempt has no live session to decide
+                // a permission against, so the box renders its detail only.
+                <ToolBox step={seg.row.step} busy onDecision={() => {}} closed={closed} />
+              ) : seg.row.type === "node" ? (
+                <MessageNode
+                  event={seg.row.ev}
+                  category={seg.row.cat}
+                  isLastAnswer={false}
+                  autonomy={autonomy}
+                  model={modelByEvent.get(seg.row.ev) ?? model}
+                  elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
+                  suggestionsDisabled
+                />
+              ) : null}
+            </div>
+          </Fragment>
+        );
+      })}
+      {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
+    </div>
+  );
+}
 
 export function AgentView({
   agents,
