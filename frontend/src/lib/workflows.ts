@@ -57,6 +57,9 @@ const TRACE_TO_STATE: Record<string, WorkflowStepState> = {
   skipped: "done",
   failed: "failed",
   blocked: "active",
+  // An attempt abandoned before it ran (a duplicate entry, or a row left open by
+  // a process that died mid-step). It says nothing about the step's outcome.
+  superseded: "pending",
 };
 
 /**
@@ -226,7 +229,7 @@ export function scheduleSummary(workflow: Workflow): string | null {
 // loop-back appends a fresh attempt). These helpers style the trace timeline,
 // run picker, and step-history list, keyed by the durable run/step statuses the
 // coordinator writes: run → running|paused|completed|failed|cancelled; step →
-// running|passed|completed|failed|blocked|cancelled.
+// running|passed|completed|failed|blocked|cancelled|superseded.
 
 // Visual metadata for a single step-attempt trace row.
 export interface TraceMeta {
@@ -275,6 +278,12 @@ const TRACE_META: Record<string, TraceMeta> = {
   },
   cancelled: {
     label: "Cancelled",
+    dot: "bg-muted",
+    text: "text-muted",
+    chip: "bg-muted/20 text-muted",
+  },
+  superseded: {
+    label: "Superseded",
     dot: "bg-muted",
     text: "text-muted",
     chip: "bg-muted/20 text-muted",

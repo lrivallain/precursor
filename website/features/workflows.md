@@ -411,6 +411,11 @@ inspectable record of how the pipeline actually converged. The step modal mirror
 this: it shows the **Input received** by that step and its full **Run history**
 across every attempt and run.
 
+An attempt that was opened but never ran is marked **`Superseded`** and greyed
+out. Entering a step always opens a fresh trace, so a row left behind by a
+process that stopped mid-step would otherwise show as a step forever in flight;
+superseding it keeps the trace honest and its spend out of the run total.
+
 Run traces are durable (backed by the `workflow_runs` / `workflow_run_steps`
 tables) and fetched via `GET /api/workflows/{id}/runs`.
 
