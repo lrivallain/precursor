@@ -107,6 +107,32 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A workflow step no longer runs twice.** The completion seam enqueued a
+  workflow advance whenever a step's agent *was* resting rather than when it
+  *reached* rest, so every event a finished agent still emits — pending-message,
+  MCP-status and tool-list updates — fired another one. Those ran concurrently
+  and unlocked, each reading the run's cursor still on the step that had just
+  finished, so each one entered the next step: several trace rows milliseconds
+  apart (one "Running" that never finished, sitting above the "Done" row for the
+  same step), and, worse, several *real* launches of the step's agent — which
+  genuinely redid the work and genuinely spent the tokens. Advances are now
+  triggered by the transition into rest, serialised per workflow, and each one
+  claims the step's open trace before acting, so a duplicate is a no-op.
+
+  This also **inflated reported run costs**: each closed trace adds its spend to
+  the run total, and the duplicate rows carried identical deltas, so affected
+  runs over-reported by roughly 40%. A migration supersedes the duplicated rows
+  and rebuilds every run's totals from what is left — **existing runs will show
+  lower (correct) token counts** after upgrading, and phantom "Running" rows
+  disappear from their traces. Attempts abandoned this way are labelled
+  `Superseded`; genuine repeat attempts (gate loop-backs, `on_error=retry`,
+  manual retries, permission resumes) are untouched.
+
+- **A failed turn dispatch tells its workflow.** `_fail_turn` marks the agent
+  `failed` outside the event seam, so the run only found out if some later event
+  happened to arrive — otherwise it sat in `running` until the watchdog (if one
+  was configured at all) noticed. It now advances the run itself.
+
 - **Answering a permission request no longer wedges the agent.** `needs_approval`
   is a *sticky* status — the idle handler skips it so a trailing idle can't mask
   a genuinely parked agent — so an agent left sitting in it never reaches
