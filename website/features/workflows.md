@@ -364,10 +364,17 @@ it reliably reaches for one anyway.
 The allowlist is per step. Changing it rebuilds that step's session on the next
 run, so a shared agent moving from a `fetch`-only step to a `workiq`-only one
 gets the right catalogue each time rather than reusing the previous one. A name
-this machine can't attach — not installed here, or installed but switched off —
-shows as a struck-through chip and simply matches nothing. The name is kept
-rather than dropped, so an exported workflow imports cleanly onto a machine with
-a different server set, and survives the trip back.
+this machine can't attach shows as a struck-through chip and simply matches
+nothing — **red** if nothing by that name is installed here, **amber** if it is
+installed but switched off in **Settings → MCP**, which is the case you can fix
+without leaving the app.
+
+The name is kept rather than dropped, so an exported workflow imports cleanly
+onto a machine with a different server set, and survives the trip back. Import
+carries the allowlist verbatim, and the preview warns before you commit to it,
+naming the servers this install can't attach and which of the two reasons
+applies — so a step doesn't silently run with fewer tools than its author gave
+it.
 
 ## Tool approvals for the whole pipeline
 

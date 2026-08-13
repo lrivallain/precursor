@@ -125,6 +125,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Importing a workflow now warns about servers it can't attach.** A step's
+  server allowlist travels verbatim, which is what lets a workflow move between
+  machines — but on an install missing one of those servers the step just
+  quietly ran with fewer tools than its author gave it, and the symptom only
+  showed up much later as odd behaviour. The import preview now names them
+  before you commit, separating "not installed here" from "installed but
+  switched off in Settings → MCP", which is the one you can fix without leaving
+  the app. The step editor makes the same distinction in colour: red for a name
+  this machine doesn't know, amber for one that's a switch away from working.
+
 - **The step editor's server picker now explains itself when it's empty.** With
   no MCP servers enabled, the **Servers** row offered nothing but **All** and
   gave no hint why, which read as a broken control rather than a setup step. It

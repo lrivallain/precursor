@@ -763,7 +763,9 @@ export function WorkflowStepEditModal({
                     );
                   })}
                   {/* Named by the step but not attachable here — kept, not
-                      dropped, so a workflow survives the trip between machines. */}
+                      dropped, so a workflow survives the trip between machines.
+                      Coloured by cause: amber is a switch away from working,
+                      red isn't fixable on this machine at all. */}
                   {missingServers.map((name) => {
                     const known = mcpServers.some((s) => s.name === name);
                     return (
@@ -776,9 +778,13 @@ export function WorkflowStepEditModal({
                         title={
                           known
                             ? "Switched off in Settings → MCP, so it won't attach — click to remove"
-                            : "Not installed here — click to remove"
+                            : "Not installed here, so it won't attach — click to remove"
                         }
-                        className="rounded-lg border border-dashed border-border px-2 py-0.5 text-muted/70 line-through transition hover:text-fg"
+                        className={`rounded-lg border border-dashed px-2 py-0.5 line-through transition ${
+                          known
+                            ? "border-amber-500/50 text-amber-500/80 hover:text-amber-400"
+                            : "border-red-500/50 text-red-500/80 hover:text-red-400"
+                        }`}
                       >
                         {name}
                       </button>
