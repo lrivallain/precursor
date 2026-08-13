@@ -348,9 +348,14 @@ export function WorkflowStepEditModal({
   // ``precursor`` is first-party and always attached with the tools on, so it is
   // not a scoping choice; disabled servers can't attach either way.
   const scopableServers = mcpServers.filter((s) => s.enabled && s.name !== "precursor");
-  // Names the step asked for that this install doesn't offer. Surfaced rather
-  // than silently dropped, because they are meaningful on the machine the
-  // workflow came from and the save keeps them.
+  // The catalogue always has the built-ins in it, so an empty array means the
+  // fetch hasn't landed yet — worth distinguishing from "nothing is enabled",
+  // which is a state the author has to act on.
+  const serversLoaded = mcpServers.length > 0;
+  // Names the step asked for that this install can't attach — either not
+  // registered here, or registered and switched off. Surfaced rather than
+  // silently dropped, because they are meaningful on the machine the workflow
+  // came from and the save keeps them.
   const missingServers = (step.mcpServers ?? []).filter(
     (name) => !scopableServers.some((s) => s.name === name),
   );
@@ -752,23 +757,40 @@ export function WorkflowStepEditModal({
                       </button>
                     );
                   })}
-                  {/* Named by the step but not installed here — kept, not
+                  {/* Named by the step but not attachable here — kept, not
                       dropped, so a workflow survives the trip between machines. */}
-                  {missingServers.map((name) => (
-                    <button
-                      key={name}
-                      type="button"
-                      onClick={() =>
-                        patch({ mcpServers: (step.mcpServers ?? []).filter((n) => n !== name) })
-                      }
-                      title="Not installed here — click to remove"
-                      className="rounded-lg border border-dashed border-border px-2 py-0.5 text-muted/70 line-through transition hover:text-fg"
-                    >
-                      {name}
-                    </button>
-                  ))}
-                  {step.mcpServers !== null && step.mcpServers.length === 0 && (
+                  {missingServers.map((name) => {
+                    const known = mcpServers.some((s) => s.name === name);
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() =>
+                          patch({ mcpServers: (step.mcpServers ?? []).filter((n) => n !== name) })
+                        }
+                        title={
+                          known
+                            ? "Switched off in Settings → MCP, so it won't attach — click to remove"
+                            : "Not installed here — click to remove"
+                        }
+                        className="rounded-lg border border-dashed border-border px-2 py-0.5 text-muted/70 line-through transition hover:text-fg"
+                      >
+                        {name}
+                      </button>
+                    );
+                  })}
+                  {/* Nothing to pick from is a setup problem, not an empty list:
+                      say so instead of leaving a lone "All" that looks broken.
+                      A deliberate empty scope outranks it — that one is a choice. */}
+                  {step.mcpServers !== null && step.mcpServers.length === 0 ? (
                     <span className="text-muted/70">no tools at all, same as Tools off</span>
+                  ) : (
+                    serversLoaded &&
+                    scopableServers.length === 0 && (
+                      <span className="text-muted/70">
+                        no servers enabled — turn them on in Settings → MCP
+                      </span>
+                    )
                   )}
                 </div>
               )}

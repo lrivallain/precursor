@@ -121,6 +121,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The step editor's server picker now explains itself when it's empty.** With
+  no MCP servers enabled, the **Servers** row offered nothing but **All** and
+  gave no hint why, which read as a broken control rather than a setup step. It
+  now says so and points at Settings → MCP, and it tells "still loading" apart
+  from "nothing enabled" so the message doesn't flash on open. A server named by
+  a step but switched off locally also reports that, instead of claiming it
+  isn't installed.
+
 - **An agent with tools off no longer rebuilds its session on every dispatch.**
   The reuse check compared the session's stored MCP fingerprint against the
   *enabled catalogue*, but a tools-off agent stores an "off" sentinel — so the

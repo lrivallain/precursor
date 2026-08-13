@@ -336,8 +336,10 @@ measured six-step briefing run, for the tool-using turns to account for well
 over 95% of the run's tokens while each step actually needed exactly one server.
 
 So a step with tools on can also name **which servers** it may see. The
-**Servers** row in the step modal lists every enabled server with its tool
-count, so the cost is visible where the choice is made:
+**Servers** row in the step modal lists every server you've enabled in
+**Settings → MCP**, with its tool count, so the cost is visible where the choice
+is made. Enable a server there first — until you do, the row has nothing to
+offer but **All**, and says so.
 
 | Selection | The step gets |
 | --- | --- |
@@ -352,10 +354,11 @@ it reliably reaches for one anyway.
 
 The allowlist is per step. Changing it rebuilds that step's session on the next
 run, so a shared agent moving from a `fetch`-only step to a `workiq`-only one
-gets the right catalogue each time rather than reusing the previous one. Servers
-named on a step but not installed on this machine show as struck-through chips
-and simply match nothing — an exported workflow imports cleanly onto a machine
-with a different server set.
+gets the right catalogue each time rather than reusing the previous one. A name
+this machine can't attach — not installed here, or installed but switched off —
+shows as a struck-through chip and simply matches nothing. The name is kept
+rather than dropped, so an exported workflow imports cleanly onto a machine with
+a different server set, and survives the trip back.
 
 ## Tool approvals for the whole pipeline
 
