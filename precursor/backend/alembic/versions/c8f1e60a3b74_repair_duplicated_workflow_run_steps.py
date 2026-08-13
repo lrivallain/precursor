@@ -16,13 +16,24 @@ flight), and duplicate *finished* rows carrying identical token deltas, whose
 spend was added to the run rollup once per row — inflating reported totals by
 roughly 40% on the runs that hit it.
 
-Both are the same event, so one rule finds them: within a ``(run_id, position)``,
-rows starting within :data:`_DUPLICATE_WINDOW_SECONDS` of each other are one
-entry that got driven several times. Nothing legitimate re-enters a position
-that fast — a gate loop-back, an ``on_error=retry``, a manual retry and a
-permission resume each involve a whole agent turn. The attempt that actually ran
-survives; its twins are marked ``superseded`` and closed, then each run's token
-totals are recomputed from the rows that remain.
+Finding them takes two conditions, not one. Rows within a ``(run_id, position)``
+starting within :data:`_DUPLICATE_WINDOW_SECONDS` of each other are *candidates*
+— but that window alone is not proof. It compares ``started_at`` to
+``started_at``, so a legitimate ``on_error=retry`` whose first attempt failed
+after two seconds falls inside it too, and superseding that would delete real
+spend from the rollup: exactly the under-reporting this migration exists to fix.
+
+So a candidate is only superseded when it also carries duplicate *evidence*:
+
+* it is **orphaned** (``finished_at IS NULL``) — a losing advance's row, which
+  never finalized and never billed anything; or
+* it is an **exact spend twin** of the attempt that survived (identical
+  ``input_tokens`` and ``output_tokens``, and non-zero) — the same turn measured
+  twice, which is what inflated the rollup.
+
+A fast retry is neither: it finished, and it billed its own distinct amount. The
+attempt that actually ran always survives, its twins are marked ``superseded``
+and closed, then each run's token totals are recomputed from what remains.
 """
 
 from __future__ import annotations
@@ -105,7 +116,18 @@ def upgrade() -> None:
         # Keep the one that did the work: it finished, and it carries the spend.
         # (The losers are the advances that were beaten to the finalize.)
         winner = max(cluster, key=lambda r: (r[4] is not None, (r[5] or 0) + (r[6] or 0), r[0]))
-        superseded.extend(r[0] for r in cluster if r[0] != winner[0])
+        winner_spend = (winner[5] or 0, winner[6] or 0)
+        for row in cluster:
+            if row[0] == winner[0]:
+                continue
+            spend = (row[5] or 0, row[6] or 0)
+            # Closeness in time is only a candidate signal — see the module
+            # docstring. Require actual evidence of duplication before touching
+            # a row, so a fast legitimate retry keeps its distinct spend.
+            orphaned = row[4] is None
+            spend_twin = spend == winner_spend and sum(spend) > 0
+            if orphaned or spend_twin:
+                superseded.append(row[0])
 
     for row_id in superseded:
         bind.execute(
