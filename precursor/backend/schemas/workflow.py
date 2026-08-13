@@ -217,9 +217,10 @@ class WorkflowRead(BaseModel):
 
 class WorkflowStepInput(BaseModel):
     """One step in a create/replace payload. Either reference an existing agent
-    by ``agent_id`` **or** create one inline from ``task`` (+ optional title/
-    model). Inline creation makes a plain, unattached agent the workflow owns
-    the chaining of."""
+    by ``agent_id`` **or** author one here from ``task`` (+ optional title/
+    model). An authored agent is plain and unattached — the workflow owns the
+    chaining of it — and ``reusable`` decides whether it is listed in the Agents
+    section or stays a private vessel owned by this step."""
 
     agent_id: int | None = None
     name: str | None = Field(default=None, max_length=200)
@@ -240,10 +241,16 @@ class WorkflowStepInput(BaseModel):
     use_mcp: bool | None = None
     use_skills: bool | None = None
     use_memory: bool | None = None
-    # Inline agent creation (used when agent_id is null).
+    # Agent authored in the step (used when agent_id is null).
     task: str | None = None
     title: str | None = Field(default=None, max_length=200)
     model: str | None = None
+    # Where the authored agent lives. ``False`` (the default, so an omitted flag
+    # keeps the established behaviour) makes a private vessel: hidden from the
+    # Agents section and deleted with the step. ``True`` mints a *reusable*
+    # agent instead — listed, editable and outliving the step, exactly as if it
+    # had been created in the Agents section and picked here.
+    reusable: bool = False
 
 
 class WorkflowCreate(BaseModel):

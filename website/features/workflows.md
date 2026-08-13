@@ -7,8 +7,8 @@ title: Workflows
 **Workflows mode** chains independent [agents](/features/agents) into a
 reusable, named pipeline that runs in the **background** — `research → draft →
 review` — where the *workflow* owns the sequencing, not the agents. Each step is
-just an existing agent (or one you spin up inline), so agents stay reusable on
-their own while the workflow coordinates the hand-off, lifecycle, and schedule.
+just an existing agent (or one you create as you build), so agents stay reusable
+on their own while the workflow coordinates the hand-off, lifecycle, and schedule.
 Like agents, it's **opt-in and off by default**.
 
 ::: warning Work in progress
@@ -57,8 +57,8 @@ editable — same horizontal pipeline, same shape, now authorable:
   opens the card.
 - **Click a card** to open that step's own settings modal. Pick its kind first —
   **Agent**, **Inline**, **Gate** or **Approval** — then, for an Agent step,
-  whether it reuses an **existing agent** from the Agents section or creates a
-  **new agent** here. Then set its
+  [where its agent comes from](#where-a-step-s-agent-comes-from): an **existing
+  agent** from the Agents section, or a **new agent** created right here. Then set its
   [instructions](#per-step-instructions), [what it's fed](#what-each-step-is-fed),
   [what it may use](#what-each-step-may-use) and its
   [failure policy](#when-a-step-fails-retry-carry-on-or-stop).
@@ -89,6 +89,27 @@ are several, the card names them so you can pick. The agent's settings panel
 keeps the same count and list. Editing an agent that three pipelines depend on
 should not be a surprise.
 
+### Where a step's agent comes from
+
+A step that runs an agent has to get one from somewhere, and the choice is
+really about **where that agent lives afterwards**:
+
+| Source | What it creates | Where it lives |
+| --- | --- | --- |
+| **Existing agent** | nothing — it references one | already in **Agents** |
+| **New agent** | a reusable agent | joins **Agents** on save, outlives the step |
+| **Inline** step / **Inline prompt** on a gate | a private vessel | nowhere you manage — dies with the step |
+
+**New agent** exists so building a pipeline doesn't mean breaking off to create
+its parts first: name it, give it its objective, save the steps, and it's a
+normal agent — editable in Agents, pickable by other steps and other workflows.
+Once saved it *is* an existing agent, so reopening the step shows it as a plain
+reference; creating is a one-time act, not a mode the step stays in.
+
+An **Agent** step only offers those first two, because writing a one-off prompt
+there would be an Inline step under another name. A **Gate** offers all three:
+there's no "inline gate" kind, so a one-off check has to be authored in the step.
+
 ### Inline steps: one-off work that isn't an agent
 
 Not every step deserves a reusable agent. Whenever you write a step's prompt
@@ -110,10 +131,8 @@ survives), and removing the step deletes it. The one place it still surfaces is
 the **needs-attention** list, deliberately: if an inline step blocks on a tool
 approval it has to stay discoverable, or a workflow could wedge invisibly.
 
-The rule is simply *where the prompt was written*, not what kind of step it is.
-Pick **Existing agent** to reuse something from the Agents section; pick
-**Inline prompt** to write a one-off here. A gate is often the clearest case: "is
-this specific joke safe for kids?" is rarely worth a permanent agent.
+A gate is often the clearest case for it: "is *this specific joke* safe for
+kids?" is rarely worth a permanent agent.
 
 ### Where a new workflow starts
 
