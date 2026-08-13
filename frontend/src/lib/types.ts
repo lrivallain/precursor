@@ -692,6 +692,63 @@ export interface WorkflowScheduleUpdate {
   days_of_week?: number | null;
 }
 
+// --- YAML transfer (export / import of agents and workflows) ----------------
+// A transfer document is the shareable form of one agent or one workflow: its
+// definition, and never its runtime state or per-install secrets. Importing is
+// two-phase because the choice below can only be offered once collisions are
+// known: `preview` reports them, `import` applies the decisions.
+
+export type TransferKind = "agent" | "workflow";
+
+/** What to do with an incoming object whose name already exists here. */
+export type ConflictAction = "replace" | "create" | "link";
+
+export interface TransferConflict {
+  kind: "agent" | "workflow";
+  /** Index into the document's agent list; null for the workflow itself. */
+  index: number | null;
+  name: string;
+  existing_id: number;
+  existing_title: string;
+  /** True when this really is the object the file was exported from. */
+  same_object: boolean;
+  /** Live workflows already using the existing agent — the blast radius of a replace. */
+  workflow_count: number;
+  allowed: ConflictAction[];
+  default: ConflictAction;
+}
+
+export interface TransferWarning {
+  code: string;
+  message: string;
+}
+
+export interface TransferPreview {
+  kind: TransferKind;
+  name: string;
+  agent_count: number;
+  step_count: number;
+  conflicts: TransferConflict[];
+  warnings: TransferWarning[];
+}
+
+export interface TransferResolution {
+  kind: "agent" | "workflow";
+  index: number | null;
+  action: ConflictAction;
+}
+
+export interface TransferImportResult {
+  kind: TransferKind;
+  workflow_id: number | null;
+  agent_id: number | null;
+  name: string;
+  created_agent_ids: number[];
+  replaced_agent_ids: number[];
+  linked_agent_ids: number[];
+  warnings: TransferWarning[];
+}
+
 export interface Attachment {
   id: number;
   topic_id?: number | null;

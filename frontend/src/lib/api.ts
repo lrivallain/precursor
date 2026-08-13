@@ -93,6 +93,9 @@ import type {
   SystemStats,
   Topic,
   TopicNode,
+  TransferImportResult,
+  TransferPreview,
+  TransferResolution,
   UsageStats,
   Workflow,
   WorkflowCreate,
@@ -565,6 +568,24 @@ export const api = {
       request<Workflow>(`/api/workflows/${id}/webhook`, { method: "DELETE" }),
     // Public webhook URL to copy (fires the workflow when POSTed to).
     webhookUrl: (token: string) => `/api/workflows/hooks/${token}`,
+  },
+
+  transfer: {
+    // YAML export/import. Export is a plain download URL so the browser handles
+    // the file save; import is two calls because the replace/create/link choice
+    // can only be offered once `preview` has reported the collisions.
+    exportWorkflowUrl: (id: number) => `/api/transfer/workflows/${id}`,
+    exportAgentUrl: (id: number | string) => `/api/transfer/agents/${id}`,
+    preview: (content: string) =>
+      request<TransferPreview>(`/api/transfer/preview`, {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      }),
+    import: (content: string, resolutions: TransferResolution[] = []) =>
+      request<TransferImportResult>(`/api/transfer/import`, {
+        method: "POST",
+        body: JSON.stringify({ content, resolutions }),
+      }),
   },
 
   messages: {

@@ -93,6 +93,13 @@ class Workflow(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    # Portable identity for YAML export/import — see ``AgentSession.export_id``.
+    # Lets a re-imported file update the workflow it came from rather than
+    # matching it by name. Nullable for legacy rows; minted on first export.
+    export_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+
     name: Mapped[str] = mapped_column(String(200), nullable=False, default="Workflow")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 

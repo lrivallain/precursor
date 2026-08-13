@@ -150,6 +150,13 @@ export function WorkflowsSection({
         setMode({ kind: "view", id: wf.id });
       }}
       onNew={() => setMode({ kind: "builder", id: null })}
+      onImported={(result) => {
+        void load();
+        if (result.workflow_id != null) {
+          onNavigate(result.workflow_id);
+          setMode({ kind: "view", id: result.workflow_id });
+        }
+      }}
       onChanged={upsert}
     />
   );

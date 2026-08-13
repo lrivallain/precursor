@@ -9,6 +9,7 @@ import {
   Coins,
   ChevronRight,
   Copy,
+  Download,
   FileInput,
   GripVertical,
   History,
@@ -588,6 +589,14 @@ export function WorkflowView({
           >
             <Pencil size={13} /> Settings
           </button>
+          <a
+            href={api.transfer.exportWorkflowUrl(workflow.id)}
+            download
+            title="Export as YAML (includes the agents its steps use)"
+            className="rounded-lg p-1.5 text-muted transition hover:bg-white/5 hover:text-fg"
+          >
+            <Download size={16} />
+          </a>
           <button
             type="button"
             onClick={() => void handleArchive()}

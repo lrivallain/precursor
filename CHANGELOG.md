@@ -11,6 +11,25 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Import and export agents and workflows as YAML.** A workflow exports to a
+  single, readable file — its steps, its wiring, and every agent those steps use
+  — so a pipeline can be committed next to the project it automates or handed to
+  someone else; an agent exports on its own the same way. What travels is the
+  *definition*: runtime state (status, run history, artifacts, token counters,
+  the SDK session handle) is left out, webhook tokens are never exported because
+  they're per-install credentials, and a carried schedule arrives **paused** so a
+  shared file can't start firing on its new owner. Importing is two-phase, since
+  the interesting decision only exists once collisions are known: a preview
+  reports them without writing anything, then each colliding agent is resolved as
+  **use existing** (reference it untouched), **replace** (overwrite its
+  definition in place, so every other workflow using it follows — with the blast
+  radius shown up front) or **create new** (keep both). Objects are stamped with
+  a stable portable id on first export, so re-importing a file that came from
+  this install updates the object it came from rather than guessing from the
+  name; a bare name match defaults to the non-destructive choice instead, which
+  also makes scripted imports safe. New `/api/transfer` router, and
+  `export_id` columns on `agent_sessions` and `workflows`.
+
 - **Create a reusable agent from the step editor.** An Agent step now chooses
   between **Existing agent** (pick one from the Agents section) and **New agent**
   (name it and give it an objective right here) — so building a pipeline no

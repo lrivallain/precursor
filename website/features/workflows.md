@@ -440,6 +440,13 @@ disappears from the "used in workflows" list on the agents it referenced.
 Deleting a workflow never deletes the reusable agents it pointed at — only the
 private vessels belonging to its own inline steps.
 
+## Sharing a workflow
+
+A workflow can be **exported to YAML** — its steps, its wiring, and the agents
+those steps use — then imported elsewhere. On import, any agent whose name
+already exists gives you the choice to reuse it, replace it, or keep both. See
+[import & export](/features/transfer).
+
 ## Triggers and scheduling
 
 A workflow can be created **without running it** — it sits in `draft`/`idle`
@@ -473,6 +480,7 @@ Workflows live under `/api/workflows`:
 | `PUT /api/workflows/{id}/schedule` | Configure the schedule |
 | `POST` \| `DELETE /api/workflows/{id}/webhook` | Mint / revoke a webhook token |
 | `POST /api/workflows/hooks/{token}` | Trigger via webhook (body → run brief) |
+| `GET /api/transfer/workflows/{id}` | [Export](/features/transfer) the workflow (+ its agents) as YAML |
 
 Lifecycle changes broadcast a `workflow.changed` [SSE event](/reference/api) so
 the dashboard live-updates without polling.

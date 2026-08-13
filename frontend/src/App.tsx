@@ -2787,6 +2787,10 @@ export default function App() {
               agents={agents ?? []}
               onSelect={(id) => setActiveAgentId(id)}
               onNew={() => setAgentComposerOpen(true)}
+              onImported={(result) => {
+                void loadAgents();
+                if (result.agent_id != null) setActiveAgentId(result.agent_id);
+              }}
               onOpenWorkflow={(workflowId) => {
                 setActiveWorkflowId(workflowId);
                 setActiveWorkflowRunSeg(null);

@@ -83,6 +83,16 @@ class AgentSession(Base, TimestampMixin):
         default=lambda: str(uuid.uuid4()),
     )
 
+    # Portable identity for YAML export/import. Unlike ``copilot_session_id``
+    # (an SDK runtime handle that must never be reused across installs), this is
+    # a plain UUID that travels *with* the definition, so re-importing a file
+    # that originally came from this agent recognises it as the same object
+    # instead of falling back to a fuzzy title match. Nullable for legacy rows;
+    # minted lazily on first export.
+    export_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="Agent task")
     # The initial instruction the agent was started with. This doubles as the
     # durable **objective** for autonomous runs: it's kept for display, for
