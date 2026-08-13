@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from precursor.backend.config import get_settings
 from precursor.backend.main import create_app
@@ -2279,6 +2279,56 @@ async def _open_run_for(workflow_id: int, *, trigger: str = "manual") -> int:
         return run.id
 
 
+async def _open_attempt_for(workflow_id: int, agent_id: int) -> None:
+    """Open a running trace row for a step, exactly as ``_launch_step`` would.
+
+    Tests that hand-roll a rewind (pointing ``current_step_id`` back at an
+    earlier step) have to seed this too: the coordinator only ever drives into a
+    step *through* ``_launch_step``, so a running workflow whose current step has
+    an agent always has an open trace for it — which is what an advance consumes
+    to prove it, and not a duplicate, owns this turn.
+    """
+    from datetime import UTC, datetime
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRunStep, WorkflowStep
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, workflow_id)
+        assert wf is not None and wf.current_run_id is not None
+        step = (
+            await session.execute(
+                select(WorkflowStep).where(
+                    WorkflowStep.workflow_id == workflow_id,
+                    WorkflowStep.agent_id == agent_id,
+                )
+            )
+        ).scalar_one()
+        prior = await session.execute(
+            select(func.count(WorkflowRunStep.id)).where(
+                WorkflowRunStep.run_id == wf.current_run_id,
+                WorkflowRunStep.position == step.position,
+            )
+        )
+        agent = await session.get(AgentSession, agent_id)
+        session.add(
+            WorkflowRunStep(
+                run_id=wf.current_run_id,
+                position=step.position,
+                kind=step.kind,
+                label=step.name or "Step",
+                agent_id=agent_id,
+                attempt=int(prior.scalar() or 0) + 1,
+                status="running",
+                started_at=datetime.now(UTC),
+                token_baseline_in=agent.total_input_tokens if agent else 0,
+                token_baseline_out=agent.total_output_tokens if agent else 0,
+            )
+        )
+        await session.commit()
+
+
 async def _run_steps(run_id: int) -> list:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models.workflow import WorkflowRunStep
@@ -2572,6 +2622,9 @@ async def test_run_brief_reaches_later_steps_and_loop_backs() -> None:
         assert gate_agent is not None
         gate_agent.result_summary = "OBJECTIVE_COMPLETE: FAIL: numbers look wrong"
         await session.commit()
+    # Re-entering a step always opens a fresh trace, so seed one for the gate the
+    # rewind above put the run back on.
+    await _open_attempt_for(wf_id, gate_id)
 
     mgr2 = _FakeWorkflowManager()
     async with SessionLocal() as session:
@@ -4686,3 +4739,322 @@ async def test_resolving_a_permission_unsticks_the_agent_status() -> None:
 
     # A request the runtime can't match changes nothing.
     assert await mgr.resolve_permission(agent_id, "gone", "deny") is False
+
+
+# --- The advance race -------------------------------------------------------
+# The completion seam enqueues advances as fire-and-forget tasks, so several can
+# be in flight for one agent at once. Each used to re-enter the same step: a
+# duplicate trace row, a *real* second ``start_task``, and the step's tokens
+# counted twice in the run rollup.
+
+
+async def _advance_in_own_session(agent_id: int, mgr) -> None:
+    """One advance in its own session — how the manager actually calls it."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    async with SessionLocal() as session:
+        await wf_mod.advance_for_agent(session, mgr, agent_id)
+
+
+async def test_concurrent_advances_enter_the_next_step_once() -> None:
+    """Two advances landing together must not double-drive the pipeline.
+
+    Every event an already-resting agent emits used to enqueue another advance,
+    and with no lock they all read ``current_step_id`` still on the finished step
+    — so each one entered the next step, launching its agent for real.
+    """
+    import asyncio
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+
+    mgr = _FakeWorkflowManager()
+    await asyncio.gather(
+        _advance_in_own_session(agents[0], mgr),
+        _advance_in_own_session(agents[0], mgr),
+    )
+
+    # Exactly one hand-off to the next step's agent — this is the expensive part:
+    # a second ``start_task`` makes the agent redo the whole step for real.
+    assert [c[0] for c in mgr.calls] == [agents[1]]
+    steps = await _run_steps(run_id)
+    assert [(s.position, s.attempt, s.status) for s in steps] == [
+        (0, 1, "completed"),
+        (1, 1, "running"),
+    ]
+
+
+async def test_a_second_advance_for_a_finished_turn_is_a_no_op() -> None:
+    """The same, arriving in sequence: the trailing events of a resting turn."""
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+
+    mgr = _FakeWorkflowManager()
+    for _ in range(4):
+        await _advance_in_own_session(agents[0], mgr)
+
+    assert [c[0] for c in mgr.calls] == [agents[1]]
+    assert len(await _run_steps(run_id)) == 2
+
+
+async def test_concurrent_advances_retry_a_failed_step_once() -> None:
+    """A step re-entered *in place* needs more than the moved-on cursor check.
+
+    ``on_error=retry`` loops back to the same index, so ``current_step_id`` never
+    changes and a duplicate advance would still match. The step's open trace is
+    what settles it: whoever handles the turn closes it, and the loser finds
+    nothing open.
+    """
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(
+        kinds=["task", "task"],
+        step_kwargs=[{"on_error": "retry", "max_retries": 2}, {}],
+    )
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agents[0])
+        assert agent is not None
+        agent.status = "failed"
+        agent.error = "boom"
+        await session.commit()
+
+    mgr = _FakeWorkflowManager()
+    await asyncio.gather(
+        _advance_in_own_session(agents[0], mgr),
+        _advance_in_own_session(agents[0], mgr),
+    )
+
+    # One retry of the same step, not two.
+    assert [c[0] for c in mgr.calls] == [agents[0]]
+    steps = await _run_steps(run_id)
+    assert [(s.position, s.attempt, s.status) for s in steps] == [
+        (0, 1, "failed"),
+        (0, 2, "running"),
+    ]
+    async with SessionLocal() as session:
+        step = (
+            await session.execute(
+                select(WorkflowStep).where(
+                    WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
+                )
+            )
+        ).scalar_one()
+        assert step.retry_count == 1
+
+
+async def test_concurrent_advances_finish_a_run_once() -> None:
+    """The last step's duplicate advance must not re-stamp the run either."""
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowRun
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task"])
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+
+    mgr = _FakeWorkflowManager()
+    await asyncio.gather(
+        _advance_in_own_session(agents[0], mgr),
+        _advance_in_own_session(agents[0], mgr),
+        _advance_in_own_session(agents[0], mgr),
+    )
+
+    assert mgr.calls == []
+    steps = await _run_steps(run_id)
+    assert [(s.position, s.attempt, s.status) for s in steps] == [(0, 1, "completed")]
+    async with SessionLocal() as session:
+        run = await session.get(WorkflowRun, run_id)
+        assert run is not None
+        assert run.status == "completed"
+
+
+async def test_duplicate_advances_do_not_double_count_a_step_s_tokens() -> None:
+    """The reported cost of a run has to be what it actually spent.
+
+    Each closed trace adds its delta to the run rollup, so a duplicated step
+    added the same spend twice — which is what inflated reported run totals.
+    """
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowRun
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agents[0])
+        assert agent is not None
+        agent.total_input_tokens = 1_253_092
+        agent.total_output_tokens = 4_000
+        await session.commit()
+
+    mgr = _FakeWorkflowManager()
+    await asyncio.gather(
+        _advance_in_own_session(agents[0], mgr),
+        _advance_in_own_session(agents[0], mgr),
+    )
+
+    async with SessionLocal() as session:
+        run = await session.get(WorkflowRun, run_id)
+        assert run is not None
+        assert run.total_input_tokens == 1_253_092
+        assert run.total_output_tokens == 4_000
+
+
+async def test_entering_a_step_supersedes_a_trace_left_open() -> None:
+    """A row stuck at ``running`` must not outlive the attempt that opened it.
+
+    Advances are serialised now, so nothing new produces one — but databases
+    written by the racy build carry them, and a process killed mid-step still
+    can. Left alone they render as a step forever in flight, ahead of the retry's
+    own trace.
+    """
+    from datetime import UTC, datetime
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow, WorkflowRunStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task"])
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+    # A run stopped with the step's trace still open, as the racy build left it.
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        wf.status = "failed"
+        wf.finished_at = datetime.now(UTC)
+        run_step = (
+            await session.execute(select(WorkflowRunStep).where(WorkflowRunStep.run_id == run_id))
+        ).scalar_one()
+        run_step.status = "failed"
+        run_step.finished_at = datetime.now(UTC)
+        session.add(
+            WorkflowRunStep(
+                run_id=run_id,
+                position=0,
+                kind="task",
+                label="orphan",
+                agent_id=agents[0],
+                attempt=2,
+                status="running",
+                started_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr, wf_id, position=0)
+
+    steps = await _run_steps(run_id)
+    assert [(s.attempt, s.status) for s in steps] == [
+        (1, "failed"),
+        (2, "superseded"),
+        (3, "running"),
+    ]
+    # The abandoned row is closed, so nothing renders as still in flight.
+    assert steps[1].finished_at is not None
+    assert [c[0] for c in mgr.calls] == [agents[0]]
+
+
+async def test_only_a_transition_into_rest_advances_workflows() -> None:
+    """A resting agent keeps emitting events; only the first may advance a run.
+
+    Pending-message, MCP-status and tool-list updates all arrive *after* a turn
+    ends. Testing the agent's status rather than the change to it re-fired an
+    advance for every one of them, and those raced each other into re-entering
+    the same step.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    agent_id = await _make_agent(title="Stepper", status="running")
+
+    mgr = AgentManager()
+    advanced: list[int] = []
+    mgr._advance_workflows = lambda aid: advanced.append(aid)  # type: ignore[method-assign]
+    mgr.enqueue = lambda coro: None  # type: ignore[method-assign]
+
+    # Named exactly as the SDK does — the handler dispatches on the class name.
+    class SessionIdleData:
+        pass
+
+    class PendingMessagesModifiedData:
+        pass
+
+    class SessionToolsUpdatedData:
+        pass
+
+    # The turn ends: running → idle is a real transition, so the run advances.
+    await mgr._handle_event_locked(agent_id, SessionIdleData())
+    assert advanced == [agent_id]
+
+    # Everything trailing behind it is not.
+    for event in (
+        PendingMessagesModifiedData(),
+        SessionToolsUpdatedData(),
+        SessionIdleData(),
+        PendingMessagesModifiedData(),
+    ):
+        await mgr._handle_event_locked(agent_id, event)
+    assert advanced == [agent_id]
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.status == "idle"
+
+
+async def test_a_status_change_made_mid_event_still_advances_workflows() -> None:
+    """The transition has to be measured across the *whole* handler.
+
+    ``_enforce_budget`` (reached from the usage handler) commits ``blocked``
+    part-way through, so comparing statuses either side of the final patch would
+    see no change and leave the step's run wedged at "Running" forever.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    agent_id = await _make_agent(title="Spender", status="running", token_budget=1000)
+
+    mgr = AgentManager()
+    advanced: list[int] = []
+    mgr._advance_workflows = lambda aid: advanced.append(aid)  # type: ignore[method-assign]
+    mgr.enqueue = lambda coro: None  # type: ignore[method-assign]
+
+    class AssistantUsageData:
+        def __init__(self) -> None:
+            self.model = "gpt-x"
+            self.input_tokens = 900
+            self.output_tokens = 200
+
+    await mgr._handle_event_locked(agent_id, AssistantUsageData())
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.status == "blocked"
+    assert advanced == [agent_id]

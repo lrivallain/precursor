@@ -19,13 +19,20 @@ Design notes
   the request/worker that triggered them.
 * **Manager is injected** to avoid a circular import (manager → service happens
   lazily inside ``_advance_workflows``).
+* **One advance at a time per workflow.** The completion seam fires from a
+  fire-and-forget task, so several advances for the same agent can be in flight
+  at once; :func:`_workflow_lock` serialises them and each re-reads the run
+  state after acquiring it. See :func:`advance_for_agent`.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -67,6 +74,29 @@ STEP_BLOCKED_STATUSES = ("blocked",)
 # five times — so the run stays ``running`` and only the card is surfaced.
 STEP_AWAITING_PERMISSION_STATUSES = ("needs_approval",)
 STEP_CANCELLED_STATUSES = ("cancelled",)
+
+# --- Advance serialisation --------------------------------------------------
+# Advances arrive as fire-and-forget tasks from the manager's completion seam, so
+# two can run concurrently for the same workflow in separate sessions. Without a
+# lock both read ``current_step_id`` still pointing at the step that just
+# finished, so both advance it: two trace rows, two real ``start_task`` launches
+# for one logical step entry, and the step's tokens counted twice in the run
+# rollup. One lock per workflow, in-process (Precursor is a single uvicorn
+# process, so this is the whole coordinator).
+_advance_locks: dict[int, asyncio.Lock] = {}
+
+
+@contextlib.asynccontextmanager
+async def _workflow_lock(workflow_id: int) -> AsyncIterator[None]:
+    """Hold the advance lock for one workflow.
+
+    Callers **must** re-read the workflow inside the lock: whoever held it before
+    them has very likely just moved ``current_step_id`` on.
+    """
+    lock = _advance_locks.setdefault(workflow_id, asyncio.Lock())
+    async with lock:
+        yield
+
 
 # --- Gate verdict grammar --------------------------------------------------
 # A gate step's agent votes by ending its turn with
@@ -591,6 +621,65 @@ async def _step_output(session: AsyncSession, agent_id: int) -> str | None:
     return None
 
 
+async def _open_run_step(
+    session: AsyncSession, run_id: int, position: int, agent_id: int
+) -> WorkflowRunStep | None:
+    """The still-open trace for one step attempt, if there is one.
+
+    A step entry opens exactly one of these and the advance that handles its
+    turn closes it, which makes it the natural idempotency token: an advance
+    that finds none has already been beaten to this turn by another.
+    """
+    result = await session.execute(
+        select(WorkflowRunStep)
+        .where(
+            WorkflowRunStep.run_id == run_id,
+            WorkflowRunStep.position == position,
+            WorkflowRunStep.agent_id == agent_id,
+            WorkflowRunStep.finished_at.is_(None),
+        )
+        .order_by(WorkflowRunStep.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _started_after(run_step: WorkflowRunStep, moment: datetime) -> bool:
+    """Did this attempt begin after ``moment``? (SQLite hands back naive times.)"""
+    started = run_step.started_at
+    if started is None:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return started > moment
+
+
+async def _supersede_open_run_steps(session: AsyncSession, run_id: int, position: int) -> None:
+    """Close any trace left open at ``position`` before a new attempt opens one.
+
+    Should never fire now that advances are serialised, but a database written
+    by an older build (or a process killed mid-step) carries rows stuck at
+    ``running`` with no ``finished_at``. Left alone they render as a step that is
+    forever in flight, and they'd sit in front of a manual retry's own trace.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(WorkflowRunStep).where(
+                    WorkflowRunStep.run_id == run_id,
+                    WorkflowRunStep.position == position,
+                    WorkflowRunStep.finished_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        row.status = "superseded"
+        row.finished_at = row.started_at or datetime.now(UTC)
+
+
 async def _launch_step(
     session: AsyncSession,
     manager: AgentManager,
@@ -610,6 +699,7 @@ async def _launch_step(
 
     run_id = workflow.current_run_id
     if run_id is not None:
+        await _supersede_open_run_steps(session, run_id, step.position)
         prior = await session.execute(
             select(func.count(WorkflowRunStep.id)).where(
                 WorkflowRunStep.run_id == run_id,
@@ -1085,23 +1175,54 @@ async def advance_for_agent(session: AsyncSession, manager: AgentManager, agent_
     terminal state. Finds the running workflow whose *current step* is this
     agent and either advances to the next step, completes, fails, pauses, or
     cancels the workflow accordingly.
+
+    Runs under the per-workflow advance lock, and everything it decides on is
+    re-read **inside** that lock. The seam is fire-and-forget, so a second
+    advance for the same agent is routinely already queued behind this one; by
+    the time it acquires the lock the run has moved on, the match below fails,
+    and it returns having done nothing — instead of re-entering the same step.
+
+    ``entered_at`` carries the moment this advance was asked for, which settles
+    the case the moved-on cursor can't: a step re-entered *in place* (an
+    ``on_error=retry`` loop-back) leaves the cursor where it was and opens a new
+    trace, which a duplicate would otherwise happily consume. An advance is only
+    ever a response to a turn that had already started, so it may not act on an
+    attempt that began after it did.
     """
+    entered_at = datetime.now(UTC)
     # Which running workflows have their current step pointing at this agent?
+    # Only the ids: the rows themselves are re-read under the lock.
     result = await session.execute(
-        select(Workflow)
+        select(Workflow.id)
         .join(WorkflowStep, Workflow.current_step_id == WorkflowStep.id)
         .where(Workflow.status == "running", WorkflowStep.agent_id == agent_id)
-        .options(selectinload(Workflow.steps).selectinload(WorkflowStep.agent))
     )
-    workflows = result.scalars().unique().all()
-    if not workflows:
+    workflow_ids = list(dict.fromkeys(result.scalars().all()))
+    if not workflow_ids:
         return
 
-    agent = await session.get(AgentSession, agent_id)
-    status = agent.status if agent else "failed"
-
-    for workflow in workflows:
-        await _advance_one(session, manager, workflow, agent_id, status)
+    for workflow_id in workflow_ids:
+        async with _workflow_lock(workflow_id):
+            # Re-read under the lock. ``expire_all`` drops anything this session
+            # cached before waiting, so a workflow another advance just moved on
+            # isn't re-advanced off a stale copy.
+            session.expire_all()
+            workflow = await _load_workflow(session, workflow_id)
+            if workflow is None or workflow.status != "running":
+                continue
+            current = next(
+                (s for s in _ordered_steps(workflow) if s.id == workflow.current_step_id), None
+            )
+            if current is None or current.agent_id != agent_id:
+                # The run has already been advanced past this agent's turn.
+                continue
+            agent = await session.get(AgentSession, agent_id)
+            status = agent.status if agent else "failed"
+            await _advance_one(session, manager, workflow, agent_id, status, entered_at=entered_at)
+            # Every terminal path in ``_advance_one`` commits, but flush anything
+            # a future one might leave pending: the next advance waiting on this
+            # lock must not re-read a step entry that hasn't landed yet.
+            await session.commit()
 
 
 async def _advance_one(
@@ -1110,12 +1231,34 @@ async def _advance_one(
     workflow: Workflow,
     agent_id: int,
     agent_status: str,
+    *,
+    entered_at: datetime | None = None,
 ) -> None:
     steps = _ordered_steps(workflow)
     # Locate the current step by id, then its index.
     current_idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
     if current_idx is None:
         return
+
+    # This step's open trace is the turn's idempotency token: whoever handles the
+    # turn closes it, so a duplicate advance finds nothing open and stops here.
+    # ``entered_at`` covers the one case that leaves a *fresh* row in its place —
+    # a step re-entered in place by ``on_error=retry``, which reopens a trace at
+    # the same position before the duplicate gets to look. An advance always
+    # answers a turn that was already under way, so a row that started after the
+    # advance did belongs to the next attempt, not this one. A run-less workflow
+    # has no trace to consume and is exempt.
+    run_id = workflow.current_run_id
+    if run_id is not None:
+        step_agent_id = steps[current_idx].agent_id
+        if step_agent_id is not None:
+            open_trace = await _open_run_step(
+                session, run_id, steps[current_idx].position, step_agent_id
+            )
+            if open_trace is None:
+                return
+            if entered_at is not None and _started_after(open_trace, entered_at):
+                return
 
     now = datetime.now(UTC)
 
@@ -1752,65 +1895,71 @@ async def sweep_stalled_steps(session: AsyncSession, manager: AgentManager) -> i
     """
     now = datetime.now(UTC)
     result = await session.execute(
-        select(Workflow).where(
+        select(Workflow.id, Workflow.step_timeout_seconds).where(
             Workflow.status == "running",
             Workflow.step_timeout_seconds.is_not(None),
             Workflow.current_run_id.is_not(None),
         )
     )
     swept = 0
-    for row in result.scalars().unique().all():
-        timeout = row.step_timeout_seconds or 0
+    for workflow_id, step_timeout in result.all():
+        timeout = step_timeout or 0
         if timeout <= 0:
             continue
-        open_step = (
-            await session.execute(
-                select(WorkflowRunStep)
-                .where(
-                    WorkflowRunStep.run_id == row.current_run_id,
-                    WorkflowRunStep.finished_at.is_(None),
-                    WorkflowRunStep.agent_id.is_not(None),
+        # Under the same lock as an advance: a step finishing right as its
+        # timeout elapses would otherwise be both advanced and failed forward,
+        # driving the next step twice.
+        async with _workflow_lock(workflow_id):
+            session.expire_all()
+            workflow = await _load_workflow(session, workflow_id)
+            if workflow is None or workflow.status != "running" or workflow.current_run_id is None:
+                continue
+            open_step = (
+                await session.execute(
+                    select(WorkflowRunStep)
+                    .where(
+                        WorkflowRunStep.run_id == workflow.current_run_id,
+                        WorkflowRunStep.finished_at.is_(None),
+                        WorkflowRunStep.agent_id.is_not(None),
+                    )
+                    .order_by(WorkflowRunStep.id.desc())
+                    .limit(1)
                 )
-                .order_by(WorkflowRunStep.id.desc())
-                .limit(1)
+            ).scalar_one_or_none()
+            if open_step is None or open_step.started_at is None:
+                continue
+            started = open_step.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            if (now - started).total_seconds() < timeout:
+                continue
+
+            steps = _ordered_steps(workflow)
+            idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
+            agent_id = open_step.agent_id
+            if idx is None or agent_id is None:
+                continue
+
+            # Stop the wedged agent before re-driving or moving past it, so a
+            # retry doesn't race a turn that may still be alive somewhere.
+            try:
+                manager.enqueue(manager.cancel(agent_id))
+            except Exception:  # pragma: no cover - manager is best-effort here
+                logger.exception("Watchdog could not cancel agent %s", agent_id)
+
+            minutes = max(1, round(timeout / 60))
+            await _apply_failure_policy(
+                session,
+                manager,
+                workflow,
+                steps,
+                idx,
+                agent_id,
+                f"Step '{_step_label(steps[idx])}' stalled with no result for over {minutes} min "
+                "and was stopped by the watchdog.",
             )
-        ).scalar_one_or_none()
-        if open_step is None or open_step.started_at is None:
-            continue
-        started = open_step.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=UTC)
-        if (now - started).total_seconds() < timeout:
-            continue
-
-        workflow = await _load_workflow(session, row.id)
-        if workflow is None:
-            continue
-        steps = _ordered_steps(workflow)
-        idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
-        agent_id = open_step.agent_id
-        if idx is None or agent_id is None:
-            continue
-
-        # Stop the wedged agent before re-driving or moving past it, so a retry
-        # doesn't race a turn that may still be alive somewhere.
-        try:
-            manager.enqueue(manager.cancel(agent_id))
-        except Exception:  # pragma: no cover - manager is best-effort here
-            logger.exception("Watchdog could not cancel agent %s", agent_id)
-
-        minutes = max(1, round(timeout / 60))
-        await _apply_failure_policy(
-            session,
-            manager,
-            workflow,
-            steps,
-            idx,
-            agent_id,
-            f"Step '{_step_label(steps[idx])}' stalled with no result for over {minutes} min "
-            "and was stopped by the watchdog.",
-        )
-        swept += 1
+            await session.commit()
+            swept += 1
     return swept
 
 
