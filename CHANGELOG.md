@@ -125,6 +125,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The test suite no longer calls a real model.** Three live-meeting tests
+  (`ask`, `summary`, `summary/from-transcript`) never stubbed a provider — they
+  relied on `get_llm_provider` falling back to the offline mock, which only
+  happens when no GitHub token resolves. Signed in to `gh`, they issued live
+  GitHub Models requests and failed against an entitlement the token doesn't
+  have, so `make check` passed or failed depending on the developer's login
+  state rather than on the code. Tests now run with no LLM credentials by
+  construction.
+
 - **Importing a workflow now warns about servers it can't attach.** A step's
   server allowlist travels verbatim, which is what lets a workflow move between
   machines — but on an install missing one of those servers the step just

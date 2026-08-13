@@ -71,6 +71,12 @@ npm --prefix frontend run build
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
 
+The suite is hermetic: `tests/conftest.py` points the app at a throwaway
+database, skills and data directory, and keeps the LLM provider on the offline
+`MockProvider` by hiding any GitHub token from it. So `make check` behaves the
+same whether or not you're signed in to `gh` — a test that needs model output
+injects its own fake provider rather than calling one.
+
 ## Lockfiles
 
 `uv.lock` and the two `package-lock.json` files are committed, and they must
