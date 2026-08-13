@@ -13,7 +13,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentSession, Chat, MeetingSession, Role, Topic, Workspace
+from precursor.backend.models import (
+    AgentSession,
+    Chat,
+    Collection,
+    MeetingSession,
+    Role,
+    Topic,
+    Workspace,
+)
 from precursor.backend.schemas import RoleCreate, RoleRead, RoleUpdate
 
 router = APIRouter(prefix="/api/roles", tags=["roles"])
@@ -122,5 +130,9 @@ async def delete_role(role_id: int, session: AsyncSession = Depends(get_session)
     # this codebase manages such cleanups in the API layer (see topics.delete).
     for model in (Topic, Chat, Workspace, MeetingSession, AgentSession):
         await session.execute(update(model).where(model.role_id == role_id).values(role_id=None))
+    # Collections reference the role via a distinct `default_role_id` column.
+    await session.execute(
+        update(Collection).where(Collection.default_role_id == role_id).values(default_role_id=None)
+    )
     await session.delete(role)
     await session.commit()

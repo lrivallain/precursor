@@ -1229,6 +1229,8 @@ export interface Collection {
   github_repo: string | null;
   accent: CollectionAccent;
   icon: string | null;
+  // Default Assistant Role for new topics here; null = built-in default role.
+  default_role_id: number | null;
   is_default: boolean;
   topic_count: number;
   created_at: string;
@@ -1251,6 +1253,7 @@ export interface CollectionCreate {
   github_repo?: string | null;
   accent?: CollectionAccent;
   icon?: string | null;
+  default_role_id?: number | null;
 }
 
 export interface CollectionUpdate {
@@ -1259,6 +1262,7 @@ export interface CollectionUpdate {
   github_repo?: string | null;
   accent?: CollectionAccent;
   icon?: string | null;
+  default_role_id?: number | null;
 }
 
 export interface Memory {

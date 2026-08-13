@@ -442,6 +442,26 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   first — so you can leave agents running in the background and be pulled back
   only when one is genuinely blocked. All of it respects the existing
   notifications toggle.
+- **A lapsed idle MCP sign-in surfaces itself, instead of stalling your next
+  request.** WorkIQ / [Agent 365](website/features/mcp.md#agent-365-workiq-teams-and-workiq-user)
+  credentials that had gone idle (per the keep-alive back-off) used to die
+  quietly — you'd only find out when a simple request stalled for seconds on a
+  doomed OAuth handshake before the sign-in banner finally appeared, or by
+  manually opening **Settings → MCP**. Now the keep-alive **probes an idle token
+  once it has genuinely expired** and raises the `McpAuthBanner` proactively if
+  its refresh token is dead (a still-refreshable session recovers silently), and
+  a detected lapse records a verdict so the **first turn** that touches the
+  server **fast-fails straight to the prompt** rather than paying the multi-second
+  connect. New `workiq_keepalive_surface_idle_lapse` knob (default `true`,
+  `PRECURSOR_WORKIQ_KEEPALIVE_SURFACE_IDLE_LAPSE`) opts back into fully silent
+  idle credentials.
+- **Per-collection default role.** A [collection](website/features/collections.md)
+  can now nominate a default **Assistant Role** — new topics created in it start
+  with that persona unless the caller picks another one, so a whole collection
+  can lean into one role without setting it per topic. Set it from **Settings →
+  Collections**; a new nullable `default_role_id` on the collection (schema, API,
+  and a migration) drives it, and deleting a role reverts any collection that
+  pointed at it back to the built-in default.
 - **Copilot AI-credit usage in the persona menu.** When you're connected with a
   GitHub account, opening the sidebar persona menu now shows your Copilot **AI
   credits** — a progress bar with the percentage used and the next reset date.

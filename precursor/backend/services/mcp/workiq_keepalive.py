@@ -35,8 +35,11 @@ import contextlib
 import logging
 from datetime import UTC, datetime
 
+from mcp.shared.auth import OAuthToken
+
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.services.events import publish_mcp_auth_required
+from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.mcp.usage import is_idle
 from precursor.backend.services.mcp.workiq_preview import (
     DbTokenStorage,
@@ -118,18 +121,15 @@ class WorkIQKeepAlive:
         return await unique_credentials()
 
     async def _tick_profile(self, profile: WorkIQOAuthProfile) -> None:
-        # Idle credentials are left alone entirely: no refresh, and crucially no
-        # sign-in prompt. Nagging the user to re-authenticate a server they
-        # haven't touched in hours is the single least welcome prompt we raise.
-        idle_after = self._settings.workiq_keepalive_idle_after_seconds
-        if is_idle(profile.auth_family, idle_after):
-            logger.debug("WorkIQ keep-alive: skipping idle credential for %s", profile.server)
-            return
-
-        # No stored token → the user hasn't signed in. Do nothing (never start
-        # an interactive flow from a background tick).
+        # No stored token → the user never signed in. Do nothing (a background
+        # tick must never start an interactive flow), whether idle or active.
         tokens = await DbTokenStorage(profile).get_tokens()
         if tokens is None:
+            return
+
+        idle_after = self._settings.workiq_keepalive_idle_after_seconds
+        if is_idle(profile.auth_family, idle_after):
+            await self._tick_idle(profile, tokens)
             return
 
         expiry = await _stored_token_expiry(tokens, profile)
@@ -137,6 +137,35 @@ class WorkIQKeepAlive:
             return
 
         # Near expiry (or expiry unknown for a legacy token) → silently refresh.
+        await self._silent_refresh(profile)
+
+    async def _tick_idle(self, profile: WorkIQOAuthProfile, tokens: OAuthToken) -> None:
+        """Handle a credential nobody has used within the idle window.
+
+        Idle sessions are *not* kept warm — refreshing a session no one is using
+        is wasted work, and prompting for one is the least welcome nag we raise.
+        But we still surface a *genuine* lapse: once the stored access token has
+        actually expired, probe it once so a dead refresh token raises the
+        re-authenticate banner proactively, instead of ambushing the user's next
+        request with a slow, silent stall. A still-refreshable idle session
+        recovers quietly with no prompt. Opt out via
+        ``workiq_keepalive_surface_idle_lapse``.
+        """
+        if not self._settings.workiq_keepalive_surface_idle_lapse:
+            logger.debug("WorkIQ keep-alive: skipping idle credential for %s", profile.server)
+            return
+        if profile.auth_family in self._auth_required_notified:
+            # Already surfaced this lapse — don't re-probe a dead token each tick.
+            return
+        expiry = await _stored_token_expiry(tokens, profile)
+        if expiry is None or expiry > datetime.now(UTC):
+            # Unknown expiry (legacy token) or still valid → leave it untouched.
+            return
+        # Access token has demonstrably expired → probe once to learn whether it
+        # now needs an interactive sign-in.
+        await self._silent_refresh(profile)
+
+    async def _silent_refresh(self, profile: WorkIQOAuthProfile) -> None:
         result = await resolve_workiq_bearer_token(profile)
         if result is None:
             await self._on_refresh_failed(profile)
@@ -148,6 +177,12 @@ class WorkIQKeepAlive:
         return (expiry - datetime.now(UTC)).total_seconds() <= margin
 
     async def _on_refresh_failed(self, profile: WorkIQOAuthProfile) -> None:
+        # Feed the client manager's short-circuit verdict either way (even if the
+        # banner was already raised) so the turn path fast-fails the doomed
+        # connect for this credential.
+        get_mcp_client_manager().mark_auth_required(
+            profile.server, message=_auth_required_message(profile)
+        )
         if profile.auth_family in self._auth_required_notified:
             return
         self._auth_required_notified.add(profile.auth_family)
@@ -159,6 +194,8 @@ class WorkIQKeepAlive:
 
     async def _on_refresh_ok(self, profile: WorkIQOAuthProfile, expiry: datetime | None) -> None:
         self._auth_required_notified.discard(profile.auth_family)
+        # The credential is signable again — let connects proceed for real.
+        get_mcp_client_manager().clear_auth_required(profile.server)
         logger.debug(
             "WorkIQ keep-alive refreshed %s token (expires=%s).",
             profile.server,
