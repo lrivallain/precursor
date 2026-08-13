@@ -3691,6 +3691,119 @@ async def test_inline_vessel_is_named_after_its_step() -> None:
             assert unlabelled.title == "Proofread the translation"  # fell back
 
 
+async def test_step_can_author_a_reusable_agent() -> None:
+    """``reusable`` mints a real agent from the builder instead of a vessel.
+
+    Same "the prompt was written here" payload as an inline step — only where the
+    resulting agent *lives* differs, so a pipeline can create the agent it needs
+    without a detour through the Agents section.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        wf_id = await _make_workflow(
+            client,
+            [
+                {
+                    "kind": "task",
+                    "task": "Summarise the input in three bullets",
+                    "title": "Summariser",
+                    "name": "Summarise",
+                    "reusable": True,
+                }
+            ],
+            name="Creates an agent",
+        )
+
+        async with SessionLocal() as session:
+            step = (
+                await session.execute(select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id))
+            ).scalar_one()
+            agent = await session.get(AgentSession, step.agent_id)
+            assert agent is not None
+            assert agent.inline is False  # a real agent, not a private vessel
+            # Its own name wins over the step label — that name is how it is
+            # picked everywhere else.
+            assert agent.title == "Summariser"
+            assert agent.task_prompt == "Summarise the input in three bullets"
+            assert agent.status == "waiting"  # parked until the workflow drives it
+            agent_id = agent.id
+
+        # It joins the roster, so another step or workflow can pick it.
+        assert any(a["id"] == agent_id for a in client.get("/api/agents").json())
+
+
+async def test_authored_reusable_agent_survives_its_step() -> None:
+    """The orphan sweep only claims vessels — a created agent is not disposable."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        wf_id = await _make_workflow(
+            client,
+            [{"kind": "task", "task": "Draft it", "title": "Drafter", "reusable": True}],
+            name="Outlives its step",
+        )
+        async with SessionLocal() as session:
+            agent_id = (
+                await session.execute(
+                    select(WorkflowStep.agent_id).where(WorkflowStep.workflow_id == wf_id)
+                )
+            ).scalar_one()
+
+        # Re-saving as a plain reference must not re-mint or disturb it: the step
+        # reopens as "existing agent" once the agent is real.
+        assert (
+            client.patch(
+                f"/api/workflows/{wf_id}", json={"steps": [{"agent_id": agent_id}]}
+            ).status_code
+            == 200
+        )
+        async with SessionLocal() as session:
+            drafters = (
+                (
+                    await session.execute(
+                        select(AgentSession.id).where(AgentSession.title == "Drafter")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert list(drafters) == [agent_id]
+
+        # And deleting the workflow leaves it standing.
+        assert client.delete(f"/api/workflows/{wf_id}").status_code in (200, 204)
+        async with SessionLocal() as session:
+            survivor = await session.get(AgentSession, agent_id)
+            assert survivor is not None
+            assert survivor.inline is False
+
+
+async def test_authoring_defaults_to_a_private_vessel() -> None:
+    """Omitting ``reusable`` keeps the established inline behaviour."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        wf_id = await _make_workflow(
+            client, [{"kind": "gate", "task": "Is it accurate?"}], name="Default vessel"
+        )
+        async with SessionLocal() as session:
+            step = (
+                await session.execute(select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id))
+            ).scalar_one()
+            agent = await session.get(AgentSession, step.agent_id)
+            assert agent is not None
+            assert agent.inline is True
+
+
 async def test_workflow_icon_can_be_set_and_cleared() -> None:
     """An icon is optional: sending null clears it, omitting it leaves it alone.
 

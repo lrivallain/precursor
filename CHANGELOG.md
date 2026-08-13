@@ -9,7 +9,37 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Added
+
+- **Create a reusable agent from the step editor.** An Agent step now chooses
+  between **Existing agent** (pick one from the Agents section) and **New agent**
+  (name it and give it an objective right here) — so building a pipeline no
+  longer means breaking off to create its parts first. The agent lands in the
+  Agents section on save, editable and pickable by other steps and workflows;
+  reopening the step then shows it as a plain reference, because creating is a
+  one-time act rather than a mode a step stays in. Backed by
+  `WorkflowStepInput.reusable`, which decides whether a step-authored prompt
+  mints a real agent or the step's private vessel — omitting it keeps the vessel,
+  so existing payloads are unchanged.
+
+### Changed
+
+- **"Inline prompt" is no longer offered on an Agent step.** It produced exactly
+  what the **Inline** step type produces — the same hidden vessel, the same
+  runtime, differing only in the badge on the board — so the same intent had two
+  spellings and the step type disagreed with the toggle beneath it. One-off work
+  is now the **Inline** kind, full stop. A **Gate** keeps all three sources,
+  since there is no inline gate kind for its one-off check to be. A blank step
+  starts as **Inline**, which is where it effectively started before.
+
 ### Fixed
+
+- **Switching a step's kind or agent source no longer strands its agent.**
+  Converting an inline step to an agent-backed one kept the reference to its
+  private vessel, which the save then swept as an orphan — leaving a step reading
+  "Missing agent". The reference is now dropped whenever the *source* changes,
+  and kept when it doesn't, so an unchanged inline step still updates its vessel
+  in place and keeps its run history.
 
 - **Step colours now reset when a new run starts.** The strip derived each step's
   state from its *agent's* live status, which survives between runs — so a step

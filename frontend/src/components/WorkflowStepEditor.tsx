@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { Bot, ShieldCheck, Sparkles, UserCheck, X } from "lucide-react";
+import { Bot, Plus, ShieldCheck, Sparkles, UserCheck, X } from "lucide-react";
 import type {
   AgentModelInfo,
   AgentSession,
@@ -26,10 +26,17 @@ import type {
 
 export interface DraftStep {
   key: string;
-  mode: "existing" | "inline";
+  /**
+   * Where this step's brain comes from: an agent picked from the Agents section,
+   * a reusable agent created here (which joins that section on save), or a
+   * one-off prompt owned by the step. Only "existing" carries a reference —
+   * the other two author a prompt, and the agent behind them is minted on save.
+   */
+  mode: "existing" | "new" | "inline";
   agentId: number | null;
   name: string;
   task: string;
+  /** Name of the agent when authoring a reusable one; the referenced agent's own title otherwise. */
   title: string;
   model: string;
   kind: WorkflowStepKind;
@@ -55,17 +62,22 @@ export interface DraftStep {
 
 let draftSeq = 0;
 
-export function newDraft(mode: DraftStep["mode"] = "inline"): DraftStep {
+/**
+ * A blank step. It starts as an **inline** one-off rather than an empty agent
+ * picker: writing what the step should do is the shortest path to a working
+ * pipeline, and a step that deserves a reusable agent can say so afterwards.
+ */
+export function newDraft(): DraftStep {
   draftSeq += 1;
   return {
     key: `d${draftSeq}`,
-    mode,
+    mode: "inline",
     agentId: null,
     name: "",
     task: "",
     title: "",
     model: "",
-    kind: "task",
+    kind: "inline",
     onFail: "",
     instructions: "",
     onError: "fail",
@@ -86,21 +98,26 @@ export function draftsFromWorkflow(workflow: Workflow | null): DraftStep[] {
     key: `s${s.id}`,
     // The agent's own `inline` flag is what says the prompt was authored in this
     // step (true for an inline task *and* an inline gate), so it — not the
-    // step's kind — decides which mode the editor reopens in.
-    mode:
-      s.kind === "inline" || s.agent?.inline || s.agent_id == null
-        ? ("inline" as const)
-        : ("existing" as const),
+    // step's kind — decides which mode the editor reopens in. A step with no
+    // agent left reopens on the picker, which is the repair it needs.
+    mode: s.kind === "inline" || s.agent?.inline ? ("inline" as const) : ("existing" as const),
+    // An agent created by a *previous* "New agent" save is a real reusable agent
+    // by the time it comes back, so it reopens as a plain reference — creation
+    // is a one-off act, not a mode the step stays in.
     agentId: s.agent_id,
     name: s.name ?? "",
     // A step-authored prompt round-trips through its hidden vessel's objective.
     task: s.kind === "inline" || s.agent?.inline ? (s.agent?.task_prompt ?? "") : "",
-    // Not user-editable: a hidden vessel is named after its step, so the server
-    // derives the title. Kept on the draft only for a referenced agent, whose
-    // real title we must not overwrite.
+    // Not user-editable for a hidden vessel: it is named after its step, so the
+    // server derives the title. For a reusable agent this is its real name —
+    // kept so the picker can show it, and so switching to "New agent" starts
+    // from something rather than blank.
     title: s.agent?.inline ? "" : (s.agent?.title ?? ""),
     model: "",
-    kind: s.kind ?? "task",
+    // An Agent step backed by a private vessel is an Inline step that predates
+    // the kind — the two were interchangeable. Heal it so the editor gives one
+    // consistent answer, and so the next save records what it always was.
+    kind: (s.kind ?? "task") === "task" && s.agent?.inline ? "inline" : (s.kind ?? "task"),
     onFail: s.on_fail_position != null ? String(s.on_fail_position + 1) : "",
     instructions: s.instructions ?? "",
     onError: s.on_error ?? "fail",
@@ -122,8 +139,8 @@ export function draftsFromWorkflow(workflow: Workflow | null): DraftStep[] {
 
 /**
  * Convert drafts to the API payload, or null when a step is incomplete (no agent
- * chosen, or an inline step with no task) — the caller surfaces that as an error
- * rather than silently saving a broken pipeline.
+ * chosen, or an authored step with no task) — the caller surfaces that as an
+ * error rather than silently saving a broken pipeline.
  */
 export function draftsToPayload(steps: DraftStep[]): WorkflowStepInput[] | null {
     const out: WorkflowStepInput[] = [];
@@ -165,17 +182,23 @@ export function draftsToPayload(steps: DraftStep[]): WorkflowStepInput[] | null 
         if (s.agentId == null) return null;
         out.push({ agent_id: s.agentId, ...policy });
       } else {
-        // Authored here — a task or a gate. Sending `task` is what tells the
-        // server this agent is private to the step; passing the known agent_id
-        // alongside makes it update that vessel instead of minting a new one,
-        // so the step keeps its run history across saves.
+        // Authored here — a task, a gate, or a brand-new reusable agent.
+        // Sending `task` is what tells the server to mint the agent; `reusable`
+        // then decides whether it joins the Agents section or stays private to
+        // the step. Passing the known agent_id alongside makes it update that
+        // vessel instead of minting a new one, so the step keeps its run history
+        // across saves — a *new* agent has none to keep, so it sends null.
         if (!s.task.trim()) return null;
+        const reusable = s.mode === "new";
         out.push({
-          agent_id: s.agentId ?? null,
+          agent_id: reusable ? null : (s.agentId ?? null),
           task: s.task.trim(),
-          // The vessel is named after the step, so there's nothing to type.
-          title: s.name.trim() || null,
+          // A reusable agent is named by its author, because that name is how it
+          // is picked everywhere else. A vessel is named after its step, so
+          // there's nothing to type.
+          title: (reusable ? s.title.trim() || s.name.trim() : s.name.trim()) || null,
           model: s.model || null,
+          reusable,
           ...policy,
         });
       }
@@ -290,7 +313,7 @@ export function WorkflowStepEditModal({
   // An approval runs nothing, so it has neither an agent picker nor authoring
   // fields; an inline step always authors its own prompt.
   const agentBacked = step.kind === "task" || step.kind === "gate";
-  const authorsAgent = isInline || (agentBacked && step.mode === "inline");
+  const authorsAgent = isInline || (agentBacked && step.mode !== "existing");
   const defaultLabel =
     step.kind === "approval"
       ? "Human approval"
@@ -298,6 +321,34 @@ export function WorkflowStepEditModal({
         ? "Quality gate"
         : `Step ${index + 1}`;
   const idx = index;
+
+  /**
+   * Move the step to a different source, dropping the agent reference with it.
+   *
+   * Only "existing" means "this id"; the other two describe an agent to be
+   * minted on save. Carrying the id across the switch is what would let a step
+   * save against an agent it no longer describes — or hold on to the private
+   * vessel of the source it just stopped being, which the orphan sweep would
+   * then delete out from under it. Staying put keeps the id, so re-saving an
+   * unchanged inline step still updates its vessel in place.
+   */
+  const setMode = (mode: DraftStep["mode"]) => {
+    if (mode === step.mode) return;
+    patch({ mode, agentId: null });
+  };
+
+  /** Switch what the step *is*, keeping its source valid for the new kind. */
+  const setKind = (kind: WorkflowStepKind) => {
+    if (kind === step.kind) return;
+    // An inline step always authors its own prompt. An Agent step never does —
+    // writing a one-off there *is* the Inline kind, so there is nothing to
+    // duplicate. A gate accepts all three sources, so it keeps whichever was
+    // chosen; approval runs nothing, and ignores the mode entirely.
+    let mode = step.mode;
+    if (kind === "inline") mode = "inline";
+    else if (kind === "task" && mode === "inline") mode = "existing";
+    patch({ kind, mode, ...(mode === step.mode ? {} : { agentId: null }) });
+  };
 
   return (
     <div
@@ -336,14 +387,14 @@ export function WorkflowStepEditModal({
             <div className="inline-flex rounded-lg border border-border p-0.5">
               <KindButton
                 active={step.kind === "task"}
-                onClick={() => patch({ kind: "task", mode: "existing" })}
+                onClick={() => setKind("task")}
                 tone="indigo"
                 label="Agent"
-                title="Runs a reusable agent from the Agents section"
+                title="Runs a reusable agent — one from the Agents section, or a new one created here"
               />
               <KindButton
                 active={step.kind === "inline"}
-                onClick={() => patch({ kind: "inline", mode: "inline" })}
+                onClick={() => setKind("inline")}
                 tone="sky"
                 icon={<Sparkles size={12} />}
                 label="Inline"
@@ -351,7 +402,7 @@ export function WorkflowStepEditModal({
               />
               <KindButton
                 active={step.kind === "gate"}
-                onClick={() => patch({ kind: "gate" })}
+                onClick={() => setKind("gate")}
                 tone="amber"
                 icon={<ShieldCheck size={12} />}
                 label="Gate"
@@ -359,7 +410,7 @@ export function WorkflowStepEditModal({
               />
               <KindButton
                 active={step.kind === "approval"}
-                onClick={() => patch({ kind: "approval" })}
+                onClick={() => setKind("approval")}
                 tone="violet"
                 icon={<UserCheck size={12} />}
                 label="Approval"
@@ -370,12 +421,6 @@ export function WorkflowStepEditModal({
             {step.kind === "inline" && (
               <p className="rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[11px] leading-relaxed text-sky-600/90 dark:text-sky-400/80">
                 A one-off step. Its instructions live here rather than in a reusable agent, so
-                nothing is added to your Agents list — and it is removed along with the step.
-              </p>
-            )}
-            {step.kind === "gate" && step.mode === "inline" && (
-              <p className="rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[11px] leading-relaxed text-sky-600/90 dark:text-sky-400/80">
-                A one-off gate: its check is written here rather than in a reusable agent, so
                 nothing is added to your Agents list — and it is removed along with the step.
               </p>
             )}
@@ -414,32 +459,63 @@ export function WorkflowStepEditModal({
                 ? "shown on the checkpoint when the run parks here"
                 : showInstructions
                   ? "how this step customises the agent"
-                  : authorsAgent
-                    ? "written here, used only by this step"
-                    : "its objective"
+                  : step.mode === "new"
+                    ? "the objective of the agent this creates"
+                    : authorsAgent
+                      ? "written here, used only by this step"
+                      : "its objective"
             }
           >
-            {/* Only an agent-backed step chooses between reusing an agent and
-                authoring one; inline always authors, approval runs nothing. */}
-            {(step.kind === "task" || step.kind === "gate") && (
+            {/* Only an agent-backed step chooses where its agent comes from;
+                inline always authors, approval runs nothing. An Agent step gets
+                two sources rather than three: writing a one-off prompt there
+                would be the Inline kind under another name, so it is offered as
+                a kind, not duplicated as a mode. A gate has no inline *kind*, so
+                its one-off check has to live here. */}
+            {agentBacked && (
               <div className="inline-flex rounded-lg border border-border p-0.5">
                 <KindButton
                   active={step.mode === "existing"}
-                  onClick={() => patch({ mode: "existing" })}
+                  onClick={() => setMode("existing")}
                   tone="indigo"
                   icon={<Bot size={12} />}
                   label="Existing agent"
                   title="Reuse an agent from the Agents section"
                 />
                 <KindButton
-                  active={step.mode === "inline"}
-                  onClick={() => patch({ mode: "inline" })}
-                  tone="sky"
-                  icon={<Sparkles size={12} />}
-                  label="Inline prompt"
-                  title="Written here and used only by this step — no reusable agent is created"
+                  active={step.mode === "new"}
+                  onClick={() => setMode("new")}
+                  tone="indigo"
+                  icon={<Plus size={12} />}
+                  label="New agent"
+                  title="Create a reusable agent here — it joins the Agents section and can be picked by other steps"
                 />
+                {step.kind === "gate" && (
+                  <KindButton
+                    active={step.mode === "inline"}
+                    onClick={() => setMode("inline")}
+                    tone="sky"
+                    icon={<Sparkles size={12} />}
+                    label="Inline prompt"
+                    title="Written here and used only by this step — no reusable agent is created"
+                  />
+                )}
               </div>
+            )}
+
+            {agentBacked && step.mode === "new" && (
+              <p className="rounded-lg border border-indigo-500/25 bg-indigo-500/5 px-3 py-2 text-[11px] leading-relaxed text-indigo-600/90 dark:text-indigo-400/80">
+                Saving the steps creates this agent in your <strong>Agents</strong> section, where
+                it can be edited and picked by other steps or workflows. It outlives the step — for
+                work only this step needs, use an <strong>Inline</strong> step instead.
+              </p>
+            )}
+
+            {step.kind === "gate" && step.mode === "inline" && (
+              <p className="rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[11px] leading-relaxed text-sky-600/90 dark:text-sky-400/80">
+                A one-off gate: its check is written here rather than in a reusable agent, so
+                nothing is added to your Agents list — and it is removed along with the step.
+              </p>
             )}
 
             {agentBacked && step.mode === "existing" && (
@@ -463,6 +539,16 @@ export function WorkflowStepEditModal({
 
             {authorsAgent && (
               <div className="space-y-2">
+                {/* Only a reusable agent is named: a vessel takes the step's own
+                    label, since that name never surfaces anywhere else. */}
+                {step.mode === "new" && (
+                  <input
+                    value={step.title}
+                    onChange={(e) => patch({ title: e.target.value.slice(0, 200) })}
+                    placeholder={step.name.trim() || "Agent name — how it appears in Agents"}
+                    className="w-full rounded-lg border border-border bg-bg/40 px-3 py-2 text-sm text-fg outline-none transition placeholder:text-muted/70 focus:border-indigo-500"
+                  />
+                )}
                 <textarea
                   value={step.task}
                   onChange={(e) => patch({ task: e.target.value })}
@@ -472,7 +558,9 @@ export function WorkflowStepEditModal({
                       ? "What should this step do? Written here, used only by this step."
                       : step.kind === "gate"
                         ? "What exactly should this gate check for?"
-                        : "Objective for this step's agent…"
+                        : step.mode === "new"
+                          ? "What is this agent for? Its standing objective, reused every run."
+                          : "Objective for this step's agent…"
                   }
                   className="w-full resize-y rounded-lg border border-border bg-bg/40 px-3 py-2 text-sm outline-none focus:border-indigo-500"
                 />

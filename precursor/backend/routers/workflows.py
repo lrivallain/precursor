@@ -115,9 +115,11 @@ async def _apply_steps(
 ) -> None:
     """Replace the workflow's ordered steps in one shot.
 
-    Each input either references an existing agent by ``agent_id`` or creates a
-    plain ``waiting`` agent inline from ``task`` — the workflow owns the chaining,
-    so an inline agent is unattached and just waits for the coordinator to run it.
+    Each input either references an existing agent by ``agent_id`` or authors one
+    from ``task`` — the workflow owns the chaining, so an authored agent is
+    unattached and just waits for the coordinator to run it. ``reusable`` decides
+    whether that agent joins the Agents section or stays the step's private
+    vessel.
     """
     # Drop existing steps via the ORM (removes them from the identity map and any
     # loaded relationship collection, so they aren't re-inserted on the next
@@ -154,19 +156,26 @@ async def _apply_steps(
             # A human checkpoint runs no agent — ignore any agent/task supplied.
             agent_id = None
         elif (item.task or "").strip():
-            # The step authors its own prompt, so its agent belongs to *it*: a
+            # The step authors its own prompt. Where the resulting agent *lives*
+            # is then the author's call: by default it belongs to the step — a
             # private vessel, hidden from the Agents list and deleted with the
-            # step. This is keyed off "was the prompt written here?" rather than
-            # the step's kind, so a gate can be a one-off check just as a task
-            # can be a one-off job. A reusable agent is made in the Agents
-            # section and referenced by ``agent_id``.
+            # step — while ``reusable`` mints a real agent in the Agents section
+            # instead, so a pipeline can create one without leaving the builder.
+            # This is keyed off "was the prompt written here?" rather than the
+            # step's kind, so a gate can be a one-off check just as a task can be
+            # a one-off job.
             task = (item.task or "").strip()
             # A hidden vessel is named after its step: the step label if one was
             # given, else the opening of its own prompt. Nothing to type — the
-            # name only ever surfaces as the step's fallback label.
-            title = (item.name or item.title or task).strip()[:200] or (
-                "Inline gate" if kind == "gate" else "Inline step"
-            )
+            # name only ever surfaces as the step's fallback label. A reusable
+            # agent is the other way round: its own name wins, because that name
+            # is what it's recognised by everywhere else.
+            if item.reusable:
+                title = (item.title or item.name or task).strip()[:200] or "New agent"
+            else:
+                title = (item.name or item.title or task).strip()[:200] or (
+                    "Inline gate" if kind == "gate" else "Inline step"
+                )
             agent = await session.get(AgentSession, agent_id) if agent_id else None
             if agent is not None and agent.inline:
                 # Re-save: update the vessel in place so the step keeps its run
@@ -181,7 +190,7 @@ async def _apply_steps(
                     task_prompt=task,
                     model=item.model,
                     status="waiting",
-                    inline=True,
+                    inline=not item.reusable,
                 )
                 session.add(agent)
                 await session.flush()

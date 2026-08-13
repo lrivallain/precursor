@@ -641,6 +641,9 @@ export interface WorkflowStepInput {
   task?: string | null;
   title?: string | null;
   model?: string | null;
+  // For a step that authors its own prompt: true mints a reusable agent listed
+  // in the Agents section, false (default) a private vessel owned by the step.
+  reusable?: boolean;
   kind?: WorkflowStepKind;
   on_fail_position?: number | null;
   instructions?: string | null;
