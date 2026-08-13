@@ -112,6 +112,10 @@ class TransferStep(BaseModel):
     use_mcp: bool | None = None
     use_skills: bool | None = None
     use_memory: bool | None = None
+    # Comma-separated MCP server allowlist. Carried verbatim: the importing
+    # machine may have a different server set, and a name it doesn't know
+    # simply matches nothing rather than blocking the import.
+    mcp_servers: str | None = Field(default=None, max_length=400)
 
 
 class TransferWorkflow(BaseModel):

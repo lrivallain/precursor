@@ -327,6 +327,36 @@ agent's session on its next run. The agent itself carries the same three toggles
 as its baseline (editable from the step modal); the step overrides them for the
 duration of its turn.
 
+### Picking which tool servers a step gets
+
+**Tools: on** still means *every* enabled [MCP server](./mcp.md), and that is
+rarely what a step needs. A modest install can register a few hundred tools
+between them, and their schemas are re-sent on every turn — enough, in a
+measured six-step briefing run, for the tool-using turns to account for well
+over 95% of the run's tokens while each step actually needed exactly one server.
+
+So a step with tools on can also name **which servers** it may see. The
+**Servers** row in the step modal lists every enabled server with its tool
+count, so the cost is visible where the choice is made:
+
+| Selection | The step gets |
+| --- | --- |
+| **All** (default) | Every enabled server — the behaviour before this existed. |
+| One or more servers | Only those, plus Precursor's own first-party server. |
+| Nothing selected | No tool servers at all — identical to **Tools: off**. |
+
+This is a real allowlist, not a request: the servers you didn't pick are never
+attached to the session, so the step *cannot* call them and their schemas cost
+nothing. Asking a model in the prompt not to use a tool is not equivalent —
+it reliably reaches for one anyway.
+
+The allowlist is per step. Changing it rebuilds that step's session on the next
+run, so a shared agent moving from a `fetch`-only step to a `workiq`-only one
+gets the right catalogue each time rather than reusing the previous one. Servers
+named on a step but not installed on this machine show as struck-through chips
+and simply match nothing — an exported workflow imports cleanly onto a machine
+with a different server set.
+
 ## Tool approvals for the whole pipeline
 
 A step's agent can stop mid-run to ask permission for a tool call — and until

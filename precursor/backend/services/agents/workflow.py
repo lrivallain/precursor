@@ -893,7 +893,8 @@ async def _apply_step_overrides(
     workflow's Assistant Role are applied *as the step is launched* rather than
     baked into the agent. Only one step of a workflow runs at a time, so the
     agent always reflects the step currently driving it. A ``None`` override
-    leaves the agent's own setting alone.
+    leaves the agent's own setting alone — except for the MCP server scope,
+    which is always assigned (see below).
     """
     if step.agent_id is None:
         return
@@ -906,6 +907,11 @@ async def _apply_step_overrides(
         agent.use_skills = step.use_skills
     if step.use_memory is not None:
         agent.use_memory = step.use_memory
+    # Unlike the toggles above, the server scope is assigned even when null:
+    # null means "the whole enabled catalogue", not "whatever the last step to
+    # borrow this agent left behind". Without this a narrow step would silently
+    # keep scoping the steps that follow it.
+    agent.mcp_servers = step.mcp_servers
     if workflow.role_id is not None:
         agent.role_id = workflow.role_id
     if workflow.approval_policy is not None:

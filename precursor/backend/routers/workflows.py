@@ -63,6 +63,26 @@ def _cap_default(enabled: bool) -> bool | None:
     return None if enabled else False
 
 
+def _normalize_mcp_servers(raw: str | None) -> str | None:
+    """Tidy an ``mcp_servers`` allowlist without collapsing its empty case.
+
+    Deliberately *not* the ``(x or "").strip() or None`` idiom used for the
+    other optional strings here: for this field null and empty mean different
+    things (every enabled server versus none at all), so an explicitly empty
+    selection has to survive the round-trip. Names are de-duplicated with their
+    order kept, and never checked against the local registry — a workflow is
+    portable, and a server absent on this machine simply matches nothing.
+    """
+    if raw is None:
+        return None
+    seen: list[str] = []
+    for part in raw.split(","):
+        name = part.strip()
+        if name and name not in seen:
+            seen.append(name)
+    return ",".join(seen)[:400]
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -275,6 +295,7 @@ async def _apply_steps(
                     if item.use_memory is not None
                     else _cap_default(caps["use_memory"])
                 ),
+                mcp_servers=_normalize_mcp_servers(item.mcp_servers),
             )
         )
     await session.flush()

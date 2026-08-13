@@ -365,8 +365,23 @@ async def test_workflow_round_trips_through_yaml() -> None:
                 "description": "three steps",
                 "max_loops": 5,
                 "steps": [
-                    {"task": "gather", "name": "Gather", "reusable": True, "title": "Gatherer"},
-                    {"task": "check it", "name": "Check", "kind": "gate", "on_fail_position": 0},
+                    {
+                        "task": "gather",
+                        "name": "Gather",
+                        "reusable": True,
+                        "title": "Gatherer",
+                        # 'ghost' isn't registered here: a workflow travels to
+                        # machines with a different server set, so import must
+                        # carry names through rather than validate them away.
+                        "mcp_servers": "fetch,ghost",
+                    },
+                    {
+                        "task": "check it",
+                        "name": "Check",
+                        "kind": "gate",
+                        "on_fail_position": 0,
+                        "mcp_servers": "",
+                    },
                     {"name": "Sign off", "kind": "approval", "on_reject": "stop"},
                 ],
             },
@@ -396,6 +411,11 @@ async def test_workflow_round_trips_through_yaml() -> None:
     assert imported["steps"][2]["on_reject"] == "stop"
     # An approval checkpoint runs no agent.
     assert imported["steps"][2]["agent_id"] is None
+    # The server allowlist survives the round trip, and "no tools" (empty)
+    # stays distinct from "no scope" (null).
+    assert imported["steps"][0]["mcp_servers"] == "fetch,ghost"
+    assert imported["steps"][1]["mcp_servers"] == ""
+    assert imported["steps"][2]["mcp_servers"] is None
 
 
 async def test_imported_schedule_arrives_paused() -> None:

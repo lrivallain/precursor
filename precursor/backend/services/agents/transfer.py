@@ -199,6 +199,7 @@ async def export_workflow(session: AsyncSession, workflow: Workflow) -> Transfer
                 use_mcp=step.use_mcp,
                 use_skills=step.use_skills,
                 use_memory=step.use_memory,
+                mcp_servers=step.mcp_servers,
             )
         )
 
@@ -747,6 +748,9 @@ async def import_document(
                 use_mcp=step.use_mcp,
                 use_skills=step.use_skills,
                 use_memory=step.use_memory,
+                # Kept verbatim, including an explicit empty string: null and
+                # empty are different scopes (all enabled servers vs none).
+                mcp_servers=step.mcp_servers,
             )
         )
     workflow.status = "idle" if incoming_wf.steps else "draft"

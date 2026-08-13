@@ -11,6 +11,20 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Pick which MCP servers a workflow step may use.** A step's *Tools* toggle
+  was all-or-nothing: on meant the entire enabled catalogue. Tool schemas are
+  re-sent on every turn, so on a modest install that is a six-figure token bill
+  per round-trip for a step that needed one server — in a measured six-step
+  briefing run the tool-using turns accounted for 2.28M of 2.34M tokens while
+  each step actually needed exactly one. The step modal now has a **Servers**
+  row listing every enabled server with its tool count: leave it on **All** for
+  the old behaviour, name the ones the step may see, or select none to run it
+  with no tools at all. It is a real allowlist rather than a prompt-level
+  request — the servers you didn't pick are never attached, so the step cannot
+  reach them and pays nothing for their schemas. Changing the selection rebuilds
+  that step's session, and unknown names are carried through export/import so a
+  workflow still imports onto a machine with a different server set.
+
 - **See what a workflow step actually did.** Every attempt in the run trace now
   carries an **Activity** section rendering the same timeline the Agents cockpit
   does — tool calls with their arguments and output, reasoning, assistant
@@ -106,6 +120,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   starts as **Inline**, which is where it effectively started before.
 
 ### Fixed
+
+- **An agent with tools off no longer rebuilds its session on every dispatch.**
+  The reuse check compared the session's stored MCP fingerprint against the
+  *enabled catalogue*, but a tools-off agent stores an "off" sentinel — so the
+  two could never match and the Copilot session was discarded and rebuilt each
+  time the agent ran, throwing away its warm state for nothing.
 
 - **A workflow step no longer runs twice.** The completion seam enqueued a
   workflow advance whenever a step's agent *was* resting rather than when it

@@ -3,6 +3,7 @@ import { Bot, Plus, ShieldCheck, Sparkles, UserCheck, X } from "lucide-react";
 import type {
   AgentModelInfo,
   AgentSession,
+  MCPServerStatus,
   Workflow,
   WorkflowStepContextMode,
   WorkflowStepErrorPolicy,
@@ -58,6 +59,13 @@ export interface DraftStep {
   useMcp: boolean | null;
   useSkills: boolean | null;
   useMemory: boolean | null;
+  /**
+   * MCP server allowlist. `null` = every enabled server (what a step did before
+   * scoping existed); a list = only those; an *empty* list = no tools at all,
+   * the same thing as `useMcp: false`. Tool schemas are a fixed per-turn context
+   * cost, so narrowing this is how a step stops paying for tools it never calls.
+   */
+  mcpServers: string[] | null;
 }
 
 let draftSeq = 0;
@@ -88,6 +96,7 @@ export function newDraft(): DraftStep {
     useMcp: null,
     useSkills: null,
     useMemory: null,
+    mcpServers: null,
   };
 }
 
@@ -134,6 +143,15 @@ export function draftsFromWorkflow(workflow: Workflow | null): DraftStep[] {
     useMcp: s.use_mcp,
     useSkills: s.use_skills,
     useMemory: s.use_memory,
+    // Null stays null ("all servers"); an empty string is a real, deliberate
+    // choice ("no servers") and must not collapse back into it.
+    mcpServers:
+      s.mcp_servers == null
+        ? null
+        : s.mcp_servers
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean),
   }));
 }
 
@@ -173,6 +191,9 @@ export function draftsToPayload(steps: DraftStep[]): WorkflowStepInput[] | null 
         use_mcp: s.useMcp,
         use_skills: s.useSkills,
         use_memory: s.useMemory,
+        // `null` = every enabled server, `""` = none at all. Both are sent, so
+        // clearing a scope back to "all" actually reaches the server.
+        mcp_servers: s.mcpServers === null ? null : s.mcpServers.join(","),
       };
       if (s.kind === "approval") {
         // A human checkpoint runs no agent — send it bare, with its own policy.
@@ -213,6 +234,8 @@ interface Props {
   index: number;
   agents: AgentSession[];
   models: AgentModelInfo[];
+  /** Registered MCP servers, for the per-step tool allowlist. */
+  mcpServers: MCPServerStatus[];
   /** Agent ids already used by other steps, so the picker can flag reuse. */
   usedAgentIds: Set<number | null>;
   onChange: (next: Partial<DraftStep>) => void;
@@ -292,6 +315,7 @@ export function WorkflowStepEditModal({
   index,
   agents,
   models,
+  mcpServers,
   usedAgentIds,
   onChange,
   onClose,
@@ -321,6 +345,15 @@ export function WorkflowStepEditModal({
         ? "Quality gate"
         : `Step ${index + 1}`;
   const idx = index;
+  // ``precursor`` is first-party and always attached with the tools on, so it is
+  // not a scoping choice; disabled servers can't attach either way.
+  const scopableServers = mcpServers.filter((s) => s.enabled && s.name !== "precursor");
+  // Names the step asked for that this install doesn't offer. Surfaced rather
+  // than silently dropped, because they are meaningful on the machine the
+  // workflow came from and the save keeps them.
+  const missingServers = (step.mcpServers ?? []).filter(
+    (name) => !scopableServers.some((s) => s.name === name),
+  );
 
   /**
    * Move the step to a different source, dropping the agent reference with it.
@@ -673,6 +706,72 @@ export function WorkflowStepEditModal({
                   );
                 })}
               </div>
+
+              {/* Which servers, not just whether. Every attached server's tool
+                  schemas are re-sent on every turn, so a step that needs one
+                  server shouldn't pay for fifteen. */}
+              {step.useMcp !== false && (
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="text-muted">Servers</span>
+                  <button
+                    type="button"
+                    onClick={() => patch({ mcpServers: null })}
+                    title="Attach every enabled MCP server"
+                    className={`rounded-lg border px-2 py-0.5 transition ${
+                      step.mcpServers === null
+                        ? "border-sky-500/40 bg-sky-500/10 text-sky-500"
+                        : "border-border text-muted hover:text-fg"
+                    }`}
+                  >
+                    All
+                  </button>
+                  {scopableServers.map((server) => {
+                    const active = step.mcpServers?.includes(server.name) ?? false;
+                    return (
+                      <button
+                        key={server.name}
+                        type="button"
+                        onClick={() =>
+                          patch({
+                            mcpServers: active
+                              ? (step.mcpServers ?? []).filter((n) => n !== server.name)
+                              : [...(step.mcpServers ?? []), server.name],
+                          })
+                        }
+                        title={`${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`}
+                        className={`rounded-lg border px-2 py-0.5 transition ${
+                          active
+                            ? "border-sky-500/40 bg-sky-500/10 text-sky-500"
+                            : "border-border text-muted hover:text-fg"
+                        }`}
+                      >
+                        {server.name}
+                        {server.tools.length > 0 && (
+                          <span className="ml-1 opacity-70">{server.tools.length}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                  {/* Named by the step but not installed here — kept, not
+                      dropped, so a workflow survives the trip between machines. */}
+                  {missingServers.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() =>
+                        patch({ mcpServers: (step.mcpServers ?? []).filter((n) => n !== name) })
+                      }
+                      title="Not installed here — click to remove"
+                      className="rounded-lg border border-dashed border-border px-2 py-0.5 text-muted/70 line-through transition hover:text-fg"
+                    >
+                      {name}
+                    </button>
+                  ))}
+                  {step.mcpServers !== null && step.mcpServers.length === 0 && (
+                    <span className="text-muted/70">no tools at all, same as Tools off</span>
+                  )}
+                </div>
+              )}
             </Section>
           )}
 

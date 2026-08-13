@@ -97,6 +97,9 @@ class WorkflowStepRead(BaseModel):
     use_mcp: bool | None = None
     use_skills: bool | None = None
     use_memory: bool | None = None
+    # Comma-separated MCP server allowlist. Null = every enabled server; an
+    # empty string = none at all (the same thing as use_mcp=false).
+    mcp_servers: str | None = None
     # Optional label override; falls back to the agent's title in the UI.
     name: str | None = None
     # Embedded live agent state (null when the referenced agent was deleted —
@@ -254,6 +257,11 @@ class WorkflowStepInput(BaseModel):
     use_mcp: bool | None = None
     use_skills: bool | None = None
     use_memory: bool | None = None
+    # Comma-separated MCP server allowlist ("fetch,workiq"). Null = every
+    # enabled server; an explicit empty string = none at all. Names are not
+    # validated against the local registry: a workflow is portable, and a server
+    # missing on this machine should match nothing rather than reject the save.
+    mcp_servers: str | None = Field(default=None, max_length=400)
     # Agent authored in the step (used when agent_id is null).
     task: str | None = None
     title: str | None = Field(default=None, max_length=200)
