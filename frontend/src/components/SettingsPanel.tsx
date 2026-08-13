@@ -15,6 +15,7 @@ import {
   Drama,
   Brain,
   SlidersHorizontal,
+  Workflow as WorkflowIcon,
   Mic,
   BarChart3,
   Bot,
@@ -53,6 +54,7 @@ import { CollectionsTab } from "./CollectionsTab";
 import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
 import { AgentsSettings } from "./AgentsSettings";
+import { WorkflowsSettings } from "./WorkflowsSettings";
 
 interface Props {
   onClose: () => void;
@@ -108,6 +110,7 @@ type Category =
   | "collections"
   | "memory"
   | "agents"
+  | "workflows"
   | "stats"
   | "backup"
   | "system";
@@ -130,6 +133,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "collections", label: "Collections", icon: Layers, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
+  { id: "workflows", label: "Workflows", icon: WorkflowIcon, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "backup", label: "Backup", icon: HardDriveDownload, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
@@ -1250,6 +1254,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
             {category === "memory" && <MemoriesTab />}
             {category === "agents" && <AgentsSettings />}
+            {category === "workflows" && <WorkflowsSettings />}
 
             {category === "stats" && <StatsTab />}
 

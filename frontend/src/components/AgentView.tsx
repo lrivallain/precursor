@@ -1,19 +1,32 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   Bot,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
   Copy,
+  CornerDownRight,
+  ExternalLink,
   Eye,
+  HelpCircle,
+  Link2,
   Loader2,
+  Package,
+  PauseCircle,
   PlayCircle,
+  Plus,
+  Radar,
   Settings as SettingsIcon,
+  ShieldCheck,
   ShieldQuestion,
+  Trash2,
+  Webhook,
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -21,6 +34,11 @@ import { eventBus } from "../lib/events";
 import { mcpAuthStore } from "../lib/mcpAuth";
 import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
+import {
+  normalizeArtifactMarkdown,
+  parseAgentDirectives,
+  stripAgentDirectives,
+} from "../lib/directives";
 import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -28,9 +46,11 @@ import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
-import { MessageMeta } from "./MessageMeta";
+import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { TopicPicker } from "./TopicPicker";
+import { Select } from "./Select";
+import { APPROVAL_POLICIES } from "./AgentsSettings";
 import { AgentUsageSection } from "./AgentUsage";
 import { PermissionBody } from "./AgentPermissionBody";
 import {
@@ -41,9 +61,12 @@ import {
   HookGutter,
 } from "./AgentTimeline";
 import type {
+  AgentApprovalPolicy,
+  AgentArtifact,
   AgentEvent,
   AgentPermissionDecisionValue,
   AgentSession,
+  AgentTrigger,
   Collection,
   Me,
   Topic,
@@ -107,11 +130,13 @@ function AgentInsightsPanel({
   toggleShow,
   events,
   model,
+  agent,
 }: {
   showPrefs: ShowPrefs;
   toggleShow: (k: keyof ShowPrefs) => void;
   events: AgentEvent[];
   model: string | null;
+  agent: AgentSession;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -159,6 +184,8 @@ function AgentInsightsPanel({
       <div className="flex flex-col gap-4 overflow-y-auto p-3">
         <AgentUsageSection events={events} model={model} />
         <div className="border-t border-border" />
+        <AgentOrchestrationSection agent={agent} />
+        <div className="border-t border-border" />
         <div className="space-y-2">
           <div className="flex items-center gap-1.5 text-sm font-medium">
             <Eye size={14} />
@@ -193,6 +220,190 @@ function AgentInsightsPanel({
   );
 }
 
+// Per-agent orchestration cockpit shown in the insights sidebar: the shared
+// artifacts this agent published to the blackboard and its external webhook
+// triggers. Everything a running agent exposes lives here so the single-agent
+// view doubles as an orchestration surface rather than an isolated transcript.
+function AgentOrchestrationSection({
+  agent,
+}: {
+  agent: AgentSession;
+}) {
+  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
+  const [triggers, setTriggers] = useState<AgentTrigger[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<number | null>(null);
+  const [viewing, setViewing] = useState<AgentArtifact | null>(null);
+
+  const loadOrch = useCallback(() => {
+    void api.agents.listArtifacts(agent.id).then(setArtifacts).catch(() => setArtifacts([]));
+    void api.agents.listTriggers(agent.id).then(setTriggers).catch(() => setTriggers([]));
+  }, [agent.id]);
+
+  useEffect(() => {
+    loadOrch();
+    // Refresh live: mid-mission ARTIFACT directives publish to the blackboard as
+    // they're emitted, and a completed turn publishes its result — the sidebar
+    // must reflect those without waiting for a manual reload (mirrors the
+    // in-chat AgentDeliverables refresh).
+    const off = eventBus.subscribe((ev) => {
+      if (ev.type !== "agent.changed") return;
+      if (ev.agent_session_id == null || ev.agent_session_id === agent.id) {
+        loadOrch();
+      }
+    });
+    return off;
+  }, [loadOrch, agent.id]);
+
+  // Auto-open an artifact from a `?artifact={id}` permalink once the list has
+  // loaded, then strip the param so it doesn't re-fire on later reloads.
+  useEffect(() => {
+    if (artifacts.length === 0) return;
+    const raw = new URLSearchParams(window.location.search).get("artifact");
+    if (!raw) return;
+    const target = artifacts.find((a) => String(a.id) === raw);
+    if (target) setViewing(target);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("artifact");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }, [artifacts]);
+
+  async function addWebhook(): Promise<void> {
+    setBusy(true);
+    try {
+      const t = await api.agents.createTrigger(agent.id, { type: "webhook" });
+      setTriggers((prev) => [...prev, t]);
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeWebhook(triggerId: number): Promise<void> {
+    setBusy(true);
+    try {
+      await api.agents.deleteTrigger(agent.id, triggerId);
+      setTriggers((prev) => prev.filter((t) => t.id !== triggerId));
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copyHook(t: AgentTrigger): void {
+    const url = `${window.location.origin}/api/agents/hooks/${t.token}`;
+    void navigator.clipboard?.writeText(url).then(() => {
+      setCopied(t.id);
+      window.setTimeout(() => setCopied((c) => (c === t.id ? null : c)), 1500);
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Shared artifacts (blackboard) */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          <Package size={14} />
+          <span>Artifacts</span>
+          {artifacts.length > 0 && (
+            <span className="text-[11px] text-muted">({artifacts.length})</span>
+          )}
+        </div>
+        {artifacts.length === 0 ? (
+          <p className="text-[11px] text-muted">
+            Nothing published yet. Completed runs post their result here for downstream agents.
+          </p>
+        ) : (
+          artifacts.slice(0, 8).map((a) => (
+            <button
+              type="button"
+              key={a.id}
+              onClick={() => setViewing(a)}
+              className="block w-full rounded border border-border bg-surface/50 px-2 py-1 text-left transition hover:border-accent/50 hover:bg-surface"
+              title={a.kind === "link" ? a.content : "Open artifact"}
+            >
+              <div className="flex items-center gap-1.5">
+                {a.kind === "link" ? (
+                  <ExternalLink size={11} className="shrink-0 text-accent" />
+                ) : (
+                  <Link2 size={11} className="shrink-0 text-muted" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{a.title}</span>
+                {a.key && (
+                  <span className="shrink-0 rounded bg-border/60 px-1 text-[10px] text-muted">
+                    {a.key}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+
+      {/* External webhook triggers */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <Webhook size={14} />
+            <span>Webhooks</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void addWebhook()}
+            disabled={busy}
+            className="rounded p-0.5 text-muted hover:bg-surface disabled:opacity-50"
+            data-tooltip="Create a webhook trigger"
+            aria-label="Create a webhook trigger"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+        {triggers.length === 0 ? (
+          <p className="text-[11px] text-muted">
+            No triggers. Add a webhook to re-run this agent from an external event.
+          </p>
+        ) : (
+          triggers.map((t) => (
+            <div
+              key={t.id}
+              className="flex items-center gap-1.5 rounded border border-border bg-surface/50 px-2 py-1"
+            >
+              <Webhook size={11} className="shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">
+                …/hooks/{t.token.slice(0, 8)}
+              </span>
+              <button
+                type="button"
+                onClick={() => copyHook(t)}
+                className="rounded p-0.5 text-muted hover:text-accent"
+                data-tooltip={copied === t.id ? "Copied!" : "Copy URL"}
+                aria-label="Copy webhook URL"
+              >
+                {copied === t.id ? <Check size={12} /> : <Copy size={12} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => void removeWebhook(t.id)}
+                disabled={busy}
+                className="rounded p-0.5 text-muted hover:text-red-500 disabled:opacity-50"
+                aria-label="Delete webhook"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
+      {viewing && (
+        <ArtifactViewer agent={agent} artifact={viewing} onClose={() => setViewing(null)} />
+      )}
+    </div>
+  );
+}
+
 // A grouped tool call: input, output and any pending approval in one box.
 interface ToolStep {
   key: string;
@@ -203,25 +414,396 @@ interface ToolStep {
   pending?: { data: Record<string, unknown>; requestId: string | null };
 }
 
+// A raised NEED_INPUT question, surfaced as a prominent amber callout inside the
+// assistant bubble so the one line a human must act on never hides in prose.
+function NeedInputCallout({
+  question,
+  onReply,
+}: {
+  question: string;
+  onReply?: () => void;
+}) {
+  return (
+    <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-800 dark:text-amber-200">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide">
+        <HelpCircle size={13} className="shrink-0" />
+        Needs your input
+      </div>
+      <Markdown className="mt-1 text-[12px] font-medium leading-relaxed text-text">
+        {question}
+      </Markdown>
+      {onReply && (
+        <button
+          type="button"
+          onClick={onReply}
+          className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-1 text-[11px] font-medium text-amber-900 transition hover:bg-amber-500/30 dark:text-amber-100"
+        >
+          <CornerDownRight size={12} /> Answer
+        </button>
+      )}
+    </div>
+  );
+}
+
+// A milestone marker lifted onto the workflow spine: PROGRESS heartbeats are
+// pulled out of the raw prose and rendered as compact, iconified timeline nodes
+// so the mission's trajectory reads at a glance instead of hiding as plain-text
+// directive lines. The terminal OBJECTIVE_COMPLETE is *not* a spine node — it's
+// folded into the final answer bubble (see MessageNode) so the completion and
+// the answer are one and the same.
+function MissionMilestone({
+  progress,
+  at,
+}: {
+  progress?: { value: number; label: string | null } | null;
+  at?: string | null;
+}) {
+  const when = formatTimestamp(at);
+  if (progress) {
+    const pct = Math.max(0, Math.min(100, Math.round(progress.value)));
+    return (
+      <div className="my-1 flex w-full justify-center">
+        <div className="inline-flex max-w-xl items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-[11px] text-violet-800 dark:text-violet-200">
+          <Activity size={13} className="shrink-0" />
+          <span className="font-semibold tabular-nums">{pct}%</span>
+          {progress.label && (
+            <span className="truncate text-violet-700/80 dark:text-violet-300/80">
+              {progress.label}
+            </span>
+          )}
+          {when && (
+            <span className="shrink-0 text-violet-700/60 dark:text-violet-300/60">{when}</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+// A modal that renders one published artifact addressably: content by kind
+// (markdown/json/text/link), plus Copy content, Copy permalink, and Open raw
+// affordances so the output can be shared or consumed on its own. The permalink
+// is `/agents/{ref}?artifact={id}`; the raw link hits the kind-typed raw API.
+function ArtifactViewer({
+  agent,
+  artifact,
+  onClose,
+}: {
+  agent: AgentSession;
+  artifact: AgentArtifact;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState<"content" | "link" | null>(null);
+  const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
+  const ref = agent.copilot_session_id ?? String(agent.id);
+  const permalink = `${window.location.origin}/agents/${encodeURIComponent(
+    ref,
+  )}?artifact=${artifact.id}`;
+
+  const flash = useCallback((which: "content" | "link") => {
+    setCopied(which);
+    window.setTimeout(() => setCopied((c) => (c === which ? null : c)), 1500);
+  }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Pretty-print JSON when the payload parses; otherwise show it verbatim.
+  const pretty = useMemo(() => {
+    if (artifact.kind !== "json") return artifact.content;
+    try {
+      return JSON.stringify(JSON.parse(artifact.content), null, 2);
+    } catch {
+      return artifact.content;
+    }
+  }, [artifact.kind, artifact.content]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Artifact: ${artifact.title}`}
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-2 border-b border-border px-4 py-3">
+          <Package size={16} className="mt-0.5 shrink-0 text-teal-500" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-text">{artifact.title}</div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+              <span className="rounded bg-border/60 px-1 uppercase tracking-wide">
+                {artifact.kind}
+              </span>
+              {artifact.key && (
+                <span className="rounded bg-border/60 px-1 font-mono">{artifact.key}</span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-muted hover:bg-surface hover:text-text"
+            aria-label="Close artifact"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+          {artifact.kind === "link" ? (
+            <a
+              href={artifact.content.trim()}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 break-all text-sm font-medium text-accent hover:underline"
+            >
+              <ExternalLink size={14} className="shrink-0" />
+              {artifact.content.trim()}
+            </a>
+          ) : artifact.kind === "markdown" ? (
+            <Markdown className="text-sm leading-relaxed text-text">{artifact.content}</Markdown>
+          ) : (
+            <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-text">
+              {pretty}
+            </pre>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-2.5">
+          {artifact.kind !== "link" && (
+            <button
+              type="button"
+              onClick={() =>
+                void navigator.clipboard?.writeText(artifact.content).then(() => flash("content"))
+              }
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] font-medium text-muted hover:bg-surface hover:text-text"
+            >
+              {copied === "content" ? <Check size={13} /> : <Copy size={13} />}
+              {copied === "content" ? "Copied" : "Copy content"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard?.writeText(permalink).then(() => flash("link"))}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] font-medium text-muted hover:bg-surface hover:text-text"
+          >
+            {copied === "link" ? <Check size={13} /> : <Link2 size={13} />}
+            {copied === "link" ? "Copied" : "Copy link"}
+          </button>
+          <a
+            href={rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] font-medium text-muted hover:bg-surface hover:text-text"
+          >
+            <ExternalLink size={13} />
+            Open raw
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The `ARTIFACT:` directive's payload is no longer rendered inline in the message
+// body: published outputs are surfaced once, at the foot of the turn, by
+// `AgentDeliverables` (below) — the single, non-duplicated home for the answer.
+
+// One deliverable, rendered unboxed into the discussion flow: a horizontal rule
+// slips it off from the streamed prose, then the artifact body renders as plain
+// Markdown (JSON in a fenced block, a `link` as a real anchor) so it reads as the
+// agent's answer to the request — no card, no tinted background. A quiet title
+// row labels it, and the copy/link/raw actions surface on hover.
+function DeliverableAnswer({
+  agent,
+  artifact,
+}: {
+  agent: AgentSession;
+  artifact: AgentArtifact;
+}) {
+  const [copied, setCopied] = useState<null | "content" | "link">(null);
+  const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
+  const ref = agent.copilot_session_id ?? String(agent.id);
+  const permalink = `${window.location.origin}/agents/${encodeURIComponent(
+    ref,
+  )}?artifact=${artifact.id}`;
+
+  // Compose a Markdown document from the payload so every kind renders as prose:
+  // JSON is fenced (pretty-printed), text/markdown pass through verbatim.
+  const markdownBody = useMemo(() => {
+    if (artifact.kind !== "json") return normalizeArtifactMarkdown(artifact.content);
+    try {
+      return `\`\`\`json\n${JSON.stringify(JSON.parse(artifact.content), null, 2)}\n\`\`\``;
+    } catch {
+      return `\`\`\`\n${artifact.content}\n\`\`\``;
+    }
+  }, [artifact.kind, artifact.content]);
+
+  async function copy(kind: "content" | "link"): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(kind === "link" ? permalink : artifact.content);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1200);
+    } catch {
+      // Clipboard may be unavailable (insecure context); fail silently.
+    }
+  }
+
+  return (
+    <div className="group/deliv w-full max-w-xl">
+      <hr className="mb-3 border-t border-border" />
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Package size={12} className="shrink-0 text-emerald-500/80" />
+        <span className="min-w-0 flex-1 truncate text-[10px] font-medium uppercase tracking-wide text-muted">
+          {artifact.title}
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/deliv:opacity-100">
+          {artifact.kind !== "link" && (
+            <button
+              type="button"
+              onClick={() => void copy("content")}
+              className="rounded p-1 text-muted hover:text-accent"
+              aria-label="Copy content"
+              data-tooltip="Copy content"
+            >
+              {copied === "content" ? (
+                <Check size={12} className="text-emerald-500" />
+              ) : (
+                <Copy size={12} />
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void copy("link")}
+            className="rounded p-1 text-muted hover:text-accent"
+            aria-label="Copy permalink"
+            data-tooltip="Copy link"
+          >
+            {copied === "link" ? (
+              <Check size={12} className="text-emerald-500" />
+            ) : (
+              <Link2 size={12} />
+            )}
+          </button>
+          <a
+            href={rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded p-1 text-muted hover:text-accent"
+            aria-label="Open raw"
+            data-tooltip="Open raw"
+          >
+            <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
+
+      {artifact.kind === "link" ? (
+        <a
+          href={artifact.content.trim()}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 break-all text-sm font-medium text-accent hover:underline"
+        >
+          <ExternalLink size={14} className="shrink-0" />
+          {artifact.content.trim()}
+        </a>
+      ) : (
+        <Markdown className="text-sm leading-relaxed text-text">{markdownBody}</Markdown>
+      )}
+    </div>
+  );
+}
+
+// The agent's deliverables, surfaced inline at the foot of the transcript so the
+// published outputs read as the agent's answer to the request — consumable right
+// in the discussion, not only indexed in the insights sidebar. These are the
+// *persisted* blackboard artifacts (stable id/kind), so each is the real,
+// addressable deliverable. The sidebar list stays as a compact, agent-to-agent
+// index.
+function AgentDeliverables({ agent }: { agent: AgentSession }) {
+  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = (): void =>
+      void api.agents
+        .listArtifacts(agent.id)
+        .then((rows) => {
+          if (alive) setArtifacts(rows);
+        })
+        .catch(() => {
+          if (alive) setArtifacts([]);
+        });
+    load();
+    // Refresh on agent.changed: a completed turn publishes its result and
+    // mid-mission ARTIFACT directives publish as they're emitted.
+    const off = eventBus.subscribe((ev) => {
+      if (ev.type !== "agent.changed") return;
+      if (ev.agent_session_id == null || ev.agent_session_id === agent.id) load();
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [agent.id]);
+
+  // A single, non-duplicated answer to the request. Prefer the model's explicit
+  // `ARTIFACT:` outputs (provenance `key !== "result"`) — those are the real
+  // deliverable. Fall back to the auto-captured completion summary (`key ===
+  // "result"`) only when nothing explicit was published, because that summary is
+  // otherwise already shown on the Objective-complete milestone. This stops the
+  // same content repeating as prose, milestone, and deliverable.
+  const outputs = artifacts.filter((a) => a.key !== "result");
+  const shown = outputs.length > 0 ? outputs : artifacts.filter((a) => a.key === "result");
+  if (shown.length === 0) return null;
+
+  return (
+    <div className="flex w-full flex-col items-start gap-3">
+      {shown.map((a) => (
+        <DeliverableAnswer key={a.id} agent={agent} artifact={a} />
+      ))}
+    </div>
+  );
+}
+
 // One simple message node (user/system/assistant/reasoning/error).
 function MessageNode({
   event,
   category,
   isLastAnswer,
+  autonomy,
   user,
   model,
   elapsedMs,
   onPickSuggestion,
+  onReply,
   suggestionsDisabled,
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
   isLastAnswer: boolean;
+  // Whether the parent agent is autonomy-enabled — gates directive parsing so a
+  // normal agent that happens to type "PROGRESS:" isn't rewritten.
+  autonomy?: boolean;
   user?: { name: string; avatarUrl: string | null };
   // Session model + computed generation time, shown on assistant answers only.
   model?: string | null;
   elapsedMs?: number | null;
   onPickSuggestion?: (text: string) => void;
+  // Focus the reply composer — offered on a raised NEED_INPUT question.
+  onReply?: () => void;
   suggestionsDisabled?: boolean;
 }) {
   const style = CATEGORY_STYLE[category];
@@ -238,8 +820,20 @@ function MessageNode({
   const isAssistant = category === "assistant";
   const label = isUser && user ? user.name : style.label;
   // Assistant turns may end with a `suggest` block; hide it from the rendered
-  // text and surface it as chips under the final answer instead.
-  const assistantText = isAssistant ? stripSuggestionBlock(event.text ?? "") : (event.text ?? "");
+  // text and surface it as chips under the final answer instead. Autonomy
+  // agents additionally embed control directives (PROGRESS/ARTIFACT/…) — strip
+  // those lines so the body reads as prose and the raised NEED_INPUT question
+  // stands out as a callout rather than a buried plain-text line.
+  const directives = isAssistant && autonomy ? parseAgentDirectives(event.text ?? "") : null;
+  const rawAssistant = isAssistant ? stripSuggestionBlock(event.text ?? "") : (event.text ?? "");
+  const assistantText = autonomy && isAssistant ? stripAgentDirectives(rawAssistant) : rawAssistant;
+  // A terminal OBJECTIVE_COMPLETE turn *is* the answer, so fold the completion
+  // into this bubble — a completion badge, and (when the prose was entirely
+  // directives) the summary as the body — instead of repeating it as a separate
+  // spine milestone below an otherwise-hollow answer bubble.
+  const completionSummary = isAssistant && autonomy ? (directives?.complete ?? null) : null;
+  const isCompletion = completionSummary != null;
+  const bodyText = assistantText || (completionSummary ?? "");
   const suggestions =
     isAssistant && isLastAnswer && onPickSuggestion
       ? parseSuggestions(event.text ?? "")
@@ -254,7 +848,7 @@ function MessageNode({
   const copyTo = async (kind: "text" | "md") => {
     const value =
       kind === "md"
-        ? (isAssistant ? assistantText : (event.text ?? ""))
+        ? (isAssistant ? bodyText : (event.text ?? ""))
         : (contentRef.current?.textContent ?? event.text ?? "").trim();
     try {
       await navigator.clipboard.writeText(value);
@@ -285,11 +879,16 @@ function MessageNode({
         <span className={`text-[11px] font-semibold ${isUser && user ? "" : "capitalize"}`}>
           {label}
         </span>
-        {isLastAnswer && (
+        {isCompletion ? (
+          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 size={10} className="shrink-0" />
+            Objective complete
+          </span>
+        ) : isLastAnswer ? (
           <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
             Answer
           </span>
-        )}
+        ) : null}
       </div>
       {event.text &&
         (isSystem ? (
@@ -314,9 +913,14 @@ function MessageNode({
           </div>
         ) : isAssistant ? (
           <div ref={contentRef}>
-            <Markdown className="mt-1 text-[11px] leading-relaxed text-muted">
-              {assistantText}
-            </Markdown>
+            {bodyText && (
+              <Markdown className="mt-1 text-[11px] leading-relaxed text-muted">
+                {bodyText}
+              </Markdown>
+            )}
+            {directives?.needInput && (
+              <NeedInputCallout question={directives.needInput} onReply={onReply} />
+            )}
           </div>
         ) : (
           <p className="mt-1 whitespace-pre-wrap text-[11px] text-muted">
@@ -771,7 +1375,27 @@ export function AgentView({
   const [me, setMe] = useState<Me | null>(null);
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
+  // Autonomy opt-in for the next started agent: when on, it runs a goal loop
+  // toward the objective and pauses only by exception (default off).
+  const [newAutonomy, setNewAutonomy] = useState(false);
+  const [newMaxSteps, setNewMaxSteps] = useState(12);
+  // Per-agent approval-policy override for the next started agent. "" (empty)
+  // means inherit the global default set in Settings.
+  const [newApprovalPolicy, setNewApprovalPolicy] = useState<AgentApprovalPolicy | "">("");
+  // Whether the composer launches the agent immediately (default) or parks it in
+  // the `waiting` state, armed for a later trigger (parent completion, webhook,
+  // or a manual "Start now").
+  const [newStart, setNewStart] = useState(true);
   const [followUp, setFollowUp] = useState("");
+  // Wrapper around the reply composer, so a raised NEED_INPUT question can jump
+  // the human straight to the answer box (scroll into view + focus).
+  const composerWrapRef = useRef<HTMLDivElement>(null);
+  const focusComposer = useCallback(() => {
+    const wrap = composerWrapRef.current;
+    if (!wrap) return;
+    wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    wrap.querySelector("textarea")?.focus();
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Optimistic echo of a just-sent prompt, scoped to the agent it targets so it
@@ -804,6 +1428,12 @@ export function AgentView({
   // mounted at a time (the start form *or* the follow-up box), so a single
   // speech/skills setup serves both — dictation targets whichever is active.
   const settings = useSettings();
+  // Short label of the global approval default, shown on the per-agent
+  // "Inherit" option so the fallback is legible without opening Settings.
+  const globalPolicyLabel = useMemo(() => {
+    const found = APPROVAL_POLICIES.find((p) => p.value === settings?.agents_approval_policy);
+    return found ? found.label.split("—")[0].trim() : "";
+  }, [settings?.agents_approval_policy]);
   const selectedRef = useRef(false);
   const { height: composerHeight, onMouseDown: onComposerResize } = useResizableHeight({
     storageKey: "precursor:agent-composer:height",
@@ -1083,12 +1713,19 @@ export function AgentView({
       const created = await api.agents.create({
         task: message,
         topic_id: newTopicId,
+        autonomy_enabled: newAutonomy,
+        max_steps: newMaxSteps,
+        approval_policy: newApprovalPolicy || null,
+        start: newStart,
       });
-      // Echo the prompt into the new session's transcript right away so the
-      // hand-off feels immediate while the runtime spins the agent up.
-      setPending({ agentId: created.id, text: message });
+      // Echo the prompt into the new session's transcript right away (only when
+      // it's actually starting) so the hand-off feels immediate while the
+      // runtime spins the agent up. A parked (waiting) agent has no live turn
+      // yet, so skip the optimistic echo.
+      if (newStart) setPending({ agentId: created.id, text: message });
       setTask("");
       setNewTopicId(null);
+      setNewStart(true);
       onReload();
       onSelect(created.id);
     } catch (e) {
@@ -1149,6 +1786,20 @@ export function AgentView({
     setError(null);
     try {
       await api.agents.resume(selected.id);
+      onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startNow(): Promise<void> {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.agents.start(selected.id);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1224,6 +1875,108 @@ export function AgentView({
             collections={collections}
           />
         </label>
+        {/* Autonomy opt-in: turn the one-shot task into a background mission. */}
+        <div className="rounded-lg border border-border bg-surface/50 p-2.5">
+          <label className="flex items-start gap-2.5">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={newAutonomy}
+              disabled={!available || busy}
+              onClick={() => setNewAutonomy((v) => !v)}
+              className={`mt-0.5 flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition disabled:opacity-50 ${
+                newAutonomy ? "bg-violet-500" : "bg-border"
+              }`}
+            >
+              <span
+                className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
+                  newAutonomy ? "translate-x-3" : ""
+                }`}
+              />
+            </button>
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-[12px] font-medium">
+                <Radar size={13} className="text-violet-500" />
+                Run autonomously
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
+                Pursues the objective on its own, continuing between turns and
+                pausing only when it finishes or needs your input.
+              </span>
+            </span>
+          </label>
+          {newAutonomy && (
+            <label className="mt-2.5 flex items-center gap-2 pl-[38px] text-[11px] text-muted">
+              Step budget
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={newMaxSteps}
+                disabled={!available || busy}
+                onChange={(e) =>
+                  setNewMaxSteps(Math.min(100, Math.max(1, Number(e.target.value) || 1)))
+                }
+                className="w-16 rounded border border-border bg-bg px-1.5 py-0.5 text-center tabular-nums outline-none focus:border-accent"
+              />
+              <span className="text-[10px]">continuations before it hands back</span>
+            </label>
+          )}
+        </div>
+        <div className="rounded-lg border border-border bg-surface/50 p-2.5">
+          <label className="flex items-center gap-1.5 text-[12px] font-medium">
+            <ShieldCheck size={13} className="text-violet-500" />
+            Approval policy
+          </label>
+          <div className="mt-2">
+            <Select
+              fullWidth
+              size="sm"
+              ariaLabel="Approval policy for this agent"
+              disabled={!available || busy}
+              value={newApprovalPolicy}
+              onChange={(v) => setNewApprovalPolicy(v as AgentApprovalPolicy | "")}
+              options={[
+                {
+                  value: "",
+                  label: `Inherit global default${
+                    globalPolicyLabel ? ` — ${globalPolicyLabel}` : ""
+                  }`,
+                },
+                ...APPROVAL_POLICIES.map((p) => ({ value: p.value, label: p.label })),
+              ]}
+            />
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+            {newApprovalPolicy
+              ? (APPROVAL_POLICIES.find((p) => p.value === newApprovalPolicy)?.hint ?? "")
+              : "Falls back to the global default set in Settings; takes effect on the agent's next turn."}
+          </p>
+        </div>
+        <label
+          className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-[12px] transition ${
+            newStart ? "border-border bg-surface/50" : "border-violet-500/50 bg-violet-500/10"
+          }`}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-violet-500"
+            checked={!newStart}
+            disabled={!available || busy}
+            onChange={() => setNewStart((s) => !s)}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5 font-medium">
+              <PauseCircle size={13} className="text-violet-500" />
+              Create parked (don't run yet)
+            </span>
+            <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
+              Arm the agent in the <span className="font-medium">waiting</span> state
+              and start it later — on a parent completing, a webhook, or a manual
+              “Start now”.
+            </span>
+          </span>
+        </label>
         {error && <p className="text-[11px] text-red-500">{error}</p>}
         <Composer
           value={task}
@@ -1257,6 +2010,73 @@ export function AgentView({
           <div className="mb-3 flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
             <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step
             below.
+          </div>
+        )}
+
+        {/* Mission strip: objective + self-reported progress for autonomous
+            agents, so the transcript reads as a tracked mission, not a chat. */}
+        {selected.autonomy_enabled && selected.status !== "completed" && (
+          <div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-500/[0.06] px-2.5 py-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-violet-600 dark:text-violet-300">
+              <Radar size={13} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate">Objective: {selected.task_prompt}</span>
+              <span className="shrink-0 rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] tabular-nums">
+                step {selected.step_count}/{selected.max_steps}
+              </span>
+            </div>
+            {selected.progress != null && (
+              <div className="mt-1.5 flex flex-col gap-1">
+                <div className="flex items-center justify-between text-[10px] text-muted">
+                  <span className="min-w-0 truncate">{selected.progress_label ?? "Progress"}</span>
+                  <span className="shrink-0 font-semibold tabular-nums">{selected.progress}%</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-border/60">
+                  <span
+                    className="block h-full rounded-full bg-violet-500 transition-all"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, selected.progress))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {selected.status === "blocked" && (
+          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <HelpCircle size={13} className="shrink-0" /> The agent needs your input
+            </div>
+            {selected.blocked_question && (
+              <p className="mt-1 leading-relaxed text-text opacity-90">
+                {selected.blocked_question}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={focusComposer}
+              className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-1 font-medium text-amber-900 transition hover:bg-amber-500/30 dark:text-amber-100"
+            >
+              <CornerDownRight size={12} /> Answer
+            </button>
+          </div>
+        )}
+
+        {selected.status === "waiting" && (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded border border-slate-500/30 bg-slate-500/10 px-2 py-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+            <span className="flex items-center gap-1.5">
+              <PauseCircle size={13} /> Parked — armed for a trigger (a parent
+              finishing, a webhook, or a manual start).
+            </span>
+            <button
+              type="button"
+              onClick={() => void startNow()}
+              disabled={busy}
+              className="flex items-center gap-1 rounded bg-slate-500/20 px-2 py-0.5 font-medium text-slate-800 hover:bg-slate-500/30 disabled:opacity-50 dark:text-slate-200"
+            >
+              <PlayCircle size={12} /> Start now
+            </button>
           </div>
         )}
 
@@ -1343,10 +2163,12 @@ export function AgentView({
                         event={seg.row.ev}
                         category={seg.row.cat}
                         isLastAnswer={answerRows.has(seg.row)}
+                        autonomy={selected.autonomy_enabled}
                         user={userPersona}
                         model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
                         elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
                         onPickSuggestion={(text) => void sendFollowUp(text)}
+                        onReply={focusComposer}
                         suggestionsDisabled={
                           selected.status === "running" ||
                           selected.status === "pending" ||
@@ -1355,10 +2177,25 @@ export function AgentView({
                       />
                     ) : null}
                   </div>
+                  {seg.row.type === "node" &&
+                    seg.row.cat === "assistant" &&
+                    selected.autonomy_enabled &&
+                    (() => {
+                      const d = parseAgentDirectives(seg.row.ev.text ?? "");
+                      // The terminal OBJECTIVE_COMPLETE is folded into the answer
+                      // bubble itself (completion badge + summary), so it's no
+                      // longer repeated as a spine node — only progress
+                      // heartbeats remain on the spine.
+                      if (d.complete != null || !d.progress) return null;
+                      return (
+                        <MissionMilestone progress={d.progress} at={seg.row.ev.at} />
+                      );
+                    })()}
                 </Fragment>
                 );
               })}
               {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
+              {selected && <AgentDeliverables agent={selected} />}
               {showPending && (
                 <>
                   <StepConnector hooks={[]} />
@@ -1386,7 +2223,7 @@ export function AgentView({
         // but don't flash a Stop control until there's actually a turn to stop.
         const sending = busy && pending != null;
         return (
-          <div className="shrink-0 border-t border-border px-5 py-3">
+          <div ref={composerWrapRef} className="shrink-0 border-t border-border px-5 py-3">
             <Composer
               value={followUp}
               onChange={setFollowUp}
@@ -1418,6 +2255,7 @@ export function AgentView({
         toggleShow={toggleShow}
         events={events}
         model={selected.model ?? null}
+        agent={selected}
       />
     </div>
   );

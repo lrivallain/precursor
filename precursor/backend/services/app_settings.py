@@ -687,3 +687,45 @@ async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
         db_value if isinstance(db_value, int) else get_settings().agents_watchdog_timeout_seconds
     )
     return max(30, int(value))
+
+
+# --- Workflow defaults ------------------------------------------------------
+# Seed values for a newly-created workflow (its watchdog) and its steps (what
+# they may draw on). Every one of them stays overridable per workflow/step; these
+# only decide where a fresh one starts.
+
+
+def _const(value: bool) -> Callable[[], bool]:
+    """A default factory bound to ``value`` now, not when it is called."""
+    return lambda: value
+
+
+async def resolve_workflows_default_capabilities(session: AsyncSession) -> dict[str, bool]:
+    """Default MCP / skills / memory enablement for new workflow steps."""
+    env = get_settings()
+    out: dict[str, bool] = {}
+    for field, env_default in (
+        ("use_mcp", env.workflows_default_use_mcp),
+        ("use_skills", env.workflows_default_use_skills),
+        ("use_memory", env.workflows_default_use_memory),
+    ):
+        out[field] = await resolve(
+            session,
+            SettingSpec(
+                f"workflows_default_{field}",
+                _boolean,
+                default_factory=_const(env_default),
+            ),
+        )
+    return out
+
+
+async def resolve_workflows_default_step_timeout(session: AsyncSession) -> int:
+    """Default stall-watchdog timeout (seconds) for a new workflow. 0 = off."""
+    db_value = await _get_db_value(session, "workflows_default_step_timeout_seconds")
+    value = (
+        db_value
+        if isinstance(db_value, int)
+        else get_settings().workflows_default_step_timeout_seconds
+    )
+    return max(0, int(value))

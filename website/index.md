@@ -52,9 +52,17 @@ features:
   - icon: 🤖
     title: Autonomous agents
     details: >-
-      Hand complex and/or long-running tasks to a Copilot SDK agent, and follow its progress in a workflow-style timeline.
+      Hand complex, long-running tasks to Copilot SDK agents that run in the background, and monitor the whole fleet from a control-tower dashboard that surfaces the ones that need you.
     link: /features/agents
     linkText: About agents
+  - icon: 🔗
+    title: Workflows
+    details: >-
+      Chain independent agents into a reusable pipeline — research → draft →
+      review — that the workflow coordinates in the background, with schedule and
+      webhook triggers.
+    link: /features/workflows
+    linkText: About workflows
   - icon: 🗂️
     title: Workspaces & files
     details: >-

@@ -34,6 +34,11 @@ class Event(TypedDict, total=False):
     # Carried only by ``mcp.auth_url`` — the interactive OAuth authorization URL
     # the window that started the sign-in should open in a script-opened popup.
     url: str | None
+    # Carried by ``workflow.changed``: which pipeline changed, and the run state
+    # + name the client needs to raise a notification without re-fetching.
+    workflow_id: int | None
+    status: str | None
+    name: str | None
     client_id: str | None
 
 
@@ -74,6 +79,9 @@ class EventBus:
             "server": event.get("server"),
             "message": event.get("message"),
             "url": event.get("url"),
+            "workflow_id": event.get("workflow_id"),
+            "status": event.get("status"),
+            "name": event.get("name"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         # Snapshot to avoid mutation during iteration.
@@ -234,3 +242,32 @@ async def publish_meeting_changed(meeting_session_id: int | None = None) -> None
     affected session id when it applies to a single session.
     """
     await _bus.publish({"type": "meeting.changed", "meeting_session_id": meeting_session_id})
+
+
+async def publish_workflow_changed(
+    workflow_id: int | None = None,
+    *,
+    status: str | None = None,
+    name: str | None = None,
+) -> None:
+    """Signal that a workflow's definition or run state changed.
+
+    Emitted by the workflow router + coordinator so the Workflows tab (gallery
+    and any open workflow view) refreshes in real time as steps advance, the
+    status flips, or the pipeline is edited. Carries the affected workflow id;
+    receivers re-fetch. The per-step agent state still arrives on the existing
+    ``agent.changed`` channel, so an open step modal updates independently.
+
+    ``status``/``name`` ride along so the client can *notify* on the transitions
+    that matter — a run finishing, failing, or parking on a human approval —
+    without fetching the workflow first. A workflow that quietly parks waiting
+    for a decision is otherwise invisible until someone opens the tab.
+    """
+    await _bus.publish(
+        {
+            "type": "workflow.changed",
+            "workflow_id": workflow_id,
+            "status": status,
+            "name": name,
+        }
+    )

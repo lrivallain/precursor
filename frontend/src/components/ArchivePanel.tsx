@@ -8,10 +8,11 @@ import {
   Radio,
   RotateCcw,
   Trash2,
+  Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { AgentSession, Chat, MeetingSession, Topic } from "../lib/types";
+import type { AgentSession, Chat, MeetingSession, Topic, Workflow } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
@@ -24,11 +25,13 @@ interface Props {
   onAgentDeleted: (agentId: number) => void;
   onSessionRestored: (session: MeetingSession) => void;
   onSessionDeleted: (sessionId: number) => void;
+  /** Nudges the Workflows cockpit to re-fetch after a restore/delete. */
+  onWorkflowsChanged?: () => void;
 }
 
-type Tab = "topics" | "chats" | "agents" | "live";
+type Tab = "topics" | "chats" | "agents" | "workflows" | "live";
 
-// Archive is shared across modes: topics, chats, agent sessions and live
+// Archive is shared across modes: topics, chats, agent sessions, workflows and live
 // sessions are all archivable, and each restores into its own section. The view
 // lists all four regardless of which mode the user is currently in.
 export function ArchivePanel({
@@ -41,12 +44,14 @@ export function ArchivePanel({
   onAgentDeleted,
   onSessionRestored,
   onSessionDeleted,
+  onWorkflowsChanged,
 }: Props) {
   const confirmAction = useConfirm();
   const [tab, setTab] = useState<Tab>("topics");
   const [topics, setTopics] = useState<Topic[] | null>(null);
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
+  const [workflows, setWorkflows] = useState<Workflow[] | null>(null);
   const [sessions, setSessions] = useState<MeetingSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -54,15 +59,17 @@ export function ArchivePanel({
   useEffect(() => {
     void (async () => {
       try {
-        const [t, c, a, s] = await Promise.all([
+        const [t, c, a, w, s] = await Promise.all([
           api.topics.listArchived(),
           api.chats.listArchived(),
           api.agents.listArchived(),
+          api.workflows.listArchived(),
           api.meetings.listArchivedSessions(),
         ]);
         setTopics(t);
         setChats(c);
         setAgents(a);
+        setWorkflows(w);
         setSessions(s);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -182,6 +189,42 @@ export function ArchivePanel({
     }
   }
 
+  async function restoreWorkflow(w: Workflow): Promise<void> {
+    setBusy(`w${w.id}`);
+    setError(null);
+    try {
+      await api.workflows.unarchive(w.id);
+      setWorkflows((prev) => prev?.filter((x) => x.id !== w.id) ?? []);
+      onWorkflowsChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteWorkflow(w: Workflow): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Permanently delete workflow "${w.name}"? Its run history is removed. Agents it referenced are kept.`,
+        confirmLabel: "Delete workflow",
+        variant: "danger",
+      }))
+    )
+      return;
+    setBusy(`w${w.id}`);
+    setError(null);
+    try {
+      await api.workflows.remove(w.id);
+      setWorkflows((prev) => prev?.filter((x) => x.id !== w.id) ?? []);
+      onWorkflowsChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function restoreSession(s: MeetingSession): Promise<void> {
     setBusy(`s${s.id}`);
     setError(null);
@@ -221,6 +264,7 @@ export function ArchivePanel({
   const topicCount = topics?.length ?? 0;
   const chatCount = chats?.length ?? 0;
   const agentCount = agents?.length ?? 0;
+  const workflowCount = workflows?.length ?? 0;
   const sessionCount = sessions?.length ?? 0;
 
   return (
@@ -279,6 +323,17 @@ export function ArchivePanel({
           >
             <Bot size={14} /> Agents
             {agentCount > 0 && <span className="text-xs opacity-70">({agentCount})</span>}
+          </button>
+          <button
+            className={`flex items-center gap-1.5 px-4 py-2 ${
+              tab === "workflows"
+                ? "border-b-2 border-accent text-accent"
+                : "text-muted hover:text-text"
+            }`}
+            onClick={() => setTab("workflows")}
+          >
+            <WorkflowIcon size={14} /> Workflows
+            {workflowCount > 0 && <span className="text-xs opacity-70">({workflowCount})</span>}
           </button>
           <button
             className={`flex items-center gap-1.5 px-4 py-2 ${
@@ -388,6 +443,39 @@ export function ArchivePanel({
                       busy={busy === `a${a.id}`}
                       onRestore={() => void restoreAgent(a)}
                       onDelete={() => void deleteAgent(a)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : tab === "workflows" ? (
+            workflows === null ? (
+              <p className="text-xs text-muted px-1">Loading…</p>
+            ) : workflows.length === 0 ? (
+              <p className="text-xs text-muted px-1">No archived workflows.</p>
+            ) : (
+              <ul className="space-y-2">
+                {workflows.map((w) => (
+                  <li
+                    key={w.id}
+                    className="flex items-start gap-3 rounded border border-border bg-surface px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">
+                        {w.icon ? `${w.icon} ` : ""}
+                        {w.name}
+                      </div>
+                      <div className="text-[11px] text-muted truncate">
+                        {w.steps.length} step{w.steps.length === 1 ? "" : "s"}
+                        {w.archived_at && (
+                          <> · archived {new Date(w.archived_at).toLocaleString()}</>
+                        )}
+                      </div>
+                    </div>
+                    <RestoreDeleteButtons
+                      busy={busy === `w${w.id}`}
+                      onRestore={() => void restoreWorkflow(w)}
+                      onDelete={() => void deleteWorkflow(w)}
                     />
                   </li>
                 ))}

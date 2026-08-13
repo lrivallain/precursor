@@ -60,6 +60,7 @@ from precursor.backend.routers import (
     summary,
     topics,
     version,
+    workflows,
     workspaces,
 )
 
@@ -305,6 +306,7 @@ def create_app() -> FastAPI:
         workspaces.router,
         reminders.router,
         agents.router,
+        workflows.router,
         stt.router,
         live.router,
         raw.router,

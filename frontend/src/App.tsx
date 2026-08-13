@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  Archive as ArchiveIcon,
+  ChevronLeft,
   ChevronRight,
   ExternalLink,
   MessagesSquare,
@@ -35,10 +37,11 @@ import { WorkspaceList } from "./components/WorkspaceList";
 import { LiveList } from "./components/LiveList";
 import { LiveView } from "./components/LiveView";
 import { LiveStartHero } from "./components/LiveStartHero";
-import { AgentList } from "./components/AgentList";
 import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
+import { AgentDashboard } from "./components/AgentDashboard";
+import { WorkflowsSection } from "./components/WorkflowsSection";
 import { KanbanBoard } from "./components/KanbanBoard";
 import { ProjectList } from "./components/ProjectList";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
@@ -50,7 +53,8 @@ import { ReminderModal } from "./components/ReminderModal";
 import { api, apiErrorMessage } from "./lib/api";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
-import { notifyIfUnfocused } from "./lib/notifications";
+import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
+import { agentsWaitingCount } from "./lib/agents";
 import { skillsStore } from "./lib/skillsStore";
 import { rolesStore } from "./lib/rolesStore";
 import { useSettings } from "./lib/settingsStore";
@@ -107,6 +111,11 @@ interface AppRoute {
   // The raw agent path segment — a public UUID for new links, or a legacy
   // integer id. Resolved to an internal numeric id once the agent list loads.
   agentRef: string | null;
+  // The workflow id segment (`/workflows/<id>`); null on the gallery route.
+  workflowRef: number | null;
+  // The run segment (`/workflows/<id>/run/<n|latest>`): a run number as a string
+  // or the literal "latest" to track the live/newest run; null when absent.
+  workflowRunRef: string | null;
   // The selected ProjectV2 URL segment (a per-owner number, optionally with a
   // title slug) when on the kanban route. Resolved to the opaque node id once
   // the project list loads.
@@ -134,12 +143,30 @@ function parseAppRoute(): AppRoute {
     chatSlug: null,
     liveSlug: null,
     agentRef: null,
+    workflowRef: null,
+    workflowRunRef: null,
     kanbanProjectRef: null,
     kanbanItemRef: null,
   };
   if (segs[0] === "ws") return { ...base, mode: "workspaces" };
   if (segs[0] === "agents") {
     return { ...base, mode: "agents", agentRef: segs[1] ? decodeURIComponent(segs[1]) : null };
+  }
+  if (segs[0] === "workflows") {
+    const raw = segs[1] ? Number.parseInt(decodeURIComponent(segs[1]), 10) : NaN;
+    // Optional `/run/<n|latest>` deep link into one run of the workflow.
+    let runRef: string | null = null;
+    if (segs[2] === "run" && segs[3]) {
+      const seg = decodeURIComponent(segs[3]).toLowerCase();
+      if (seg === "latest") runRef = "latest";
+      else if (/^\d+$/.test(seg)) runRef = seg;
+    }
+    return {
+      ...base,
+      mode: "workflows",
+      workflowRef: Number.isSafeInteger(raw) && raw > 0 ? raw : null,
+      workflowRunRef: runRef,
+    };
   }
   if (segs[0] === "chats") {
     return { ...base, mode: "chats", chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
@@ -268,6 +295,16 @@ function resolveAgentRef(ref: string | null, agents: AgentSession[] | null): num
 }
 
 const BASE_TITLE = "Precursor";
+
+// Workflow run states worth interrupting the user for, and what to say. Only
+// terminal-ish transitions notify: a run advancing between steps is noise.
+// `awaiting_approval` is the important one — the run is *blocked* on a human,
+// so without a notification a background pipeline can wait indefinitely.
+const WORKFLOW_NOTICES: Record<string, string> = {
+  awaiting_approval: "⏸ Waiting for your approval to continue.",
+  completed: "✅ Workflow finished.",
+  failed: "⚠️ Workflow failed.",
+};
 
 // Agent statuses that represent a finished/paused turn (not actively running).
 // Used to re-mark the actively-viewed agent read once per turn rather than on
@@ -416,6 +453,24 @@ export default function App() {
   // Topic to preselect in the new-agent form, set when "/agent" (no prompt) is
   // run from a topic. Cleared once consumed.
   const [agentDraftTopicId, setAgentDraftTopicId] = useState<number | null>(null);
+  // When nothing is selected, agents mode shows the fleet dashboard rather than
+  // the start composer. This flag flips to the composer when the user hits
+  // "New agent"; it resets to the dashboard whenever an agent is selected or we
+  // leave agents mode.
+  const [agentComposerOpen, setAgentComposerOpen] = useState(false);
+  // Workflows cockpit state. The active id comes from the route; a reload key is
+  // bumped on `workflow.changed` SSE; a new-signal counter opens the builder.
+  const [activeWorkflowId, setActiveWorkflowId] = useState<number | null>(
+    () => parseAppRoute().workflowRef,
+  );
+  // The run segment shown in the URL (`/run/<n|latest>`). Owned here so the
+  // workflow URL effect can write it; kept in sync with the detail view's
+  // selected run via onRunChange below.
+  const [activeWorkflowRunSeg, setActiveWorkflowRunSeg] = useState<string | null>(
+    () => parseAppRoute().workflowRunRef,
+  );
+  const [workflowReloadKey, setWorkflowReloadKey] = useState(0);
+  const [workflowNewSignal, setWorkflowNewSignal] = useState(0);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -439,6 +494,10 @@ export default function App() {
   // Previous per-agent unread counts, so loadAgents can detect background
   // completions and fire a browser notification for newly-unread sessions.
   const agentUnreadRef = useRef<Map<number, number> | null>(null);
+  // Previous per-agent status, so loadAgents can detect a transition INTO
+  // needs_approval and fire the out-of-band "an agent is waiting for you"
+  // signal (idea 5) that deep-links to the blocked agent.
+  const agentStatusRef = useRef<Map<number, string> | null>(null);
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [sidebarReminder, setSidebarReminder] = useState<{
@@ -506,6 +565,25 @@ export default function App() {
   useEffect(() => {
     activeAgentIdRef.current = activeAgentId;
   }, [activeAgentId]);
+
+  // Selecting an agent (or landing on one via a deep link) drops the transient
+  // "start composer" state so returning to /agents shows the dashboard again.
+  useEffect(() => {
+    if (activeAgentId != null) setAgentComposerOpen(false);
+  }, [activeAgentId]);
+
+  // Leaving agents mode also resets the composer flag so the next visit to
+  // /agents starts from the fleet dashboard, not a stale composer.
+  useEffect(() => {
+    if (sidebarMode !== "agents") setAgentComposerOpen(false);
+  }, [sidebarMode]);
+
+  // Mirror the composer flag so changeMode (called from the rail) can decide
+  // whether re-clicking the Agents icon should fall back to the dashboard.
+  const agentComposerOpenRef = useRef(agentComposerOpen);
+  useEffect(() => {
+    agentComposerOpenRef.current = agentComposerOpen;
+  }, [agentComposerOpen]);
 
   // Mirror the active meeting session into refs so changeMode / URL sync can
   // build the /live URL without re-subscribing.
@@ -727,10 +805,14 @@ export default function App() {
     () => ({ topics: topicsUnread, chats: chatsUnread, agents: agentsUnread }),
     [topicsUnread, chatsUnread, agentsUnread],
   );
+  // Agents blocked waiting for the human — surfaced as a bell in the tab title
+  // so a background approval request is visible from any other tab.
+  const agentsWaiting = useMemo(() => agentsWaitingCount(agents ?? []), [agents]);
   useEffect(() => {
     const n = topicsUnread + chatsUnread + agentsUnread;
-    document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
-  }, [topicsUnread, chatsUnread, agentsUnread]);
+    const bell = agentsWaiting > 0 ? "🔔 " : "";
+    document.title = n > 0 ? `${bell}(${n}) ${BASE_TITLE}` : `${bell}${BASE_TITLE}`;
+  }, [topicsUnread, chatsUnread, agentsUnread, agentsWaiting]);
 
   // Mirror tree + notification setting into refs so the completion callbacks
   // (registered once) read current values without re-subscribing.
@@ -754,6 +836,36 @@ export default function App() {
       body: "A new reply is ready.",
       tag: `precursor-topic-${topicId}`,
     });
+  }
+
+  // Fire a notification when a workflow reaches a state worth interrupting for.
+  // A background pipeline is invisible otherwise — and an approval checkpoint
+  // *blocks* until someone answers, so parking on one is the single most
+  // important thing to surface. Deduped per (workflow, state) so the repeated
+  // `workflow.changed` events a run emits don't notify twice for the same
+  // transition.
+  const workflowNoticeRef = useRef<Map<number, string>>(new Map());
+  function maybeNotifyWorkflow(
+    workflowId: number | null,
+    status: string | null,
+    name: string | null,
+  ): void {
+    if (workflowId == null || !status) return;
+    const notice = WORKFLOW_NOTICES[status];
+    if (!notice) {
+      // Any other state (running, paused…) clears the marker so the *next*
+      // completion of this workflow notifies again.
+      workflowNoticeRef.current.delete(workflowId);
+      return;
+    }
+    if (workflowNoticeRef.current.get(workflowId) === status) return;
+    workflowNoticeRef.current.set(workflowId, status);
+    if (!notificationsEnabledRef.current) return;
+    const title = name?.trim() || "Workflow";
+    // An approval blocks the run, so it's worth showing even when the app is
+    // focused — the other outcomes only interrupt an unfocused window.
+    const notify = status === "awaiting_approval" ? notifyNow : notifyIfUnfocused;
+    notify({ title, body: notice, tag: `precursor-workflow-${workflowId}` });
   }
 
   // ---- Path-based routing ----------------------------------------------
@@ -823,12 +935,12 @@ export default function App() {
         });
         return;
       }
+      if (r.mode === "workflows") {
+        setActiveWorkflowId(r.workflowRef);
+        setActiveWorkflowRunSeg(r.workflowRunRef);
+        return;
+      }
       if (r.mode === "agents") {
-        if (r.agentRef == null) {
-          pendingAgentRef.current = null;
-          setActiveAgentId(null);
-          return;
-        }
         const id = resolveAgentRef(r.agentRef, agentsRef.current);
         if (id != null) {
           pendingAgentRef.current = null;
@@ -964,6 +1076,31 @@ export default function App() {
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeAgentId, sidebarMode, agents, atHome]);
 
+  // activeWorkflowId (+ run seg) -> /workflows/<id>[/run/<n|latest>] (or
+  // /workflows for the gallery). A workflow id change is a navigation (pushState
+  // so Back returns to the gallery / previous workflow); a run-seg-only change
+  // is a refinement of the same view (replaceState so auto-advancing runs don't
+  // spam history).
+  const prevWorkflowIdRef = useRef<number | null>(activeWorkflowId);
+  useEffect(() => {
+    if (atHome) return;
+    if (sidebarMode !== "workflows") return;
+    let target: string;
+    if (activeWorkflowId == null) {
+      target = "/workflows";
+    } else if (activeWorkflowRunSeg) {
+      target = `/workflows/${activeWorkflowId}/run/${activeWorkflowRunSeg}`;
+    } else {
+      target = `/workflows/${activeWorkflowId}`;
+    }
+    if (window.location.pathname !== target) {
+      const idChanged = prevWorkflowIdRef.current !== activeWorkflowId;
+      if (idChanged) history.pushState(null, "", target);
+      else history.replaceState(null, "", target);
+    }
+    prevWorkflowIdRef.current = activeWorkflowId;
+  }, [activeWorkflowId, activeWorkflowRunSeg, sidebarMode, atHome]);
+
   // Auto-clear the search highlight when the user navigates to a *different*
   // conversation than the one it was opened for. The highlight is tied to a
   // single conversation (`${mode}:${id}`): while a search-open is in flight we
@@ -1083,6 +1220,26 @@ export default function App() {
   // Switch sidebar mode, pushing the URL for that mode (the active item's path
   // when there is one, else the mode's base path).
   async function changeMode(next: SidebarMode): Promise<void> {
+    // In agents mode, re-clicking the Agents rail icon while viewing a single
+    // agent (or the start composer) returns to the fleet dashboard — the
+    // section's monitoring "home" — rather than no-op'ing.
+    if (
+      next === "agents" &&
+      sidebarMode === "agents" &&
+      !atHome &&
+      (activeAgentIdRef.current != null || agentComposerOpenRef.current)
+    ) {
+      setActiveAgentId(null);
+      setAgentComposerOpen(false);
+      return;
+    }
+    // In workflows mode, re-clicking the rail icon while viewing one workflow
+    // returns to the gallery rather than no-op'ing.
+    if (next === "workflows" && sidebarMode === "workflows" && !atHome && activeWorkflowId != null) {
+      setActiveWorkflowId(null);
+      setActiveWorkflowRunSeg(null);
+      return;
+    }
     // Clicking the active mode's tab while on the home launcher still needs to
     // leave home, so only short-circuit when we're already showing that mode.
     if (next === sidebarMode && !atHome) return;
@@ -1103,6 +1260,8 @@ export default function App() {
       target = "/live";
     } else if (next === "agents") {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
+    } else if (next === "workflows") {
+      target = activeWorkflowId != null ? `/workflows/${activeWorkflowId}` : "/workflows";
     } else if (next === "kanban") {
       const active =
         projectsRef.current?.find((p) => p.id === activeProjectIdRef.current) ?? null;
@@ -1145,8 +1304,15 @@ export default function App() {
       setSidebarMode("live");
     } else if (mode === "agents") {
       setActiveAgentId(null);
+      setAgentComposerOpen(true);
       history.pushState(null, "", "/agents");
       setSidebarMode("agents");
+    } else if (mode === "workflows") {
+      setActiveWorkflowId(null);
+      setActiveWorkflowRunSeg(null);
+      setWorkflowNewSignal((n) => n + 1);
+      history.pushState(null, "", "/workflows");
+      setSidebarMode("workflows");
     } else {
       history.pushState(null, "", "/ws");
       setSidebarMode("workspaces");
@@ -1450,6 +1616,16 @@ export default function App() {
             }
           }
         })();
+      } else if (event.type === "workflow.changed") {
+        // A workflow was created, advanced a step, or finished (possibly in the
+        // background via the coordinator). Bump the reload key so the cockpit
+        // re-fetches; the WorkflowsSection owns its own collection.
+        setWorkflowReloadKey((k) => k + 1);
+        maybeNotifyWorkflow(
+          event.workflow_id ?? null,
+          event.workflow_status ?? null,
+          event.workflow_name ?? null,
+        );
       } else if (event.type === "meeting.changed") {
         // A meeting session was created, renamed, ended, or deleted (possibly in
         // another tab). Refresh the list if we've loaded it so the Live section
@@ -1710,7 +1886,15 @@ export default function App() {
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
-    else if (sidebarMode === "agents") setActiveAgentId(null);
+    else if (sidebarMode === "agents") {
+      setActiveAgentId(null);
+      setAgentComposerOpen(true);
+    }
+    else if (sidebarMode === "workflows") {
+      setActiveWorkflowId(null);
+      setActiveWorkflowRunSeg(null);
+      setWorkflowNewSignal((n) => n + 1);
+    }
     else if (sidebarMode === "kanban") {
       // No "new" affordance for the kanban board (the header hides the "+").
     } else setCreateWorkspaceOpen(true);
@@ -1867,7 +2051,36 @@ export default function App() {
           }
         }
       }
+      // Out-of-band waiting signal: fire once when an agent transitions INTO
+      // needs_approval, even if the user is looking at another part of the app,
+      // so a blocked background agent never stalls unnoticed. Clicking jumps
+      // straight to it.
+      const prevStatus = agentStatusRef.current;
+      if (prevStatus && notificationsEnabledRef.current) {
+        for (const a of list) {
+          const was = prevStatus.get(a.id);
+          if (
+            a.status === "needs_approval" &&
+            was != null &&
+            was !== "needs_approval" &&
+            a.id !== activeAgentIdRef.current
+          ) {
+            const detail = a.pending_permission?.title;
+            notifyNow({
+              title: `🔔 ${a.title} needs approval`,
+              body: detail ? `Waiting on: ${detail}` : "An agent is blocked waiting for you.",
+              tag: `precursor-agent-approval-${a.id}`,
+              requireInteraction: true,
+              onClick: () => {
+                setSidebarMode("agents");
+                setActiveAgentId(a.id);
+              },
+            });
+          }
+        }
+      }
       agentUnreadRef.current = new Map(list.map((a) => [a.id, a.unread_count ?? 0]));
+      agentStatusRef.current = new Map(list.map((a) => [a.id, a.status]));
       setAgents(list);
       return list;
     } catch {
@@ -1939,6 +2152,12 @@ export default function App() {
           onNavigate={changeMode}
           onGoHome={goHome}
           onOpenResult={openSearchResult}
+          agents={agents ?? []}
+          onOpenAgent={(id) => {
+            setSidebarMode("agents");
+            setActiveAgentId(id);
+            setPaletteOpen(false);
+          }}
           liveEnabled={liveEnabled}
           kanbanEnabled={kanbanEnabled}
           initialQuery={atHome ? "" : searchHighlight.trim()}
@@ -1972,7 +2191,8 @@ export default function App() {
         onMoveToCollection={moveTopicToCollection}
         activeId={activeTopic?.id ?? null}
         streamingTopicIds={streamingTopicIds}
-        collapsed={sidebarCollapsed}
+        collapsed={sidebarCollapsed || sidebarMode === "agents" || sidebarMode === "workflows"}
+        expandable={sidebarMode !== "agents" && sidebarMode !== "workflows"}
         mode={sidebarMode}
         onModeChange={changeMode}
         atHome={atHome}
@@ -2011,16 +2231,6 @@ export default function App() {
             onSelect={handleSelectSession}
             onRename={handleRenameSession}
             onArchiveMany={handleArchiveSessions}
-          />
-        }
-        agentSlot={
-          <AgentList
-            agents={agents ?? []}
-            activeId={activeAgentId}
-            enabled={agentsEnabled}
-            onSelect={(id) => setActiveAgentId(id)}
-            onRename={handleRenameAgent}
-            onArchiveMany={handleArchiveAgents}
           />
         }
         kanbanSlot={
@@ -2237,10 +2447,22 @@ export default function App() {
             <span className="truncate font-medium min-w-0 flex-1">
               {projects?.find((p) => p.id === activeProjectId)?.title ?? "Kanban"}
             </span>
+          ) : sidebarMode === "workflows" ? (
+            <span className="truncate font-medium min-w-0 flex-1">Workflows</span>
           ) : (
             <>
               {activeAgent ? (
                 <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveAgentId(null)}
+                    className="group inline-flex shrink-0 items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
+                    data-tooltip="Back to the agents dashboard"
+                    aria-label="Back to all agents"
+                  >
+                    <ChevronLeft size={14} />
+                    <span>All agents</span>
+                  </button>
                   <InlineTitle
                     title={activeAgent.title}
                     onRename={(t) => handleRenameAgent(activeAgent.id, t)}
@@ -2291,6 +2513,14 @@ export default function App() {
                     </button>
                   )}
                   <button
+                    className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-foreground"
+                    aria-label="Archive agent"
+                    data-tooltip="Archive agent"
+                    onClick={() => void handleArchiveAgents([activeAgent.id])}
+                  >
+                    <ArchiveIcon size={18} />
+                  </button>
+                  <button
                     className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
                     aria-label="Delete agent"
                     data-tooltip="Delete agent"
@@ -2298,6 +2528,22 @@ export default function App() {
                   >
                     <Trash2 size={18} />
                   </button>
+                </>
+              ) : agentComposerOpen && (agents?.length ?? 0) > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setAgentComposerOpen(false)}
+                    className="group inline-flex shrink-0 items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
+                    data-tooltip="Back to the agents dashboard"
+                    aria-label="Back to all agents"
+                  >
+                    <ChevronLeft size={14} />
+                    <span>All agents</span>
+                  </button>
+                  <span className="truncate font-medium min-w-0 flex-1">
+                    New agent
+                  </span>
                 </>
               ) : (
                 <span className="truncate font-medium min-w-0 flex-1">Agents</span>
@@ -2510,6 +2756,43 @@ export default function App() {
             ) : (
               <EmptyHero label="Select a project to view its board." />
             )
+          ) : sidebarMode === "workflows" ? (
+            <WorkflowsSection
+              enabled={agentsEnabled}
+              reloadKey={workflowReloadKey}
+              activeId={activeWorkflowId}
+              newSignal={workflowNewSignal}
+              runSeg={activeWorkflowRunSeg}
+              onNavigate={(id) => {
+                setActiveWorkflowId(id);
+                setActiveWorkflowRunSeg(null);
+              }}
+              onRunSegChange={setActiveWorkflowRunSeg}
+              onOpenAgent={(agentId) => {
+                setActiveWorkflowId(null);
+                setActiveWorkflowRunSeg(null);
+                setActiveAgentId(agentId);
+                setAgentComposerOpen(false);
+                void changeMode("agents");
+              }}
+            />
+          ) : agentsEnabled &&
+            agentsAvailable &&
+            activeAgentId == null &&
+            !agentComposerOpen &&
+            (agents?.length ?? 0) > 0 ? (
+            // Nothing selected + a live fleet → the control-tower dashboard is
+            // the default agents view (not an empty start composer).
+            <AgentDashboard
+              agents={agents ?? []}
+              onSelect={(id) => setActiveAgentId(id)}
+              onNew={() => setAgentComposerOpen(true)}
+              onOpenWorkflow={(workflowId) => {
+                setActiveWorkflowId(workflowId);
+                setActiveWorkflowRunSeg(null);
+                changeMode("workflows");
+              }}
+            />
           ) : (
             <AgentView
               agents={agents ?? []}
@@ -2604,6 +2887,12 @@ export default function App() {
             if (activeAgentId === activeAgent.id) setActiveAgentId(null);
             void loadAgents();
           }}
+          onOpenWorkflow={(workflowId) => {
+            setAgentSettingsOpen(false);
+            setActiveWorkflowId(workflowId);
+            setActiveWorkflowRunSeg(null);
+            changeMode("workflows");
+          }}
         />
       )}
 
@@ -2639,6 +2928,7 @@ export default function App() {
             if (activeAgentId === id) setActiveAgentId(null);
             void loadAgents();
           }}
+          onWorkflowsChanged={() => setWorkflowReloadKey((k) => k + 1)}
           onSessionRestored={() => void loadMeetingSessions()}
           onSessionDeleted={(id) => {
             if (activeSessionId === id) setActiveSessionId(null);

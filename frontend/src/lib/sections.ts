@@ -73,6 +73,16 @@ export const SECTION_COLORS: Record<SidebarMode, SectionColor> = {
     activeTab: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
     hoverTab: "hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400",
   },
+  workflows: {
+    icon: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+    activeCard: "border-indigo-500/60 bg-indigo-500/10",
+    hoverCard: "hover:border-indigo-500/50 hover:bg-indigo-500/5",
+    primaryBtn:
+      "bg-indigo-500/15 text-indigo-700 hover:bg-indigo-500/25 dark:text-indigo-300 border border-indigo-500/30",
+    accentText: "text-indigo-600 dark:text-indigo-400",
+    activeTab: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
+    hoverTab: "hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400",
+  },
   kanban: {
     icon: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
     activeCard: "border-cyan-500/60 bg-cyan-500/10",

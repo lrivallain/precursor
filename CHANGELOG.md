@@ -9,8 +9,439 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Fixed
+
+- **Step colours now reset when a new run starts.** The strip derived each step's
+  state from its *agent's* live status, which survives between runs — so a step
+  that finished last time rests at `idle` and lit up green the instant a fresh
+  run began, before it had done anything. Step state now comes from the **run
+  trace** (what happened to that step *in this run*); a step with no trace yet
+  reads `pending`. Scrolling the run picker replays how the strip looked for that
+  run, while a live run never paints from a different one. The agent-status
+  fallback (used by the gallery, which doesn't load traces) additionally refuses
+  to mark anything past the running cursor as done.
+
+- **An approval note now reaches the steps after it.** Approval checkpoints are
+  transparent to the data flow (they publish no content, so the *material* still
+  comes from the last real producer) — but that also silently dropped the
+  reviewer's note, so approving with "translate it into French before sending"
+  had no effect on the sending step. Notes are now read back off the run's
+  approval traces and injected into every later step as a reviewer directive,
+  alongside the content rather than instead of it. Approving with no note injects
+  nothing.
+
+- **The agents board uses the app's own tooltips.** Its hover hints were native
+  browser `title` attributes, so they appeared after a long OS delay in a system
+  bubble that ignored the theme — visibly different from every other hint in the
+  app. The KPI tiles, the Auto badge, the narration line, the inbox rows and the
+  new workflow chip all use the shared tooltip now.
+
+- **Removed the unreachable agents sidebar list.** The agents section has been a
+  card board since the dashboard landed, and the sidebar is force-collapsed (and
+  un-expandable) in that mode — so the old `AgentList` sidebar rows could not be
+  reached by any route, while still being maintained alongside every agent
+  change. Deleted, along with the `agentSlot` plumbing that fed it.
+
+- **No more double border on the in-progress step.** The active step drew a
+  border *and* a 2px ring underneath the animated holographic frame; the frame
+  now owns the edge alone. An approval step also no longer mislabels itself
+  "Missing agent" — it legitimately has no agent, and reads "Human approval".
+
 ### Added
 
+- **Workflows can be archived.** Archive hides a workflow from the gallery while
+  keeping its definition and run history; the shared **Archive** panel gains a
+  Workflows tab to restore or permanently delete it, alongside topics, chats,
+  agents and live sessions. The backing endpoints existed but had no UI at all.
+  Backed by a new `GET /api/workflows/archived`.
+
+- **An agent shows which workflows use it.** Every agent **card on the agents
+  board** carries a workflow chip with the number of pipelines using it. Clicking
+  it jumps straight to the workflow when there's only one, and names them on the
+  card when there are several — so the link is one click from the board rather
+  than buried in settings. The agent settings panel keeps the same count and
+  list. Editing a shared agent isn't a blind change any more. Archived workflows
+  don't count, and private inline vessels never appear. Backed by
+  `GET /api/agents/{id}/workflows` and a `workflow_count` on the agent payload
+  (one grouped query, not one request per card).
+
+- **Workflow schedules match topic and agent schedules.** The workflow recurrence
+  editor now uses the same control as scheduled topics and agents: an arbitrary
+  "every *N* minutes / hours / days" interval, or a **time of day on chosen
+  weekdays**, in your local timezone. It previously offered four fixed presets
+  (hourly / 6h / daily / weekly) with no weekday selection.
+
+- **A real icon picker for workflows.** Browse a categorised set, search it by
+  keyword, or paste **any** emoji (including from the OS picker) — and **No icon**
+  is a first-class choice rather than a fallback gear. Clearing one also required
+  a backend fix: the update handler tested `if payload.icon is not None`, so a
+  null could never remove an icon once set.
+
+- **Settings → Workflows.** A section for the defaults a new workflow and its
+  steps start from: whether a step may use **tools**, **skills** and **memory**,
+  and the **stall watchdog** a new workflow carries. All still overridable per
+  workflow/step. A default of *on* leaves a step's override unset (inherit its
+  agent); a default of *off* is written explicitly, because "inherit" would
+  quietly turn it back on.
+
+- **Workflows on the home page.** The launcher grid now offers Workflows
+  alongside Topics, Chats, Live, Agents and Files.
+
+- **Any prompt written inside a step stays private to it — including a gate's.**
+  A step's agent is a hidden vessel whenever its prompt was authored in the step,
+  so a one-off quality check ("is *this* joke safe for kids?") no longer leaves a
+  permanent agent behind any more than a one-off task does. The choice is now
+  **Existing agent** (reuse one from the Agents section) vs **Inline prompt**
+  (write it here), offered for both Agent and Gate steps; the old "New agent"
+  silently created a reusable agent instead. Referenced agents are never touched.
+
+- **Inline steps — one-off work that isn't an agent.** A step can now be
+  **Inline**: its instructions live with the step instead of in a reusable agent,
+  so a pipeline stops leaving a trail of single-purpose agents in your Agents
+  list, and the work is deleted along with the step (or the workflow). In a run
+  it behaves exactly like a Task step — it produces content, hands it downstream,
+  and takes the same context, capability and failure settings. Under the hood the
+  step keeps a private hidden agent as its execution vessel (the runtime is
+  agent-keyed); editing the step updates that vessel in place so its run history
+  survives, and it's swept when no step owns it. It stays listed in
+  **needs-attention** by design, so an inline step blocked on a tool approval
+  can't wedge a workflow invisibly. Backed by `WorkflowStep.kind = "inline"` and
+  `AgentSession.inline` (migration `b6e1f70a3c48`).
+
+- **Steps are authored on the workflow board, not in a dialog.** Hit **Edit
+  steps** and the horizontal strip you already know becomes editable — same
+  layout, now authorable. **Drag a card** anywhere to reorder, **click a card** for that step's own
+  settings modal (kind, agent — existing or created inline — instructions,
+  context sourcing, capability toggles, failure policy), and the **+ between
+  cards** inserts a step at that position, drawing the seam it will be spliced
+  into as you hover. Keeping the horizontal layout is
+  deliberate: the strip is the picture of the pipeline and shouldn't change shape
+  just because you're editing it. The **New/Edit workflow** dialog keeps only the
+  workflow's identity and run-wide settings, and a new workflow starts empty for
+  the board to fill in. Editing is an explicit mode with an explicit save and is
+  **refused while a run is in flight**: saving replaces the whole step list
+  server-side and the run cursor is `ON DELETE SET NULL`, so a mid-run write
+  would strand the coordinator. Backed by a new `WorkflowStepEditModal` that owns
+  the draft model (`draftsFromWorkflow` / `draftsToPayload`), leaving
+  `WorkflowBuilder` a third of its former size.
+
+- **Workflow notifications.** A background pipeline can now reach you: a run
+  raises a notification when it **finishes**, **fails**, or — most importantly —
+  **parks on a human approval**, which is shown even when the app is focused
+  because the run is *blocked* until you answer. Step-to-step progress stays
+  silent and each transition notifies once. The `workflow.changed` SSE event now
+  carries the run status and workflow name (the event bus whitelists payload
+  keys and had been dropping `workflow_id` entirely).
+
+- **Per-step context sourcing.** A step no longer has to inherit everything: pick
+  **Previous step** (the default hand-off plus the artifact board), **Pick steps**
+  to name exactly which earlier steps feed it, or **None** to run on its own
+  objective alone. The run brief, reviewer directives and step instructions are
+  always delivered — this governs the *material*, not the intent. Backed by
+  `WorkflowStep.context_mode` / `context_sources`.
+
+- **Per-step capability toggles (tools, skills, memory).** Agents gain
+  `use_mcp` / `use_skills` / `use_memory`, and each workflow step can override
+  them tri-state (auto / on / off). Tool schemas are a large fixed context cost
+  paid every turn, so a step that only rewrites a paragraph needn't carry the
+  whole MCP catalogue; a pure transform step is usually better off not consulting
+  long-term memory. Flipping one rebuilds the agent's session on its next run.
+
+- **A workflow-wide Assistant role.** Pick a role on the workflow and every
+  step's agent adopts it for the run — applied at launch rather than stamped onto
+  the shared agent rows, so the same agent can be formal in one pipeline and
+  blunt in another. Backed by `Workflow.role_id` (migration `a9d4e7f21c60`).
+
+- **Editing a step's agent without leaving the workflow.** The step modal now
+  edits the agent's objective in place and toggles its capabilities, instead of
+  bouncing out to the Agents cockpit to change one line. Saving primes the change
+  for the step's next run; it never launches a turn.
+
+
+- **Human approval checkpoints, with a reject policy.** A step can now be an
+  **approval**: the run *parks* on it — no agent runs, nothing is spent — until a
+  human decides. Where a gate is an agent judging the work, this is you judging
+  it, so you can put a checkpoint in front of anything irreversible (sending the
+  email, publishing, filing). Approving resumes the pipeline — and the note you
+  leave is **forwarded to every later step** as a reviewer directive, so you can
+  course-correct mid-run ("translate it into French before sending") without
+  editing the workflow. Rejecting follows the checkpoint's **reject policy** — **send back** (loop an earlier step with
+  your feedback injected, reusing the gate machinery and `max loops` cap),
+  **stop the run** (recorded as `cancelled`, not `failed` — nothing broke, you
+  decided), or **skip ahead**. The decision panel always also offers *Stop the
+  run*, so the policy is a default rather than a cage. Backed by the `approval`
+  step kind, `WorkflowStep.on_reject` (migration `f3b8d1c05a92`), an
+  `awaiting_approval` workflow/run status, and
+  `POST /api/workflows/{id}/approve` \| `/reject`. See
+  [features/workflows](website/features/workflows.md).
+
+- **Per-step instructions — one agent, a different job in each workflow.** A step
+  can carry its own mandate, layered on the referenced agent's standing objective
+  and taking precedence where they differ, so a single `Summariser` row can be
+  the terse-bullets stage in one pipeline and the exec-brief stage in another
+  without cloning it. Instructions land at the end of the kickoff preamble where
+  they carry the most weight; on an approval step they're what the reviewer sees.
+
+- **Per-step failure policy + stall watchdog.** A failed step no longer always
+  kills the run: each step chooses **stop run** (the default), **retry** up to
+  *N* times (with the failure reason injected so the retry isn't a blind repeat,
+  each attempt appending its own trace row), or **carry on** for steps whose
+  output is optional. Retry budgets reset per run. Separately, a workflow can set
+  a **stall watchdog** (minutes; `0` = off): a step running past it is declared
+  stuck, its agent cancelled, and it's put through that same failure policy — so
+  an unattended pipeline can't sit in `running` forever behind a hung turn.
+  Backed by `WorkflowStep.on_error`/`max_retries`/`retry_count`,
+  `Workflow.step_timeout_seconds` (migration `e7c2f4a9b8d1`) and a scheduler
+  sweep.
+
+- **Cost roll-up per step and per run.** Every step attempt records the token
+  spend of its turn and the run accumulates the total, shown in the run header
+  and on each trace row — so a gate that looped four times reveals what each pass
+  cost. Turns "did it work?" into "was it worth it?".
+
+- **Per-run brief — point one reusable workflow at a different subject each
+  run.** Starting a workflow now takes an optional free-text **brief** ("analyse
+  `/data/q3-sales.csv`, EMEA only"), so the definition stays generic
+  (`analyse → review → report`) while the run carries the subject. The **Run**
+  button gains a caret that opens a brief composer (`⌘↵` to run); leave it empty
+  and the pipeline runs fully autonomously exactly as before. The brief leads
+  **every** step's kickoff preamble — not just the first — so a gate can judge
+  the work against what was actually asked, a loop-back re-drives the producer
+  with the brief still attached, and a final step knows which file it was about.
+  It's stored on the run (new `workflow_runs.input` column, migration
+  `d5e9b0c1a2f3`) and shown on the run header, so browsing back through history
+  explains itself. `POST /api/workflows/{id}/run` accepts an optional
+  `{ "input": … }` body and a webhook's posted payload becomes the run's brief;
+  scheduled runs stay brief-free by design. See
+  [features/workflows](website/features/workflows.md).
+
+- **Workflow run history + inspectable per-step trace.** Every workflow
+  execution is now persisted as a `WorkflowRun` with an append-only
+  `WorkflowRunStep` trace — one row per step **attempt**, capturing what the step
+  *received* (`input_context`) and *produced* (`output_summary`), plus gate
+  verdicts and per-attempt duration. Gate loop-backs append a fresh attempt row
+  rather than overwriting the prior one, so retries read as distinct entries.
+  The workflow detail page gains a **run-progress header** (status, trigger,
+  live current step, elapsed, % complete), a **run picker** to scroll back
+  through past executions, and a collapsible **Run trace** timeline; the step
+  modal now shows the **Input received** by a step and its full **Run history**
+  across attempts. Backed by new `workflow_runs` / `workflow_run_steps` tables
+  (migration `c3f7a1b2d4e8`), engine trace-recording in
+  `services/agents/workflow.py`, and `GET /api/workflows/{id}/runs`. See
+  [features/workflows](website/features/workflows.md). The run **result panel**
+  now renders Markdown (bold, lists, rules) instead of raw text, the running
+  step wears an animated holographic border mirroring the composer's
+  thinking-state, and the run-trace rail is aligned dead-centre through its
+  step dots. Runs are **deep-linkable** — `/workflows/<id>/run/<n>` pins a
+  specific run and `/workflows/<id>/run/latest` follows the live one, with the
+  URL updating as you scroll the run picker and staying put on a pinned run when
+  new runs fire. Turns an agent runs **as a workflow step** no longer mark it
+  **unread** in the Agents section — that badge is reserved for genuinely
+  autonomous runs (started manually or by schedule), so the coordinator driving a
+  step doesn't spam agent badges.
+
+- **Workflow steps read the whole run's artifacts (shared blackboard).** Beyond
+  the immediate hand-off (the previous step's full answer + artifacts), a step
+  now also inherits the **artifacts published by every earlier step** in the
+  run, labelled by step and oldest-first, as a reference-material section in its
+  kickoff preamble. A reviewer three stages down sees the first step's research
+  inventory without the middle steps having to re-forward it; steps that
+  published nothing are skipped and gates never appear on the board. Backed by
+  `collect_prior_artifacts` / `_earlier_content_agent_ids` in
+  `services/agents/workflow.py`. See
+  [features/workflows](website/features/workflows.md).
+
+- **Workflow gates with conditional loop-back — simple prompt chaining with a
+  quality gate.** A workflow step can now be a **gate**: it votes `PASS`/`FAIL`
+  on the work so far and, on failure, re-drives an earlier step (its **on-fail
+  target**) with the critique injected, so a bare chain like *tell a story → is
+  it kid-safe? → note the story* loops until it passes — no special prompting
+  needed. A step now feeds the next its **full answer** (not just the folded
+  `OBJECTIVE_COMPLETE` summary), so results are shared implicitly. A gate is
+  **transparent to the data flow** — the step after it receives the last real
+  producer's output (the material the gate validated), not the gate's terse
+  `PASS: …` verdict, so *tell a joke → is it kid-safe? → note the joke* actually
+  notes the joke. Retries are
+  bounded by a workflow-level **max loops** cap (default 3); exceeding it stops
+  the run in `failed`. Backed by new `WorkflowStep.kind`/`on_fail_position`/
+  `attempt_count` and `Workflow.max_loops` columns (migration
+  `a7c93e21f4d8`), gate verdict parsing in `services/agents/workflow.py`, and
+  Task/Gate controls in the workflow builder. See
+  [features/workflows](website/features/workflows.md).
+  **Workflows** mode (opt-in, off by default) turns a named sequence of
+  independent agents into a `research → draft → review` pipeline where the
+  *workflow* owns the chaining, not agent-to-agent `depends-on` links. Build one
+  from existing agents or create steps inline; run/pause/resume/cancel it from a
+  lifecycle bar; drill into any step's agent run in a modal while the pipeline
+  stays live in the background. Each step is fed **only** the previous step's
+  summary + artifacts, and a re-run clears each step's artifacts first. A workflow
+  can be **parked** and triggered manually, on a **schedule** (hourly/6h/daily/
+  weekly), or by **webhook** (`POST /api/workflows/hooks/{token}`). Backed by new
+  `Workflow`/`WorkflowStep` models, a `/api/workflows` router, the
+  `services/agents/workflow.py` coordinator, and a `workflow.changed` SSE event.
+  See [features/workflows](website/features/workflows.md).
+- **Park an agent for a trigger, then start it on demand.** The composer now has
+  a **Create parked (don't run yet)** toggle: leave it on to launch immediately
+  (the old behaviour), or turn it off to arm the agent in a new **`waiting`**
+  lifecycle state. A parked agent stays idle until something triggers it — its
+  webhook firing, the new **Start now** button on its detail view, or a workflow
+  step reaching it. A parked agent is never auto-swept; only an explicit trigger
+  launches it. Backed by a `start` flag on
+  `POST /api/agents` and a new `POST /api/agents/{id}/start` endpoint. See
+  `_spawn_agent`/`start_agent` in `routers/agents.py`.
+- **Re-running an agent — or clearing its context — starts from a clean
+  blackboard.** A fresh objective run (manual restart, retry, or webhook
+  re-trigger) **and** clearing an agent's
+  context with `/clear` now wipe the artifacts a previous run published, so the
+  new turn's deliverables replace the stale ones instead of piling up beside
+  them. Conversational follow-ups (`/send`) keep their artifacts. See
+  `_clear_artifacts` (called from `start_task` and `clear_session`) in
+  `manager.py`.
+- **Multi-line ARTIFACT block form so deliverables land whole.** Substantial
+  outputs (a research inventory, a draft, a review) can now be published as a
+  block — `ARTIFACT: <title>` with no pipe, then the full Markdown body on the
+  following lines, closed by an `END_ARTIFACT` line (or the next directive / end
+  of message). This fixes the case where a model put its real deliverable across
+  many lines and only a heading after the inline `|`, so the artifact captured
+  just the heading. The single-line `ARTIFACT: <title> | <body>` form still works
+  for short values, and a trailing `PROGRESS`/`OBJECTIVE_COMPLETE` line a model
+  glued onto the body is now stripped off. See `_extract_artifacts` in
+  `manager.py`.
+- **Autonomy cadence promoted to the durable system layer.** The behavioral
+  cadence that makes the dashboard useful is now baked into the autonomous
+  agent's system preamble (`_AUTONOMY_PROTOCOL`) and per-turn nudge, so it
+  applies to *every* run rather than relying on each mission prompt to restate
+  it: narrate one short plain sentence before each action (feeding the live
+  dashboard narration), emit `PROGRESS` several times across the run (early /
+  middle / late, not only at the end), publish an `ARTIFACT` as each phase or
+  finding lands, and close with a **2–3 sentence** `OBJECTIVE_COMPLETE` (up from
+  a one-liner — it now reads better folded into the answer bubble). Task-specific
+  specifics (named phases, exact checkpoint percentages like 15/40/65/90%) stay
+  in the mission prompt: the durable layer sets the floor, the task sets the
+  shape.
+- **Artifact deliverables render as real Markdown, not run-on lines.** A single
+  `ARTIFACT:` directive is one physical line, so a model can't press Enter inside
+  it — a numbered list or multi-paragraph payload used to collapse into one
+  inline paragraph. The autonomy prompt now tells the model to write `<content>`
+  as Markdown using `\n` for line breaks, the directive parser unescapes those
+  `\n`/`\t` sequences, and — as a safety net — a numbered list packed onto one
+  line (`1. … 2. … 3. …`) is broken back onto separate lines (only a strictly
+  sequential run, so decimals/versions/prices are left alone). The frontend
+  mirrors the same normalization at render time, so **already-persisted**
+  artifacts also render correctly without a re-run.
+- **Objective-complete folded into the answer bubble.** A terminal
+  `OBJECTIVE_COMPLETE` turn no longer renders as a separate emerald milestone
+  node beneath an otherwise-hollow answer bubble. The completion is now folded
+  **into the final answer bubble itself** — an *Objective complete* badge on the
+  bubble, and (when the turn's prose was entirely control directives) the summary
+  becomes that bubble's body — so the completion and the answer are one and the
+  same, not two adjacent nodes echoing each other. Progress heartbeats still drop
+  their own violet milestone pills on the spine.
+- **Deliverables inline in the discussion flow — as a single, non-duplicated
+  answer.** An agent's published artifacts now render at the foot of the
+  conversation **unboxed, in the normal discussion background**: a horizontal
+  rule slips each one off from the streamed prose, a quiet title row labels it,
+  then the body renders as plain **Markdown** (Markdown passes through, JSON in a
+  fenced block, `link` as a real anchor), so it reads as the agent's answer to
+  your request. Copy content / copy link / open raw surface on hover. To stop the
+  same content repeating as prose, completion, *and* deliverable, the `ARTIFACT:`
+  payload no longer renders inline in the message body, and the section prefers
+  the model's explicit `ARTIFACT:` outputs — falling back to the auto-captured
+  completion summary only when nothing explicit was published (that summary is
+  already shown in the *Objective complete* answer bubble). The insights-sidebar
+  list stays as a compact index a workflow can feed into a later step's kickoff
+  context — so the deliverable is consumable in the discussion *and* still travels
+  the blackboard.
+- **Addressable agent artifacts (permalinks + raw endpoint).** Published
+  blackboard artifacts are now openable on their own. The insights-sidebar list
+  entries are clickable: they open a viewer that renders the artifact by kind
+  (Markdown, pretty-printed JSON, plain text, or a clickable link) with **Copy
+  content**, **Copy link**, and **Open raw** actions. Two new routes back this —
+  `GET /api/agents/{id}/artifacts/{artifactId}` (single artifact) and
+  `GET /api/agents/{id}/artifacts/{artifactId}/raw` (raw body with a
+  kind-appropriate content-type; a `link` artifact `307`-redirects to its URL).
+  The permalink form `/agents/{id}?artifact={artifactId}` reopens the agent with
+  the artifact auto-expanded.
+- **Live agent narration in the dashboard.** While an agent has a turn in
+  flight, `live_activity` now distils its own natural-language commentary (the
+  first meaningful prose line of the streaming assistant message, stripped of
+  control directives and markdown) into `AgentSessionRead.active_narration`. The
+  dashboard card renders it under the active-tool chip (or as a standalone chip
+  when no tool is running) and the sidebar rail surfaces it as the row label +
+  tooltip, so a backgrounded agent reads as "what it's doing now" in plain
+  language rather than a bare tool name. Mirrors to the frontend types.
+- **A multi-agent orchestrator (budgets, triggers, blueprints, blackboard,
+  unified inbox).** Agents mode graduates from independent runs to a coordinated
+  **fleet** you watch from one dashboard. A **concurrency
+  governor** (`agents_max_concurrent`, default 3) caps how many run at once; a
+  per-agent **token budget** parks an agent in the inbox for approval instead of
+  overspending; and **retry/backoff** (`max_retries` + `agents_retry_backoff_seconds`)
+  auto-recovers a failed run with exponential delay before giving up. **Blueprints**
+  (`/api/agents/blueprints`) save a reusable task + governance profile you stamp
+  into fresh agents; a **shared-artifact blackboard** (`/api/agents/{id}/artifacts`)
+  lets completed runs publish results (deduped) for a workflow or a watcher to read;
+  **webhook triggers** (`/api/agents/{id}/triggers` + `POST /api/agents/hooks/{token}`)
+  re-run an agent from an external event. Two new aggregate surfaces back the
+  cockpit: `GET /api/agents/metrics` (fleet rollup — counts, running/queued,
+  token + budget totals) and `GET /api/agents/inbox` (everything waiting on you —
+  approvals, raised questions, budget parks — in one list). The dashboard grows a
+  **unified inbox strip** and a **concurrency/token rollup**; each run's insights
+  sidebar gains an **artifacts panel** and **webhook**
+  management; the agent settings drawer gains **token budget** + **max retries**;
+  and Settings gains a **blueprints** manager. New `AgentSession` columns
+  (`token_budget`, `max_retries`, `retry_count`, `retry_at`, `total_input_tokens`,
+  `total_output_tokens`) and three new tables (`agent_triggers`,
+  `agent_artifacts`, `agent_blueprints`) land in one Alembic
+  migration; all new read/create schemas mirror to the frontend types.
+- **Autonomous agent missions (opt-in).** An agent can now be started in
+  **autonomous** mode, turning its task prompt into a **durable objective** it
+  pursues on its own: a **goal loop** inspects each idle turn for a control
+  directive and either finishes, blocks for input, or **continues itself** to the
+  next step, so a multi-step mission lands as a **single** result in the linked
+  topic/chat instead of a burst of intermediate turns. Agents self-report
+  **progress** (`PROGRESS: <0-100> | label` → a progress bar on the card, the
+  mission strip, and the open run), raise a question via `NEED_INPUT:` to enter a
+  new **Needs input** (`blocked`) state that floats to the top of the dashboard
+  next to approvals (your reply resumes the mission), and finish with
+  `OBJECTIVE_COMPLETE: <summary>`. A per-agent **step budget** (default 12) plus a
+  **stall guard** cap the loop so it can't spin forever; a blocked agent's
+  scheduled re-runs are skipped so a cadence never discards its question. The mode
+  is **off by default** — plain agents rest at Idle after each turn exactly as
+  before — and is toggled (with a step-budget input) on the start-agent form. New
+  persisted fields on `AgentSessionRead` (`autonomy_enabled`, `max_steps`,
+  `step_count`, `progress`, `progress_label`, `blocked_question`) mirror to the
+  frontend types.
+- **Per-agent approval policy.** The approval policy gating an agent's actions is
+  now **selectable per agent** instead of only globally: choose *Inherit global
+  default* / `manual` / `balanced` / `autonomous` on the start-agent form or from
+  the agent's settings drawer. A nullable `approval_policy` column on
+  `AgentSession` (`NULL` = inherit) is resolved **per turn**, so switching it
+  needs no session rebuild, and it wins over the Settings-wide default only when
+  set. Exposed on `AgentSessionRead` / `AgentSessionCreate` / `AgentUpdateRequest`
+  and mirrored to the frontend types.
+- **An agent control-tower dashboard.** Agents mode now opens on a fleet
+  **dashboard** instead of a single run: a row of **KPI stat tiles** (**Need
+  you** / **Working** / **Idle · done** / **Scheduled**) — the *Need you* tile
+  glowing amber and the *Working* tile spinning while live — over **urgency
+  swimlanes** of monitor cards, one per agent, each with a live status medallion,
+  current tool, next scheduled run, unread count, linked topic/chat, and model.
+  Cards are **urgency-sorted** by an attention router — an agent blocked on you
+  floats to the top, then interrupted/failed, then live work, then quiet states —
+  and grouped into **Needs you / Working / Idle · done** lanes with a hover-lift
+  and a status-colored rail. A shared **status medallion** (pulses while working,
+  wears an amber ring when it needs you, grows a fan-out cluster badge for
+  parallel tool calls) renders identically on the dashboard and the command
+  palette. While an agent works, its **current tool** and a `×N parallel` count
+  are shown live, derived from a new in-process `live_activity()` snapshot exposed
+  via three fields on `AgentSessionRead` (`active_tool`, `active_tool_count`,
+  `pending_permission`).
+- **An out-of-band "agent needs you" signal.** When a background or scheduled
+  agent pauses for approval, a browser notification now fires **regardless of
+  window focus** and deep-links to that agent, the **tab title** grows a 🔔 and a
+  waiting count, and the **⌘K palette** lists the agents that need attention
+  first — so you can leave agents running in the background and be pulled back
+  only when one is genuinely blocked. All of it respects the existing
+  notifications toggle.
 - **A lapsed idle MCP sign-in surfaces itself, instead of stalling your next
   request.** WorkIQ / [Agent 365](website/features/mcp.md#agent-365-workiq-teams-and-workiq-user)
   credentials that had gone idle (per the keep-alive back-off) used to die
@@ -59,6 +490,162 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   carry `created_at` alongside `updated_at`.
 
 ### Changed
+
+- **An approval step's run detail reads like any other step's.** Opening one used
+  to show a red error — "no agent runs for it" — and nothing else, hiding the
+  brief, the input and the decision that *were* recorded. It now shows the same
+  anatomy as every other kind: what the reviewer was asked, the **Decision**
+  (verdict + note), the input it received and the full attempt history, with the
+  no-agent fact stated as a neutral note rather than a failure.
+- **The run-step modal is read-only.** Opening a step from a run is for
+  inspecting what happened, so it no longer offers objective editing, capability
+  toggles or a "nudge this step" composer — authoring lives in *Edit steps* on
+  the board, and a past run shouldn't be mutable from the record of it. Its
+  **Open in agents** link (and the one in the run trace) now appears only for a
+  *reusable* agent: an inline step's vessel isn't listed in the Agents section
+  and an approval step has no agent at all. Backed by a new `agent_inline` flag
+  on the run-step trace.
+- **Removing a webhook lives on the webhook control**, not buried in the
+  schedule editor — revoking a token has nothing to do with recurrence. It now
+  confirms first, since the URL stops working immediately.
+- **Step authoring reads more clearly.** The step modal asks for the **kind**
+  first (**Agent** / Inline / Gate / Approval) and only then, for an Agent step,
+  whether it reuses an **existing agent** or creates a **new** one — the old
+  order asked how before what. "Task" is now **Agent**, since that is exactly
+  what distinguishes it: it is backed by a real agent from the Agents section.
+- **One prose field per step.** The separate step-instructions box now appears
+  only where it adds something — a step reusing an *existing* agent, where it
+  customises a prompt written elsewhere (and says so), plus an Approval step,
+  where it is the only description. An Inline step, or an Agent step authored on
+  the spot, already states its job in its own field.
+- **Dragging a step shows where it will land**, as a vertical seam between two
+  cards — the same signal the `+` uses — instead of highlighting whichever card
+  sits under the cursor, which read as "replace this one".
+- The workflow settings dialog no longer carries a note pointing at *Edit steps*,
+  and the **Expand sidebar** control is hidden on the Workflows page as it
+  already is on Agents.
+
+### Fixed
+
+- **A workflow step no longer stalls asking for clarification.** A task step
+  whose objective was slightly under-specified (e.g. *"note this joke 0–10"*)
+  could emit `NEED_INPUT` / present a menu of options instead of acting — which
+  parked the step **Blocked** and paused the whole run, since a workflow runs
+  unattended with no human to answer. Every non-gate step's kickoff now carries a
+  strict autonomy directive: complete the objective directly on the given input,
+  never ask for clarification or emit `NEED_INPUT`, and if a detail is
+  underspecified pick the most reasonable interpretation and produce the
+  deliverable anyway. Backed by `_TASK_PREAMBLE` in
+  `services/agents/workflow.py`. See
+  [features/workflows](website/features/workflows.md).
+
+- **A completed step now shows its deliverable, not the terse completion
+  reason.** When an autonomous step wrote its output as prose and then ended with
+  `OBJECTIVE_COMPLETE: <reason>` (a *meta* description like "Told the user a
+  joke"), the step displayed — and auto-captured as its **"Result" artifact** —
+  the reason instead of the actual deliverable (the joke), even though the
+  downstream hand-off correctly received the real prose. The completion branch
+  now prefers the message's prose body for the displayed `result_summary` and the
+  Result artifact, falling back to the reason only when the final turn was
+  directives-only (a bare `OBJECTIVE_COMPLETE` with no body). See
+  [features/workflows](website/features/workflows.md).
+
+- **Control directives no longer leak into a step's displayed result.** A gate
+  stored its raw `OBJECTIVE_COMPLETE: PASS: …` verdict as the step result *and*
+  auto-captured it as a shared **"Result" artifact**, so directive syntax showed
+  up as a deliverable and polluted the blackboard. A gate is now normalised to a
+  plain `Passed — <reason>` / `Rejected — <reason>` verdict and emits **no
+  artifact** (a gate judges, it doesn't produce). More generally, control tokens
+  (`OBJECTIVE_COMPLETE`, `ARTIFACT`, `PROGRESS`, `NEED_INPUT`, …) are now scrubbed
+  from every step's *displayed* `result_summary`; the raw turn is still retained
+  internally for directive parsing, content forwarding, and gate verdicts. See
+  [features/workflows](website/features/workflows.md).
+
+
+  lifecycle-directive parser matched `NEED_INPUT:` / `OBJECTIVE_COMPLETE:` /
+  `PROGRESS:` **anywhere** in an assistant message, so an agent explaining "I emit
+  **NEED_INPUT:** to the dashboard when blocked" tripped the marker mid-prose,
+  captured the trailing `**` and surfaced a garbled phantom question (`** to your
+  dashboard when blocked.`) that halted the run/workflow. Directives are now only
+  recognised at the **start of a line**, and the closing `**` of a bolded
+  `**LABEL:**` is eaten so it never leaks into the captured value. Mirrored in the
+  backend parser (`parse_agent_directives` in `services/agents/manager.py`) and the
+  frontend (`lib/directives.ts`).
+- **A parked agent no longer hides the entire agent list.** The `waiting`
+  lifecycle state (parked agents) was added to the DB and frontend but omitted
+  from the `AgentSessionRead.status` literal, so one waiting agent raised a
+  Pydantic `literal_error` for the whole `GET /api/agents` response — the list
+  500'd and the UI fell back to the empty-state start wizard, making every agent
+  look gone. `waiting` is now part of the `AgentStatus` schema literal (already
+  present in the TS `AgentStatus` type). See `schemas/agent.py`.
+- **The agent insights sidebar now refreshes live.** The per-agent orchestration
+  panel (shared artifacts + triggers) fetched once when the agent was selected and
+  never again, so mid-mission `ARTIFACT:` outputs and the completion result only
+  appeared after a manual reload. It now subscribes to the `agent.changed` bus —
+  mirroring the in-chat deliverables — so the right bar updates the moment new
+  content is published.
+- **Autonomous agents no longer randomly hit "Permission denied" on every tool
+  call.** When an agent's detail page was open as the agent started, the timeline
+  poll (`GET /api/agents/{id}/events`) and `start_task` could each call
+  `_ensure_live` before either cached the session, firing **two** `session.create`
+  requests for the same `copilot_session_id`. The duplicate create left the CLI's
+  permission responder mis-wired, so every tool call — including built-in `rg`/shell
+  — was denied non-interactively with *"Permission denied and could not request
+  permission from user"*, even under the `autonomous` policy, and the run parked
+  itself with a spurious `NEED_INPUT`. `_ensure_live` now serialises its
+  check-then-create under a per-agent lock, so concurrent callers reuse the single
+  session. No API or schema change.
+
+### Changed For autonomous agents, the control-directive markers (`NEED_INPUT:`,
+  `PROGRESS:`, `ARTIFACT:`, `OBJECTIVE_COMPLETE:`) are **stripped from the rendered
+  message body** — they were previously persisted verbatim and left the one line a
+  human must act on buried in prose. The raised question is re-surfaced as its own
+  amber **"Needs your input"** callout inside the message (rendered as markdown,
+  so emphasis shows), and both that callout and the top blocked banner gain an
+  **Answer** button that scrolls to and focuses the reply composer. `PROGRESS:`
+  heartbeats and the terminal `OBJECTIVE_COMPLETE:` are additionally re-drawn as
+  compact, iconified **milestone nodes on the transcript spine** (violet
+  percentage pills capped by an emerald *Objective complete* node), and
+  `ARTIFACT:` publications render inline as teal **Published artifact** cards
+  (collapsible, mirroring the sidebar blackboard), so a mission's trajectory and
+  its named outputs read in the discussion instead of as raw directive lines.
+  Pure frontend (`frontend/src/lib/directives.ts` mirrors the backend directive
+  parser); no API or schema change.
+- **Editing an agent saves without running it.** Changing an agent's objective,
+  role, or governance in the settings drawer used to **auto-replay** the task the
+  moment you saved. **Save** is now save-only — a changed objective/role *primes*
+  the new instructions (the cached SDK session is dropped) but no turn is
+  launched. A new **Save & run** button combines both: it persists the edits and
+  then starts the objective (clearing the prior run's artifacts first), and is
+  disabled while the agent is already active. `PATCH /api/agents/{id}` no longer
+  enqueues `restart_with_task`; the frontend runs via the existing
+  `POST /api/agents/{id}/start`.
+- **Autonomous agents no longer emit user-facing "suggest" follow-ups.** The
+  trailing follow-up-chip instruction is now injected only for **plain** agents
+  (a human converses with them turn-by-turn); an **autonomous** agent drives
+  itself through the control directives and runs unattended, so soliciting
+  next-step suggestions there only spent tokens and pulled against both the
+  "keep going, don't ask" autonomy contract and the base CLI prompt's
+  "don't offer to continue" tone rule. Backend-only preamble tweak in
+  `_system_preamble`; no API or schema change.
+- **The autonomy protocol now explicitly outranks the base "end tersely" tone
+  rule.** The captured GitHub Copilot CLI base prompt instructs the model to end
+  a turn without a recap, summary, or status — which pulls directly against the
+  control lines (`PROGRESS:` / `OBJECTIVE_COMPLETE:`) an autonomous agent must
+  emit for the system to track its mission. `_AUTONOMY_PROTOCOL` now states that
+  those control lines are required output and take precedence, reconciling the
+  conflict and hardening directive reliability. Backend-only injection tweak; no
+  API or schema change.
+- **Agents mode drops the parallel session list for a dashboard-first
+  navigation.** Opening Agents no longer shows a left list of agent sessions
+  next to an open agent (which made agents feel like "alternative topics").
+  The sidebar collapses to a **slim icon rail** used only to switch sections,
+  and the **fleet dashboard is the home** for monitoring existing agents. Open a
+  single agent and its header grows an **← All agents** back button (re-clicking
+  the **Agents** rail icon does the same) that returns to the dashboard. Per-agent
+  management — rename (double-click the title), **archive**, stop, and delete —
+  now lives in the open agent's header, so no capability is lost with the list
+  gone.
 
 - **The GitHub Models provider is retired and no longer offered.** GitHub has
   retired the service; `https://models.github.ai/catalog/models` now answers
@@ -421,6 +1008,30 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the expanded rail, and the collapsed sidebar.
 
 ### Fixed
+
+- **Orphaned `running` agents now recover on boot, and a degraded runtime is
+  visible.** A dev auto-reload (or any process death) mid-turn used to leave an
+  agent pinned in `running` with no live worker behind it, because the boot-time
+  reap and the watchdog only ran *after* the SDK client successfully started —
+  so if the client failed to come up, the row stayed stuck forever and never
+  timed out. The reap (`running` → `interrupted`, resumable) now runs early on
+  **every** boot, before and regardless of the SDK client, so orphans are always
+  un-stuck. Settings also gains an `agents_runtime_started` signal (distinct from
+  the stateless `agents_available` probe) with a warning banner when the runtime
+  is installed but didn't actually start in this process — telling you to restart
+  to recover instead of silently doing nothing.
+- **Agents no longer brick when the default model goes stale.** The Copilot
+  runtime's model catalogue rotates over time, so a model id that was valid when
+  it was saved (e.g. a since-retired `claude-sonnet-4.5`) can vanish. Passing a
+  now-unknown id to the SDK fails the whole turn at session build, and because a
+  turn is dispatched as a detached background task the exception was **swallowed**
+  — the agent hung forever on its "Sending…" spinner with no error. Three fixes:
+  the factory default is now **`auto`** (the runtime picks a current model, so it
+  can never go stale); a per-turn guard **downgrades a vanished model pin to
+  `auto`** before the session is built (leaving `auto` and still-valid pins
+  untouched, and never masking a transient runtime outage); and any turn-dispatch
+  error is now surfaced as a **`failed`** status with the error text instead of a
+  silent hang.
 
 - **A stale WorkIQ / Agent 365 sign-in no longer strands you behind a 409.**
   When a manual sign-in was orphaned — its popup closed, tab reloaded, or the OS

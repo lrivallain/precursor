@@ -1,0 +1,459 @@
+---
+title: Workflows
+---
+
+# Workflows
+
+**Workflows mode** chains independent [agents](/features/agents) into a
+reusable, named pipeline that runs in the **background** — `research → draft →
+review` — where the *workflow* owns the sequencing, not the agents. Each step is
+just an existing agent (or one you spin up inline), so agents stay reusable on
+their own while the workflow coordinates the hand-off, lifecycle, and schedule.
+Like agents, it's **opt-in and off by default**.
+
+::: warning Work in progress
+Workflows are a new orchestration layer built on top of agents mode. The linear
+`step → step` pipeline is solid, but the surface is still evolving — expect the
+UI and controls to keep changing.
+:::
+
+## How it differs from agent dependencies
+
+Agents can already declare `depends-on` links that render a
+[workflow strip](/features/agents). Workflows are the **coordinator-owned**
+alternative:
+
+- **Reusable, not baked in.** A workflow references agents by id. The same agent
+  can appear in several workflows; the chaining lives on the workflow, so you
+  reorder or reuse steps without touching the agents themselves.
+- **One coordinator.** The workflow drives the run — it starts the first step,
+  waits for it to rest, feeds its output to the next, and advances down the line.
+  Agents don't trigger each other.
+- **Implicit hand-off.** Each step receives the immediately preceding step's
+  **full answer** plus its artifacts as a kickoff preamble, mirroring a pipeline
+  stage. You don't have to prompt a step to "use the previous result" — the
+  coordinator forwards it. No dependency graph to reason about.
+- **Shared blackboard.** Beyond that immediate hand-off, a step also inherits the
+  **artifacts published by every earlier step** in the run, labelled by step and
+  oldest-first. A reviewer three stages down still sees the research inventory the
+  first step produced — without the middle steps having to re-forward it. Steps
+  that published nothing are skipped, and gates (which leave no deliverable)
+  never appear on the board.
+
+## Building a workflow
+
+Open **Workflows** in the sidebar and hit **New workflow**. The dialog names the
+workflow and sets its run-wide options (icon, artifact reset, gate retry cap,
+stall watchdog, Assistant role). It deliberately does **not** contain the steps —
+a brand-new workflow starts empty and you author its steps on the board itself.
+
+### Steps are edited on the board
+
+Hit **Edit steps** on the workflow view and the strip you already know becomes
+editable — same horizontal pipeline, same shape, now authorable:
+
+- **Drag a card** left or right to reorder — the whole card is grabbable, and a
+  vertical seam shows exactly where it will land. A click without movement still
+  opens the card.
+- **Click a card** to open that step's own settings modal. Pick its kind first —
+  **Agent**, **Inline**, **Gate** or **Approval** — then, for an Agent step,
+  whether it reuses an **existing agent** from the Agents section or creates a
+  **new agent** here. Then set its
+  [instructions](#per-step-instructions), [what it's fed](#what-each-step-is-fed),
+  [what it may use](#what-each-step-may-use) and its
+  [failure policy](#when-a-step-fails-retry-carry-on-or-stop).
+- **The + between cards** inserts a step at that position — hovering the gap
+  draws the seam the new card will be spliced into. The one at the end appends,
+  and the bin on a card removes it.
+
+Keeping the horizontal layout is deliberate: the strip is the picture of the
+pipeline, and it shouldn't change shape just because you're editing it.
+
+Editing is an explicit mode with an explicit **Save steps**, because saving
+**replaces** the whole step list server-side. For the same reason it's refused
+while a run is in flight — rewriting the steps mid-run would strand the
+coordinator's cursor. Stop the run first.
+
+You can also edit a step's agent from the [step modal](#running-and-monitoring)
+outside edit mode: its objective and capability toggles are editable in place, so
+tuning a prompt doesn't mean leaving the workflow.
+
+Because steps are just agents, anything else you can do to an agent — its
+artifacts, schedule, triggers — is still done in agents mode. The workflow only
+owns the *sequence*.
+
+Since agents are shared, the reverse link matters too. Every agent **card on the
+agents board** carries a workflow chip with the number of pipelines using it.
+Click it and, if there's only one, you land straight in that workflow; if there
+are several, the card names them so you can pick. The agent's settings panel
+keeps the same count and list. Editing an agent that three pipelines depend on
+should not be a surprise.
+
+### Inline steps: one-off work that isn't an agent
+
+Not every step deserves a reusable agent. Whenever you write a step's prompt
+**in the step** — an Inline step, or a Gate whose check you type there — that
+prompt belongs to the step alone:
+
+- Nothing is added to your **Agents** list — the pipeline doesn't leave a trail
+  of single-purpose agents behind it.
+- It is **removed with the step**, so deleting the step (or the workflow) cleans
+  up after itself.
+- It behaves exactly like a Task step in the run: it produces content, hands it
+  downstream, and can be gated, retried or given its own context and capability
+  settings.
+
+Under the hood a step still needs *something* to execute it — the runtime is
+agent-keyed — so an inline step keeps a private, hidden agent as its vessel. You
+never manage it: editing the step edits the vessel in place (so its run history
+survives), and removing the step deletes it. The one place it still surfaces is
+the **needs-attention** list, deliberately: if an inline step blocks on a tool
+approval it has to stay discoverable, or a workflow could wedge invisibly.
+
+The rule is simply *where the prompt was written*, not what kind of step it is.
+Pick **Existing agent** to reuse something from the Agents section; pick
+**Inline prompt** to write a one-off here. A gate is often the clearest case: "is
+this specific joke safe for kids?" is rarely worth a permanent agent.
+
+### Where a new workflow starts
+
+**Settings → Workflows** holds the defaults a fresh workflow and its steps begin
+from: whether a new step may use **tools**, **skills** and **memory**, and the
+**stall watchdog** a new workflow carries. Every one stays overridable per
+workflow and per step — this only decides the starting point, so a fleet that
+mostly transforms text can default tools off rather than switching each step by
+hand.
+
+One subtlety worth knowing: a default of *on* leaves the step's override unset
+so it simply inherits its agent, while a default of *off* is written onto the
+step explicitly — "inherit" would otherwise quietly turn it back on.
+
+## Steps run autonomously — they never stop to ask
+
+A workflow runs **unattended**: once you start it, there is no human sitting in
+the loop to answer a mid-run question. So every task step is launched with a
+strict autonomy directive — it must carry out its objective **directly on the
+input it was handed**, and it is explicitly forbidden from asking for
+clarification, presenting a menu of options, or emitting `NEED_INPUT`. If a
+detail is under-specified, the step picks the most reasonable interpretation and
+produces the deliverable anyway.
+
+This keeps bare chains flowing without careful prompting. A step like *note this
+joke from 0 to 10* just scores the joke it received, rather than stopping to ask
+"what did you mean by *note*?" — which would otherwise park the step **Blocked**
+and pause the entire run. (Gates are exempt: they follow their own PASS/FAIL
+contract described below.)
+
+## Gates and loop-back
+
+A step can be flagged as a **gate** instead of a plain task. A gate is a
+quality check that votes **PASS** or **FAIL** on the work so far, and on failure
+sends the run **back to an earlier step** to try again — enabling chains like:
+
+1. **Task** — *tell me a story*
+2. **Gate** — *ensure the story is safe for a kid; otherwise rerun step 1*
+3. **Task** — *note the provided story*
+
+You don't need special prompting. When a step is a gate, the coordinator appends
+a short instruction telling the agent to end its turn with a verdict:
+
+```
+OBJECTIVE_COMPLETE: PASS: <reason>
+OBJECTIVE_COMPLETE: FAIL: <reason>
+```
+
+- **PASS** → the workflow advances to the next step as usual.
+- **FAIL** → the gate's **on-fail target** step is re-driven, with the gate's
+  critique injected as a preamble so the retry knows *what* to fix. The run then
+  marches forward and naturally re-reaches the gate.
+- The verdict is **fail-open**: an empty or ambiguous answer counts as PASS, so a
+  gate never wedges the pipeline.
+
+A gate is **transparent to the data flow**: it judges the work but doesn't
+replace it. The step *after* a gate receives the last real producer's output —
+the material the gate validated — not the gate's terse `PASS: …` verdict. So in
+*tell a joke → is it kid-safe? → note the joke*, the final step sees the joke
+itself, exactly as if the gate weren't there.
+
+Because a gate is a **judge, not a producer**, its own output stays out of the
+deliverables: the raw `OBJECTIVE_COMPLETE: PASS: …` control line is never shown
+as the step's result, and the gate leaves **no artifact** on the shared board.
+The step just displays a plain `Passed — <reason>` / `Rejected — <reason>`
+verdict. More broadly, control directives (`OBJECTIVE_COMPLETE`, `ARTIFACT`,
+`PROGRESS`, …) are scrubbed from every step's *displayed* result — the raw turn
+is still kept internally for parsing and hand-off, but the plumbing never leaks
+into the work you read.
+
+Each loop-back bumps the gate's **attempt counter** (shown as a badge on the
+step). A workflow-level **max loops** cap (default **3**, range 1–25) bounds the
+retries: once a gate fails more times than the cap, the workflow stops in the
+`failed` state instead of looping forever. In the builder, a gate exposes an
+**on fail → step N** target (defaults to the previous runnable step) and the
+workflow carries the **max loops** value.
+
+## Human approval checkpoints
+
+A [gate](#gates-and-loop-back) is an *agent* judging the work. An **approval**
+step is a **human** judging it. The run **parks** on it — no agent runs, nothing
+is spent while it waits — until you decide. Put one in front of anything
+irreversible: sending the email, publishing the post, filing the ticket.
+
+While parked, the workflow reads `Needs you` and the detail board shows a
+decision panel with the checkpoint's brief and a note box. You can:
+
+- **Approve & continue** — the pipeline resumes at the next step. Your note is
+  recorded on the trace **and forwarded to every later step** as a reviewer
+  directive. That's the escape hatch for a mid-run course correction: approve the
+  Italian joke but add *"translate it into French before sending"* and the
+  sending step obeys, without editing the workflow. The note rides *alongside*
+  the content — an approval publishes nothing itself, so the material the
+  reviewer saw is still what flows downstream.
+- **Reject** — what happens next is the checkpoint's **reject policy**:
+
+| Policy | On reject |
+| --- | --- |
+| **Send back** (default) | Loops back to an earlier step to be redone, with your note injected as the feedback to address — the same machinery (and `max loops` cap) a failing gate uses. |
+| **Stop the run** | Ends the run there. Recorded as `cancelled`, not `failed`: nothing broke, you decided. This is the "don't do this at all" answer a checkpoint in front of an irreversible action exists for. |
+| **Skip ahead** | Abandons the rejected work and carries on with the following step. |
+
+The policy is set per checkpoint in the builder, but it isn't a cage — the
+decision panel always also offers **Stop the run**, so a reviewer can end a run
+outright no matter how the checkpoint was configured.
+
+An approval step has **no agent**, is transparent to the data flow (like a gate,
+it forwards the last real producer's output rather than anything of its own), and
+appears in the run trace as its own violet `Approval` row.
+
+## Per-step instructions
+
+A step is a *reference* to an agent, and the same agent can appear in many
+workflows. **Step instructions** are the extra mandate for that stage only,
+layered on top of the agent's standing objective and taking precedence where they
+differ. They appear **only on a step that reuses an existing agent** — that's the
+one case where they add to a prompt written elsewhere. An Inline step, or an
+Agent step whose agent is authored on the spot, already states its job in its own
+field, and a second box would ask the same question twice:
+
+> **Agent objective:** "Summarise the material you're given."
+> **Step instructions:** "Three bullets, exec tone, lead with the number."
+
+That's what makes an agent genuinely reusable — one `Summariser` row can be the
+terse-bullets step in one pipeline and the long-form brief in another, with no
+cloning. Instructions land at the *end* of the kickoff preamble, where they carry
+the most weight. On an approval step, the instructions are what the reviewer sees
+on the decision panel.
+
+## When a step fails: retry, carry on, or stop
+
+By default any failed step stops the run. Each step now carries its own **failure
+policy**:
+
+- **Stop run** (default) — today's behaviour, the conservative choice.
+- **Retry** — re-drive the same step up to *N* times (1–10), with the failure
+  reason injected so the retry isn't a blind repeat. Each attempt appends its own
+  trace row.
+- **Carry on** — record the failure and move to the next step. For steps whose
+  output is a nice-to-have: an optional enrichment, a notification.
+
+Retry budgets are **per run**, so a scheduled pipeline doesn't exhaust its
+allowance over its lifetime.
+
+### The stall watchdog
+
+An agent that never returns would otherwise park an unattended pipeline in
+`running` forever. Set a **stall watchdog** on the workflow (in minutes; `0` =
+off, the default) and any step running longer than that is declared stuck: the
+coordinator cancels its agent and puts it through the *same* failure policy
+above — so a timeout can retry, be skipped, or stop the run exactly like any
+other failure. The trace records it as a failure with a `watchdog` note.
+
+## Cost: what the run actually spent
+
+Every step attempt records its **token spend** — the delta across that turn — and
+the run rolls them up. The run header shows the total, and each trace row shows
+its own, so a gate that looped four times reveals what each pass cost. It turns
+"did it work?" into "was it worth it?", and makes an expensive loop obvious.
+
+## What each step is fed
+
+By default a step inherits the **previous producer's output plus the accumulated
+artifact board** — the implicit hand-off that makes a bare chain work with no
+wiring. In a long pipeline that gets expensive and unfocused, so each step can
+choose:
+
+| Context | The step receives |
+| --- | --- |
+| **Previous step** (default) | The last real producer's output + every earlier step's artifacts. |
+| **Pick steps** | Only the earlier steps you name (by step number). The last one named is the hand-off; the rest form its reference board. |
+| **None** | Nothing upstream — the step runs on its own objective and the run brief alone. |
+
+The run brief, reviewer directives and the step's own instructions are *always*
+delivered; this setting governs the **material**, not the intent.
+
+## What each step may use
+
+A step can also narrow what its agent draws on. Each toggle is tri-state —
+**auto** (inherit the agent's own setting), **on**, or **off**:
+
+- **Tools** — MCP servers. Tool schemas are a large *fixed* context cost paid on
+  every turn, so a step that only has to rewrite a paragraph shouldn't carry the
+  whole catalogue. Off means no tool servers at all.
+- **Skills** — stored skills. Off tells the agent to solve the task directly.
+  (Skills are files the SDK discovers, so this is a directive, not a sandbox.)
+- **Memory** — long-term memory. A pure transform step is usually better off not
+  consulting it.
+
+Because these change what's baked into the session, flipping one rebuilds the
+agent's session on its next run. The agent itself carries the same three toggles
+as its baseline (editable from the step modal); the step overrides them for the
+duration of its turn.
+
+## One voice for the whole pipeline
+
+A workflow can select an **Assistant role**, applied to every step's agent while
+the workflow runs. Because agents are shared and reusable, the role is applied at
+launch rather than stamped onto the agent rows — so the same `Summariser` can be
+formal in one workflow and blunt in another. Leave it unset and each agent keeps
+its own role.
+
+## Notifications
+
+A pipeline that runs in the background is only useful if it can reach you. A
+workflow now raises a notification when it:
+
+- **needs you** — parked on a [human approval](#human-approval-checkpoints). This
+  one shows even when the app is focused, because the run is *blocked* until you
+  answer;
+- **finished**, or
+- **failed**.
+
+Step-to-step progress stays silent, and each transition notifies once, so a run
+that emits many updates doesn't nag. The `workflow.changed` event carries the run
+status and workflow name so the client can raise the notice without re-fetching.
+
+## Running and monitoring
+
+The workflow **detail board** shows the sequence as a horizontal strip of step
+nodes, each with a live status ring — **done**, **active**, **failed**, or
+**pending** — plus a lifecycle bar:
+
+- **Run** starts (or restarts) the workflow from the first runnable step. On a
+  re-run, each step agent's **artifacts are cleared** first so the fresh pass
+  isn't polluted by the previous one's output.
+- **Pause / Resume** halt the coordinator between steps and pick back up.
+- **Cancel** stops the run.
+
+Clicking a step opens a **modal** that drills into that agent's run — its
+timeline, artifacts, and answer — while the workflow stays live in the
+background. From there you can jump to the full agent in agents mode.
+
+### Run history and the step trace
+
+Every execution is recorded as a **run**. The detail board's **run header**
+surfaces the selected run's status, trigger, live current step, elapsed time and
+percent complete, and a **run picker** lets you scroll back through past
+executions without leaving the page. A collapsible **Run trace** below the strip
+renders the run as an append-only timeline — one row per step **attempt**,
+showing what each step **received** (the input context handed down from earlier
+steps) and **produced** (its output), plus gate verdicts and per-attempt
+duration.
+
+Because a [gate loop-back](#gates-and-loop-back) re-drives an earlier step, each
+retry appends a **fresh attempt row** (badged `attempt 2`, `attempt 3`, …)
+rather than overwriting the previous one — so the trace reads as a faithful,
+inspectable record of how the pipeline actually converged. The step modal mirrors
+this: it shows the **Input received** by that step and its full **Run history**
+across every attempt and run.
+
+Run traces are durable (backed by the `workflow_runs` / `workflow_run_steps`
+tables) and fetched via `GET /api/workflows/{id}/runs`.
+
+Individual runs are **deep-linkable**. The URL tracks the run you're looking at —
+`/workflows/<id>/run/latest` follows the live/newest run (and auto-advances when a
+new one fires), while `/workflows/<id>/run/<n>` pins run number `n` so you can
+bookmark or share it; a pinned run stays put even as later runs execute. Scrolling
+the run picker rewrites the URL to match.
+
+When the coordinator drives a step, the agent runs its turn **without** flagging
+itself as **unread** in the [Agents](./agents.md) section. That badge is reserved
+for genuinely autonomous runs — ones you start manually or that fire on a
+schedule — so a busy workflow doesn't leave a trail of unread agents behind it.
+You still see every step's output in the run trace and the step modal.
+
+## The run brief: one workflow, a different subject each run
+
+A workflow definition is meant to be **generic and reusable** ("analyse it →
+review it → report it"). What changes run to run is the *subject*. That's the
+**run brief**: an optional free-text input you attach when you start a run.
+
+Click the caret next to **Run** to open the brief composer, describe what this
+particular run is about — the file to analyse, the topic to research, the
+constraints to honour — and hit **Run with brief** (or `⌘↵`). Leave it empty and
+the pipeline runs exactly as before: **fully autonomous**, on its steps' own
+objectives.
+
+```
+Analyse /data/q3-sales.csv — focus on the EMEA region and
+flag anything below target.
+```
+
+The brief leads **every step's** kickoff preamble, ahead of the upstream
+hand-off, framed as the run's primary subject. That matters beyond step one: a
+[gate](#gates-and-loop-back) three stages down can judge the work *against what
+was actually asked for*, a loop-back re-drives the producer with the brief still
+attached, and a final reporting step knows which file it was ever about — without
+any step having to re-forward it by hand.
+
+The brief is stored on the run, so it shows on the run header (and in each step's
+**Input received**) when you scroll back through history — a past run is
+self-explanatory rather than a mystery result. Runs started **on a schedule**
+carry no brief by design; a **webhook** may supply one by posting a body
+(`{"input": "…"}`, or any JSON/text payload, handed over verbatim).
+
+## Archiving
+
+A workflow archives like a topic, chat or agent: **Archive** on the detail board
+hides it from the gallery while keeping its definition *and* its run history.
+Restore or permanently delete it from the shared **Archive** panel, which now has
+a Workflows tab. An archived workflow stops counting as a live reference, so it
+disappears from the "used in workflows" list on the agents it referenced.
+
+Deleting a workflow never deletes the reusable agents it pointed at — only the
+private vessels belonging to its own inline steps.
+
+## Triggers and scheduling
+
+A workflow can be created **without running it** — it sits in `draft`/`idle`
+until something triggers the first step:
+
+- **Manual** — the **Run** button, optionally with a
+  [run brief](#the-run-brief-one-workflow-a-different-subject-each-run).- **Schedule** — the schedule editor is the same recurrence control scheduled
+  topics and agents use: either an interval ("every *N* minutes / hours / days")
+  or a **time of day on chosen weekdays**. The scheduler fires the workflow like
+  any other recurring job.
+- **Webhook** — mint a token to expose a `POST /api/workflows/hooks/{token}`
+  URL that kicks off the run. Copy it from the **Webhook** button, or revoke it
+  from the bin beside it (revoking breaks the URL immediately, so it asks first).
+  Any body you post becomes the run's brief.
+
+## API surface
+
+Workflows live under `/api/workflows`:
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /api/workflows` | List workflows (`?includeArchived`) |
+| `POST /api/workflows` | Create a workflow with steps |
+| `GET /api/workflows/{id}` | Fetch one |
+| `GET /api/workflows/{id}/runs` | List persisted run traces (`?limit`) |
+| `PATCH /api/workflows/{id}` | Update fields / replace steps |
+| `DELETE /api/workflows/{id}` | Delete |
+| `POST /api/workflows/{id}/run` \| `/pause` \| `/resume` \| `/cancel` | Lifecycle. `run` takes an optional `{ "input": "…" }` brief |
+| `POST /api/workflows/{id}/approve` \| `/reject` | Clear or bounce a human approval checkpoint (`{ "note": "…", "action": "rework\|stop\|skip" }`) |
+| `POST /api/workflows/{id}/archive` \| `/unarchive` | Archive toggle |
+| `PUT /api/workflows/{id}/schedule` | Configure the schedule |
+| `POST` \| `DELETE /api/workflows/{id}/webhook` | Mint / revoke a webhook token |
+| `POST /api/workflows/hooks/{token}` | Trigger via webhook (body → run brief) |
+
+Lifecycle changes broadcast a `workflow.changed` [SSE event](/reference/api) so
+the dashboard live-updates without polling.

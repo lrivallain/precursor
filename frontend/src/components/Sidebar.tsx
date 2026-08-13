@@ -28,6 +28,7 @@ import {
   Search,
   SquareKanban,
   StickyNote,
+  Workflow as WorkflowIcon,
 } from "lucide-react";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
 import { SECTION_COLORS } from "../lib/sections";
@@ -46,7 +47,14 @@ import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuItem } from "./ContextMenu";
 
-export type SidebarMode = "topics" | "chats" | "live" | "workspaces" | "agents" | "kanban";
+export type SidebarMode =
+  | "topics"
+  | "chats"
+  | "live"
+  | "workspaces"
+  | "agents"
+  | "workflows"
+  | "kanban";
 
 // Label for the header "New" action, which is mode-aware.
 function newActionLabel(mode: SidebarMode): string {
@@ -59,6 +67,8 @@ function newActionLabel(mode: SidebarMode): string {
       return "New workspace";
     case "agents":
       return "New agent";
+    case "workflows":
+      return "New workflow";
     default:
       return "New topic";
   }
@@ -82,10 +92,13 @@ interface Props {
   /** Rendered in the body when mode === "workspaces" (the workspace list). */
   workspaceSlot?: ReactNode;
   /** Rendered in the body when mode === "agents" (the agent session list). */
-  agentSlot?: ReactNode;
   /** Rendered in the body when mode === "kanban" (the project picker list). */
   kanbanSlot?: ReactNode;
   onToggleCollapsed: () => void;
+  /** Whether the collapsed rail offers an "expand" button. Agents mode locks
+      the sidebar to rail-only (the fleet dashboard is the list), so it hides
+      the affordance to avoid a no-op expand. */
+  expandable?: boolean;
   onSelect: (id: number) => void;
   /** Mode-aware "New" action (topic / chat / workspace) in the header. */
   onNew: () => void;
@@ -140,9 +153,9 @@ export function Sidebar({
   chatSlot,
   liveSlot,
   workspaceSlot,
-  agentSlot,
   kanbanSlot,
   onToggleCollapsed,
+  expandable = true,
   onSelect,
   onNew,
   onCreate,
@@ -216,14 +229,16 @@ export function Sidebar({
           height={28}
           className="rounded-md mb-1"
         />
-        <button
-          className="p-2 rounded hover:bg-surface"
-          aria-label="Expand sidebar"
-          data-tooltip="Expand sidebar"
-          onClick={onToggleCollapsed}
-        >
-          <PanelLeftOpen size={18} />
-        </button>
+        {expandable && (
+          <button
+            className="p-2 rounded hover:bg-surface"
+            aria-label="Expand sidebar"
+            data-tooltip="Expand sidebar"
+            onClick={onToggleCollapsed}
+          >
+            <PanelLeftOpen size={18} />
+          </button>
+        )}
         <div className="my-1 h-px w-6 bg-border" />
         <SectionRailButtons
           mode={mode}
@@ -360,8 +375,6 @@ export function Sidebar({
         liveSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
-      ) : mode === "agents" ? (
-        agentSlot
       ) : mode === "kanban" ? (
         kanbanSlot
       ) : (
@@ -820,6 +833,7 @@ const MODES: ModeDef[] = [
   { mode: "live", label: "Live", Icon: Radio },
   { mode: "workspaces", label: "Files", Icon: FolderGit2 },
   { mode: "agents", label: "Agents", Icon: Bot },
+  { mode: "workflows", label: "Workflows", Icon: WorkflowIcon },
   { mode: "kanban", label: "Kanban", Icon: SquareKanban },
 ];
 

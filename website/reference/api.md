@@ -61,7 +61,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. |
 | `skills` / `memories` | Skill enablement and long-term memory. |
 | `schedules` | Topic/agent recurrence and **Run now**. |
-| `agents` | Agent sessions, timelines, and read/unread state. |
+| `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
 | `stt` | Short-lived Azure Speech token minting for live sessions. |
 | `plugins` | Descriptors for frontend extensions contributed by plugins. |
 

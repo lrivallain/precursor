@@ -78,6 +78,21 @@ The [skills](/features/skills-memory) folder is resolved the way the Copilot CLI
 resolves its home: `COPILOT_HOME` → `XDG_CONFIG_HOME/copilot` → `~/.copilot`, with
 a `PRECURSOR_SKILLS_DIR` override.
 
+## Agents
+
+[Agents mode](/features/agents) is toggled at runtime (**Settings → Agents**),
+but the [agent orchestrator](/features/agents#orchestrating-agents) governance
+has two process-level knobs:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
+| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
+
+Per-agent **token budget** and **max retries** aren't env vars — they're set in
+each agent's settings drawer (or baked into a
+[blueprint](/features/agents#blueprints-reusable-templates)).
+
 ## MCP tool servers
 
 Most [MCP](/features/mcp) built-ins are toggled **at runtime** (**Settings →

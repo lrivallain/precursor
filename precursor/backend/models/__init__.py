@@ -1,8 +1,17 @@
 """SQLAlchemy ORM models."""
 
+from precursor.backend.models.agent_artifact import (
+    AGENT_ARTIFACT_KINDS,
+    AgentArtifact,
+)
+from precursor.backend.models.agent_blueprint import AgentBlueprint
 from precursor.backend.models.agent_event import AgentEventRecord
 from precursor.backend.models.agent_schedule import AgentSchedule
 from precursor.backend.models.agent_session import AgentSession
+from precursor.backend.models.agent_trigger import (
+    AGENT_TRIGGER_TYPES,
+    AgentTrigger,
+)
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
@@ -31,15 +40,28 @@ from precursor.backend.models.skill import Skill
 from precursor.backend.models.topic import Topic
 from precursor.backend.models.topic_schedule import TopicSchedule
 from precursor.backend.models.usage import UsageRecord
+from precursor.backend.models.workflow import (
+    WORKFLOW_STATUSES,
+    Workflow,
+    WorkflowRun,
+    WorkflowRunStep,
+    WorkflowStep,
+)
 from precursor.backend.models.workspace import Workspace
 
 __all__ = [
+    "AGENT_ARTIFACT_KINDS",
+    "AGENT_TRIGGER_TYPES",
     "COLLECTION_ACCENTS",
     "DEFAULT_COLLECTION_ACCENT",
     "DEFAULT_COLLECTION_NAME",
+    "WORKFLOW_STATUSES",
+    "AgentArtifact",
+    "AgentBlueprint",
     "AgentEventRecord",
     "AgentSchedule",
     "AgentSession",
+    "AgentTrigger",
     "AppSetting",
     "Attachment",
     "Base",
@@ -62,5 +84,9 @@ __all__ = [
     "Topic",
     "TopicSchedule",
     "UsageRecord",
+    "Workflow",
+    "WorkflowRun",
+    "WorkflowRunStep",
+    "WorkflowStep",
     "Workspace",
 ]

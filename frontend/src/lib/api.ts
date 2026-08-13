@@ -1,14 +1,25 @@
 import type {
+  AgentArtifact,
+  AgentArtifactCreate,
+  AgentBlueprint,
+  AgentBlueprintCreate,
+  AgentBlueprintInstantiate,
+  AgentBlueprintUpdate,
   AgentEvent,
+  AgentInboxItem,
   AgentLink,
+  AgentMetrics,
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
   AgentSchedule,
+  AgentApprovalPolicy,
   AgentScheduleCreate,
   AgentScheduleUpdate,
   AgentSession,
   AgentSessionCreate,
+  AgentTrigger,
+  AgentTriggerCreate,
   AppVersion,
   BackupRunResult,
   Attachment,
@@ -83,6 +94,13 @@ import type {
   Topic,
   TopicNode,
   UsageStats,
+  Workflow,
+  WorkflowCreate,
+  WorkflowRun,
+  WorkflowScheduleUpdate,
+  WorkflowStepRejectPolicy,
+  WorkflowSummary,
+  WorkflowUpdate,
   Workspace,
   WorkspaceCreate,
   WorkspaceFileContent,
@@ -356,6 +374,8 @@ export const api = {
       }),
     cancel: (id: number) =>
       request<AgentSession>(`/api/agents/${id}/cancel`, { method: "POST" }),
+    start: (id: number | string) =>
+      request<AgentSession>(`/api/agents/${id}/start`, { method: "POST" }),
     resume: (id: number | string) =>
       request<AgentSession>(`/api/agents/${id}/resume`, { method: "POST" }),
     resolvePermission: (
@@ -377,13 +397,30 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ title }),
       }),
-    update: (id: number, payload: { title?: string; task?: string; role_id?: number | null }) =>
+    update: (
+      id: number,
+      payload: {
+        title?: string;
+        task?: string;
+        role_id?: number | null;
+        autonomy_enabled?: boolean;
+        max_steps?: number;
+        approval_policy?: AgentApprovalPolicy | null;
+        token_budget?: number | null;
+        max_retries?: number;
+        use_mcp?: boolean;
+        use_skills?: boolean;
+        use_memory?: boolean;
+      },
+    ) =>
       request<AgentSession>(`/api/agents/${id}`, {
         method: "PATCH",
         body: JSON.stringify(payload),
       }),
     remove: (id: number) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
     listArchived: () => request<AgentSession[]>(`/api/agents/archived`),
+    /** Workflows that reference this agent (archived ones excluded). */
+    workflows: (id: number) => request<WorkflowSummary[]>(`/api/agents/${id}/workflows`),
     archive: (id: number) =>
       request<AgentSession>(`/api/agents/${id}/archive`, { method: "POST" }),
     unarchive: (id: number) =>
@@ -407,6 +444,127 @@ export const api = {
       request<void>(`/api/agents/${id}/schedule`, { method: "DELETE" }),
     runScheduleNow: (id: number | string) =>
       request<AgentSchedule>(`/api/agents/${id}/schedule/run`, { method: "POST" }),
+
+    // --- Orchestrator: aggregate observability + unified inbox -------------
+    // Fleet-wide rollup (status counts, token totals, concurrency headroom).
+    metrics: () => request<AgentMetrics>(`/api/agents/metrics`),
+    // Everything waiting on a human: raised questions, permission gates, budget parks.
+    inbox: () => request<AgentInboxItem[]>(`/api/agents/inbox`),
+
+    // --- Blueprints (reusable agent templates) ----------------------------
+    listBlueprints: () => request<AgentBlueprint[]>(`/api/agents/blueprints`),
+    createBlueprint: (data: AgentBlueprintCreate) =>
+      request<AgentBlueprint>(`/api/agents/blueprints`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    updateBlueprint: (id: number, data: AgentBlueprintUpdate) =>
+      request<AgentBlueprint>(`/api/agents/blueprints/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    deleteBlueprint: (id: number) =>
+      request<void>(`/api/agents/blueprints/${id}`, { method: "DELETE" }),
+    instantiateBlueprint: (id: number, data: AgentBlueprintInstantiate) =>
+      request<AgentSession>(`/api/agents/blueprints/${id}/instantiate`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    // --- Shared artifacts / blackboard ------------------------------------
+    listArtifacts: (id: number) =>
+      request<AgentArtifact[]>(`/api/agents/${id}/artifacts`),
+    getArtifact: (id: number, artifactId: number) =>
+      request<AgentArtifact>(`/api/agents/${id}/artifacts/${artifactId}`),
+    // Browser-openable URL for an artifact's raw body (kind-appropriate
+    // content-type; a `link` artifact redirects to its URL). Used for the
+    // "Open raw" affordance and programmatic/download access.
+    rawArtifactUrl: (id: number, artifactId: number) =>
+      `/api/agents/${id}/artifacts/${artifactId}/raw`,
+    createArtifact: (id: number, data: AgentArtifactCreate) =>
+      request<AgentArtifact>(`/api/agents/${id}/artifacts`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    // --- Triggers (external webhooks) -------------------------------------
+    listTriggers: (id: number) =>
+      request<AgentTrigger[]>(`/api/agents/${id}/triggers`),
+    createTrigger: (id: number, data: AgentTriggerCreate = {}) =>
+      request<AgentTrigger>(`/api/agents/${id}/triggers`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    deleteTrigger: (id: number, triggerId: number) =>
+      request<void>(`/api/agents/${id}/triggers/${triggerId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  workflows: {
+    // Workflows: reusable, named sequences of independent agents. The *workflow*
+    // owns the chaining (not agent-to-agent dependencies). Live progress arrives
+    // via the `workflow.changed` SSE event.
+    list: (opts?: { includeArchived?: boolean }) => {
+      const qs = opts?.includeArchived ? "?include_archived=true" : "";
+      return request<Workflow[]>(`/api/workflows${qs}`);
+    },
+    get: (id: number) => request<Workflow>(`/api/workflows/${id}`),
+    // Durable run history (newest first), each with its per-step attempt traces.
+    runs: (id: number, limit?: number) => {
+      const qs = limit ? `?limit=${limit}` : "";
+      return request<WorkflowRun[]>(`/api/workflows/${id}/runs${qs}`);
+    },
+    create: (data: WorkflowCreate) =>
+      request<Workflow>(`/api/workflows`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: number, data: WorkflowUpdate) =>
+      request<Workflow>(`/api/workflows/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    remove: (id: number) => request<void>(`/api/workflows/${id}`, { method: "DELETE" }),
+    // Lifecycle controls — the workflow coordinates its step agents.
+    run: (id: number, input?: string | null) =>
+      request<Workflow>(`/api/workflows/${id}/run`, {
+        method: "POST",
+        body: JSON.stringify({ input: input?.trim() ? input.trim() : null }),
+      }),
+    approve: (id: number, note?: string | null) =>
+      request<Workflow>(`/api/workflows/${id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ note: note?.trim() ? note.trim() : null }),
+      }),
+    reject: (id: number, note?: string | null, action?: WorkflowStepRejectPolicy | null) =>
+      request<Workflow>(`/api/workflows/${id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({
+          note: note?.trim() ? note.trim() : null,
+          action: action ?? null,
+        }),
+      }),
+    pause: (id: number) => request<Workflow>(`/api/workflows/${id}/pause`, { method: "POST" }),
+    resume: (id: number) => request<Workflow>(`/api/workflows/${id}/resume`, { method: "POST" }),
+    cancel: (id: number) => request<Workflow>(`/api/workflows/${id}/cancel`, { method: "POST" }),
+    listArchived: () => request<Workflow[]>(`/api/workflows/archived`),
+    archive: (id: number) => request<Workflow>(`/api/workflows/${id}/archive`, { method: "POST" }),
+    unarchive: (id: number) =>
+      request<Workflow>(`/api/workflows/${id}/unarchive`, { method: "POST" }),
+    // Recurrence config (PUT replaces the whole schedule block).
+    setSchedule: (id: number, data: WorkflowScheduleUpdate) =>
+      request<Workflow>(`/api/workflows/${id}/schedule`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    // Webhook trigger: mint returns the workflow with `webhook_token` populated.
+    mintWebhook: (id: number) =>
+      request<Workflow>(`/api/workflows/${id}/webhook`, { method: "POST" }),
+    revokeWebhook: (id: number) =>
+      request<Workflow>(`/api/workflows/${id}/webhook`, { method: "DELETE" }),
+    // Public webhook URL to copy (fires the workflow when POSTed to).
+    webhookUrl: (token: string) => `/api/workflows/hooks/${token}`,
   },
 
   messages: {

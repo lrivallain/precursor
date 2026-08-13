@@ -100,6 +100,12 @@ Highlights:
   `system` / `tool`. Large `tool` results can be age-pruned in place.
 - **`TopicSchedule`** / **`AgentSchedule`** — recurrence config + run state
   (interval, weekday mask, time-of-day, timezone, lease/status).
+- **`AgentTrigger`** / **`AgentArtifact`** / **`AgentBlueprint`** — the
+  [agent orchestrator](/features/agents#orchestrating-agents): webhook/manual
+  triggers, the shared-artifact blackboard, and reusable task+governance
+  templates. `AgentSession` also carries
+  `token_budget`, `max_retries`, `retry_count`, `retry_at`, and cumulative
+  `total_input_tokens` / `total_output_tokens`.
 - **`Workspace`** — a git clone or local directory.
 - **`Skill`** — an enablement record for a file-backed `SKILL.md` prompt preset.
 - **`Memory`** — long-term notes injected into the system prompt.
@@ -181,7 +187,11 @@ See the [MCP feature guide](/features/mcp) for the user-facing side.
 async ticker enqueues due `TopicSchedule` and `AgentSchedule` rows, a bounded
 worker pool runs each, with DB row leasing for crash recovery. Scheduled prompts
 that start with a slash command are dispatched to that command's backend action;
-`/guard` directives gate a run behind a cheap MCP probe. See the
+`/guard` directives gate a run behind a cheap MCP probe. The same ticker also
+drives the [agent orchestrator](/features/agents#orchestrating-agents):
+re-running failed agents whose exponential-backoff retry is due, sweeping
+orphaned `pending` agents (via `services/agents/fleet.py`), and honouring the
+concurrency governor. See the
 [scheduler feature guide](/features/scheduler).
 
 ## Workspaces

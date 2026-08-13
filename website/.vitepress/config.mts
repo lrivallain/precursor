@@ -89,6 +89,7 @@ export default withMermaid(
             { text: "Chats", link: "/features/chats" },
             { text: "Live sessions", link: "/features/live-sessions" },
             { text: "Agents", link: "/features/agents" },
+            { text: "Workflows", link: "/features/workflows" },
             { text: "Workspaces & files", link: "/features/workspaces" },
             { text: "Kanban board", link: "/features/kanban" },
             { text: "Skills & memory", link: "/features/skills-memory" },

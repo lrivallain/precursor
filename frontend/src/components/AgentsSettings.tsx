@@ -5,10 +5,13 @@ import { Select } from "./Select";
 import { RefineTextarea } from "./RefineTextarea";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 import { useConfirm } from "./ConfirmDialog";
+import { AgentBlueprintsSection } from "./AgentBlueprints";
 import type { AgentApprovalPolicy, AgentModelInfo, AgentPermissionGrant } from "../lib/types";
 
 // Approval policies, ordered most → least cautious, for the settings dropdown.
-const APPROVAL_POLICIES: {
+// Exported so per-agent selectors (create form + settings drawer) reuse the
+// exact same wording as the global default control.
+export const APPROVAL_POLICIES: {
   value: AgentApprovalPolicy;
   label: string;
   hint: string;
@@ -42,6 +45,7 @@ export function AgentsSettings() {
 
   const enabled = settings?.agents_enabled ?? false;
   const available = settings?.agents_available ?? false;
+  const runtimeStarted = settings?.agents_runtime_started ?? false;
   const reason = settings?.agents_unavailable_reason ?? null;
   const defaultModel = settings?.agents_default_model ?? "";
   const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
@@ -150,7 +154,17 @@ export function AgentsSettings() {
         </div>
       )}
 
-      {enabled && available && (
+      {enabled && available && !runtimeStarted && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          The Copilot runtime is installed but didn&apos;t start in this process —
+          agents won&apos;t be driven until it&apos;s (re)started. This usually means
+          the SDK client failed to launch (often after a dev auto-reload). Restart
+          the server to recover; any agents left mid-turn are reset to
+          <span className="font-medium"> Interrupted</span> so you can Resume them.
+        </div>
+      )}
+
+      {enabled && available && runtimeStarted && (
         <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300">
           The Copilot runtime is available. Open the Agents tab in the sidebar to
           start a task.
@@ -311,6 +325,10 @@ export function AgentsSettings() {
           )}
         </div>
       )}
+
+      <div className="border-t border-border pt-4">
+        <AgentBlueprintsSection />
+      </div>
     </section>
   );
 }

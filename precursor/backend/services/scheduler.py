@@ -24,14 +24,14 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import AgentSchedule, TopicSchedule
+from precursor.backend.models import AgentSchedule, AgentSession, TopicSchedule
 from precursor.backend.services.app_settings import (
     resolve_agents_enabled,
     resolve_scheduled_run_timeout_seconds,
@@ -40,6 +40,9 @@ from precursor.backend.services.events import publish_agent_changed, publish_top
 from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.scheduled_commands import run_scheduled_prompt_with_timeout
 
+if TYPE_CHECKING:  # circular at runtime: the manager imports the scheduler
+    from precursor.backend.services.agents.manager import AgentManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,9 +50,11 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-# Agent statuses that mean a turn is in flight; a scheduled re-run is skipped
-# (not errored) while one is active so it never stomps an unfinished run.
-_AGENT_BUSY_STATUSES = {"pending", "running", "needs_approval"}
+# Agent statuses that mean a turn is in flight or awaiting a human; a scheduled
+# re-run is skipped (not errored) while one is active so it never stomps an
+# unfinished run or discards a question the agent parked for the user. A
+# ``completed`` agent is *not* busy — a cadence should re-run it next tick.
+_AGENT_BUSY_STATUSES = {"pending", "running", "needs_approval", "blocked"}
 
 
 class _SkipRun(Exception):
@@ -115,9 +120,123 @@ class Scheduler:
             except Exception:
                 logger.exception("Scheduler ticker iteration failed")
             try:
+                await self._run_agent_maintenance()
+            except Exception:
+                logger.exception("Scheduler agent maintenance failed")
+            try:
                 await asyncio.sleep(poll)
             except asyncio.CancelledError:
                 break
+
+    async def _run_agent_maintenance(self) -> None:
+        """Per-tick agent upkeep: fire due retries and start orphaned pending agents.
+
+        Kept separate from the scheduled-cadence path (``_enqueue_due``): these
+        are event-driven runtime mechanics, not recurrence. The manager owns the
+        runtime, so we only fire when Agents mode is actually up.
+        """
+        from precursor.backend.services.agents.manager import get_agent_manager
+
+        manager = get_agent_manager()
+        if not manager.ready:
+            return
+
+        now = _now()
+        async with SessionLocal() as session:
+            due_retries = (
+                (
+                    await session.execute(
+                        select(AgentSession.id).where(
+                            AgentSession.status == "failed",
+                            AgentSession.next_retry_at.is_not(None),
+                            AgentSession.next_retry_at <= now,
+                            AgentSession.archived_at.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for agent_id in due_retries:
+            await manager.retry_agent(int(agent_id))
+
+        # Backstop: start any orphaned ``pending`` agent whose kickoff was lost
+        # (e.g. the app restarted mid-spawn), respecting the concurrency cap.
+        await manager.release_ready_fleet()
+
+        try:
+            await self._enqueue_due_workflows(manager)
+        except Exception:
+            logger.exception("Scheduler workflow maintenance failed")
+
+        try:
+            await self._sweep_stalled_workflow_steps(manager)
+        except Exception:
+            logger.exception("Workflow stall watchdog failed")
+
+    async def _sweep_stalled_workflow_steps(self, manager: AgentManager) -> None:
+        """Unwedge workflow steps that have run past their timeout.
+
+        Opt-in per workflow (``step_timeout_seconds``); the coordinator cancels
+        the stuck agent and applies the step's ``on_error`` policy, so an
+        unattended pipeline can't sit in ``running`` forever behind a hung turn.
+        """
+        from precursor.backend.services.agents import workflow as workflow_svc
+
+        async with SessionLocal() as session:
+            swept = await workflow_svc.sweep_stalled_steps(session, manager)
+        if swept:
+            logger.info("Workflow watchdog intervened in %s stalled step(s)", swept)
+
+    async def _enqueue_due_workflows(self, manager: AgentManager) -> None:
+        """Start scheduled workflows that are due and re-anchor their next run.
+
+        Workflows carry their own recurrence + ``status``; a due workflow whose
+        status is not ``running`` is started via the coordinator, then its
+        ``next_run_at`` is recomputed so it self-heals even if the start fails.
+        """
+        from precursor.backend.models import Workflow
+        from precursor.backend.services.agents import workflow as workflow_svc
+
+        now = _now()
+        async with SessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(Workflow.id).where(
+                            Workflow.schedule_enabled.is_(True),
+                            Workflow.next_run_at.is_not(None),
+                            Workflow.next_run_at <= now,
+                            Workflow.status != "running",
+                            Workflow.archived_at.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        for workflow_id in rows:
+            async with SessionLocal() as session:
+                workflow = await session.get(Workflow, int(workflow_id))
+                if workflow is None:
+                    continue
+                # Re-anchor the next run first so a start failure still reschedules.
+                workflow.next_run_at = compute_next_run(
+                    now,
+                    workflow.interval_seconds or 86400,
+                    workflow.days_of_week,
+                    workflow.run_at_minute,
+                    workflow.timezone,
+                )
+                await session.commit()
+            async with SessionLocal() as session:
+                try:
+                    await workflow_svc.start_workflow(
+                        session, manager, int(workflow_id), trigger="schedule"
+                    )
+                except Exception:
+                    logger.exception("Failed to start scheduled workflow %s", workflow_id)
 
     async def _enqueue_due(self) -> None:
         now = _now()
