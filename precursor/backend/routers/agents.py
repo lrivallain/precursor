@@ -718,9 +718,8 @@ async def resolve_permission(
     )
     if not matched:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No pending permission request")
-    # The session resumes; reflect that it's working again.
-    agent.status = "running"
-    await session.commit()
+    # The manager already flipped the agent back to ``running`` as it resolved;
+    # reload so the response reflects that rather than the parked status.
     await session.refresh(agent)
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id

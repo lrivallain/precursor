@@ -4478,13 +4478,13 @@ async def test_workflow_read_surfaces_a_steps_parked_permission() -> None:
         await _set_agents_enabled(False)
 
 
-async def test_approving_a_steps_permission_puts_the_run_back_in_flight() -> None:
-    """Resolving the gate must un-pause the workflow, not just the agent.
+async def test_a_permission_gate_does_not_park_the_run() -> None:
+    """Waiting on a tool decision is not the same as being blocked.
 
-    The block paused the run and closed the step's trace, and
-    ``advance_for_agent`` only ever looks at *running* workflows. Without this,
-    an approved agent finishes its turn into a pipeline that stopped listening —
-    the board sits on "Blocked" forever and the run never moves.
+    The turn is still alive and resumes by itself once the gate is answered, so
+    pausing the run for it meant *every tool call* closed the step's trace and
+    demanded a manual "Resume" — an agent making five calls blocked five times.
+    The run stays running with its trace open; only the card is surfaced.
     """
     from precursor.backend.db import SessionLocal
     from precursor.backend.models.workflow import Workflow
@@ -4496,16 +4496,92 @@ async def test_approving_a_steps_permission_puts_the_run_back_in_flight() -> Non
     agent_id = agents[0]
     assert agent_id is not None
 
-    # The step's agent parks on a tool-permission request → run pauses.
     mgr = _FakeWorkflowManager()
     async with SessionLocal() as session:
         wf = await wf_mod._load_workflow(session, wf_id)
         assert wf is not None
         await wf_mod._advance_one(session, mgr, wf, agent_id, "needs_approval")
+
+    # Nothing re-driven, nothing recorded, nothing parked.
+    assert mgr.calls == []
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        assert wf.status == "running"
+        assert wf.current_step_id is not None
+    steps = await _run_steps(run_id)
+    assert [s.status for s in steps] == ["running"]
+    assert steps[0].finished_at is None
+
+    # Several gates in one step leave exactly one attempt, not one per call.
+    for _ in range(3):
+        async with SessionLocal() as session:
+            wf = await wf_mod._load_workflow(session, wf_id)
+            assert wf is not None
+            await wf_mod._advance_one(session, mgr, wf, agent_id, "needs_approval")
+    assert len(await _run_steps(run_id)) == 1
+
+    # And the turn that follows advances the pipeline exactly as normal.
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr2, wf, agent_id, "idle")
+    assert [c[0] for c in mgr2.calls] == [agents[1]]
+
+
+async def test_a_raised_question_still_parks_the_run() -> None:
+    """The other half of the split: ``blocked`` is a real stop.
+
+    The agent ended its turn asking something, so nothing resumes on its own —
+    the run parks and waits for a human to answer and re-drive it.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "blocked")
+
+    assert mgr.calls == []
     async with SessionLocal() as session:
         wf = await session.get(Workflow, wf_id)
         assert wf is not None and wf.status == "paused"
     assert [s.status for s in await _run_steps(run_id)] == ["blocked"]
+
+
+async def test_approving_a_permission_on_a_paused_run_puts_it_back_in_flight() -> None:
+    """A run parked *before* the split (or by a raised question) still recovers.
+
+    ``advance_for_agent`` only looks at running workflows, so resolving the gate
+    of a paused run without restoring it would leave the approved agent
+    finishing its turn into a pipeline that had stopped listening.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+    agent_id = agents[0]
+    assert agent_id is not None
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agent_id, "blocked")
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None and wf.status == "paused"
 
     class _PermissionManager(_FakeWorkflowManager):
         def __init__(self) -> None:
@@ -4518,7 +4594,7 @@ async def test_approving_a_steps_permission_puts_the_run_back_in_flight() -> Non
 
     pm = _PermissionManager()
     async with SessionLocal() as session:
-        wf, ok = await wf_mod.resolve_step_permission(
+        _wf, ok = await wf_mod.resolve_step_permission(
             session, pm, wf_id, request_id="req-1", decision="approve-once"
         )
     assert ok is True
@@ -4526,17 +4602,13 @@ async def test_approving_a_steps_permission_puts_the_run_back_in_flight() -> Non
 
     async with SessionLocal() as session:
         wf = await session.get(Workflow, wf_id)
-        assert wf is not None
-        # Listening again, and pointed back at the step that was parked.
-        assert wf.status == "running"
+        assert wf is not None and wf.status == "running"
 
-    # The continuing turn has an open trace to record into, appended as a new
-    # attempt rather than reopening the one closed as blocked.
+    # The continuing turn gets an open trace to record into.
     steps = await _run_steps(run_id)
     assert [s.status for s in steps] == ["blocked", "running"]
     assert [s.attempt for s in steps] == [1, 2]
 
-    # And the coordinator now advances when that turn lands.
     mgr2 = _FakeWorkflowManager()
     async with SessionLocal() as session:
         wf = await wf_mod._load_workflow(session, wf_id)
@@ -4568,3 +4640,49 @@ async def test_resolving_a_stale_permission_reports_it_rather_than_pretending() 
         wf = await session.get(Workflow, wf_id)
         # Untouched: nothing was resolved, so nothing is resumed.
         assert wf is not None and wf.status == "running"
+
+
+async def test_resolving_a_permission_unsticks_the_agent_status() -> None:
+    """Answering a gate must return the agent to ``running``.
+
+    ``needs_approval`` is *sticky*: the idle handler skips it so a trailing idle
+    can't mask a genuinely parked agent. An agent left sitting in it therefore
+    never reaches ``_on_idle`` — its turn finishes, the workflow is never told,
+    and the step shows "Running" forever. The manager owns this reset so every
+    caller gets it; when only the agents router did, approving from the workflow
+    board silently wedged the run.
+    """
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    agent_id = await _make_agent(title="Gated", status="needs_approval")
+
+    mgr = AgentManager()
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+
+    class _Live:
+        def __init__(self) -> None:
+            self.pending = {"req-1": fut}
+            self.pending_info: dict = {}
+            self.session_approvals: set = set()
+            self.grants: list = []
+
+    mgr._live[agent_id] = _Live()  # type: ignore[assignment]
+    # The decision object needs the SDK; the status reset is what's under test.
+    mgr._decision = lambda decision: decision  # type: ignore[method-assign]
+
+    assert await mgr.resolve_permission(agent_id, "req-1", "approve-once") is True
+    assert fut.result() == "approve-once"
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.status == "running"
+
+    # A request the runtime can't match changes nothing.
+    assert await mgr.resolve_permission(agent_id, "gone", "deny") is False

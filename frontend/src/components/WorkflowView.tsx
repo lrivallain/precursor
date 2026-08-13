@@ -477,19 +477,22 @@ export function WorkflowView({
   // both cases. The agent's own status is the signal — the workflow is merely
   // "paused" either way.
   const blockedAgent =
-    workflow.status === "paused" &&
-    currentStep?.agent &&
-    (currentStep.agent.status === "blocked" || currentStep.agent.status === "needs_approval")
+    // Only a *raised question* parks the run and wants an answer before
+    // resuming. A permission gate no longer pauses anything — the turn resumes
+    // itself once the card below is answered.
+    workflow.status === "paused" && currentStep?.agent?.status === "blocked"
       ? currentStep.agent
       : null;
 
-  // A blocked run opens its answer box unprompted: the agent asked a question,
-  // and hiding both the question and the field to answer it behind a chevron
-  // would make "Resume" look like the whole story when it usually isn't.
-  const blockedAgentId = blockedAgent?.id ?? null;
+  // A blocked run opens its answer box unprompted — but only when the block is a
+  // question the agent *asked*. A permission gate already renders its own
+  // approve/deny card, which is the actionable thing; auto-opening a second,
+  // empty box under it just buries the decision the operator came to make.
+  // Keyed off the same card the board shows, so the two can never disagree.
+  const asksAQuestion = blockedAgent != null && pendingPermission == null;
   useEffect(() => {
-    if (blockedAgentId != null) setShowGuidance(true);
-  }, [blockedAgentId]);
+    if (asksAQuestion) setShowGuidance(true);
+  }, [asksAQuestion]);
 
   // The step whose failure stopped the run, so it can be re-driven on its own
   // instead of replaying the whole pipeline. Read from the trace, because the
@@ -1001,7 +1004,11 @@ export function WorkflowView({
             <div className="mb-2 flex items-center gap-2">
               <HelpCircle size={13} className="text-amber-500" />
               <span className="text-xs font-medium text-fg">
-                {blockedAgent ? "Answer the question" : `Guidance for ${retryLabel}`}
+                {asksAQuestion
+                  ? "Answer the question"
+                  : blockedAgent
+                    ? "Guidance for the resumed step"
+                    : `Guidance for ${retryLabel}`}
               </span>
               <span className="text-[11px] text-muted">
                 {blockedAgent

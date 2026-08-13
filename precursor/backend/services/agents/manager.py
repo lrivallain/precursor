@@ -1409,6 +1409,19 @@ class AgentManager:
                 }
             )
         fut.set_result(self._decision(decision))
+        # The turn resumes, so the agent is working again. This *must* happen
+        # here rather than at each call site: ``needs_approval`` is a sticky
+        # status the idle handler deliberately skips (so a trailing idle can't
+        # mask a genuinely parked agent), which means an agent left sitting in it
+        # never reaches ``_on_idle`` — its turn finishes, the workflow is never
+        # told, and the step stays "Running" forever.
+        await self._patch(agent_id, status="running", blocked_question=None)
+        agent = await self._load(agent_id)
+        await publish_agent_changed(
+            agent_session_id=agent_id,
+            topic_id=agent.topic_id if agent else None,
+            chat_id=agent.chat_id if agent else None,
+        )
         return True
 
     def list_permissions(self) -> list[dict[str, Any]]:

@@ -1450,7 +1450,10 @@ export function AgentActivity({
   }
 
   return (
-    <div className="flex flex-col items-center">
+    // Same width the cockpit gives its timeline. The spine is centred on this
+    // column, so letting it stretch to the full trace width would fling the
+    // left- and right-aligned bubbles away from the arrows that connect them.
+    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col items-center">
       {segments.map((seg, idx) => {
         const align =
           seg.row.type === "node" && seg.row.cat === "user"

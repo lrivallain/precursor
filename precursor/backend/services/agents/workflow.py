@@ -57,7 +57,15 @@ logger = logging.getLogger(__name__)
 STEP_DONE_STATUSES = ("idle", "completed")
 # These divert the whole run instead of advancing.
 STEP_FAILED_STATUSES = ("failed",)
-STEP_BLOCKED_STATUSES = ("blocked", "needs_approval")
+# The agent stopped and *raised a question*: its turn is over and a human has to
+# answer before it can be re-driven, so the run parks.
+STEP_BLOCKED_STATUSES = ("blocked",)
+# The agent is waiting on a tool-permission decision. Deliberately NOT a blocked
+# status: the turn is still alive and resumes by itself the moment the gate is
+# answered. Pausing the run for it meant every single tool call in a step closed
+# the trace and demanded a manual "Resume" — an agent making five calls blocked
+# five times — so the run stays ``running`` and only the card is surfaced.
+STEP_AWAITING_PERMISSION_STATUSES = ("needs_approval",)
 STEP_CANCELLED_STATUSES = ("cancelled",)
 
 # --- Gate verdict grammar --------------------------------------------------
@@ -1129,9 +1137,19 @@ async def _advance_one(
         await _publish(workflow)
         return
 
+    if agent_status in STEP_AWAITING_PERMISSION_STATUSES:
+        # A tool-permission gate inside a live turn. The agent picks up where it
+        # left off as soon as the decision lands, so there is nothing to resume
+        # and nothing to record: leave the run ``running`` with its step trace
+        # open and just publish, which surfaces the approve/deny card on the
+        # board. The step timeout still applies, so a gate nobody ever answers is
+        # caught by the watchdog rather than parking the pipeline forever.
+        await _publish(workflow)
+        return
+
     if agent_status in STEP_BLOCKED_STATUSES:
-        # The step is waiting on a human (a question or approval). Hold the
-        # workflow paused on this step so a resume re-drives it once unblocked.
+        # The agent raised a question and ended its turn. Hold the workflow
+        # paused on this step so a resume re-drives it once answered.
         workflow.status = "paused"
         await _finalize_run_step(session, workflow, agent_id, status="blocked")
         await _finalize_run(session, workflow, status="paused")

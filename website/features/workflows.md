@@ -347,10 +347,11 @@ When a step does stop at a permission request, the approve / deny card appears
 step](#inline-steps-one-off-work-that-isnt-an-agent): its agent is hidden from
 the Agents section, so the board is the only place its decision can be made.
 
-Answering it also puts the paused run **back in flight**. Resolving the gate only
-un-parks the *agent*; the block had stopped the coordinator too, so without this
-the approved step would finish its turn into a pipeline that had stopped
-listening. The continuing turn is recorded as a fresh attempt in the run trace.
+Waiting on a permission does **not** pause the run. The turn is still alive and
+picks up the moment you answer, so there is nothing to resume — which matters
+because a step often makes several tool calls, and pausing for each one would
+mean approving, resuming, approving, resuming. Only a question the agent
+genuinely *raised* parks the pipeline.
 :::
 
 ## One voice for the whole pipeline

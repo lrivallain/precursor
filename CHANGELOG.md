@@ -42,6 +42,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   permission gate parks the whole run until a human answers, which a scheduled or
   webhook-fired workflow has nobody to do.
 
+- **A tool-permission gate no longer parks the whole run.** Waiting on a tool
+  decision was treated as a *block*: the workflow paused, the step's trace was
+  closed, and a manual **Resume** was required — so an agent making five tool
+  calls in one step blocked five times, stacking five "Blocked" attempts in the
+  trace. The turn is in fact still alive and continues by itself the moment the
+  gate is answered, so the run now stays `running` with its trace open and only
+  the approve/deny card is surfaced. A question the agent genuinely *raised*
+  (`blocked`) still parks the run, as before. The step timeout still applies, so
+  a gate nobody ever answers is caught by the watchdog instead of parking the
+  pipeline forever.
+
 - **Approve a step's permission request from the workflow board.** A parked
   tool-permission gate now renders its approve/deny card on the board itself.
   This was previously impossible to answer at all for an **inline** step, whose
@@ -95,6 +106,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   starts as **Inline**, which is where it effectively started before.
 
 ### Fixed
+
+- **Answering a permission request no longer wedges the agent.** `needs_approval`
+  is a *sticky* status — the idle handler skips it so a trailing idle can't mask
+  a genuinely parked agent — so an agent left sitting in it never reaches
+  `_on_idle`: its turn finished, the workflow was never told, and the step showed
+  "Running" until the watchdog killed it. The reset to `running` now lives in
+  `AgentManager.resolve_permission`, where every caller gets it, rather than only
+  in the agents router (which is why approving from the workflow board silently
+  stalled the run).
 
 - **Re-driving a parked agent no longer queues behind the thing that parked it.**
   A turn stopped at a permission gate stays *open*, so sending the next prompt
