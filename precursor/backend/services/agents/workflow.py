@@ -52,6 +52,10 @@ from precursor.backend.models.workflow import (
     WorkflowStep,
 )
 from precursor.backend.services.events import publish_workflow_changed
+from precursor.backend.services.workflow_state import (
+    build_state_index_prompt,
+    render_step_instructions,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -483,6 +487,7 @@ def _step_label(step: WorkflowStep) -> str:
 
 async def _build_context(
     session: AsyncSession,
+    workflow: Workflow,
     step: WorkflowStep,
     prev_agent_id: int | None,
     *,
@@ -496,8 +501,9 @@ async def _build_context(
 ) -> str | None:
     """Assemble a step's kickoff preamble: the run's brief, reviewer directives,
     rejection/loop-back reason, previous output, earlier-step artifacts (the
-    accumulated blackboard), a gate instruction, and the step's own mandate — in
-    that reading order. Returns ``None`` when empty."""
+    accumulated blackboard), the workflow's saved-state index, a gate
+    instruction, and the step's own mandate — in that reading order. Returns
+    ``None`` when empty."""
     parts: list[str] = []
     if run_input:
         parts.append(_run_input_preamble(run_input))
@@ -517,6 +523,14 @@ async def _build_context(
         prior = await collect_prior_artifacts(session, earlier_agent_ids)
         if prior:
             parts.append(prior)
+    # The pipeline's own memory, as a **key index only**. A step that wants a
+    # specific value names it in a ``{{state.<key>}}`` placeholder (already
+    # substituted below) or fetches it with ``workflow_state_get``; inlining
+    # every body here would put the whole store in every step's context.
+    if step.use_mcp is not False:
+        state_index = await build_state_index_prompt(session, workflow.id)
+        if state_index:
+            parts.append(state_index)
     if step.kind == "gate":
         parts.append(_GATE_PREAMBLE)
     else:
@@ -525,9 +539,13 @@ async def _build_context(
         # no upstream input, so no task step can block for clarification.
         parts.append(_TASK_PREAMBLE)
     # The step's own mandate goes last: it's the actionable directive, and the
-    # closing lines of a preamble carry the most weight.
+    # closing lines of a preamble carry the most weight. Placeholders are
+    # resolved here — the agent is handed real values, never a raw template.
     if step.instructions and step.instructions.strip():
-        parts.append(_step_instructions_preamble(step.instructions))
+        rendered = await render_step_instructions(
+            session, workflow.id, workflow.current_run_id, step.instructions
+        )
+        parts.append(_step_instructions_preamble(rendered))
     return "\n\n---\n\n".join(parts) if parts else None
 
 
@@ -1032,6 +1050,7 @@ async def _enter_step(
 
     context = await _build_context(
         session,
+        workflow,
         step,
         prev_agent_id,
         earlier_agent_ids=earlier_ids,

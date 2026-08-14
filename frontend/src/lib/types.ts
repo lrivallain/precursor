@@ -261,6 +261,30 @@ export interface AgentArtifact {
   updated_at: string;
 }
 
+// A durable entry in an agent's private scratchpad (mirrors backend
+// AgentStateRead). Unlike an artifact this survives re-runs — it's how a
+// scheduled agent remembers a cursor between runs.
+export interface AgentState {
+  id: number;
+  agent_id: number;
+  key: string;
+  value: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// A durable entry in a workflow's own memory (mirrors backend
+// WorkflowStateRead). Shared by every step of the pipeline and kept across
+// runs, unlike the per-run trace and the artifact blackboard.
+export interface WorkflowState {
+  id: number;
+  workflow_id: number;
+  key: string;
+  value: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // The parked approval blocking a live agent (mirrors backend
 // AgentPendingPermission).
 export interface AgentPendingPermission {

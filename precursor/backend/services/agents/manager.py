@@ -53,6 +53,7 @@ from precursor.backend.models import (
     Topic,
 )
 from precursor.backend.schemas.agent import AgentEvent
+from precursor.backend.services.agent_state import build_state_index_prompt
 from precursor.backend.services.agents import fleet, runtime
 from precursor.backend.services.agents.event_normalizer import normalize_event
 from precursor.backend.services.agents.permissions import (
@@ -799,7 +800,7 @@ class AgentManager:
             _ok, detail = runtime.agents_available()
             raise RuntimeError(f"Agents runtime not available: {detail}")
 
-    def _precursor_mcp_config(self) -> dict[str, Any] | None:
+    def _precursor_mcp_config(self, agent: AgentSession) -> dict[str, Any] | None:
         """Translate the built-in 'precursor' MCP entry into an SDK stdio config.
 
         Attaching it lets the agent read topic context and post results back via
@@ -816,6 +817,10 @@ class AgentManager:
         # First-party access: agents bypass the external mcp_expose toggles so
         # they can read topic content and post results back.
         env["PRECURSOR_MCP_FULL_ACCESS"] = "1"
+        # Identity, so the ``state_*`` tools can default to *this* agent's
+        # scratchpad. Without it the agent would have to discover its own row id
+        # before it could save a cursor for its next run.
+        env["PRECURSOR_AGENT_ID"] = str(agent.id)
         config: Any = sdk.MCPStdioServerConfig(
             type="stdio",
             command=sys.executable,
@@ -1081,6 +1086,14 @@ class AgentManager:
             # Long-term memory is standing context, not always wanted: a pure
             # transform step ("translate this") is better off not consulting it.
             memory = await build_memory_prompt(session) if agent.use_memory else ""
+            # The agent's own scratchpad from previous runs. Only the *key index*
+            # goes in the prompt — the bodies stay in the DB until the agent asks
+            # for one with ``state_get``, so a large saved cursor costs nothing
+            # per turn. Tool-less agents can't call ``state_get``, so telling them
+            # what they can't read would just burn context.
+            state = (
+                (await build_state_index_prompt(session, agent.id) or "") if agent.use_mcp else ""
+            )
         persona = (
             f"Active assistant role — adopt this persona for the whole task:\n{role_prompt}"
             if role_prompt
@@ -1099,7 +1112,9 @@ class AgentManager:
         # rather than a hard sandbox — it tells the agent to solve the task
         # directly instead of reaching for a stored skill.
         skills = "" if agent.use_skills else _NO_SKILLS_INSTRUCTION
-        parts = [p for p in (persona, custom, memory, topic, autonomy, skills, suggestions) if p]
+        parts = [
+            p for p in (persona, custom, memory, state, topic, autonomy, skills, suggestions) if p
+        ]
         return "\n\n".join(parts) if parts else None
 
     # ------------------------------------------------------------------ sessions
@@ -1190,7 +1205,7 @@ class AgentManager:
             # scope_includes_precursor. Attached here rather than via
             # _catalog_mcp_configs so it keeps its full-access env.
             if scope_includes_precursor(scope):
-                mcp.update(self._precursor_mcp_config() or {})
+                mcp.update(self._precursor_mcp_config(agent) or {})
             # Every enabled catalog server the scope allows (built-in +
             # user-defined). _catalog_mcp_configs already skips 'precursor', so
             # the first-party full-access entry above can't be shadowed.

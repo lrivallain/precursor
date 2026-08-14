@@ -8,6 +8,11 @@ from precursor.backend.schemas.agent import (
     AgentSessionCreate,
     AgentSessionRead,
 )
+from precursor.backend.schemas.agent_state import (
+    AgentStateRead,
+    AgentStateSummary,
+    AgentStateWrite,
+)
 from precursor.backend.schemas.chat import (
     ChatCreate,
     ChatRead,
@@ -110,6 +115,9 @@ __all__ = [
     "AgentSendRequest",
     "AgentSessionCreate",
     "AgentSessionRead",
+    "AgentStateRead",
+    "AgentStateSummary",
+    "AgentStateWrite",
     "AttachmentRead",
     "AttendeesUpdate",
     "ChatCreate",

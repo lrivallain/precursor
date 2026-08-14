@@ -58,6 +58,8 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "skills",
     "memory",
     "memory_write",
+    "agent_state",
+    "workflow_state",
     "post_message",
     "schedules",
     "reminders",

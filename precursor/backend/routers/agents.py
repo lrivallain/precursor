@@ -24,6 +24,7 @@ from precursor.backend.models import (
     AgentEventRecord,
     AgentSchedule,
     AgentSession,
+    AgentState,
     AgentTrigger,
     Chat,
     Topic,
@@ -58,7 +59,12 @@ from precursor.backend.schemas.agent_schedule import (
     AgentScheduleRead,
     AgentScheduleUpdate,
 )
+from precursor.backend.schemas.agent_state import (
+    AgentStateRead,
+    AgentStateWrite,
+)
 from precursor.backend.schemas.workflow import WorkflowSummary
+from precursor.backend.services import agent_state as agent_state_service
 from precursor.backend.services.agents import fleet, runtime
 from precursor.backend.services.agents.manager import get_agent_manager, parse_agent_command
 from precursor.backend.services.app_settings import resolve_agents_enabled
@@ -1234,3 +1240,51 @@ async def delete_agent_trigger(
     await publish_agent_changed(
         agent_session_id=agent.id, topic_id=agent.topic_id, chat_id=agent.chat_id
     )
+
+
+# ------------------------------------------------- state (the private scratchpad)
+#
+# Distinct from artifacts above: artifacts are *published* deliverables and are
+# cleared at the start of every fresh run, while state is private bookkeeping
+# that deliberately survives re-runs. The UI exposes it so an operator can
+# inspect a recurring agent's cursor — or reset one that has got stuck.
+
+
+@router.get("/{agent_id}/state", response_model=list[AgentStateRead])
+async def list_agent_state(
+    agent_id: str, session: AsyncSession = Depends(get_session)
+) -> list[AgentState]:
+    agent = await _get_or_404(session, agent_id)
+    return await agent_state_service.list_states(session, agent.id)
+
+
+@router.put("/{agent_id}/state", response_model=AgentStateRead)
+async def set_agent_state(
+    agent_id: str,
+    payload: AgentStateWrite,
+    session: AsyncSession = Depends(get_session),
+) -> AgentState:
+    """Upsert one state entry (same semantics as the ``state_set`` MCP tool)."""
+    agent = await _get_or_404(session, agent_id)
+    try:
+        state, _created = await agent_state_service.set_state(session, agent.id, payload)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return state
+
+
+@router.delete("/{agent_id}/state/{key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_state(
+    agent_id: str, key: str, session: AsyncSession = Depends(get_session)
+) -> None:
+    agent = await _get_or_404(session, agent_id)
+    if not await agent_state_service.delete_state(session, agent.id, key.strip().lower()):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "State key not found")
+
+
+@router.delete("/{agent_id}/state", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_agent_state(agent_id: str, session: AsyncSession = Depends(get_session)) -> None:
+    """Wipe the whole scratchpad — the operator's "start from scratch" lever for
+    an agent whose saved cursor has gone bad."""
+    agent = await _get_or_404(session, agent_id)
+    await agent_state_service.clear_states(session, agent.id)

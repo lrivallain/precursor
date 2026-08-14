@@ -113,8 +113,9 @@ silent between turns.
 
 A single agent is a run; several of them make a **fleet** you watch from one
 dashboard. Precursor lets agents **park** until triggered, **budget** and
-**retry** themselves, share results on a **blackboard**, and fire on external
-**events** — with a fleet-wide concurrency cap over the lot.
+**retry** themselves, share results on a **blackboard**, keep **durable state**
+between runs, and fire on external **events** — with a fleet-wide concurrency cap
+over the lot.
 
 ::: tip Chaining agents into a pipeline
 Sequencing one agent after another — research → draft → review — is owned by
@@ -233,6 +234,55 @@ output. (A conversational **follow-up** in the same context is the exception —
 *keeps* the existing artifacts, because it's continuing the run, not restarting
 it.) The clear re-broadcasts the agent, so the sidebar and in-chat deliverables
 empty on their own without a manual reload.
+
+### Durable state (the private scratchpad)
+
+Artifacts are for **publishing**; state is for **remembering**. A recurring agent
+needs to know where it got to last time — the last id it processed, the items it
+already saw, a counter — and neither of the other two stores fits:
+
+| | Scope | Survives a re-run? | In the prompt? |
+| --- | --- | --- | --- |
+| [Memory](/features/skills-memory) | Global, app-wide | Yes | **Always injected**, everywhere |
+| [Artifacts](#shared-artifacts-blackboard) | One agent | **No** — wiped on each fresh run | Injected into downstream fleet agents |
+| **State** | One agent | **Yes** | **Keys only** — bodies on demand |
+
+So state is the home for cross-run bookkeeping, and it's what a
+[scheduled](#scheduling-agents) or [webhook-triggered](#event-triggers-webhooks)
+agent uses to resume instead of redoing work.
+
+**The bodies never enter the prompt.** Each turn, the agent's preamble gets only
+a **key index** — the key names, their sizes and when they changed. The agent
+then pulls the one body it actually needs with a tool call. That's the whole
+point: a 40 KB saved cursor costs nothing per turn, which is exactly what putting
+it in long-term memory *would* cost.
+
+Agents read and write it through four first-party MCP tools, which default to the
+calling agent's own scratchpad:
+
+| Tool | What it does |
+| --- | --- |
+| `state_list` | List saved keys (**keys only**, no bodies). |
+| `state_get` | Read one entry. Returns `found: false` on a first run rather than an error. |
+| `state_set` | Save/replace one entry — upserted by key, so a re-run overwrites rather than accumulating. |
+| `state_delete` | Drop one entry. |
+
+Values are opaque text (JSON by convention) capped at 100 KB, with at most 200
+keys per agent. **Keep bodies small** — this is bookkeeping, not payload storage.
+For anything large, binary, or worth version-controlling, write the file to a
+[workspace](/features/workspaces) and store just the path here.
+
+The insights sidebar lists the saved keys under **State**, expands one to show its
+body, and offers a per-key delete plus a **reset** that wipes the scratchpad — the
+operator's lever when an agent's saved cursor has gone bad. State is deleted with
+its agent, and is reachable over HTTP at `GET|PUT /api/agents/{id}/state`.
+
+::: tip Exposing state to *external* MCP clients
+The `state_*` tools are always available to Precursor's own agents. Serving them
+to outside MCP hosts is a separate, opt-in disclosure — enable **Agent state**
+under **Settings → MCP servers → Precursor capabilities**. External callers must
+also name the `agent_id` explicitly; only an in-app agent gets the implicit "me".
+:::
 
 ### Event triggers (webhooks)
 

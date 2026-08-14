@@ -23,6 +23,7 @@ from precursor.backend.models import (
     AgentSession,
     Workflow,
     WorkflowRun,
+    WorkflowState,
     WorkflowStep,
 )
 from precursor.backend.models.workflow import (
@@ -45,6 +46,11 @@ from precursor.backend.schemas.workflow import (
     WorkflowStepInput,
     WorkflowUpdate,
 )
+from precursor.backend.schemas.workflow_state import (
+    WorkflowStateRead,
+    WorkflowStateWrite,
+)
+from precursor.backend.services import workflow_state as workflow_state_service
 from precursor.backend.services.agents import workflow as workflow_svc
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.app_settings import (
@@ -791,3 +797,57 @@ async def fire_webhook(
         run_input=await _webhook_input(request),
     )
     return {"status": "started", "workflow": str(workflow.id)}
+
+
+# ------------------------------------------------------ state (pipeline memory)
+#
+# The workflow's own named values: written by its steps (or here by hand), read
+# by later steps through ``{{state.<key>}}`` placeholders, and kept **across
+# runs** — unlike the run trace and the artifact blackboard, which describe a
+# single execution.
+
+
+@router.get("/{workflow_id}/state", response_model=list[WorkflowStateRead])
+async def list_workflow_state(
+    workflow_id: int, session: AsyncSession = Depends(get_session)
+) -> list[WorkflowState]:
+    workflow = await _load(session, workflow_id)
+    return await workflow_state_service.list_states(session, workflow.id)
+
+
+@router.put("/{workflow_id}/state", response_model=WorkflowStateRead)
+async def set_workflow_state(
+    workflow_id: int,
+    payload: WorkflowStateWrite,
+    session: AsyncSession = Depends(get_session),
+) -> WorkflowState:
+    """Upsert one entry (same semantics as the ``workflow_state_set`` MCP tool).
+
+    Setting a value by hand is how you seed a pipeline's first run — e.g. the
+    cursor it should start from — without having to fake a run to write it.
+    """
+    workflow = await _load(session, workflow_id)
+    try:
+        state, _created = await workflow_state_service.set_state(session, workflow.id, payload)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return state
+
+
+@router.delete("/{workflow_id}/state/{key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow_state(
+    workflow_id: int, key: str, session: AsyncSession = Depends(get_session)
+) -> None:
+    workflow = await _load(session, workflow_id)
+    if not await workflow_state_service.delete_state(session, workflow.id, key.strip().lower()):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "State key not found")
+
+
+@router.delete("/{workflow_id}/state", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_workflow_state(
+    workflow_id: int, session: AsyncSession = Depends(get_session)
+) -> None:
+    """Wipe the pipeline's memory — the "start clean" lever when a saved cursor
+    has gone bad and every run is now working from a wrong baseline."""
+    workflow = await _load(session, workflow_id)
+    await workflow_state_service.clear_states(session, workflow.id)

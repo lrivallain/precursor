@@ -38,6 +38,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.agent_session import AgentSession
+    from precursor.backend.models.workflow_state import WorkflowState
 
 
 # Lifecycle of a workflow. ``draft`` = created but never run (or has no steps);
@@ -223,6 +224,21 @@ class Workflow(Base, TimestampMixin):
         lazy="noload",
     )
 
+    # The pipeline's own durable memory: named values that outlive a run, written
+    # by one step and read by another (or by the next run). Not eager-loaded —
+    # values can be sizeable and nothing in the workflow serialisation needs
+    # them, so they're fetched only through the state API. The cascade still
+    # resolves on delete because ``AsyncSession.delete`` is awaited (it loads
+    # unloaded cascades), which keeps cleanup correct on SQLite, where
+    # ``ON DELETE CASCADE`` is inert with foreign keys off.
+    states: Mapped[list[WorkflowState]] = relationship(
+        "WorkflowState",
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowState.key",
+        foreign_keys="WorkflowState.workflow_id",
+    )
+
     @staticmethod
     def mint_webhook_token() -> str:
         return _mint_token()
@@ -269,8 +285,9 @@ class WorkflowStep(Base, TimestampMixin):
     # Extra mandate for *this* step, appended to the agent's own objective for
     # this run only. What makes an agent genuinely reusable: one "Summariser" row
     # can be the terse-bullets step in one workflow and the exec-brief step in
-    # another, without cloning the agent. Supports ``{{run.input}}`` and
-    # ``{{step.N.output}}`` placeholders (see ``render_placeholders``).
+    # another, without cloning the agent. Supports ``{{run.input}}``,
+    # ``{{step.N.output}}`` and ``{{state.<key>}}`` placeholders, each with an
+    # optional ``| default`` (see ``services/workflow_state.render_placeholders``).
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- Failure handling ---------------------------------------------------

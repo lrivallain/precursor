@@ -18,6 +18,7 @@ import type {
   AgentScheduleUpdate,
   AgentSession,
   AgentSessionCreate,
+  AgentState,
   AgentTrigger,
   AgentTriggerCreate,
   AppVersion,
@@ -101,6 +102,7 @@ import type {
   WorkflowCreate,
   WorkflowRun,
   WorkflowScheduleUpdate,
+  WorkflowState,
   WorkflowStepRejectPolicy,
   WorkflowSummary,
   WorkflowUpdate,
@@ -490,6 +492,23 @@ export const api = {
         body: JSON.stringify(data),
       }),
 
+    // --- State (private cross-run scratchpad) -----------------------------
+    // Distinct from artifacts: state is private bookkeeping that *survives*
+    // re-runs, so this surface is mostly for inspecting (or resetting) a
+    // recurring agent's saved cursor.
+    listState: (id: number) => request<AgentState[]>(`/api/agents/${id}/state`),
+    setState: (id: number, key: string, value: string) =>
+      request<AgentState>(`/api/agents/${id}/state`, {
+        method: "PUT",
+        body: JSON.stringify({ key, value }),
+      }),
+    deleteState: (id: number, key: string) =>
+      request<void>(`/api/agents/${id}/state/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+      }),
+    clearState: (id: number) =>
+      request<void>(`/api/agents/${id}/state`, { method: "DELETE" }),
+
     // --- Triggers (external webhooks) -------------------------------------
     listTriggers: (id: number) =>
       request<AgentTrigger[]>(`/api/agents/${id}/triggers`),
@@ -611,6 +630,22 @@ export const api = {
       request<Workflow>(`/api/workflows/${id}/webhook`, { method: "DELETE" }),
     // Public webhook URL to copy (fires the workflow when POSTed to).
     webhookUrl: (token: string) => `/api/workflows/hooks/${token}`,
+
+    // --- State (the pipeline's own memory) --------------------------------
+    // Named values shared by every step and kept across runs. Setting one by
+    // hand is how you seed a pipeline's first run (e.g. its starting cursor).
+    listState: (id: number) => request<WorkflowState[]>(`/api/workflows/${id}/state`),
+    setState: (id: number, key: string, value: string) =>
+      request<WorkflowState>(`/api/workflows/${id}/state`, {
+        method: "PUT",
+        body: JSON.stringify({ key, value }),
+      }),
+    deleteState: (id: number, key: string) =>
+      request<void>(`/api/workflows/${id}/state/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+      }),
+    clearState: (id: number) =>
+      request<void>(`/api/workflows/${id}/state`, { method: "DELETE" }),
   },
 
   transfer: {
