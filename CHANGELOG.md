@@ -179,6 +179,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **A running workflow now wears the holographic frame on the gallery.** The
+  Workflows landing signalled a live run only with a small status dot and a
+  Pause button, so a card mid-flight read the same as an idle one at a glance —
+  yet everywhere else in Precursor an in-flight turn is the rotating iridescent
+  ring: the composer while a reply streams, and the step cards on the workflow
+  board. Cards whose workflow is `running` now use that same frame, so the one
+  thing worth spotting on the page is the one thing that moves.
+
 - **"Inline prompt" is no longer offered on an Agent step.** It produced exactly
   what the **Inline** step type produces — the same hidden vessel, the same
   runtime, differing only in the badge on the board — so the same intent had two

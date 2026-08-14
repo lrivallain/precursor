@@ -111,12 +111,19 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
               const { done, total } = stepProgress(wf);
               const schedule = scheduleSummary(wf);
               const active = workflowIsActive(wf);
+              // The holographic frame draws its own 2px ring at the card's edge,
+              // so the card's own border must go transparent or you see both.
+              const holo = wf.status === "running";
               return (
                 <button
                   key={wf.id}
                   type="button"
                   onClick={() => onOpen(wf)}
-                  className="group flex flex-col rounded-2xl border border-border bg-surface p-4 text-left transition hover:border-indigo-500/50 hover:shadow-md"
+                  className={`group relative flex flex-col rounded-2xl border bg-surface p-4 text-left transition hover:shadow-md ${
+                    holo
+                      ? "holo-active border-transparent"
+                      : "border-border hover:border-indigo-500/50"
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
