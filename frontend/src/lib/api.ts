@@ -587,6 +587,13 @@ export const api = {
         }),
       }),
     cancel: (id: number) => request<Workflow>(`/api/workflows/${id}/cancel`, { method: "POST" }),
+    // Run one recorded step attempt again, alone, on the input it first saw.
+    // Unlike `retry` this advances nothing — so it works on a run that
+    // succeeded, when you just want another take on one step.
+    replayStep: (id: number, stepRunId: number) =>
+      request<Workflow>(`/api/workflows/${id}/run-steps/${stepRunId}/replay`, {
+        method: "POST",
+      }),
     listArchived: () => request<Workflow[]>(`/api/workflows/archived`),
     archive: (id: number) => request<Workflow>(`/api/workflows/${id}/archive`, { method: "POST" }),
     unarchive: (id: number) =>

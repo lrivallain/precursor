@@ -465,6 +465,31 @@ out. Entering a step always opens a fresh trace, so a row left behind by a
 process that stopped mid-step would otherwise show as a step forever in flight;
 superseding it keeps the trace honest and its spend out of the run total.
 
+### Replaying a single step
+
+Every finished, agent-backed row in the trace carries a small **replay** icon
+(⟳). It re-runs *that one step* on the **exact input it first saw** — the same
+kickoff preamble, the same brief, the same upstream hand-off — and **advances
+nothing**: no later step runs, and the run keeps its own outcome.
+
+That's what makes it different from [Retry](#getting-a-stopped-run-moving-again),
+which exists to get a *stopped run* moving and carries on through the rest of the
+pipeline. Replay is for interrogating one step, so it's offered on a step that
+**succeeded** too: take a second sample from a non-deterministic model, or check
+what the step does now that you've tightened its instructions or narrowed its
+tool servers — without re-running (and re-paying for) everything around it.
+
+The replay lands in the same run trace, badged `replay` in indigo rather than
+`attempt N`, and its spend rolls into the run total like any other turn. It is
+deliberately invisible to the coordinator's own bookkeeping: it never becomes
+"the attempt that failed" for a later retry, never counts as a pipeline attempt,
+and is never mistaken for a stalled step by the [watchdog](#the-stall-watchdog).
+
+Because a replay drives the step's agent directly, it's refused while the run is
+still in flight (running, paused, or awaiting approval) — stop the run first. An
+[approval checkpoint](#human-approval-checkpoints) ran no agent, so it has
+nothing to replay.
+
 Run traces are durable (backed by the `workflow_runs` / `workflow_run_steps`
 tables) and fetched via `GET /api/workflows/{id}/runs`.
 
@@ -529,6 +554,11 @@ Re-driving a step first **releases whatever parked it** — an unanswered
 permission gate is rejected and the old turn aborted — so the retry starts on an
 idle session instead of queueing behind the thing it was meant to fix.
 
+Retry is about the *run*. When you only want another take on **one step** —
+including one that succeeded — use
+[replay](#replaying-a-single-step) instead: it re-runs that step on the same
+context and leaves the rest of the pipeline alone.
+
 ## What a step actually did
 
 Every attempt in the run trace carries an **Activity** section: the same
@@ -591,6 +621,7 @@ Workflows live under `/api/workflows`:
 | `POST /api/workflows/{id}/retry` | Re-drive one step of a stopped run (`{ "position": N, "input": "…" }`) |
 | `POST /api/workflows/{id}/permission` | Answer a step's tool-permission gate (`{ "request_id": "…", "decision": "approve-once\|approve-always\|deny" }`) and resume the run |
 | `GET /api/workflows/{id}/run-steps/{stepRunId}/events` | One attempt's agent activity (tool calls, reasoning) |
+| `POST /api/workflows/{id}/run-steps/{stepRunId}/replay` | [Replay](#replaying-a-single-step) one attempt on its recorded input, advancing nothing (409 while the run is in flight) |
 | `POST /api/workflows/{id}/approve` \| `/reject` | Clear or bounce a human approval checkpoint (`{ "note": "…", "action": "rework\|stop\|skip" }`) |
 | `POST /api/workflows/{id}/archive` \| `/unarchive` | Archive toggle |
 | `PUT /api/workflows/{id}/schedule` | Configure the schedule |

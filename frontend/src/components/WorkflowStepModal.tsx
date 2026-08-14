@@ -153,7 +153,8 @@ export function WorkflowStepModal({ step, runs = [], onOpenInAgents, onClose }: 
               type="button"
               onClick={() => void load()}
               className="rounded-lg p-1.5 text-muted transition hover:bg-white/5 hover:text-fg"
-              title="Refresh"
+              data-tooltip="Refresh"
+              aria-label="Refresh"
             >
               <RefreshCw size={15} />
             </button>
@@ -163,7 +164,7 @@ export function WorkflowStepModal({ step, runs = [], onOpenInAgents, onClose }: 
               type="button"
               onClick={() => onOpenInAgents(agentId)}
               className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-indigo-500 transition hover:bg-indigo-500/10"
-              title="Open in the Agents cockpit"
+              data-tooltip="Open in the Agents cockpit"
             >
               Open <ArrowUpRight size={13} />
             </button>

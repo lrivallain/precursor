@@ -62,7 +62,7 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
             type="button"
             onClick={() => setImporting(true)}
             className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:bg-white/5 hover:text-fg"
-            title="Import a workflow from a YAML file"
+            data-tooltip="Import a workflow from a YAML file"
           >
             <Upload size={15} /> Import
           </button>
@@ -152,7 +152,7 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
                           key={s.id}
                           className="truncate rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] text-muted"
                           style={{ maxWidth: "5.5rem" }}
-                          title={stepLabel(s)}
+                          data-tooltip={stepLabel(s)}
                         >
                           {i + 1}. {stepLabel(s)}
                         </span>

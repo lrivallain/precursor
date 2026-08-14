@@ -285,20 +285,20 @@ function KindButton({
   label,
   icon,
   tone = "indigo",
-  title,
+  tooltip,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
   icon?: ReactNode;
   tone?: keyof typeof TONE_ACTIVE;
-  title?: string;
+  tooltip?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
+      data-tooltip={tooltip}
       className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition ${
         active ? TONE_ACTIVE[tone] : "text-muted hover:text-fg"
       }`}
@@ -433,7 +433,7 @@ export function WorkflowStepEditModal({
                 onClick={() => setKind("task")}
                 tone="indigo"
                 label="Agent"
-                title="Runs a reusable agent — one from the Agents section, or a new one created here"
+                tooltip="Runs a reusable agent — one from the Agents section, or a new one created here"
               />
               <KindButton
                 active={step.kind === "inline"}
@@ -441,7 +441,7 @@ export function WorkflowStepEditModal({
                 tone="sky"
                 icon={<Sparkles size={12} />}
                 label="Inline"
-                title="A one-off task written here — no reusable agent is created"
+                tooltip="A one-off task written here — no reusable agent is created"
               />
               <KindButton
                 active={step.kind === "gate"}
@@ -449,7 +449,7 @@ export function WorkflowStepEditModal({
                 tone="amber"
                 icon={<ShieldCheck size={12} />}
                 label="Gate"
-                title="An agent votes PASS/FAIL on the work so far"
+                tooltip="An agent votes PASS/FAIL on the work so far"
               />
               <KindButton
                 active={step.kind === "approval"}
@@ -457,7 +457,7 @@ export function WorkflowStepEditModal({
                 tone="violet"
                 icon={<UserCheck size={12} />}
                 label="Approval"
-                title="Pause here for a human decision — no agent runs"
+                tooltip="Pause here for a human decision — no agent runs"
               />
             </div>
 
@@ -523,7 +523,7 @@ export function WorkflowStepEditModal({
                   tone="indigo"
                   icon={<Bot size={12} />}
                   label="Existing agent"
-                  title="Reuse an agent from the Agents section"
+                  tooltip="Reuse an agent from the Agents section"
                 />
                 <KindButton
                   active={step.mode === "new"}
@@ -531,7 +531,7 @@ export function WorkflowStepEditModal({
                   tone="indigo"
                   icon={<Plus size={12} />}
                   label="New agent"
-                  title="Create a reusable agent here — it joins the Agents section and can be picked by other steps"
+                  tooltip="Create a reusable agent here — it joins the Agents section and can be picked by other steps"
                 />
                 {step.kind === "gate" && (
                   <KindButton
@@ -540,7 +540,7 @@ export function WorkflowStepEditModal({
                     tone="sky"
                     icon={<Sparkles size={12} />}
                     label="Inline prompt"
-                    title="Written here and used only by this step — no reusable agent is created"
+                    tooltip="Written here and used only by this step — no reusable agent is created"
                   />
                 )}
               </div>
@@ -699,7 +699,7 @@ export function WorkflowStepEditModal({
                       key={field}
                       type="button"
                       onClick={() => patch({ [field]: next } as Partial<DraftStep>)}
-                      title="Click to cycle: inherit → on → off"
+                      data-tooltip="Click to cycle: inherit → on → off"
                       className={`rounded-lg border px-2 py-0.5 transition ${
                         value === null
                           ? "border-border text-muted hover:text-fg"
@@ -726,7 +726,7 @@ export function WorkflowStepEditModal({
                   <button
                     type="button"
                     onClick={() => patch({ mcpServers: null })}
-                    title="Attach every enabled MCP server"
+                    data-tooltip="Attach every enabled MCP server"
                     className={`rounded-lg border px-2 py-0.5 transition ${
                       step.mcpServers === null
                         ? "border-sky-500/40 bg-sky-500/10 text-sky-500"
@@ -748,7 +748,7 @@ export function WorkflowStepEditModal({
                               : [...(step.mcpServers ?? []), server.name],
                           })
                         }
-                        title={`${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`}
+                        data-tooltip={`${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`}
                         className={`rounded-lg border px-2 py-0.5 transition ${
                           active
                             ? "border-sky-500/40 bg-sky-500/10 text-sky-500"
@@ -775,7 +775,7 @@ export function WorkflowStepEditModal({
                         onClick={() =>
                           patch({ mcpServers: (step.mcpServers ?? []).filter((n) => n !== name) })
                         }
-                        title={
+                        data-tooltip={
                           known
                             ? "Switched off in Settings → MCP, so it won't attach — click to remove"
                             : "Not installed here, so it won't attach — click to remove"

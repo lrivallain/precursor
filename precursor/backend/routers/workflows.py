@@ -605,6 +605,33 @@ async def retry_workflow_step(
     return _read_one(await _load(session, workflow_id))
 
 
+@router.post("/{workflow_id}/run-steps/{step_run_id}/replay", response_model=WorkflowRead)
+async def replay_run_step(
+    workflow_id: int,
+    step_run_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> WorkflowRead:
+    """Run one recorded step attempt again, on its own, with the input it saw.
+
+    Unlike ``/retry`` — which recovers a *stopped run* and carries on through the
+    rest of the pipeline — this replays a single step in isolation and advances
+    nothing, so it works on a run that succeeded. The new attempt lands in the
+    same run trace, marked as a replay.
+    """
+    await _require_enabled(session)
+    workflow, refusal = await workflow_svc.replay_step(
+        session,
+        get_agent_manager(),
+        workflow_id,
+        step_run_id=step_run_id,
+    )
+    if workflow is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Step attempt not found")
+    if refusal:
+        raise HTTPException(status.HTTP_409_CONFLICT, refusal)
+    return _read_one(await _load(session, workflow_id))
+
+
 @router.post("/{workflow_id}/cancel", response_model=WorkflowRead)
 async def cancel_workflow(
     workflow_id: int, session: AsyncSession = Depends(get_session)
