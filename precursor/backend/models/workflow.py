@@ -430,6 +430,14 @@ class WorkflowRunStep(Base, TimestampMixin):
     # this so repeated attempts are legible in the trace).
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
+    # True when this attempt was a **manual replay**: an operator re-ran one step
+    # on its own, out of band, feeding it the exact input a previous attempt saw.
+    # It is deliberately *not* a pipeline attempt — nothing advances when it ends
+    # — so every coordinator lookup that means "the turn the run is waiting on"
+    # filters these out, and the trace badges them so a run's history still reads
+    # as the pipeline that actually executed.
+    replay: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="running", server_default="running"
     )

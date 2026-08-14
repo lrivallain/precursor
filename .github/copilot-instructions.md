@@ -45,6 +45,11 @@ plus a frontend extension registry.
 - All HTTP goes through `src/lib/api.ts`. Streaming chat goes through
   `src/lib/sse.ts` (we don't use `EventSource` because we POST a JSON body).
 - Keep type definitions in `src/lib/types.ts` mirrored to the Pydantic schemas.
+- Hover hints use `data-tooltip="…"`, never the native `title` attribute —
+  `components/Tooltip.tsx` mounts a provider that styles and viewport-clamps
+  them. Newlines in the value are honoured. `title` also supplies an element's
+  accessible name, so an **icon-only** control needs an explicit `aria-label`
+  alongside its `data-tooltip`.
 
 ### Plugins
 

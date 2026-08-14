@@ -574,6 +574,12 @@ export interface WorkflowRunStep {
   /** True when that agent is private to its step, so it isn't in the Agents list. */
   agent_inline: boolean;
   attempt: number;
+  /**
+   * True when an operator re-ran this step on its own, out of band, on the same
+   * input a previous attempt saw. Not a turn the pipeline drove — nothing
+   * advanced when it ended.
+   */
+  replay: boolean;
   status: string;
   input_context: string | null;
   output_summary: string | null;

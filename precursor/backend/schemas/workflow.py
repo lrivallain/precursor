@@ -123,6 +123,10 @@ class WorkflowRunStepRead(BaseModel):
     # knows not to offer a link into the Agents section, where it isn't listed.
     agent_inline: bool = False
     attempt: int = 1
+    # True when an operator re-ran this step on its own, out of band, on the same
+    # input a previous attempt saw. Not a turn the pipeline drove: nothing
+    # advanced when it ended, so the trace badges it apart from real attempts.
+    replay: bool = False
     status: str
     input_context: str | None = None
     output_summary: str | None = None

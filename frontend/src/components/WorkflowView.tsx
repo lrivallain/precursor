@@ -131,7 +131,8 @@ function InsertSlot({
       <button
         type="button"
         onClick={onInsert}
-        title="Add a step at the end"
+        data-tooltip="Add a step at the end"
+        aria-label="Add a step at the end"
         className={`flex w-10 shrink-0 items-center justify-center self-stretch rounded-lg border border-dashed text-muted transition hover:border-indigo-500/50 hover:text-indigo-500 ${
           active ? "border-indigo-500 bg-indigo-500/10 text-indigo-500" : "border-border"
         }`}
@@ -144,7 +145,8 @@ function InsertSlot({
     <button
       type="button"
       onClick={onInsert}
-      title="Insert a step here"
+      data-tooltip="Insert a step here"
+      aria-label="Insert a step here"
       className="group relative flex w-6 shrink-0 items-center justify-center self-stretch text-muted transition hover:text-indigo-500"
     >
       {/* The seam: shown on hover (where a *new* step goes) and while a dragged
@@ -524,6 +526,35 @@ export function WorkflowView({
     });
   }
 
+  // Replay one recorded attempt on its own, on the input it first saw. Not a
+  // retry: nothing after it runs, so it's the "give me another take on this one
+  // step" tool — which is exactly what you want on a run that *succeeded*.
+  const replayStep = useCallback(
+    async (stepRunId: number) => {
+      setActionError(null);
+      try {
+        await api.workflows.replayStep(workflow.id, stepRunId);
+        await loadRuns();
+      } catch (e) {
+        setActionError(apiErrorMessage(e, "Couldn't replay that step."));
+      }
+    },
+    [loadRuns, workflow.id],
+  );
+
+  // A replay leaves the workflow's own status and cursor alone (by design — it
+  // isn't a pipeline turn), so the effect that reloads runs off those fields
+  // never fires for it. Poll while one is in flight so its row lands.
+  const replayInFlight = useMemo(
+    () => runs.some((r) => r.step_runs.some((s) => s.replay && s.status === "running")),
+    [runs],
+  );
+  useEffect(() => {
+    if (!replayInFlight) return;
+    const t = window.setInterval(() => void loadRuns(), 2000);
+    return () => window.clearInterval(t);
+  }, [replayInFlight, loadRuns]);
+
   // Which run the step strip reflects. Normally the selected one, so scrolling
   // the run picker replays how the strip looked then. But while a run is *live*,
   // never derive from a different run: between clicking Run and the new run's
@@ -645,7 +676,7 @@ export function WorkflowView({
             type="button"
             onClick={editingSteps ? () => setEditingSteps(false) : openStepEditor}
             disabled={active && !editingSteps}
-            title={
+            data-tooltip={
               active
                 ? "Stop the run before editing its steps"
                 : "Reorder, add and edit steps in place"
@@ -668,7 +699,8 @@ export function WorkflowView({
           <a
             href={api.transfer.exportWorkflowUrl(workflow.id)}
             download
-            title="Export as YAML (includes the agents its steps use)"
+            data-tooltip="Export as YAML (includes the agents its steps use)"
+            aria-label="Export as YAML"
             className="rounded-lg p-1.5 text-muted transition hover:bg-white/5 hover:text-fg"
           >
             <Download size={16} />
@@ -676,7 +708,8 @@ export function WorkflowView({
           <button
             type="button"
             onClick={() => void handleArchive()}
-            title="Archive workflow"
+            data-tooltip="Archive workflow"
+            aria-label="Archive workflow"
             className="rounded-lg p-1.5 text-muted transition hover:bg-white/5 hover:text-fg"
           >
             <Archive size={16} />
@@ -685,7 +718,8 @@ export function WorkflowView({
             type="button"
             onClick={() => void handleDelete()}
             className="rounded-lg p-1.5 text-muted transition hover:bg-red-500/10 hover:text-red-500"
-            title="Delete workflow"
+            data-tooltip="Delete workflow"
+            aria-label="Delete workflow"
           >
             <Trash2 size={16} />
           </button>
@@ -834,7 +868,7 @@ export function WorkflowView({
                 }}
                 disabled={workflow.steps.length === 0}
                 className="border-l border-white/25 px-1.5 text-white transition hover:bg-white/10 disabled:opacity-40"
-                title={showBrief ? "Hide run brief" : "Add a brief for this run"}
+                data-tooltip={showBrief ? "Hide run brief" : "Add a brief for this run"}
                 aria-expanded={showBrief}
                 aria-label="Run brief"
               >
@@ -899,7 +933,7 @@ export function WorkflowView({
                     window.setTimeout(() => guidanceRef.current?.focus(), 0);
                   }}
                   className="border-l border-white/25 px-1.5 text-white transition hover:bg-amber-600"
-                  title={showGuidance ? "Hide answer" : "Answer what it asked"}
+                  data-tooltip={showGuidance ? "Hide answer" : "Answer what it asked"}
                   aria-expanded={showGuidance}
                   aria-label="Answer the blocked step"
                 >
@@ -923,7 +957,7 @@ export function WorkflowView({
                   ? "border-amber-500/50 bg-amber-500/10 text-amber-500"
                   : "border-border text-muted hover:border-amber-500/50 hover:text-amber-500"
               }`}
-              title="Add guidance for the retry — the retry itself is on the failed step"
+              data-tooltip="Add guidance for the retry — the retry itself is on the failed step"
               aria-expanded={showGuidance}
             >
               <HelpCircle size={14} /> Guidance
@@ -965,7 +999,7 @@ export function WorkflowView({
                 type="button"
                 onClick={() => void copyWebhook()}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted transition hover:text-fg"
-                title="Copy webhook URL"
+                data-tooltip="Copy webhook URL"
               >
                 {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                 Webhook
@@ -975,7 +1009,7 @@ export function WorkflowView({
                 onClick={() => void removeWebhook()}
                 disabled={busy != null}
                 className="border-l border-border px-2 text-muted transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40"
-                title="Remove webhook"
+                data-tooltip="Remove webhook"
                 aria-label="Remove webhook"
               >
                 {busy === "hook" ? (
@@ -1162,7 +1196,7 @@ export function WorkflowView({
               {selectedRun.total_input_tokens + selectedRun.total_output_tokens > 0 && (
                 <span
                   className="flex items-center gap-1 text-[11px] tabular-nums text-muted"
-                  title={`${selectedRun.total_input_tokens.toLocaleString()} in · ${selectedRun.total_output_tokens.toLocaleString()} out`}
+                  data-tooltip={`${selectedRun.total_input_tokens.toLocaleString()} in · ${selectedRun.total_output_tokens.toLocaleString()} out`}
                 >
                   <Coins size={11} />
                   {formatTokens(
@@ -1403,7 +1437,7 @@ export function WorkflowView({
                               void runRetry(step.position);
                             }
                           }}
-                          title="Run this step again as a new attempt and carry on from here — the steps before it are kept"
+                          data-tooltip="Run this step again as a new attempt and carry on from here — the steps before it are kept"
                           className="flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-amber-600"
                         >
                           {busy === "retry" ? (
@@ -1463,7 +1497,7 @@ export function WorkflowView({
                   }`}
                 >
                   <div className="mb-2 flex items-center gap-1.5">
-                    <span className="text-muted" title="Drag to reorder" aria-hidden>
+                    <span className="text-muted" data-tooltip="Drag to reorder" aria-hidden>
                       <GripVertical size={14} />
                     </span>
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
@@ -1480,7 +1514,8 @@ export function WorkflowView({
                       onClick={() => removeDraft(draft.key)}
                       disabled={drafts.length <= 1}
                       className="ml-auto rounded p-1 text-muted transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-30"
-                      title="Remove step"
+                      data-tooltip="Remove step"
+                      aria-label="Remove step"
                     >
                       <Trash2 size={13} />
                     </button>
@@ -1544,6 +1579,7 @@ export function WorkflowView({
               <WorkflowRunTrace
                 run={selectedRun}
                 workflowId={workflow.id}
+                onReplay={active ? undefined : replayStep}
                 onOpenAgent={onOpenInAgents}
               />
             )}

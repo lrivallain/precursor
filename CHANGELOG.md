@@ -11,6 +11,23 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Replay a single workflow step.** Every finished, agent-backed row in a run
+  trace now carries a small replay icon that re-runs *that one step* on the
+  exact input it first saw — the same kickoff preamble, brief and upstream
+  hand-off — and advances nothing after it. The existing *Retry* is about
+  recovering a **stopped run**: it only works on a failed or cancelled run and
+  carries on through the rest of the pipeline, so there was no way to ask "what
+  does this step do if I hand it the same thing again?" without re-running (and
+  re-paying for) everything around it. Replay is offered on a step that
+  **succeeded** too, which is the point: take another sample from a
+  non-deterministic model, or check the step now that you've tightened its
+  instructions or narrowed its tool servers. The new attempt lands in the same
+  run trace badged `replay` and its spend rolls into the run total, but it is
+  deliberately invisible to the coordinator — it never becomes "the attempt that
+  failed" for a later retry, never counts as a pipeline attempt, and is never
+  mistaken for a stalled step by the watchdog. Refused while the run is still in
+  flight, since a live run owns its steps' agents.
+
 - **Pick which MCP servers a workflow step may use.** A step's *Tools* toggle
   was all-or-nothing: on meant the entire enabled catalogue. Tool schemas are
   re-sent on every turn, so on a modest install that is a six-figure token bill

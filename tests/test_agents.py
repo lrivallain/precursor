@@ -4442,6 +4442,263 @@ async def test_retry_and_resume_endpoints_accept_an_optional_body() -> None:
         await _set_agents_enabled(False)
 
 
+# --- Manual step replay ------------------------------------------------------
+# Retrying recovers a *stopped run* and carries on through the pipeline. A
+# replay interrogates *one step*: it re-runs it on the exact input it first saw
+# and advances nothing, so it also works on a run that succeeded.
+
+
+async def _finish_run_as(workflow_id: int, status: str) -> None:
+    """Park a seeded workflow (and its run) in a terminal state."""
+    from datetime import UTC, datetime
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, workflow_id)
+        assert wf is not None
+        wf.status = status
+        wf.finished_at = datetime.now(UTC)
+        wf.current_step_id = None
+        if wf.current_run_id is not None:
+            run = await session.get(WorkflowRun, wf.current_run_id)
+            if run is not None:
+                run.status = status
+                run.finished_at = datetime.now(UTC)
+        await session.commit()
+
+
+async def test_replay_reruns_one_step_on_its_recorded_context() -> None:
+    """The replay is handed exactly the input the original attempt saw."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "idle")
+    await _finish_run_as(wf_id, "completed")
+
+    # Give the finished attempt a context worth replaying.
+    steps = await _run_steps(run_id)
+    original = next(s for s in steps if s.position == 0)
+    async with SessionLocal() as session:
+        row = await session.get(type(original), original.id)
+        assert row is not None
+        row.input_context = "Summarise the Q3 deck."
+        await session.commit()
+
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf, refusal = await wf_mod.replay_step(session, mgr2, wf_id, step_run_id=original.id)
+    assert refusal is None and wf is not None
+
+    # The step's own agent was re-driven with the very same preamble.
+    assert [c[0] for c in mgr2.calls] == [agents[0]]
+    assert mgr2.calls[0][1] == "Summarise the Q3 deck."
+
+
+async def test_replay_appends_a_marked_attempt_without_advancing() -> None:
+    """A replay never moves the run on — that's what makes it safe on success."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "idle")
+    await _finish_run_as(wf_id, "completed")
+
+    original = next(s for s in await _run_steps(run_id) if s.position == 0)
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        _wf, refusal = await wf_mod.replay_step(session, mgr2, wf_id, step_run_id=original.id)
+    assert refusal is None
+
+    # Only the replayed step ran; step 2 was *not* driven again.
+    assert [c[0] for c in mgr2.calls] == [agents[0]]
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        # The run's own outcome is untouched: a replay is not a re-run.
+        assert wf.status == "completed"
+        assert wf.current_step_id is None
+
+    rows = await _run_steps(run_id)
+    replays = [s for s in rows if s.replay]
+    assert len(replays) == 1
+    assert replays[0].position == 0
+    assert replays[0].attempt == 1  # replays are numbered on their own sequence
+    assert replays[0].status == "running"
+    assert replays[0].input_context == original.input_context
+
+
+async def test_replay_is_closed_by_the_completion_seam() -> None:
+    """Nothing else would ever close a replay's trace, so the seam must."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "idle")
+    await _finish_run_as(wf_id, "completed")
+
+    original = next(s for s in await _run_steps(run_id) if s.position == 0)
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.replay_step(session, mgr2, wf_id, step_run_id=original.id)
+
+    # The replayed agent lands its turn with a fresh deliverable.
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agents[0])
+        assert agent is not None
+        agent.status = "idle"
+        agent.result_summary = "A sharper second take."
+        await session.commit()
+        await wf_mod.advance_for_agent(session, mgr2, agents[0])
+
+    # Closing the replay handed nothing downstream: step 2 was never launched.
+    assert [c[0] for c in mgr2.calls] == [agents[0]]
+
+    replay_row = next(s for s in await _run_steps(run_id) if s.replay)
+    assert replay_row.status == "completed"
+    assert replay_row.finished_at is not None
+    assert replay_row.output_summary == "A sharper second take."
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        # Still finished: closing a replay must not resurrect the run.
+        assert wf is not None and wf.status == "completed"
+
+
+async def test_replay_is_refused_while_the_run_is_in_flight() -> None:
+    """A live (or paused) run owns its agents; a replay would collide with it."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, _agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+    open_row = next(s for s in await _run_steps(run_id) if s.position == 0)
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        _wf, refusal = await wf_mod.replay_step(session, mgr, wf_id, step_run_id=open_row.id)
+    assert refusal is not None
+    assert mgr.calls == []
+    assert [s for s in await _run_steps(run_id) if s.replay] == []
+
+
+async def test_replay_is_refused_for_an_approval_checkpoint() -> None:
+    """An approval ran no agent, so there is nothing to replay."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, _agents = await _seed_linear_workflow(kinds=["approval", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        steps = wf_mod._ordered_steps(wf)
+        await wf_mod._open_approval_trace(session, wf, steps[0])
+        await session.commit()
+    await _finish_run_as(wf_id, "cancelled")
+
+    approval_row = next(s for s in await _run_steps(run_id) if s.kind == "approval")
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        _wf, refusal = await wf_mod.replay_step(session, mgr, wf_id, step_run_id=approval_row.id)
+    assert refusal is not None
+    assert mgr.calls == []
+
+
+async def test_replay_does_not_hijack_a_later_retry() -> None:
+    """A replay is invisible to the pipeline's own bookkeeping.
+
+    Its trace must not be mistaken for the turn a run is waiting on, nor for the
+    failure that stopped it, nor counted as a pipeline attempt.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    run_id = await _open_run_for(wf_id)
+
+    # Step 1 fails, stopping the run at position 0.
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "failed")
+
+    # Replay that step, and let the replay itself fail: a replay's outcome must
+    # not stand in for the failure that actually stopped the run.
+    failed_row = next(s for s in await _run_steps(run_id) if s.position == 0)
+    mgr2 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.replay_step(session, mgr2, wf_id, step_run_id=failed_row.id)
+    async with SessionLocal() as session:
+        replay_row = next(s for s in await _run_steps(run_id) if s.replay)
+        row = await session.get(type(replay_row), replay_row.id)
+        assert row is not None
+        row.status = "failed"
+        row.finished_at = replay_row.started_at
+        await session.commit()
+
+    mgr3 = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr3, wf_id)
+
+    # The retry still lands on the step that stopped the run, and numbers itself
+    # as the pipeline's *second* attempt — the replay didn't inflate the count.
+    assert [c[0] for c in mgr3.calls] == [agents[0]]
+    pipeline = [s for s in await _run_steps(run_id) if s.position == 0 and not s.replay]
+    assert [s.attempt for s in pipeline] == [1, 2]
+
+
+async def test_replay_endpoint_refuses_a_live_run_with_a_conflict() -> None:
+    """The refusal is said out loud, not silently swallowed."""
+    await _ensure_schema()
+    try:
+        with TestClient(create_app()) as client:
+            await _set_agents_enabled(True)
+            wf_id, _agents = await _seed_linear_workflow(kinds=["task", "task"])
+            run_id = await _open_run_for(wf_id)
+            row = next(s for s in await _run_steps(run_id) if s.position == 0)
+
+            res = client.post(f"/api/workflows/{wf_id}/run-steps/{row.id}/replay")
+            assert res.status_code == 409
+
+            missing = client.post(f"/api/workflows/{wf_id}/run-steps/999999/replay")
+            assert missing.status_code == 404
+    finally:
+        await _set_agents_enabled(False)
+
+
 async def test_step_attempt_events_are_sliced_to_their_own_attempt() -> None:
     """Each attempt shows its own activity, not the agent's whole history.
 

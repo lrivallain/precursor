@@ -24,6 +24,10 @@ interface FinalPos {
  * `data-tooltip="..."` attribute gets a snappy custom tooltip on hover
  * (200ms show, instant hide). The tooltip auto-clamps to the viewport on
  * all four edges by measuring its rendered size after mount.
+ *
+ * Text wraps at the max width (`pre-line`) rather than running past it, while
+ * explicit newlines in the attribute are still honoured — so a long hint reads
+ * as a block instead of overflowing its own background.
  */
 export function TooltipProvider() {
   const [anchor, setAnchor] = useState<AnchorRect | null>(null);
@@ -147,7 +151,7 @@ export function TooltipProvider() {
         maxWidth: "min(20rem, calc(100vw - 12px))",
         visibility: pos ? "visible" : "hidden",
       }}
-      className="px-2 py-1 rounded text-[11px] leading-tight bg-text text-bg shadow-lg whitespace-pre"
+      className="px-2 py-1 rounded text-[11px] leading-tight bg-text text-bg shadow-lg whitespace-pre-line"
     >
       {anchor.text}
     </div>

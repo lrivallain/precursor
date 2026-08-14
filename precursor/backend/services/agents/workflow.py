@@ -628,7 +628,9 @@ async def _open_run_step(
 
     A step entry opens exactly one of these and the advance that handles its
     turn closes it, which makes it the natural idempotency token: an advance
-    that finds none has already been beaten to this turn by another.
+    that finds none has already been beaten to this turn by another. A manual
+    replay's trace is excluded — it is not a turn the run is waiting on, so
+    consuming it here would let a replay swallow the pipeline's own advance.
     """
     result = await session.execute(
         select(WorkflowRunStep)
@@ -636,6 +638,7 @@ async def _open_run_step(
             WorkflowRunStep.run_id == run_id,
             WorkflowRunStep.position == position,
             WorkflowRunStep.agent_id == agent_id,
+            WorkflowRunStep.replay.is_(False),
             WorkflowRunStep.finished_at.is_(None),
         )
         .order_by(WorkflowRunStep.id.desc())
@@ -704,6 +707,9 @@ async def _launch_step(
             select(func.count(WorkflowRunStep.id)).where(
                 WorkflowRunStep.run_id == run_id,
                 WorkflowRunStep.position == step.position,
+                # Manual replays are numbered on their own sequence, so a replay
+                # never inflates "the pipeline drove this step N times".
+                WorkflowRunStep.replay.is_(False),
             )
         )
         attempt = int(prior.scalar() or 0) + 1
@@ -729,6 +735,49 @@ async def _launch_step(
     manager.enqueue(manager.start_task(agent_id, extra_context=context))
 
 
+async def _close_run_step(
+    session: AsyncSession,
+    run_step: WorkflowRunStep,
+    *,
+    status: str,
+    output_summary: str | None = None,
+    gate_verdict: str | None = None,
+) -> None:
+    """Stamp one trace row with its outcome, spend, and finish time.
+
+    Shared by the pipeline's advance and by a manual replay, so a replayed
+    attempt is accounted for exactly like the turn it re-runs.
+    """
+    run_step.status = status
+    run_step.finished_at = datetime.now(UTC)
+    if output_summary is not None:
+        run_step.output_summary = output_summary[:8000]
+    if gate_verdict is not None:
+        run_step.gate_verdict = gate_verdict
+
+    agent = await session.get(AgentSession, run_step.agent_id) if run_step.agent_id else None
+
+    # Keep the agent's Agents-section unread badge clear for turns it ran *as a
+    # workflow step*: the workflow is the coordinator here, so these replies
+    # aren't the "autonomous agent finished something for you" signal the badge
+    # is meant to convey. Advancing ``last_read_at`` past this step's events
+    # marks them read without touching genuinely autonomous (manual/scheduled)
+    # runs, whose events land after their own ``last_read_at``.
+    if agent is not None:
+        agent.last_read_at = run_step.finished_at
+
+    # Cost accounting: this attempt spent whatever the agent's cumulative
+    # counters moved by since launch. Clamped at zero because an agent whose
+    # context was cleared mid-run can see its totals reset.
+    if agent is not None:
+        run_step.input_tokens = max(0, agent.total_input_tokens - run_step.token_baseline_in)
+        run_step.output_tokens = max(0, agent.total_output_tokens - run_step.token_baseline_out)
+        run = await session.get(WorkflowRun, run_step.run_id)
+        if run is not None:
+            run.total_input_tokens = (run.total_input_tokens or 0) + run_step.input_tokens
+            run.total_output_tokens = (run.total_output_tokens or 0) + run_step.output_tokens
+
+
 async def _finalize_run_step(
     session: AsyncSession,
     workflow: Workflow,
@@ -747,6 +796,8 @@ async def _finalize_run_step(
         .where(
             WorkflowRunStep.run_id == run_id,
             WorkflowRunStep.agent_id == agent_id,
+            # A replay's trace is closed by the replay seam, never by an advance.
+            WorkflowRunStep.replay.is_(False),
             WorkflowRunStep.finished_at.is_(None),
         )
         .order_by(WorkflowRunStep.id.desc())
@@ -755,33 +806,13 @@ async def _finalize_run_step(
     run_step = result.scalar_one_or_none()
     if run_step is None:
         return
-    run_step.status = status
-    run_step.finished_at = datetime.now(UTC)
-    if output_summary is not None:
-        run_step.output_summary = output_summary[:8000]
-    if gate_verdict is not None:
-        run_step.gate_verdict = gate_verdict
-
-    # Keep the agent's Agents-section unread badge clear for turns it ran *as a
-    # workflow step*: the workflow is the coordinator here, so these replies
-    # aren't the "autonomous agent finished something for you" signal the badge
-    # is meant to convey. Advancing ``last_read_at`` past this step's events
-    # marks them read without touching genuinely autonomous (manual/scheduled)
-    # runs, whose events land after their own ``last_read_at``.
-    agent = await session.get(AgentSession, agent_id)
-    if agent is not None:
-        agent.last_read_at = run_step.finished_at
-
-    # Cost accounting: this attempt spent whatever the agent's cumulative
-    # counters moved by since launch. Clamped at zero because an agent whose
-    # context was cleared mid-run can see its totals reset.
-    if agent is not None:
-        run_step.input_tokens = max(0, agent.total_input_tokens - run_step.token_baseline_in)
-        run_step.output_tokens = max(0, agent.total_output_tokens - run_step.token_baseline_out)
-        run = await session.get(WorkflowRun, run_id)
-        if run is not None:
-            run.total_input_tokens = (run.total_input_tokens or 0) + run_step.input_tokens
-            run.total_output_tokens = (run.total_output_tokens or 0) + run_step.output_tokens
+    await _close_run_step(
+        session,
+        run_step,
+        status=status,
+        output_summary=output_summary,
+        gate_verdict=gate_verdict,
+    )
 
 
 async def _finalize_run(
@@ -870,6 +901,7 @@ async def _finalize_step_by_position(
         .where(
             WorkflowRunStep.run_id == run_id,
             WorkflowRunStep.position == position,
+            WorkflowRunStep.replay.is_(False),
             WorkflowRunStep.finished_at.is_(None),
         )
         .order_by(WorkflowRunStep.id.desc())
@@ -1196,6 +1228,18 @@ async def advance_for_agent(session: AsyncSession, manager: AgentManager, agent_
     attempt that began after it did.
     """
     entered_at = datetime.now(UTC)
+    # A manual replay runs outside the pipeline, so no advance will ever close
+    # its trace. Handled here because this is the one seam every ended turn
+    # reaches, and it is independent of the workflow match below (a replay only
+    # happens when no run is active, so that match is empty by definition).
+    # Isolated behind a rollback: a half-written replay close must not leave a
+    # dirty session for the advance that follows it.
+    try:
+        await finalize_replays_for_agent(session, agent_id)
+    except Exception:
+        logger.debug("failed to close replay traces for %s", agent_id, exc_info=True)
+        await session.rollback()
+
     # Which running workflows have their current step pointing at this agent?
     # Only the ids: the rows themselves are re-read under the lock.
     result = await session.execute(
@@ -1632,6 +1676,174 @@ async def retry_step(
     return workflow
 
 
+# --- Manual replay ----------------------------------------------------------
+# Retrying is about *recovering a run*: it re-drives the step that stopped the
+# pipeline and carries on through everything after it. Replaying is about
+# *interrogating a step*: an operator reading a finished trace wants to see what
+# this one step does when handed the very same input again — a different sample
+# from a non-deterministic model, or a second look after tweaking the agent's
+# prompt or its tools. So a replay deliberately does none of the coordination:
+# it never moves ``current_step_id``, never reopens the run, and nothing advances
+# when it ends. It appends one clearly-marked attempt to the run it belongs to,
+# which is why it works just as well on a run that succeeded.
+
+# An agent in one of these is mid-turn; replaying would hand it a second prompt
+# on top of the one it is already answering.
+_REPLAY_BUSY_STATUSES = ("running", "needs_approval", "pending")
+
+
+async def replay_step(
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow_id: int,
+    *,
+    step_run_id: int,
+) -> tuple[Workflow | None, str | None]:
+    """Re-run one recorded step attempt on its own, with the input it first saw.
+
+    Returns ``(workflow, refusal)`` — ``workflow`` is ``None`` when the attempt
+    doesn't belong to this workflow (a 404), and ``refusal`` carries a
+    human-readable reason when the replay can't be honoured right now.
+    """
+    workflow = await _load_workflow(session, workflow_id)
+    if workflow is None:
+        return None, None
+
+    run_step = await session.get(WorkflowRunStep, step_run_id)
+    if run_step is None:
+        return None, None
+    run = await session.get(WorkflowRun, run_step.run_id)
+    if run is None or run.workflow_id != workflow_id:
+        return None, None
+
+    # A run that hasn't finished still owns its steps' agents: replaying
+    # underneath one would race the coordinator (or, for a paused run, collide
+    # with the resume that re-drives the parked step) over the same agent.
+    if workflow.status in ("running", "paused", "awaiting_approval"):
+        return workflow, "Stop the run before replaying a step."
+    if run_step.agent_id is None:
+        return workflow, "This step ran no agent, so there's nothing to replay."
+
+    agent = await session.get(AgentSession, run_step.agent_id)
+    if agent is None:
+        return workflow, "The agent that ran this step no longer exists."
+    if agent.status in _REPLAY_BUSY_STATUSES:
+        return workflow, "That step's agent is busy — wait for its current turn to end."
+
+    # Re-apply the step's capability scope and the workflow's role, so the replay
+    # runs under the same conditions the pipeline gave it. Best-effort: the
+    # definition may have been edited since this run, in which case the agent's
+    # own settings stand.
+    step = next(
+        (
+            s
+            for s in _ordered_steps(workflow)
+            if s.position == run_step.position and s.agent_id == run_step.agent_id
+        ),
+        None,
+    )
+    if step is not None:
+        await _apply_step_overrides(session, workflow, step)
+
+    prior_replays = await session.execute(
+        select(func.count(WorkflowRunStep.id)).where(
+            WorkflowRunStep.run_id == run_step.run_id,
+            WorkflowRunStep.position == run_step.position,
+            WorkflowRunStep.replay.is_(True),
+        )
+    )
+    context = run_step.input_context
+    session.add(
+        WorkflowRunStep(
+            run_id=run_step.run_id,
+            position=run_step.position,
+            kind=run_step.kind,
+            label=run_step.label,
+            agent_id=run_step.agent_id,
+            attempt=int(prior_replays.scalar() or 0) + 1,
+            replay=True,
+            status="running",
+            input_context=context,
+            started_at=datetime.now(UTC),
+            token_baseline_in=agent.total_input_tokens,
+            token_baseline_out=agent.total_output_tokens,
+        )
+    )
+    await session.commit()
+    await _publish(workflow)
+
+    manager.enqueue(manager.start_task(run_step.agent_id, extra_context=context))
+    return workflow, None
+
+
+async def finalize_replays_for_agent(session: AsyncSession, agent_id: int) -> None:
+    """Close any open replay trace for an agent that just ended its turn.
+
+    A replay is invisible to the coordinator by design, so nothing else would
+    ever close its row — it would render as a step forever in flight. This runs
+    off the same completion seam as the advance, but independently of it: a
+    replay happens precisely when no run is active, which is exactly when the
+    advance has nothing to do.
+    """
+    run_step = (
+        await session.execute(
+            select(WorkflowRunStep)
+            .where(
+                WorkflowRunStep.agent_id == agent_id,
+                WorkflowRunStep.replay.is_(True),
+                WorkflowRunStep.finished_at.is_(None),
+            )
+            .order_by(WorkflowRunStep.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if run_step is None:
+        return
+
+    agent = await session.get(AgentSession, agent_id)
+    status = agent.status if agent else "failed"
+    if status in STEP_AWAITING_PERMISSION_STATUSES:
+        # The turn is still alive and resumes the moment the gate is answered.
+        return
+
+    if status in STEP_FAILED_STATUSES:
+        await _close_run_step(session, run_step, status="failed")
+    elif status in STEP_CANCELLED_STATUSES:
+        await _close_run_step(session, run_step, status="cancelled")
+    elif status in STEP_BLOCKED_STATUSES:
+        await _close_run_step(session, run_step, status="blocked")
+    elif status in STEP_DONE_STATUSES:
+        if run_step.kind == "gate":
+            verdict_text = await _last_assistant_message(session, agent_id) or (
+                (agent.result_summary if agent and agent.result_summary else "") or ""
+            )
+            passed = _parse_verdict(verdict_text)
+            await _tidy_gate_result(session, agent, verdict_text, passed)
+            await _close_run_step(
+                session,
+                run_step,
+                status="passed" if passed else "failed",
+                output_summary=_verdict_reason(verdict_text),
+                gate_verdict="PASS" if passed else "FAIL",
+            )
+        else:
+            await _close_run_step(
+                session,
+                run_step,
+                status="completed",
+                output_summary=await _step_output(session, agent_id),
+            )
+    else:
+        # running / interrupted — not a decision point.
+        return
+
+    await session.commit()
+    run = await session.get(WorkflowRun, run_step.run_id)
+    workflow = await _load_workflow(session, run.workflow_id) if run is not None else None
+    if workflow is not None:
+        await _publish(workflow)
+
+
 async def step_attempt_events(
     session: AsyncSession, workflow_id: int, step_run_id: int
 ) -> list[dict[str, Any]] | None:
@@ -1720,6 +1932,9 @@ async def _last_failed_position(session: AsyncSession, workflow: Workflow) -> in
         .where(
             WorkflowRunStep.run_id == workflow.current_run_id,
             WorkflowRunStep.status.in_(("failed", "cancelled")),
+            # A replay that went badly didn't stop the run; it must not redirect
+            # a retry away from the step that actually did.
+            WorkflowRunStep.replay.is_(False),
         )
         .order_by(WorkflowRunStep.id.desc())
         .limit(1)
@@ -1927,6 +2142,9 @@ async def sweep_stalled_steps(session: AsyncSession, manager: AgentManager) -> i
                         WorkflowRunStep.run_id == workflow.current_run_id,
                         WorkflowRunStep.finished_at.is_(None),
                         WorkflowRunStep.agent_id.is_not(None),
+                        # A replay isn't part of the run's progress, so it must
+                        # not be mistaken for the step the pipeline is stuck on.
+                        WorkflowRunStep.replay.is_(False),
                     )
                     .order_by(WorkflowRunStep.id.desc())
                     .limit(1)

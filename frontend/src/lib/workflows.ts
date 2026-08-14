@@ -82,9 +82,11 @@ export function stepState(
 ): WorkflowStepState {
   if (run) {
     // Newest attempt for this position wins (a gate loop-back appends attempts).
+    // A manual replay is skipped: it re-runs a step outside the pipeline, so
+    // letting it repaint the strip would misreport how the run itself went.
     let latest: WorkflowRunStep | null = null;
     for (const rs of run.step_runs) {
-      if (rs.position === step.position) latest = rs;
+      if (rs.position === step.position && !rs.replay) latest = rs;
     }
     if (!latest) return "pending";
     return TRACE_TO_STATE[latest.status] ?? "pending";
@@ -335,11 +337,14 @@ export const RUN_TRIGGER_LABEL: Record<string, string> = {
 
 // Progress of a run: how many *distinct positions* reached a terminal, non-failed
 // state over the run's step count. Gate loop-backs (repeated positions) collapse
-// so the bar reflects pipeline advancement, not attempt count.
+// so the bar reflects pipeline advancement, not attempt count. Manual replays are
+// skipped entirely — replaying a step the run never got past shouldn't advance a
+// bar that measures how far the pipeline itself actually got.
 export function runProgress(run: WorkflowRun, totalSteps: number): { done: number; total: number } {
   const total = Math.max(totalSteps, 0);
   const donePositions = new Set<number>();
   for (const s of run.step_runs) {
+    if (s.replay) continue;
     if (s.status === "completed" || s.status === "passed") donePositions.add(s.position);
   }
   return { done: Math.min(donePositions.size, total || donePositions.size), total };
