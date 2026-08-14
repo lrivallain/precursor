@@ -262,6 +262,109 @@ cloning. Instructions land at the *end* of the kickoff preamble, where they carr
 the most weight. On an approval step, the instructions are what the reviewer sees
 on the decision panel.
 
+### Placeholders
+
+Step instructions aren't static text — they can pull in live values, so one
+generic definition adapts to each run and each step takes only what it needs:
+
+| Placeholder | Resolves to |
+| --- | --- |
+| <code v-pre>{{run.input}}</code> | The [run brief](#the-run-brief-one-workflow-a-different-subject-each-run) for *this* run |
+| <code v-pre>{{step.N.output}}</code> | What the step at 0-based position `N` produced this run |
+| <code v-pre>{{state.&lt;key&gt;}}</code> | A value from the workflow's [saved state](#pipeline-state-what-a-workflow-remembers) |
+
+Each takes an optional fallback after a pipe — <code v-pre>{{state.cursor | the
+beginning of time}}</code> — which is what makes a first run safe, since nothing
+is stored yet. Without one, an unresolved placeholder renders as `(unset)`: an
+explicit absence the agent can reason about, rather than a silent blank that
+quietly changes what the instruction says. Anything we don't recognise
+(<code v-pre>{{mustache.thing}}</code>) is left untouched, so prose and other
+tooling's braces survive.
+
+Substitution happens **before** the agent is handed its instructions — it never
+sees a raw template. <code v-pre>{{step.N.output}}</code> reads the run trace
+rather than the agents' live artifacts, so it still resolves after the blackboard
+is cleared, and a step re-driven by a [gate loop-back](#gates-and-loop-back)
+resolves to its latest attempt.
+
+::: tip Narrowing what a step is fed
+<code v-pre>{{step.N.output}}</code> pairs well with `context_mode: none`:
+instead of inheriting the whole upstream transcript, a step names the one earlier
+output it needs. In a long pipeline that's the difference between a focused
+prompt and an expensive, distracting one.
+:::
+
+## Pipeline state: what a workflow remembers
+
+The run brief, the run trace and the artifact blackboard all describe **one
+execution** — the blackboard is even wiped between runs. So a scheduled pipeline
+had nowhere to record what it must not redo next time. **Pipeline state** is that
+place: named values scoped to the workflow, shared by every step, kept **across
+runs**.
+
+<!-- The example ships in the repo so this isn't just prose — see
+     examples/workflows/stateful-digest.yaml -->
+
+It is deliberately *not* the same as an agent's
+[own state](/features/agents#durable-state-the-private-scratchpad):
+
+| | Scope | Survives a run? |
+| --- | --- | --- |
+| Agent state | One agent — which several pipelines may share | Yes |
+| Artifacts | One agent, one run | **No** — cleared per run |
+| **Pipeline state** | **One workflow, all its steps** | **Yes** |
+
+That distinction is the whole point. A step points at a *reusable* agent, so a
+cursor written under the agent's own scope is shared with every other pipeline
+using that agent — and an inline agent's scratchpad dies with its step. A fact
+like "the last invoice we processed" belongs to the **pipeline**.
+
+Steps use it two ways:
+
+- **Read** — a <code v-pre>{{state.&lt;key&gt;}}</code> placeholder in the step's
+  instructions, resolved before the agent runs. The step is handed the value, not
+  a lookup task.
+- **Write** — the `workflow_state_set` tool, which defaults to whichever workflow
+  is running the calling agent right now (resolved per call, since a shared agent
+  belongs to no single pipeline). `workflow_state_get`, `workflow_state_list` and
+  `workflow_state_delete` round it out.
+
+Each step's kickoff also carries a **key index** — the names of the stored values,
+never the bodies — so an agent knows what it can look up without paying for the
+whole store in every prompt.
+
+The **Pipeline state** panel on the workflow page lists what's saved, expands a
+value, and lets you add, delete, or reset entries. Seeding a value by hand is how
+you give a pipeline its starting cursor without faking a run; **reset** is the
+lever when a saved cursor has gone bad and every run is working from a wrong
+baseline.
+
+### A worked example
+
+The repo ships one at
+[`examples/workflows/stateful-digest.yaml`](https://github.com/lrivallain/precursor/blob/main/examples/workflows/stateful-digest.yaml)
+— import it from **Workflows → Import**. It's a three-step digest that shows the
+whole loop:
+
+1. **Survey since last run** reads <code v-pre>{{state.last_digest_at | the
+   beginning of time…}}</code>. First run: nothing is stored, so the default
+   lands and the step surveys everything.
+2. **Write the digest** reads <code v-pre>{{step.0.output}}</code> plus
+   <code v-pre>{{state.audience | a general technical audience}}</code> — an
+   operator-tunable knob you seed from the panel without editing the workflow.
+3. **Record the cursor** calls `workflow_state_set` to store the new
+   `last_digest_at`, which is what step 1 reads on the *next* run.
+
+Those three moves — read a cursor with a safe first-run default, work relative to
+it, write the new cursor at the end — cover most stateful pipelines.
+
+::: warning Bookkeeping, not a blob store
+Values are capped (100 KB each, 200 keys per workflow) and are meant to be small
+facts: a cursor, a set of seen ids, a baseline. A document belongs in an
+**artifact**; a large file belongs in a [workspace](/features/workspaces), with
+only its path recorded here.
+:::
+
 ## When a step fails: retry, carry on, or stop
 
 By default any failed step stops the run. Each step now carries its own **failure
@@ -625,6 +728,9 @@ Workflows live under `/api/workflows`:
 | `POST /api/workflows/{id}/approve` \| `/reject` | Clear or bounce a human approval checkpoint (`{ "note": "…", "action": "rework\|stop\|skip" }`) |
 | `POST /api/workflows/{id}/archive` \| `/unarchive` | Archive toggle |
 | `PUT /api/workflows/{id}/schedule` | Configure the schedule |
+| `GET /api/workflows/{id}/state` | List the pipeline's [saved state](#pipeline-state-what-a-workflow-remembers) |
+| `PUT /api/workflows/{id}/state` | Upsert one value (`{ "key": "…", "value": "…" }`) |
+| `DELETE /api/workflows/{id}/state/{key}` \| `/state` | Drop one key, or reset the lot |
 | `POST` \| `DELETE /api/workflows/{id}/webhook` | Mint / revoke a webhook token |
 | `POST /api/workflows/hooks/{token}` | Trigger via webhook (body → run brief) |
 | `GET /api/transfer/workflows/{id}` | [Export](/features/transfer) the workflow (+ its agents) as YAML |

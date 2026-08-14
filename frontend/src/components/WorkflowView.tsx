@@ -84,6 +84,7 @@ import {
   type DraftStep,
 } from "./WorkflowStepEditor";
 import { WorkflowRunTrace } from "./WorkflowRunTrace";
+import { WorkflowStatePanel } from "./WorkflowStatePanel";
 import { WorkflowScheduleEditor } from "./WorkflowScheduleEditor";
 import { useConfirm } from "./ConfirmDialog";
 
@@ -1585,6 +1586,9 @@ export function WorkflowView({
             )}
           </div>
         )}
+
+        {/* Pipeline state — what the workflow carries across runs */}
+        <WorkflowStatePanel workflowId={workflow.id} />
 
         {/* Fallback: legacy last-run summary when no run history exists yet. */}
         {!selectedRun && workflow.result_summary && (

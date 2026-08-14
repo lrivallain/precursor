@@ -53,6 +53,12 @@ from precursor.backend.models.workflow import (
     WorkflowRunStep,
     WorkflowStep,
 )
+from precursor.backend.models.workflow_state import (
+    WORKFLOW_STATE_MAX_KEY,
+    WORKFLOW_STATE_MAX_KEYS,
+    WORKFLOW_STATE_MAX_VALUE,
+    WorkflowState,
+)
 from precursor.backend.models.workspace import Workspace
 
 __all__ = [
@@ -64,6 +70,9 @@ __all__ = [
     "COLLECTION_ACCENTS",
     "DEFAULT_COLLECTION_ACCENT",
     "DEFAULT_COLLECTION_NAME",
+    "WORKFLOW_STATE_MAX_KEY",
+    "WORKFLOW_STATE_MAX_KEYS",
+    "WORKFLOW_STATE_MAX_VALUE",
     "WORKFLOW_STATUSES",
     "AgentArtifact",
     "AgentBlueprint",
@@ -97,6 +106,7 @@ __all__ = [
     "Workflow",
     "WorkflowRun",
     "WorkflowRunStep",
+    "WorkflowState",
     "WorkflowStep",
     "Workspace",
 ]

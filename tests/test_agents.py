@@ -2135,16 +2135,19 @@ async def test_task_step_context_forbids_clarification() -> None:
     directive; a gate step (which has its own PASS/FAIL contract) must not.
     """
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models.workflow import WorkflowStep
+    from precursor.backend.models.workflow import Workflow, WorkflowStep
     from precursor.backend.services.agents import workflow as wf_mod
 
     await _ensure_schema()
     async with SessionLocal() as session:
+        # Unsaved rows: _build_context only reads them, and passing a detached
+        # workflow keeps the state lookup a no-op (no id → no stored keys).
+        workflow = Workflow(id=0, name="ctx probe")
         task_step = WorkflowStep(workflow_id=0, position=0, agent_id=1, kind="task")
         gate_step = WorkflowStep(workflow_id=0, position=0, agent_id=2, kind="gate")
 
-        task_ctx = await wf_mod._build_context(session, task_step, None)
-        gate_ctx = await wf_mod._build_context(session, gate_step, None)
+        task_ctx = await wf_mod._build_context(session, workflow, task_step, None)
+        gate_ctx = await wf_mod._build_context(session, workflow, gate_step, None)
 
     # A task step — even a first one with no upstream input — is told to complete
     # autonomously and explicitly forbidden from emitting NEED_INPUT.

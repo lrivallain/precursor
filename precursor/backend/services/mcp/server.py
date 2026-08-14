@@ -28,6 +28,12 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
     "skills": ["list_skills", "get_skill"],
     "memory": ["list_memories"],
     "agent_state": ["state_list", "state_get", "state_set", "state_delete"],
+    "workflow_state": [
+        "workflow_state_list",
+        "workflow_state_get",
+        "workflow_state_set",
+        "workflow_state_delete",
+    ],
     "post_message": ["post_message"],
     "schedules": [
         "list_schedules",

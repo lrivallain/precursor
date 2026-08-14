@@ -308,7 +308,9 @@ Precursor runs a `FastMCP` server named **`precursor`** that exposes its own
 data to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 (meeting) sessions, cross-entity search, skills, memory (read + write),
 [agent state](/features/agents#durable-state-the-private-scratchpad) (an agent's
-durable cross-run scratchpad, read + write), `post_message` (runs a full turn),
+durable cross-run scratchpad, read + write),
+[workflow state](/features/workflows#pipeline-state-what-a-workflow-remembers) (a
+pipeline's shared memory, read + write), `post_message` (runs a full turn),
 schedules, and reminders.
 
 **Search spans every surface** — the same ⌘K palette engine — so a host can find

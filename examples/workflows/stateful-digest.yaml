@@ -1,0 +1,125 @@
+# A worked example of workflow state: a pipeline that remembers where it got to
+# between runs, so a scheduled digest reports "what changed since last time"
+# instead of re-reporting everything it has ever seen.
+#
+# Import it with Workflows → Import (or POST the file to /api/transfer/import).
+# It arrives paused and unscheduled; the agents it carries are created with it.
+#
+# What to look at, in order:
+#
+#  1. Step 1 reads `{{state.last_digest_at | the beginning of time}}`. On the very
+#     first run nothing is stored, so the default is substituted and the step is
+#     told to survey everything. The step never sees a raw `{{…}}` template —
+#     placeholders are resolved before the agent is handed its instructions.
+#  2. Step 2 reads `{{step.0.output}}` (what step 1 actually produced this run)
+#     alongside `{{state.audience | …}}`, an operator-tunable knob you can seed by
+#     hand from the Pipeline state panel without editing the workflow.
+#  3. Step 3 calls `workflow_state_set` to record the new cursor. That write is
+#     what the *next* run reads back in step 1 — the loop that makes the pipeline
+#     stateful rather than amnesiac.
+#
+# The same three moves cover most real stateful pipelines: read a cursor with a
+# safe first-run default, do work relative to it, write the new cursor at the end.
+format: 1
+kind: workflow
+exported_by: Precursor (bundled example)
+
+agents:
+  - title: Surveyor
+    task: >-
+      Survey a subject and report what you find as a compact, factual list.
+      Prefer specifics (names, dates, identifiers) over prose, and say plainly
+      when something is unchanged or absent rather than padding the list.
+    inline: false
+    use_mcp: true
+    use_skills: false
+    use_memory: false
+
+  - title: Digest writer
+    task: >-
+      Turn a list of findings into a short written digest. Lead with what
+      matters most, keep it to a handful of bullets, and never invent an item
+      that is not in the input.
+    inline: false
+    use_mcp: true
+    use_skills: false
+    use_memory: false
+
+  - title: State recorder
+    task: >-
+      Record the durable facts a pipeline needs on its next run, using the
+      workflow state tools. Write only what a future run genuinely needs to
+      resume; never dump a whole document into state.
+    inline: false
+    use_mcp: true
+    use_skills: false
+    use_memory: false
+
+workflow:
+  name: Stateful digest (example)
+  description: >-
+    Demonstrates workflow state: step 1 reads the cursor left by the previous
+    run, step 2 formats the result for a stored audience setting, and step 3
+    writes the new cursor for next time.
+  icon: database
+  # Keep the blackboard fresh each run — artifacts are this run's deliverables.
+  # Anything that must outlive the run belongs in state instead, which is
+  # precisely the distinction this example exists to show.
+  clear_artifacts: true
+  max_loops: 3
+
+  steps:
+    # ---------------------------------------------------------------- step 0
+    - agent: 0
+      name: Survey since last run
+      kind: task
+      instructions: |
+        Survey this subject: {{run.input | the state of this project}}
+
+        The previous run of this pipeline finished at:
+        {{state.last_digest_at | the beginning of time — this is the first run, so cover everything}}
+
+        Report only what is new or has changed since that point. If the marker
+        above says this is the first run, survey the whole subject instead and
+        say so explicitly in your first line.
+
+        Produce a compact bulleted list of findings. Publish it as an artifact
+        titled "Findings" so the next step receives it intact.
+
+    # ---------------------------------------------------------------- step 1
+    - agent: 1
+      name: Write the digest
+      kind: task
+      # Only this step's own instructions matter here, so don't inherit the
+      # whole upstream transcript — the findings arrive via the placeholder.
+      context_mode: none
+      instructions: |
+        Write a short digest of these findings:
+
+        {{step.0.output | (the previous step produced nothing — say so plainly)}}
+
+        Write it for this audience: {{state.audience | a general technical audience}}
+
+        Keep it to five bullets at most, lead with the most consequential item,
+        and add nothing that is not in the findings above. Publish the result as
+        an artifact titled "Digest".
+
+    # ---------------------------------------------------------------- step 2
+    - agent: 2
+      name: Record the cursor
+      kind: task
+      context_mode: none
+      instructions: |
+        Record this run's cursor so the next run knows where to resume.
+
+        Call `workflow_state_set` with:
+          - key:   last_digest_at
+          - value: the current UTC timestamp, ISO-8601 (e.g. 2026-08-14T09:30:00Z)
+
+        Then call `workflow_state_set` once more with:
+          - key:   last_digest_topic
+          - value: {{run.input | (no subject was given for this run)}}
+
+        Do not store the digest itself — that is this run's deliverable and is
+        already published as an artifact. State is for the small facts the next
+        run needs in order to resume. Confirm both writes in one short sentence.

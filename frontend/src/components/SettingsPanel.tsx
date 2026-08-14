@@ -1744,6 +1744,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "workflow_state",
+    label: "Workflow state",
+    hint: "Read & write a workflow's shared pipeline memory.",
+    danger: true,
+  },
+  {
     key: "post_message",
     label: "Post message",
     hint: "Let callers post to a topic and run a full assistant turn.",
@@ -1927,6 +1933,7 @@ function McpExposeCard({
   const anyWriteOn =
     expose.memory_write ||
     expose.agent_state ||
+    expose.workflow_state ||
     expose.post_message ||
     expose.schedules ||
     expose.reminders;

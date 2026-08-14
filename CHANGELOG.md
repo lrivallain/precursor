@@ -46,6 +46,37 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   export/import so a workflow still imports onto a machine with a different
   server set.
 
+- **Workflows remember things between runs, and steps can read them.** A pipeline
+  now has its own **state**: named values scoped to the workflow, shared by every
+  step and kept **across runs**. Everything else a step could see described a
+  single execution — the run brief, the run trace, and an artifact blackboard
+  that's wiped between runs — so a scheduled pipeline had nowhere to record what
+  it must not redo next time. Agent state can't stand in for it: a step points at
+  a *reusable* agent, so a cursor written under the agent's own scope is shared
+  with every other pipeline using that agent, and an inline agent's scratchpad
+  dies with its step.
+
+  Steps **read** state through `{{state.<key>}}` placeholders substituted into
+  their instructions before the agent ever runs, and **write** it with the
+  `workflow_state_set` tool (plus `_get`, `_list`, `_delete`), which resolves the
+  owning pipeline per call rather than from the environment — the right answer
+  for an agent shared by several workflows. The new **Pipeline state** panel on
+  the workflow page lists what's saved, expands a value, and lets you seed a
+  starting cursor by hand or reset one that's gone bad
+  (`GET|PUT /api/workflows/{id}/state`, `DELETE .../state[/{key}]`).
+
+- **Step instructions support placeholders.** `{{run.input}}` and
+  `{{step.N.output}}` were documented on the model but never actually
+  implemented — a step written with them was handed the raw template. They now
+  resolve for real, alongside `{{state.<key>}}`, each with an optional `| default`
+  fallback (`{{state.cursor | the beginning of time}}`) that makes a first run
+  safe. An unresolved placeholder renders as `(unset)` rather than a silent blank,
+  and anything we don't recognise is left untouched. `{{step.N.output}}` pairs
+  with `context_mode: none` to feed a step exactly one earlier output instead of
+  the whole upstream transcript. A worked example ships at
+  `examples/workflows/stateful-digest.yaml` — import it from **Workflows →
+  Import**.
+
 - **Agents can remember things between runs.** A new **State** store gives every
   agent a private key/value scratchpad that *survives re-runs* — the missing
   third surface next to long-term **memory** (global, and injected into every

@@ -363,6 +363,18 @@ the server preflights Docker availability against the effective jail setting.
   `state_list`/`state_get`/`state_set`/`state_delete` MCP tools, which resolve the
   calling agent from the `PRECURSOR_AGENT_ID` env the manager stamps into the
   first-party MCP subprocess.
+- **Workflow state** (`WorkflowState`, `services/workflow_state.py`,
+  `/api/workflows/{id}/state`) — the same idea one level up, scoped to the
+  *pipeline* rather than an agent, because a `WorkflowStep` points at a **reusable**
+  agent: a cursor written under the agent's scope would be shared with every other
+  workflow using it, and an `inline` agent's scratchpad dies with its step. Steps
+  read it through `{{state.<key>}}` placeholders substituted into
+  `WorkflowStep.instructions` by `render_placeholders` (which also resolves
+  `{{run.input}}` and `{{step.N.output}}`, each with an optional `| default`), and
+  write it with the `workflow_state_*` MCP tools. Those resolve the owning workflow
+  **per call** — the running workflow whose `current_step_id` points at the calling
+  agent — rather than from the environment, since a shared agent's SDK session
+  outlives any one run.
 
 ## SPA
 
