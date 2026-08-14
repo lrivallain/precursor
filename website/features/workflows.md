@@ -545,6 +545,12 @@ Clicking a step opens a **modal** that drills into that agent's run — its
 timeline, artifacts, and answer — while the workflow stays live in the
 background. From there you can jump to the full agent in agents mode.
 
+You don't have to be on the board to see a run is under way: on the
+**Workflows gallery**, a card whose workflow is running wears the same rotating
+holographic frame the composer uses while a reply streams, and the active step
+card uses on the board — so the live pipeline is the one thing moving on the
+page.
+
 ### Run history and the step trace
 
 Every execution is recorded as a **run**. The detail board's **run header**
