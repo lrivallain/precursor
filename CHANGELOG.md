@@ -228,6 +228,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A run records what actually started it.** Every entry point outside a
+  workflow opened its run as `manual`, so the Runs rail credited a human for
+  schedules, webhook fires, fleet releases and retries alike.
 - **A gate agent reads its own verdict.** The event archive spans every run of
   an agent — that is what makes it the transcript you scroll — so "the newest
   assistant message" meant "whichever concurrent run spoke last". A gate shared

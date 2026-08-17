@@ -482,7 +482,7 @@ async def fire_agent_webhook(
     await session.commit()
     await session.refresh(agent)
     mgr = get_agent_manager()
-    mgr.enqueue(mgr.restart_with_task(agent.id))
+    mgr.enqueue(mgr.restart_with_task(agent.id, trigger="webhook"))
     return agent
 
 

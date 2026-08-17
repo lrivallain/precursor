@@ -1612,6 +1612,7 @@ class AgentManager:
         extra_context: str | None = None,
         *,
         run_id: int | None = None,
+        trigger: str = "manual",
     ) -> None:
         """Begin a fresh execution of the agent's objective.
 
@@ -1626,7 +1627,7 @@ class AgentManager:
             run = (
                 await self._run(run_id)
                 if run_id is not None
-                else await self._open_run(agent_id, trigger="manual")
+                else await self._open_run(agent_id, trigger=trigger)
             )
             if run is None:
                 return
@@ -1674,7 +1675,7 @@ class AgentManager:
             if run is not None:
                 await self._fail_turn(run.id, exc)
 
-    async def restart_with_task(self, agent_id: int) -> None:
+    async def restart_with_task(self, agent_id: int, *, trigger: str = "manual") -> None:
         """Re-establish the SDK session after the task prompt was edited.
 
         The task is delivered only by :meth:`start_task`; a live or resumed
@@ -1690,7 +1691,7 @@ class AgentManager:
         the ``clear`` command instead.
         """
         await self.teardown_session(agent_id)
-        run = await self._open_run(agent_id, trigger="manual", inherit_session=True)
+        run = await self._open_run(agent_id, trigger=trigger, inherit_session=True)
         await self.start_task(agent_id, run_id=run.id if run else None)
 
     async def send_message(self, agent_id: int, text: str) -> None:
@@ -2054,7 +2055,9 @@ class AgentManager:
 
     # ------------------------------------------------------------------ commands
 
-    async def clear_session(self, agent_id: int, *, keep_id: bool = False) -> None:
+    async def clear_session(
+        self, agent_id: int, *, keep_id: bool = False, trigger: str = "manual"
+    ) -> None:
         """Erase an agent's conversation and start its SDK context from scratch.
 
         Disconnects + forgets the live session and wipes the archived timeline
@@ -2092,7 +2095,7 @@ class AgentManager:
         if prior is not None:
             await self._clear_artifacts(prior.id)
 
-        run = await self._open_run(agent_id, trigger="manual", inherit_session=keep_id)
+        run = await self._open_run(agent_id, trigger=trigger, inherit_session=keep_id)
         if run is not None:
             await self._patch_run(
                 run.id,
@@ -2103,7 +2106,9 @@ class AgentManager:
             )
         await self._publish(agent_id, agent_run_id=run.id if run else None)
 
-    async def rerun_task(self, agent_id: int, *, extra: str | None = None) -> None:
+    async def rerun_task(
+        self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"
+    ) -> None:
         """Reset the agent's context (same uuid) and replay its stored task.
 
         Backs the scheduled ``/agent <uuid> /run`` nudge: instead of the schedule
@@ -2114,7 +2119,7 @@ class AgentManager:
         resolving), then re-delivers ``task_prompt`` — optionally with an
         ``extra`` one-off note appended for this run — as a clean turn.
         """
-        await self.clear_session(agent_id, keep_id=True)
+        await self.clear_session(agent_id, keep_id=True, trigger=trigger)
         agent = await self._load(agent_id)
         if agent is None:
             return
@@ -3195,7 +3200,7 @@ class AgentManager:
                 async with SessionLocal() as session:
                     if await fleet.running_count(session) >= settings.agents_max_concurrent:
                         break
-                await self.start_task(agent_id)
+                await self.start_task(agent_id, trigger="fleet")
         except Exception:
             logger.debug("fleet sweep failed", exc_info=True)
 
@@ -3216,7 +3221,7 @@ class AgentManager:
             next_retry_at=None,
             error=None,
         )
-        await self.restart_with_task(agent_id)
+        await self.restart_with_task(agent_id, trigger="retry")
 
 
 # Map SDK event class names → coarse workflow step kinds for the UI.

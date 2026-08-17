@@ -801,7 +801,7 @@ async def test_rerun_task_clears_then_replays_task_prompt() -> None:
 
     calls: dict[str, object] = {}
 
-    async def fake_clear(aid, *, keep_id=False):  # type: ignore[no-untyped-def]
+    async def fake_clear(aid, *, keep_id=False, trigger="manual"):  # type: ignore[no-untyped-def]
         calls["clear"] = (aid, keep_id)
 
     async def fake_send(aid, text):  # type: ignore[no-untyped-def]
@@ -1681,7 +1681,7 @@ async def test_retry_agent_bumps_count_and_replays(monkeypatch) -> None:
     mgr = AgentManager()
     replayed: list[int] = []
 
-    async def fake_restart(aid: int) -> None:
+    async def fake_restart(aid: int, *, trigger: str = "manual") -> None:
         replayed.append(aid)
 
     mgr.restart_with_task = fake_restart  # type: ignore[method-assign]
@@ -1828,7 +1828,7 @@ async def test_webhook_fires_agent(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "agents_available", lambda: (True, "ok"))
     fired: list[int] = []
 
-    async def fake_restart(self, aid: int) -> None:
+    async def fake_restart(self, aid: int, *, trigger: str = "manual") -> None:
         fired.append(aid)
 
     monkeypatch.setattr(AgentManager, "restart_with_task", fake_restart)
@@ -6752,3 +6752,35 @@ async def test_oauth_refresh_only_drops_the_runs_that_are_idle() -> None:
     await mgr.refresh_oauth_sessions()
 
     assert torn == [idle_id]
+
+
+@pytest.mark.asyncio
+async def test_runs_record_what_actually_triggered_them() -> None:
+    """The trigger is a user-visible column on the Runs rail, so it must be true.
+
+    Every non-workflow entry point funnelled through ``_open_run(trigger=
+    "manual")``, so a schedule, a webhook, a fleet release and a retry all
+    claimed a human had pressed start.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        agent = AgentSession(title="Triggered", task_prompt="work", status="idle")
+        session.add(agent)
+        await session.commit()
+        await session.refresh(agent)
+        agent_id = agent.id
+
+    mgr = AgentManager()
+    for trigger in ("fleet", "schedule", "webhook", "retry"):
+        run = await mgr._open_run(agent_id, trigger=trigger)
+        assert run is not None
+
+    async with SessionLocal() as session:
+        rows = await session.execute(
+            select(AgentRun.trigger).where(AgentRun.agent_id == agent_id).order_by(AgentRun.id)
+        )
+        assert list(rows.scalars().all()) == ["fleet", "schedule", "webhook", "retry"]

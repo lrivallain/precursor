@@ -121,7 +121,7 @@ class _StubManager:
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
 
-    async def rerun_task(self, agent_id: int) -> None:
+    async def rerun_task(self, agent_id: int, *, trigger: str = "manual") -> None:
         self.calls.append(("rerun", agent_id))
 
     async def send_message(self, agent_id: int, text: str) -> None:
