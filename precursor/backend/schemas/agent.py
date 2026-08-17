@@ -290,6 +290,10 @@ class AgentEvent(BaseModel):
     request_id: str | None = None
     data: dict[str, Any] | None = None
     at: UtcDateTime | None = None
+    # Which execution produced this event. The transcript is per *agent* and
+    # spans every run, so without this a reusable agent driven by two workflows
+    # at once renders one interleaved conversation (issue #242).
+    agent_run_id: int | None = None
 
 
 class AgentModelInfo(BaseModel):

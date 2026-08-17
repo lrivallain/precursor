@@ -675,10 +675,22 @@ async def get_agent(
 
 @router.get("/{agent_id}/events", response_model=list[AgentEvent])
 async def get_agent_events(
-    agent_id: str, session: AsyncSession = Depends(get_session)
+    agent_id: str,
+    agent_run_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[AgentEvent]:
+    """The agent's transcript, optionally narrowed to one execution.
+
+    Unfiltered the timeline spans every run, which is what a single-driver agent
+    wants. Pass ``agent_run_id`` to read one execution on its own — concurrent
+    drivers otherwise interleave into one conversation (issue #242).
+    """
     agent = await _get_or_404(session, agent_id)
-    return await get_agent_manager().get_events(agent.id)
+    if agent_run_id is not None:
+        run = await session.get(AgentRun, agent_run_id)
+        if run is None or run.agent_id != agent.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent run not found")
+    return await get_agent_manager().get_events(agent.id, agent_run_id=agent_run_id)
 
 
 @router.get("/{agent_id}/runs", response_model=list[AgentRunRead])

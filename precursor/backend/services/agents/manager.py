@@ -1941,17 +1941,33 @@ class AgentManager:
             await self._teardown_run(run_id)
         return cleared
 
-    async def get_events(self, agent_id: int) -> list[AgentEvent]:
+    async def get_events(
+        self, agent_id: int, *, agent_run_id: int | None = None
+    ) -> list[AgentEvent]:
         """Return the normalised event history for the workflow timeline.
 
         The archive is per *agent* — the transcript the user reads spans every
         execution — but the live fallback and the pending-approval cards belong
         to the agent's **current** run, the only execution they can act on.
+
+        Pass ``agent_run_id`` to read a single execution. Two workflows driving
+        one reusable agent at the same time otherwise interleave into a single
+        unreadable conversation, each answering the other's prompt (issue #242).
         """
         await self._ensure_loaded(agent_id)
-        run = await self._resolve_run(agent_id)
+        # Which execution this read is about: the requested one, else the
+        # agent's current run (the only one an approval card could act on).
+        run = (
+            await self._run(agent_run_id)
+            if agent_run_id is not None
+            else await self._resolve_run(agent_id)
+        )
         live = self._live.get(run.id) if run is not None else None
-        events = list(self._events.get(agent_id, []))
+        events = [
+            ev
+            for ev in self._events.get(agent_id, [])
+            if agent_run_id is None or ev.agent_run_id == agent_run_id
+        ]
         if not events:
             # Nothing archived (neither in memory nor the DB) — e.g. a session
             # resumed after a restart that hasn't re-emitted yet. Fall back to
@@ -2550,17 +2566,22 @@ class AgentManager:
             if agent_id in self._loaded:
                 return
             async with SessionLocal() as session:
-                payloads = (
-                    await session.scalars(
-                        select(AgentEventRecord.payload)
+                rows = (
+                    await session.execute(
+                        select(AgentEventRecord.payload, AgentEventRecord.agent_run_id)
                         .where(AgentEventRecord.agent_session_id == agent_id)
                         .order_by(AgentEventRecord.id)
                     )
                 ).all()
             archived: list[AgentEvent] = []
-            for payload in payloads:
+            for payload, run_id in rows:
                 try:
-                    archived.append(AgentEvent.model_validate_json(payload))
+                    parsed = AgentEvent.model_validate_json(payload)
+                    # The column is the authority: rows archived before the event
+                    # payload carried a run id still resolve to their execution.
+                    if run_id is not None:
+                        parsed.agent_run_id = run_id
+                    archived.append(parsed)
                 except Exception:
                     logger.debug(
                         "skipping malformed archived event for agent %s", agent_id, exc_info=True
@@ -2619,6 +2640,8 @@ class AgentManager:
         before_status = run.status
         normalised = normalize_event(event)
         normalised.at = datetime.now(UTC)
+        # Stamp the producing run so the timeline can be split per execution.
+        normalised.agent_run_id = run_id
         self._events.setdefault(agent_id, []).append(normalised)
         await self._archive_event(agent_id, normalised, agent_run_id=run_id)
 

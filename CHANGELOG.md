@@ -228,6 +228,17 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A workflow board shows its own run.** The step strip was rendered from the
+  shared agent row, which mirrors that agent's *current* run — so two pipelines
+  driving one agent both displayed whichever finished last, right down to the
+  answer and the question waiting on you. Each board now resolves its step
+  through the run that step actually launched.
+- **The agent transcript can be read one run at a time.** Concurrent drivers
+  produced a single interleaved timeline — two prompts and two answers with
+  nothing saying which belonged to which. Every event now carries its run, the
+  **Runs** rail doubles as a filter, and a chip above the timeline says which
+  run you are reading. Agent-wide notices (the MCP authorisation banner) carry
+  no run and so appear only in the unfiltered view.
 - **A run records what actually started it.** Every entry point outside a
   workflow opened its run as `manual`, so the Runs rail credited a human for
   schedules, webhook fires, fleet releases and retries alike.

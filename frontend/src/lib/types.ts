@@ -419,6 +419,9 @@ export interface AgentEvent {
   request_id: string | null;
   data: Record<string, unknown> | null;
   at: string | null;
+  // Which execution produced this event, so a shared agent's concurrent runs can
+  // be read one at a time instead of interleaved.
+  agent_run_id: number | null;
 }
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";

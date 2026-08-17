@@ -6784,3 +6784,142 @@ async def test_runs_record_what_actually_triggered_them() -> None:
             select(AgentRun.trigger).where(AgentRun.agent_id == agent_id).order_by(AgentRun.id)
         )
         assert list(rows.scalars().all()) == ["fleet", "schedule", "webhook", "retry"]
+
+
+async def test_transcript_can_be_read_one_run_at_a_time() -> None:
+    """Two concurrent drivers must not read as one interleaved conversation.
+
+    The event archive is per *agent* and spans every execution, which is right
+    for a single-driver agent and unreadable for a shared one: workflow ALPHA's
+    prompt, workflow BRAVO's prompt, ALPHA's answer and BRAVO's answer land in
+    one flat timeline where each appears to answer the other (issue #242).
+    Filtering by run recovers a coherent transcript per execution.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.schemas.agent import AgentEvent
+
+    with TestClient(create_app()) as client:
+        async with SessionLocal() as session:
+            agent = AgentSession(title="Shared worker", task_prompt="do", status="idle")
+            session.add(agent)
+            await session.flush()
+            agent_id = agent.id
+            alpha = (await _seed_agent_run(session, agent_id, None)).id
+            bravo = (await _seed_agent_run(session, agent_id, None)).id
+            # Interleaved exactly as two concurrent workflows would archive them.
+            for run_id, text in (
+                (alpha, "run ALPHA"),
+                (bravo, "run BRAVO"),
+                (alpha, "ALPHA"),
+                (bravo, "BRAVO"),
+            ):
+                session.add(
+                    AgentEventRecord(
+                        agent_session_id=agent_id,
+                        agent_run_id=run_id,
+                        payload=AgentEvent(kind="assistant_message", text=text).model_dump_json(),
+                    )
+                )
+            await session.commit()
+
+        # Unfiltered, the transcript still spans every run.
+        every = client.get(f"/api/agents/{agent_id}/events").json()
+        assert [e["text"] for e in every] == ["run ALPHA", "run BRAVO", "ALPHA", "BRAVO"]
+        # The run id rides on the event even for rows archived before the payload
+        # carried one — the column is the authority.
+        assert [e["agent_run_id"] for e in every] == [alpha, bravo, alpha, bravo]
+
+        # Scoped to one run, each execution reads on its own.
+        assert [
+            e["text"]
+            for e in client.get(f"/api/agents/{agent_id}/events?agent_run_id={alpha}").json()
+        ] == ["run ALPHA", "ALPHA"]
+        assert [
+            e["text"]
+            for e in client.get(f"/api/agents/{agent_id}/events?agent_run_id={bravo}").json()
+        ] == ["run BRAVO", "BRAVO"]
+
+        # A run belonging to someone else is not a filter, it's a 404.
+        async with SessionLocal() as session:
+            other = AgentSession(title="Other", task_prompt="do", status="idle")
+            session.add(other)
+            await session.flush()
+            stranger = (await _seed_agent_run(session, other.id, None)).id
+            await session.commit()
+        assert (
+            client.get(f"/api/agents/{agent_id}/events?agent_run_id={stranger}").status_code == 404
+        )
+
+
+async def test_workflow_board_shows_its_own_run_not_the_agents_latest() -> None:
+    """A shared agent's board strip must report the run *that board* drove.
+
+    ``WorkflowAgentSummary`` was built off the ``AgentSession`` row, which is a
+    write-through mirror of the agent's *current* run. Two workflows sharing an
+    agent therefore both rendered whichever finished last: workflow ALPHA's board
+    displayed BRAVO's answer (issue #242). The strip now resolves through the
+    newest ``WorkflowRunStep`` to the run that step actually launched.
+    """
+    from datetime import UTC, datetime
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import (
+        AgentSession,
+        Workflow,
+        WorkflowRun,
+        WorkflowRunStep,
+        WorkflowStep,
+    )
+
+    with TestClient(create_app()) as client:
+        async with SessionLocal() as session:
+            agent = AgentSession(title="Shared worker", task_prompt="do", status="idle")
+            session.add(agent)
+            await session.flush()
+
+            boards: dict[str, int] = {}
+            for name in ("ALPHA", "BRAVO"):
+                wf = Workflow(name=f"Demo {name}", status="completed")
+                session.add(wf)
+                await session.flush()
+                step = WorkflowStep(
+                    workflow_id=wf.id,
+                    position=0,
+                    agent_id=agent.id,
+                    kind="task",
+                    instructions=f"Reply {name}",
+                )
+                session.add(step)
+                run = WorkflowRun(
+                    workflow_id=wf.id, run_number=1, status="completed", trigger="manual"
+                )
+                session.add(run)
+                await session.flush()
+                agent_run = await _seed_agent_run(session, agent.id, run.id)
+                agent_run.status = "completed"
+                agent_run.result_summary = name
+                agent_run.finished_at = datetime.now(UTC)
+                session.add(
+                    WorkflowRunStep(
+                        run_id=run.id,
+                        position=0,
+                        kind="task",
+                        agent_id=agent.id,
+                        agent_run_id=agent_run.id,
+                        attempt=1,
+                        status="completed",
+                    )
+                )
+                boards[name] = wf.id
+
+            # The mirror carries only the *last* run — the state that used to leak
+            # onto every board that shares this agent.
+            agent.result_summary = "BRAVO"
+            await session.commit()
+
+        for name, workflow_id in boards.items():
+            payload = client.get(f"/api/workflows/{workflow_id}").json()
+            summary = payload["steps"][0]["agent"]
+            assert summary["result_summary"] == name, payload["name"]
+            assert summary["status"] == "completed"

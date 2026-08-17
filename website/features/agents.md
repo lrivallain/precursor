@@ -156,6 +156,19 @@ workflow's [step trace](/features/workflows#run-history-and-the-step-trace),
 each row names the run it launched, so you can walk from a pipeline step to the
 exact execution behind it.
 
+**Click a run to read it on its own.** The rail doubles as a filter: selecting a
+run narrows the transcript to just that execution, and a chip above the timeline
+reminds you which one you're reading. Click the active run again, hit **All
+runs**, or dismiss the chip to go back to the full history. This matters most
+for a shared agent — two workflows driving it at once produce one interleaved
+transcript, and the filter is what pulls each conversation back apart.
+
+::: tip
+A handful of Precursor-generated notices — the "this MCP server needs
+authorising" banner, for instance — belong to the agent rather than to any one
+run, so they only show in the unfiltered view.
+:::
+
 The agent row itself keeps mirroring its **current** run's status and counters,
 which is what the dashboard cards, the inbox and the command palette read — so
 "what is this agent doing right now" stays a single cheap lookup.

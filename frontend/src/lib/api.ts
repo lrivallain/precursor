@@ -368,7 +368,12 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    getEvents: (id: number) => request<AgentEvent[]>(`/api/agents/${id}/events`),
+    // `agentRunId` narrows the transcript to one execution — without it a
+    // reusable agent driven by two workflows at once reads as one conversation.
+    getEvents: (id: number, agentRunId?: number | null) =>
+      request<AgentEvent[]>(
+        `/api/agents/${id}/events${agentRunId != null ? `?agent_run_id=${agentRunId}` : ""}`,
+      ),
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
     listPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
     resetPermissions: () =>
