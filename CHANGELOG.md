@@ -228,6 +228,25 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A gate agent reads its own verdict.** The event archive spans every run of
+  an agent — that is what makes it the transcript you scroll — so "the newest
+  assistant message" meant "whichever concurrent run spoke last". A gate shared
+  by two workflows could hand one pipeline the other's `PASS` and wave a failing
+  deliverable through. Verdict and hand-off reads are now scoped to the run that
+  produced them; the agent-wide read remains for the transcript itself.
+- **A crash no longer leaks a concurrency slot.** Boot recovery flagged only the
+  agent rows it found mid-turn, leaving the runs the fleet governor counts stuck
+  at `running` forever. After `agents_max_concurrent` hard stops, nothing could
+  start again.
+- **Signing in to an MCP server rebuilds the right sessions.** The rebuild swept
+  the live-session registry as though it were keyed by agent when it is keyed by
+  run, so it skipped the sessions that needed rebuilding and could disconnect an
+  unrelated agent's live run mid-turn.
+- **Replaying a step of an edited workflow finishes.** If the step had been moved
+  or removed from the definition since the original run, the replay opened no
+  execution to attach to and its trace row could never be closed — leaving the
+  step pinned "in flight" on the board. The replay now always opens a run,
+  falling back to the agent's current settings when the step is gone.
 - **The concurrency governor counts executions, not agents.** A slot exists to
   bound how many Copilot SDK sessions run at once, and there is now one session
   per run — so two workflows driving the same agent burned two sessions while
@@ -238,6 +257,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   spend collapsed to the latest turn of each agent, and an agent parked by the
   budget governor after several runs was mislabelled as having raised a
   question.
+- **The stall watchdog watches runs, not agents.** It selected sessions whose
+  status was `running` and read their last activity — both of which now mirror
+  only the agent's *current* run. A turn wedged by a hung tool therefore became
+  invisible the moment another execution took over, and stayed pinned in
+  `running` forever: never surfaced for a Resume, and permanently holding one of
+  the `agents_max_concurrent` slots. It now sweeps the run rows, interrupts the
+  run itself, and drops only *that* run's live session — previously it tore down
+  every session the agent owned, killing a healthy concurrent workflow's
+  in-flight turn as collateral.
+- **Raising a token budget no longer un-parks an agent that is still over it.**
+  The check compared the new ceiling against the agent's own counters, which
+  mirror its current run, so a raise above the latest turn's spend flipped a
+  budget-blocked agent to idle even when its lifetime total was still past the
+  limit — and the governor simply re-parked it on the next metered round. It now
+  weighs cumulative spend across every run, matching the governor.
 - **An agent's token budget is no longer reset by starting it again.** The
   governor read the agent's cumulative counters, which are now a mirror of its
   *current* run — so every new run would have handed the agent a fresh

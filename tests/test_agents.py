@@ -6406,3 +6406,349 @@ async def test_clear_artifacts_decides_whether_the_board_spans_runs() -> None:
     cumulative = await _board(False)
     assert "produced during this run" in cumulative
     assert "carried over from the previous run" in cumulative
+
+
+# --- Watchdog is run-scoped (issue #242) ------------------------------------
+
+
+async def _seed_two_runs(*, stale_is_current: bool) -> tuple[int, int, int]:
+    """An agent with a wedged run and a healthy one, both ``running``.
+
+    Returns ``(agent_id, stale_run_id, healthy_run_id)``. ``stale_is_current``
+    picks which one the agent's mirror points at, so a test can cover both the
+    superseded case (mirror says something else entirely) and the current one.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+
+    agent_id = await _make_agent(status="running")
+    now = datetime.now(UTC)
+    async with SessionLocal() as session:
+        stale = AgentRun(
+            agent_id=agent_id,
+            trigger="workflow",
+            status="running",
+            last_activity_at=now - timedelta(hours=2),
+        )
+        healthy = AgentRun(
+            agent_id=agent_id, trigger="workflow", status="running", last_activity_at=now
+        )
+        session.add_all([stale, healthy])
+        await session.flush()
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        agent.current_run_id = stale.id if stale_is_current else healthy.id
+        await session.commit()
+        return agent_id, stale.id, healthy.id
+
+
+async def test_watchdog_interrupts_a_superseded_run() -> None:
+    """A wedged run stays visible after another run supersedes it.
+
+    The sweep used to select agents whose *mirrored* status was ``running``.
+    Post-split that mirror only tracks the current run, so a run wedged by a
+    hung tool became invisible the moment a second execution took over — and
+    stayed pinned in ``running`` forever, permanently billing a slot to the
+    fleet governor, which counts runs.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    _agent_id, stale_id, healthy_id = await _seed_two_runs(stale_is_current=False)
+
+    await AgentManager()._watchdog_sweep()
+
+    async with SessionLocal() as session:
+        stale = await session.get(AgentRun, stale_id)
+        healthy = await session.get(AgentRun, healthy_id)
+        assert stale is not None and healthy is not None
+        assert stale.status == "interrupted"
+        assert "watchdog" in (stale.error or "")
+        assert healthy.status == "running"
+
+
+async def test_watchdog_mirrors_only_when_the_stalled_run_is_current() -> None:
+    """The interrupt reaches the agent row only if it owns the mirror."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    superseded_agent, _, _ = await _seed_two_runs(stale_is_current=False)
+    current_agent, _, _ = await _seed_two_runs(stale_is_current=True)
+
+    await AgentManager()._watchdog_sweep()
+
+    async with SessionLocal() as session:
+        # The mirror still describes the healthy run that took over.
+        assert (await session.get(AgentSession, superseded_agent)).status == "running"
+        # Here the wedged run *is* the current one, so the agent surfaces it.
+        assert (await session.get(AgentSession, current_agent)).status == "interrupted"
+
+
+def _make_recorder(sink: list[int], run_id: int):
+    async def _disconnect() -> None:
+        sink.append(run_id)
+
+    return _disconnect
+
+
+async def test_watchdog_tears_down_only_the_wedged_runs_session() -> None:
+    """A shared agent's healthy session must survive the sweep.
+
+    Teardown used to go through ``teardown_session(agent_id)``, which drops
+    *every* live run of the agent — correct when the agent is being deleted,
+    catastrophic here: it would kill a second workflow's in-flight turn.
+    """
+    from types import SimpleNamespace
+
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    _agent_id, stale_id, healthy_id = await _seed_two_runs(stale_is_current=False)
+
+    disconnected: list[int] = []
+
+    def _fake(run_id: int) -> object:
+        return SimpleNamespace(
+            sdk_session=SimpleNamespace(
+                disconnect=_make_recorder(disconnected, run_id),
+            )
+        )
+
+    mgr = AgentManager()
+    mgr._live[stale_id] = _fake(stale_id)  # type: ignore[assignment]
+    mgr._live[healthy_id] = _fake(healthy_id)  # type: ignore[assignment]
+
+    await mgr._watchdog_sweep()
+
+    assert disconnected == [stale_id]
+    assert healthy_id in mgr._live
+    assert stale_id not in mgr._live
+
+
+async def test_budget_raise_weighs_spend_across_every_run() -> None:
+    """Un-parking honours lifetime spend, not just the latest run's.
+
+    Raising the ceiling above the *current run's* spend used to un-park an agent
+    whose cumulative total was still over the new limit — so it flipped to idle
+    and ``_enforce_budget`` immediately re-parked it on the next metered round.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    await _ensure_schema()
+    agent_id = await _make_agent(
+        status="blocked",
+        token_budget=100,
+        total_input_tokens=20,
+        total_output_tokens=0,
+        blocked_question="budget",
+    )
+    # 90 spent earlier, 20 on the run the mirror describes: 110 all told.
+    await _seed_run_spend(agent_id, 90, 0)
+    await _seed_run_spend(agent_id, 20, 0)
+
+    with TestClient(create_app()) as client:
+        # Above the current run's 20, still under the cumulative 110.
+        resp = client.patch(f"/api/agents/{agent_id}", json={"token_budget": 105})
+        assert resp.status_code == 200, resp.text
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.status == "blocked"
+        assert agent.blocked_question == "budget"
+
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent_id}", json={"token_budget": 500})
+        assert resp.status_code == 200, resp.text
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.status == "idle"
+        assert agent.blocked_question is None
+
+
+# --- Reads that span runs must be scoped to one (issue #242) ---------------
+
+
+@pytest.mark.asyncio
+async def test_gate_verdict_reads_only_its_own_runs_transcript() -> None:
+    """A shared gate agent must not read a concurrent workflow's verdict.
+
+    The event archive is deliberately agent-wide — it is the transcript a user
+    scrolls. That makes "the newest assistant message" ambiguous the moment two
+    workflows drive the same gate: whichever run spoke last wins. Workflow A
+    passing would then wave workflow B's failing deliverable straight through,
+    silently, with a ``PASS`` it never produced.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.services.agents.workflow import _last_assistant_message
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        gate = AgentSession(title="Gate", task_prompt="judge", status="idle")
+        session.add(gate)
+        await session.commit()
+        await session.refresh(gate)
+        run_a = await _seed_agent_run(session, gate.id, None)
+        run_b = await _seed_agent_run(session, gate.id, None)
+
+        def reply(text: str) -> str:
+            return json.dumps({"kind": "assistant_message", "text": text})
+
+        # B renders its verdict first, then A speaks — so the agent-wide read
+        # would hand B's caller A's answer.
+        session.add(
+            AgentEventRecord(
+                agent_session_id=gate.id, agent_run_id=run_b.id, payload=reply("FAIL: leaks")
+            )
+        )
+        session.add(
+            AgentEventRecord(
+                agent_session_id=gate.id, agent_run_id=run_a.id, payload=reply("PASS: looks good")
+            )
+        )
+        await session.commit()
+
+        assert await _last_assistant_message(session, gate.id, run_b.id) == "FAIL: leaks"
+        assert await _last_assistant_message(session, gate.id, run_a.id) == "PASS: looks good"
+        # No run in hand: the agent-wide read stays available for the transcript.
+        assert await _last_assistant_message(session, gate.id) == "PASS: looks good"
+
+
+@pytest.mark.asyncio
+async def test_step_handoff_body_comes_from_the_previous_steps_own_run() -> None:
+    """``collect_step_context`` forwards the prior step's output, not the agent's.
+
+    Same hazard one layer up: the hand-off body is read from the producer's
+    archive, so a producer shared with another in-flight workflow would leak
+    that workflow's output into this pipeline's next step.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer = AgentSession(title="Producer", task_prompt="write", status="idle")
+        wf = Workflow(name="Chain", status="running")
+        session.add_all([producer, wf])
+        await session.commit()
+        await session.refresh(producer)
+        await session.refresh(wf)
+
+        mine = WorkflowRun(workflow_id=wf.id, run_number=1, status="running", trigger="manual")
+        theirs = WorkflowRun(workflow_id=wf.id, run_number=2, status="running", trigger="manual")
+        session.add_all([mine, theirs])
+        await session.commit()
+        await session.refresh(mine)
+        await session.refresh(theirs)
+
+        mine_run = await _seed_agent_run(session, producer.id, mine.id)
+        theirs_run = await _seed_agent_run(session, producer.id, theirs.id)
+
+        def reply(text: str) -> str:
+            return json.dumps({"kind": "assistant_message", "text": text})
+
+        session.add(
+            AgentEventRecord(
+                agent_session_id=producer.id,
+                agent_run_id=mine_run.id,
+                payload=reply("the chapter you asked for"),
+            )
+        )
+        session.add(
+            AgentEventRecord(
+                agent_session_id=producer.id,
+                agent_run_id=theirs_run.id,
+                payload=reply("someone else's chapter"),
+            )
+        )
+        await session.commit()
+
+        context = await collect_step_context(session, producer.id, workflow_run_id=mine.id)
+
+    assert "the chapter you asked for" in context
+    assert "someone else's chapter" not in context
+
+
+@pytest.mark.asyncio
+async def test_boot_recovery_frees_the_fleet_slot_a_crash_held() -> None:
+    """A crash mid-turn must release its concurrency slot.
+
+    The fleet governor counts *runs* now, and nothing else ever revisits a run
+    left ``running`` by a hard stop — so marking only the agent mirror would
+    leak one of ``agents_max_concurrent`` per crash until the install is reset.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        agent = AgentSession(title="Crasher", task_prompt="work", status="running")
+        session.add(agent)
+        await session.commit()
+        await session.refresh(agent)
+        run = await _seed_agent_run(session, agent.id, None)
+        run.status = "running"
+        agent.current_run_id = run.id
+        await session.commit()
+        run_id = run.id
+
+    await AgentManager()._mark_interrupted_on_boot()
+
+    async with SessionLocal() as session:
+        assert (await session.get(AgentRun, run_id)).status == "interrupted"
+        assert (await session.get(AgentSession, agent.id)).status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_oauth_refresh_only_drops_the_runs_that_are_idle() -> None:
+    """Rebuilding sessions after a sign-in is keyed by run, not by agent.
+
+    ``_live`` holds runs, so iterating it as though it held agents both spares
+    the sessions that actually need rebuilding and tears down an unrelated
+    agent's live runs mid-turn — run ids and agent ids are independent
+    sequences, so the ids collide by coincidence.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        agent = AgentSession(title="Signer", task_prompt="work", status="idle")
+        session.add(agent)
+        await session.commit()
+        await session.refresh(agent)
+        busy = await _seed_agent_run(session, agent.id, None)
+        idle = await _seed_agent_run(session, agent.id, None)
+        busy.status = "running"
+        idle.status = "idle"
+        await session.commit()
+        busy_id, idle_id = busy.id, idle.id
+
+    mgr = AgentManager()
+    mgr._ready = True
+    mgr._live = {busy_id: object(), idle_id: object()}  # type: ignore[assignment]
+    torn: list[int] = []
+
+    async def _teardown(run_id: int, *, forget: bool = False) -> None:
+        torn.append(run_id)
+
+    mgr._teardown_run = _teardown  # type: ignore[assignment]
+    await mgr.refresh_oauth_sessions()
+
+    assert torn == [idle_id]

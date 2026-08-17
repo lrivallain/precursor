@@ -760,10 +760,19 @@ class AgentManager:
             self._watchdog_task = None
 
     async def _mark_interrupted_on_boot(self) -> None:
-        """Flag sessions that were mid-turn when the process last died."""
+        """Flag executions that were mid-turn when the process last died.
+
+        The runs are the authoritative rows and must be flipped too: they are
+        what the fleet governor counts, and nothing else ever revisits them, so a
+        run left ``running`` by a crash would hold one of the
+        ``agents_max_concurrent`` slots for the lifetime of the install.
+        """
         async with SessionLocal() as session:
             from sqlalchemy import update
 
+            await session.execute(
+                update(AgentRun).where(AgentRun.status == "running").values(status="interrupted")
+            )
             await session.execute(
                 update(AgentSession)
                 .where(AgentSession.status == "running")
@@ -791,43 +800,54 @@ class AgentManager:
                 logger.debug("agent watchdog sweep failed", exc_info=True)
 
     async def _watchdog_sweep(self) -> None:
+        """Interrupt every *run* that has gone silent, not every agent.
+
+        The sweep is run-scoped for two reasons. ``AgentSession.status`` and
+        ``last_activity_at`` only mirror the agent's *current* run, so a wedged
+        run that some other execution has since superseded would be invisible
+        here and stay pinned in ``running`` forever — leaking a concurrency slot
+        from the fleet governor, which counts runs. And the teardown has to hit
+        only the wedged run: an agent shared by two workflows may have a second,
+        perfectly healthy session mid-turn that must survive the sweep.
+        """
         async with SessionLocal() as session:
             timeout = await resolve_agents_watchdog_timeout(session)
             cutoff = datetime.now(UTC) - timedelta(seconds=timeout)
             rows = (
-                (
-                    await session.execute(
-                        select(AgentSession).where(AgentSession.status == "running")
-                    )
+                await session.execute(
+                    select(AgentRun, AgentSession.topic_id, AgentSession.chat_id)
+                    .join(AgentSession, AgentSession.id == AgentRun.agent_id)
+                    .where(AgentRun.status == "running")
                 )
-                .scalars()
-                .all()
-            )
-            stale: list[tuple[int, int | None, int | None]] = []
-            reason = (
-                f"No runtime activity for over {max(1, timeout // 60)} min — "
-                "interrupted by the watchdog. Resume to retry."
-            )
-            for agent in rows:
-                ref = agent.last_activity_at or agent.updated_at or agent.created_at
+            ).all()
+            stale: list[tuple[int, int, int | None, int | None]] = []
+            for run, topic_id, chat_id in rows:
+                ref = run.last_activity_at or run.started_at or run.updated_at or run.created_at
                 if ref is None:
                     continue
                 if ref.tzinfo is None:
                     ref = ref.replace(tzinfo=UTC)
                 if ref < cutoff:
-                    agent.status = "interrupted"
-                    agent.error = reason
-                    stale.append((agent.id, agent.topic_id, agent.chat_id))
-            if stale:
-                await session.commit()
-        # Drop any wedged live session so a Resume rebuilds it clean, then signal
-        # the UI. Done outside the DB transaction to keep the commit tight.
-        for agent_id, topic_id, chat_id in stale:
-            logger.warning("agent %s: interrupted by watchdog (idle > %ss)", agent_id, timeout)
+                    stale.append((run.id, run.agent_id, topic_id, chat_id))
+        reason = (
+            f"No runtime activity for over {max(1, timeout // 60)} min — "
+            "interrupted by the watchdog. Resume to retry."
+        )
+        # Drop the wedged live session so a Resume rebuilds it clean, then signal
+        # the UI. Done outside the read transaction to keep it tight, and through
+        # ``_patch_run`` so the agent-level mirror is maintained in one place.
+        for run_id, agent_id, topic_id, chat_id in stale:
+            logger.warning(
+                "agent %s run %s: interrupted by watchdog (idle > %ss)", agent_id, run_id, timeout
+            )
+            await self._patch_run(run_id, status="interrupted", error=reason)
             with contextlib.suppress(Exception):
-                await self.teardown_session(agent_id)
+                await self._teardown_run(run_id)
             await publish_agent_changed(
-                agent_session_id=agent_id, topic_id=topic_id, chat_id=chat_id
+                agent_session_id=agent_id,
+                topic_id=topic_id,
+                chat_id=chat_id,
+                agent_run_id=run_id,
             )
 
     # ------------------------------------------------------------------ helpers
@@ -1549,12 +1569,16 @@ class AgentManager:
         """
         if not self.ready:
             return
-        for agent_id in list(self._live):
-            agent = await self._load(agent_id)
-            if agent is not None and agent.status in {"running", "needs_approval", "pending"}:
+        # ``_live`` is keyed by *run*, so the busy check has to read the run's own
+        # status and the teardown has to be run-scoped: tearing down by agent id
+        # would take out every other live execution of that agent as collateral.
+        for run_id in list(self._live):
+            run = await self._run(run_id)
+            if run is not None and run.status in {"running", "needs_approval", "pending"}:
                 continue
-            await self.teardown_session(agent_id, forget=False)
-            self._auth_announced.pop(agent_id, None)
+            await self._teardown_run(run_id, forget=False)
+            if run is not None:
+                self._auth_announced.pop(run.agent_id, None)
 
     async def _release_parked_turn(self, agent_id: int, live: Any) -> None:
         """Free a session parked on an unanswered permission before re-driving it.

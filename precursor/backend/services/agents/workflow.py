@@ -272,21 +272,29 @@ async def _load_workflow(session: AsyncSession, workflow_id: int) -> Workflow | 
     return result.scalar_one_or_none()
 
 
-async def _last_assistant_message(session: AsyncSession, agent_id: int) -> str | None:
-    """The newest persisted ``assistant_message`` body for an agent (uncapped).
+async def _last_assistant_message(
+    session: AsyncSession, agent_id: int, agent_run_id: int | None = None
+) -> str | None:
+    """The newest persisted ``assistant_message`` body (uncapped).
 
     Tier-1 hand-off: an agent that ends its turn with ``OBJECTIVE_COMPLETE:`` has
     its ``result_summary`` folded to the terse directive summary, losing the full
     output. The durable event archive still holds the complete assistant message,
     so a bare generative step ("tell me a story") forwards its whole body to the
     next step even after the directive fold.
+
+    Scope this to ``agent_run_id`` whenever the caller knows which execution it
+    is asking about. The archive spans every run of the agent — that is what
+    makes it the transcript a user reads — so an agent-wide read of "the newest
+    message" is really "whichever concurrent run spoke last". For a gate that
+    means workflow B can pick up workflow A's ``PASS`` and wave a failing
+    deliverable through. The agent-wide read stays the default only for callers
+    with no run in hand.
     """
-    rows = await session.execute(
-        select(AgentEventRecord.payload)
-        .where(AgentEventRecord.agent_session_id == agent_id)
-        .order_by(AgentEventRecord.id.desc())
-        .limit(100)
-    )
+    query = select(AgentEventRecord.payload).where(AgentEventRecord.agent_session_id == agent_id)
+    if agent_run_id is not None:
+        query = query.where(AgentEventRecord.agent_run_id == agent_run_id)
+    rows = await session.execute(query.order_by(AgentEventRecord.id.desc()).limit(100))
     for payload in rows.scalars():
         try:
             data = json.loads(payload)
@@ -339,7 +347,10 @@ async def collect_step_context(
     if agent is None:
         return ""
     parts: list[str] = []
-    body = await _last_assistant_message(session, prev_agent_id)
+    prev_run = await _current_run_for(session, prev_agent_id, workflow_run_id)
+    body = await _last_assistant_message(
+        session, prev_agent_id, prev_run.id if prev_run is not None else None
+    )
     if body:
         body = _DIRECTIVE_LINE_RE.sub("", body).strip()
     if not body:
@@ -729,7 +740,9 @@ async def _step_output(
         agent = await session.get(AgentSession, agent_id)
         if agent is not None and agent.result_summary:
             return agent.result_summary
-    body = await _last_assistant_message(session, agent_id)
+    body = await _last_assistant_message(
+        session, agent_id, agent_run.id if agent_run is not None else None
+    )
     if body:
         return _DIRECTIVE_LINE_RE.sub("", body).strip() or body
     return None
@@ -832,7 +845,7 @@ async def _open_agent_run(
     session: AsyncSession,
     agent_id: int,
     workflow: Workflow,
-    step: WorkflowStep,
+    step: WorkflowStep | None,
     *,
     trigger: str = "workflow",
     workflow_run_id: int | None = None,
@@ -842,6 +855,10 @@ async def _open_agent_run(
     Created here rather than in the manager because the run id has to land on the
     ``WorkflowRunStep`` trace in the same transaction — the trace is the link
     between "attempt 2 of step 3" and "the execution that produced it".
+
+    ``step`` is optional so a replay can still open a run when the definition has
+    been edited out from under it; the agent's current settings then stand in for
+    the vanished step's overrides.
     """
     agent = await session.get(AgentSession, agent_id)
     if agent is None:
@@ -860,7 +877,8 @@ async def _open_agent_run(
         role_id=agent.role_id,
         started_at=datetime.now(UTC),
     )
-    await _snapshot_step_overrides(run, workflow, step)
+    if step is not None:
+        await _snapshot_step_overrides(run, workflow, step)
     session.add(run)
     await session.flush()
     agent.current_run_id = run.id
@@ -1581,7 +1599,12 @@ async def _advance_one(
         # Read the raw archived turn first: the manager cleans directive tokens out
         # of ``result_summary`` for display, so the raw message is the reliable
         # source of the PASS/FAIL verdict. Fall back to the summary if unavailable.
-        verdict_text = await _last_assistant_message(session, agent_id) or ""
+        verdict_text = (
+            await _last_assistant_message(
+                session, agent_id, agent_run.id if agent_run is not None else None
+            )
+            or ""
+        )
         if not verdict_text:
             fallback = (
                 agent_run.result_summary
@@ -1981,16 +2004,17 @@ async def replay_step(
         ),
         None,
     )
-    agent_run: AgentRun | None = None
-    if step is not None:
-        agent_run = await _open_agent_run(
-            session,
-            run_step.agent_id,
-            workflow,
-            step,
-            trigger="replay",
-            workflow_run_id=run_step.run_id,
-        )
+    # Unconditional: a replay with no run would leave a trace row that
+    # ``finalize_replays_for_run`` (which matches on ``agent_run_id``) can never
+    # close, pinning the step "in flight" on the board forever.
+    agent_run = await _open_agent_run(
+        session,
+        run_step.agent_id,
+        workflow,
+        step,
+        trigger="replay",
+        workflow_run_id=run_step.run_id,
+    )
 
     prior_replays = await session.execute(
         select(func.count(WorkflowRunStep.id)).where(
@@ -2012,8 +2036,8 @@ async def replay_step(
         status="running",
         input_context=context,
         started_at=datetime.now(UTC),
-        token_baseline_in=0 if agent_run is not None else agent.total_input_tokens,
-        token_baseline_out=0 if agent_run is not None else agent.total_output_tokens,
+        token_baseline_in=0,
+        token_baseline_out=0,
     )
     session.add(replay_step)
     await session.flush()
@@ -2077,9 +2101,9 @@ async def finalize_replays_for_run(session: AsyncSession, agent_run_id: int) -> 
         await _close_run_step(session, run_step, status="blocked")
     elif status in STEP_DONE_STATUSES:
         if run_step.kind == "gate":
-            verdict_text = await _last_assistant_message(session, agent_id) or (
-                agent_run.result_summary or ""
-            )
+            verdict_text = await _last_assistant_message(
+                session, agent_id, agent_run.id if agent_run is not None else None
+            ) or (agent_run.result_summary or "")
             passed = _parse_verdict(verdict_text)
             await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
             await _close_run_step(

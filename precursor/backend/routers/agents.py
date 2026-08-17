@@ -871,10 +871,13 @@ async def update_agent(
     if "token_budget" in payload.model_fields_set:
         agent.token_budget = payload.token_budget
         # Un-park a budget-blocked agent when its ceiling is raised or removed.
-        if agent.status == "blocked" and (
-            agent.token_budget is None
-            or agent.total_input_tokens + agent.total_output_tokens < agent.token_budget
-        ):
+        # Gate on cumulative spend across every run, not the agent's mirrored
+        # counters (which only carry the current run) — otherwise a raise to
+        # just above the latest run's spend un-parks an agent whose lifetime
+        # total is still over the new ceiling, and ``_enforce_budget`` simply
+        # re-parks it on the next metered round.
+        spent = (await _agent_spend(session, [agent.id])).get(agent.id, 0)
+        if agent.status == "blocked" and (agent.token_budget is None or spent < agent.token_budget):
             agent.status = "idle"
             agent.blocked_question = None
     if payload.max_retries is not None:
