@@ -443,6 +443,12 @@ class WorkflowRunStep(Base, TimestampMixin):
     agent_id: Mapped[int | None] = mapped_column(
         ForeignKey("agent_sessions.id", ondelete="SET NULL"), nullable=True
     )
+    # The specific *execution* of that agent. This is what makes two workflows
+    # able to drive the same agent at once: the coordinator resolves the turn by
+    # run, never by agent. Nullable for traces recorded before runs existed.
+    agent_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # 1-based attempt within this run (a gate loop-back re-drives a step, bumping
     # this so repeated attempts are legible in the trace).
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
@@ -466,17 +472,19 @@ class WorkflowRunStep(Base, TimestampMixin):
     # For a gate trace: "PASS" or "FAIL".
     gate_verdict: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
-    # Token spend for *this attempt*, computed as the delta between the agent's
-    # cumulative counters at launch and at finalize. Stored per attempt so a gate
-    # that looped four times shows what each pass actually cost.
+    # Token spend for *this attempt*, computed as the delta between the run's
+    # counters at launch and at finalize. Stored per attempt so a gate that
+    # looped four times shows what each pass actually cost.
     input_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
     output_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    # Internal: the agent's cumulative counters when this attempt started, so the
-    # delta above can be computed at finalize. Not surfaced in the API.
+    # Internal: the run's counters when this attempt started, so the delta above
+    # can be computed at finalize. Normally 0 (a fresh run starts empty), but a
+    # permission gate can reopen a trace mid-run, and a run's counters keep
+    # accumulating across the reopen. Not surfaced in the API.
     token_baseline_in: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

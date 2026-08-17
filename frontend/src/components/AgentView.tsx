@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Eye,
   HelpCircle,
+  History,
   Link2,
   Loader2,
   Package,
@@ -67,6 +68,7 @@ import type {
   AgentArtifact,
   AgentEvent,
   AgentPermissionDecisionValue,
+  AgentRun,
   AgentSession,
   AgentState,
   AgentTrigger,
@@ -134,12 +136,18 @@ function AgentInsightsPanel({
   events,
   model,
   agent,
+  runs,
+  runFilter,
+  onRunFilterChange,
 }: {
   showPrefs: ShowPrefs;
   toggleShow: (k: keyof ShowPrefs) => void;
   events: AgentEvent[];
   model: string | null;
   agent: AgentSession;
+  runs: AgentRun[];
+  runFilter: number | null;
+  onRunFilterChange: (choice: number | "all") => void;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -187,6 +195,8 @@ function AgentInsightsPanel({
       <div className="flex flex-col gap-4 overflow-y-auto p-3">
         <AgentUsageSection events={events} model={model} />
         <div className="border-t border-border" />
+        <AgentRunsSection agent={agent} runs={runs} selected={runFilter} onSelect={onRunFilterChange} />
+        <div className="border-t border-border" />
         <AgentOrchestrationSection agent={agent} />
         <div className="border-t border-border" />
         <div className="space-y-2">
@@ -220,6 +230,115 @@ function AgentInsightsPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+// Short label for what set a run going. Kept terse — it sits in a 60-wide rail.
+const RUN_TRIGGER_LABEL: Record<AgentRun["trigger"], string> = {
+  manual: "Manual",
+  workflow: "Workflow",
+  schedule: "Schedule",
+  webhook: "Webhook",
+  fleet: "Fleet",
+  retry: "Retry",
+  replay: "Replay",
+};
+
+// Execution history for one agent.
+//
+// An agent is a reusable *definition*, so it can be driven by several things at
+// once — two workflows, a schedule and a manual nudge. Each of those is a run
+// with its own status, capability snapshot, artifacts and token spend, and this
+// is where that separation becomes visible: without it a shared agent looks like
+// a single confusing timeline where concurrent drivers appear to overwrite
+// each other.
+function AgentRunsSection({
+  agent,
+  runs,
+  selected,
+  onSelect,
+}: {
+  agent: AgentSession;
+  runs: AgentRun[];
+  selected: number | null;
+  onSelect: (choice: number | "all") => void;
+}) {
+  if (runs.length === 0) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          <History size={14} />
+          <span>Runs</span>
+        </div>
+        <p className="text-[11px] text-muted">
+          No executions yet. Each start — manual, workflow, schedule or webhook — opens its own run
+          so concurrent drivers stay separate.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5 text-sm font-medium">
+        <History size={14} />
+        <span>Runs</span>
+        <span className="text-[11px] text-muted">({runs.length})</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => onSelect("all")}
+        className={`w-full rounded border px-2 py-1 text-left text-[11px] ${
+          selected == null
+            ? "border-accent/50 bg-accent/10 font-medium"
+            : "border-border bg-surface/50 text-muted hover:bg-surface"
+        }`}
+        data-tooltip="Show every execution in one timeline"
+      >
+        All runs
+      </button>
+      {runs.map((run) => {
+        const current = agent.current_run?.id === run.id;
+        const active = selected === run.id;
+        const spend = run.total_input_tokens + run.total_output_tokens;
+        return (
+          <button
+            type="button"
+            key={run.id}
+            onClick={() => onSelect(active ? "all" : run.id)}
+            aria-pressed={active}
+            className={`w-full rounded border px-2 py-1 text-left transition-colors ${
+              active
+                ? "border-accent bg-accent/10"
+                : current
+                  ? "border-accent/50 bg-accent/5 hover:bg-accent/10"
+                  : "border-border bg-surface/50 hover:bg-surface"
+            }`}
+            data-tooltip={`Run #${run.id} · ${RUN_TRIGGER_LABEL[run.trigger]}${
+              run.workflow_run_id ? ` · workflow run #${run.workflow_run_id}` : ""
+            }\n${run.total_input_tokens.toLocaleString()} in · ${run.total_output_tokens.toLocaleString()} out\n${
+              active ? "Click to show every run" : "Click to read this run on its own"
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
+                {RUN_TRIGGER_LABEL[run.trigger]}
+                {run.workflow_run_id ? ` · #${run.workflow_run_id}` : ""}
+              </span>
+              {current && (
+                <span className="shrink-0 rounded bg-accent/20 px-1 text-[10px] text-accent">
+                  now
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] text-muted">
+              <span className="truncate">{run.status}</span>
+              {spend > 0 && <span className="shrink-0">· {spend.toLocaleString()} tok</span>}
+            </div>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -600,7 +719,7 @@ function ArtifactViewer({
 }) {
   const [copied, setCopied] = useState<"content" | "link" | null>(null);
   const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
-  const ref = agent.copilot_session_id ?? String(agent.id);
+  const ref = agent.public_id ?? String(agent.id);
   const permalink = `${window.location.origin}/agents/${encodeURIComponent(
     ref,
   )}?artifact=${artifact.id}`;
@@ -737,7 +856,7 @@ function DeliverableAnswer({
 }) {
   const [copied, setCopied] = useState<null | "content" | "link">(null);
   const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
-  const ref = agent.copilot_session_id ?? String(agent.id);
+  const ref = agent.public_id ?? String(agent.id);
   const permalink = `${window.location.origin}/agents/${encodeURIComponent(
     ref,
   )}?artifact=${artifact.id}`;
@@ -1602,6 +1721,23 @@ export function AgentView({
   draftTopicId,
 }: AgentViewProps) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  // Narrows the transcript to a single execution. A reusable agent driven by two
+  // workflows at once produces two conversations in one archive; reading them
+  // interleaved is meaningless (issue #242).
+  //
+  // This holds the user's *choice*, not the filter: `null` means "follow the
+  // newest run", which is the default so opening an agent shows what it just
+  // did rather than every execution ever stitched together. Picking a run or
+  // "All runs" pins the view until the user switches agent.
+  const [runChoice, setRunChoice] = useState<number | "all" | null>(null);
+  // The agent's executions. Loaded here rather than inside the Runs rail because
+  // the transcript defaults to the newest one — a collapsed insights panel must
+  // not change what you read. Tagged with the agent they belong to so switching
+  // agents can't briefly scope the transcript to the previous one's run.
+  const [runsState, setRunsState] = useState<{ agentId: number | null; items: AgentRun[] }>({
+    agentId: null,
+    items: [],
+  });
   const [topics, setTopics] = useState<Topic[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [me, setMe] = useState<Me | null>(null);
@@ -1818,13 +1954,16 @@ export function AgentView({
     );
   }, [segmentCount]);
 
-  const loadEvents = useCallback(async (id: number): Promise<void> => {
-    try {
-      setEvents(await api.agents.getEvents(id));
-    } catch {
-      setEvents([]);
-    }
-  }, []);
+  const loadEvents = useCallback(
+    async (id: number, agentRunId: number | null = null): Promise<void> => {
+      try {
+        setEvents(await api.agents.getEvents(id, agentRunId));
+      } catch {
+        setEvents([]);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!enabled) return;
@@ -1853,6 +1992,33 @@ export function AgentView({
     [events],
   );
 
+  useEffect(() => {
+    if (agentId == null) {
+      setRunsState({ agentId: null, items: [] });
+      return;
+    }
+    const load = () => {
+      void api.agents
+        .runs(agentId, { limit: 12 })
+        .then((items) => setRunsState({ agentId, items }))
+        .catch(() => setRunsState({ agentId, items: [] }));
+    };
+    load();
+    // A run opens and closes as the agent works, so the rail — and the default
+    // filter riding on it — follow the live stream rather than a manual reload.
+    return eventBus.subscribe((ev) => {
+      if (ev.type !== "agent.changed") return;
+      if (ev.agent_session_id == null || ev.agent_session_id === agentId) load();
+    });
+  }, [agentId]);
+
+  const runs = runsState.agentId === agentId ? runsState.items : [];
+  // `runChoice` is what the user asked for; this is what the transcript shows.
+  // Left alone it tracks the newest run, so starting the agent again pulls the
+  // view along instead of stranding you on a finished conversation.
+  const latestRunId = runs[0]?.id ?? null;
+  const runFilter = runChoice === "all" ? null : (runChoice ?? latestRunId);
+
   // Load the selected session's timeline, and keep it live on agent.changed.
   useEffect(() => {
     // Drop an optimistic echo when leaving the agent it targeted (it survives the
@@ -1862,14 +2028,21 @@ export function AgentView({
       setEvents([]);
       return;
     }
-    void loadEvents(agentId);
+    void loadEvents(agentId, runFilter);
     return eventBus.subscribe((ev) => {
       if (ev.type !== "agent.changed") return;
       if (ev.agent_session_id == null || ev.agent_session_id === agentId) {
-        void loadEvents(agentId);
+        void loadEvents(agentId, runFilter);
       }
     });
-  }, [agentId, loadEvents]);
+  }, [agentId, loadEvents, runFilter]);
+
+  // A pinned run belongs to the agent it was chosen on — switching agents must
+  // not leave the next transcript scoped to a run that isn't even theirs, or
+  // stuck on "all runs" when the default is to read the latest.
+  useEffect(() => {
+    setRunChoice(null);
+  }, [agentId]);
 
   // Drive the app-global sign-in banner when a turn surfaces an MCP server that
   // needs interactive auth (e.g. WorkIQ OAuth lapsed). The agent runtime emits a
@@ -2238,6 +2411,28 @@ export function AgentView({
           <div ref={innerRef}>
         {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
 
+        {/* The transcript is scoped to one execution. Shown in the transcript
+            itself, not only in the Runs rail, so the filter can't strand a user
+            who has the insights panel collapsed. Silent on a single-run agent,
+            where "the latest run" and "everything" are the same timeline. */}
+        {runFilter != null && runs.length > 1 && (
+          <div className="mb-3 flex items-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[11px]">
+            <History size={13} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {runChoice == null
+                ? `Showing the latest run (#${runFilter}). Earlier executions are hidden.`
+                : `Showing run #${runFilter} only — other executions of this agent are hidden.`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setRunChoice("all")}
+              className="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/15"
+            >
+              Show all runs
+            </button>
+          </div>
+        )}
+
         {selected.status === "needs_approval" && (
           <div className="mb-3 flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
             <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step
@@ -2488,6 +2683,9 @@ export function AgentView({
         events={events}
         model={selected.model ?? null}
         agent={selected}
+        runs={runs}
+        runFilter={runFilter}
+        onRunFilterChange={setRunChoice}
       />
     </div>
   );

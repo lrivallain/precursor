@@ -25,6 +25,10 @@ class Event(TypedDict, total=False):
     topic_id: int | None
     chat_id: int | None
     agent_session_id: int | None
+    # Which *execution* of that agent changed. Agents are shared definitions, so
+    # a client watching one workflow's step needs the run to tell its own
+    # progress apart from a concurrent driver's.
+    agent_run_id: int | None
     meeting_session_id: int | None
     # Carried by ``mcp.auth_required`` (which MCP server needs an interactive
     # sign-in and the human-readable reason to show) and ``mcp.auth_resolved``
@@ -192,17 +196,21 @@ async def publish_agent_changed(
     agent_session_id: int | None = None,
     topic_id: int | None = None,
     chat_id: int | None = None,
+    agent_run_id: int | None = None,
 ) -> None:
     """Signal that an agent session's state or event stream changed.
 
     Carries the agent session id (so the Agents tab / an open session view can
     react) plus the linked container, if any, so a window viewing that topic or
-    chat can refresh its agent badge.
+    chat can refresh its agent badge. ``agent_run_id`` names the *execution* the
+    change came from — the same agent can be driven by two workflows at once, so
+    a view scoped to one run can ignore the other's traffic.
     """
     await _bus.publish(
         {
             "type": "agent.changed",
             "agent_session_id": agent_session_id,
+            "agent_run_id": agent_run_id,
             "topic_id": topic_id,
             "chat_id": chat_id,
         }

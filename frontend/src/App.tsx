@@ -275,13 +275,13 @@ function projectRefNumber(ref: string | null): number | null {
   return match ? Number(match[1]) : null;
 }
 
-// Agents are addressed by their public UUID (copilot_session_id) in the URL.
+// Agents are addressed by their public UUID (public_id) in the URL.
 // Until the agent list has loaded we may not know the UUID yet, so fall back to
 // the internal id; the URL-sync effect rewrites it to the UUID once known.
 function agentUrl(agentId: number | null, agents: AgentSession[] | null): string {
   if (agentId == null) return "/agents";
   const a = agents?.find((x) => x.id === agentId);
-  const ref = a?.copilot_session_id ?? String(agentId);
+  const ref = a?.public_id ?? String(agentId);
   return `/agents/${encodeURIComponent(ref)}`;
 }
 
@@ -291,7 +291,7 @@ function agentUrl(agentId: number | null, agents: AgentSession[] | null): string
 function resolveAgentRef(ref: string | null, agents: AgentSession[] | null): number | null {
   if (!ref) return null;
   if (/^\d+$/.test(ref)) return Number(ref);
-  return agents?.find((a) => a.copilot_session_id === ref)?.id ?? null;
+  return agents?.find((a) => a.public_id === ref)?.id ?? null;
 }
 
 const BASE_TITLE = "Precursor";

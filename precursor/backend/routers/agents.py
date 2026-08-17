@@ -22,6 +22,7 @@ from precursor.backend.models import (
     AgentArtifact,
     AgentBlueprint,
     AgentEventRecord,
+    AgentRun,
     AgentSchedule,
     AgentSession,
     AgentState,
@@ -46,6 +47,7 @@ from precursor.backend.schemas.agent import (
     AgentPendingPermission,
     AgentPermissionDecision,
     AgentPermissionGrant,
+    AgentRunRead,
     AgentSendRequest,
     AgentSessionCreate,
     AgentSessionRead,
@@ -85,17 +87,15 @@ async def _require_runtime(session: AsyncSession) -> None:
 
 
 async def _get_or_404(session: AsyncSession, agent_ref: str) -> AgentSession:
-    """Resolve an agent by its public UUID (``copilot_session_id``) or, as a
-    fallback, its legacy integer id. Deep links and the ``/agent`` command use
-    the UUID; older bookmarks may still carry the integer id."""
+    """Resolve an agent by its public UUID (``public_id``) or, as a fallback,
+    its legacy integer id. Deep links and the ``/agent`` command use the UUID;
+    older bookmarks may still carry the integer id."""
     agent: AgentSession | None = None
     if agent_ref.isdigit():
         agent = await session.get(AgentSession, int(agent_ref))
     if agent is None:
         agent = (
-            await session.execute(
-                select(AgentSession).where(AgentSession.copilot_session_id == agent_ref)
-            )
+            await session.execute(select(AgentSession).where(AgentSession.public_id == agent_ref))
         ).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent session not found")
@@ -162,15 +162,31 @@ async def _workflow_counts(session: AsyncSession, agent_ids: list[int]) -> dict[
     return {row[0]: row[1] for row in result.all()}
 
 
+async def _current_runs(session: AsyncSession, agents: list[AgentSession]) -> dict[int, AgentRun]:
+    """The execution currently driving each agent, keyed by agent id.
+
+    Fetched in one query rather than through a relationship: ``current_run``
+    points back at the agent, so eager-loading it would recurse.
+    """
+    run_ids = [a.current_run_id for a in agents if a.current_run_id is not None]
+    if not run_ids:
+        return {}
+    result = await session.execute(select(AgentRun).where(AgentRun.id.in_(run_ids)))
+    return {run.agent_id: run for run in result.scalars().all()}
+
+
 def _to_read(
     agent: AgentSession,
     unread: int,
     activity: dict[str, Any] | None = None,
     workflow_count: int = 0,
+    current_run: AgentRun | None = None,
 ) -> AgentSessionRead:
     read = AgentSessionRead.model_validate(agent)
     read.unread_count = unread
     read.workflow_count = workflow_count
+    if current_run is not None:
+        read.current_run = AgentRunRead.model_validate(current_run)
     if activity:
         read.active_tool = activity.get("active_tool")
         read.active_tool_count = activity.get("active_tool_count", 0)
@@ -192,7 +208,7 @@ async def list_agent_models(
 @router.get("/permissions", response_model=list[AgentPermissionGrant])
 async def list_agent_permissions() -> list[dict[str, Any]]:
     """Recap of active "approve for session" grants (for the Settings panel)."""
-    return get_agent_manager().list_permissions()
+    return await get_agent_manager().list_permissions()
 
 
 @router.post("/permissions/reset")
@@ -208,17 +224,42 @@ async def reset_agent_permissions() -> dict[str, int]:
 # Declared before the ``/{agent_id}`` routes so the literal paths win the match.
 
 
-def _is_budget_park(agent: AgentSession) -> bool:
+async def _agent_spend(session: AsyncSession, agent_ids: list[int]) -> dict[int, int]:
+    """Lifetime tokens per agent, summed over its runs.
+
+    ``AgentSession.total_*`` is a write-through mirror of the agent's *current*
+    run, so it under-reports any agent that has run more than once. Cumulative
+    spend has to come from ``agent_runs`` — which the migration seeded with a
+    synthetic run carrying pre-split history.
+    """
+    if not agent_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                AgentRun.agent_id,
+                func.coalesce(
+                    func.sum(AgentRun.total_input_tokens + AgentRun.total_output_tokens), 0
+                ),
+            )
+            .where(AgentRun.agent_id.in_(agent_ids))
+            .group_by(AgentRun.agent_id)
+        )
+    ).all()
+    return {int(r[0]): int(r[1]) for r in rows}
+
+
+def _is_budget_park(agent: AgentSession, spent: int) -> bool:
     """True when a blocked agent was parked by the token-budget governor.
 
     A budget park and a raised question both land on ``status="blocked"``; the
     distinguishing signal is that the governor only fires when the accrued spend
-    has reached the configured ceiling.
+    has reached the configured ceiling. ``spent`` is the agent's cumulative spend
+    across every run — the same total :meth:`AgentManager._enforce_budget` gates
+    on, so the badge can't disagree with the governor that raised it.
     """
     return (
-        agent.status == "blocked"
-        and agent.token_budget is not None
-        and agent.total_input_tokens + agent.total_output_tokens >= agent.token_budget
+        agent.status == "blocked" and agent.token_budget is not None and spent >= agent.token_budget
     )
 
 
@@ -227,12 +268,7 @@ async def get_agent_metrics(session: AsyncSession = Depends(get_session)) -> Age
     """Status counts + token totals + concurrency headroom for the header."""
     rows = (
         await session.execute(
-            select(
-                AgentSession.status,
-                func.count(AgentSession.id),
-                func.coalesce(func.sum(AgentSession.total_input_tokens), 0),
-                func.coalesce(func.sum(AgentSession.total_output_tokens), 0),
-            )
+            select(AgentSession.status, func.count(AgentSession.id))
             .where(AgentSession.archived_at.is_(None))
             .where(AgentSession.inline.is_(False))
             .group_by(AgentSession.status)
@@ -240,8 +276,23 @@ async def get_agent_metrics(session: AsyncSession = Depends(get_session)) -> Age
     ).all()
     by_status = [AgentStatusCount(status=r[0], count=int(r[1])) for r in rows]
     counts = {r[0]: int(r[1]) for r in rows}
-    total_in = sum(int(r[2]) for r in rows)
-    total_out = sum(int(r[3]) for r in rows)
+    # Tokens come from the runs: the agent's own counters mirror its *current*
+    # run only, so summing those would report just the latest turn of each agent
+    # as the fleet's lifetime spend.
+    totals = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(AgentRun.total_input_tokens), 0),
+                func.coalesce(func.sum(AgentRun.total_output_tokens), 0),
+            )
+            .select_from(AgentRun)
+            .join(AgentSession, AgentRun.agent_id == AgentSession.id)
+            .where(AgentSession.archived_at.is_(None))
+            .where(AgentSession.inline.is_(False))
+        )
+    ).one()
+    total_in = int(totals[0])
+    total_out = int(totals[1])
     return AgentMetrics(
         total=sum(counts.values()),
         active=counts.get("running", 0) + counts.get("needs_approval", 0),
@@ -277,6 +328,7 @@ async def get_agent_inbox(session: AsyncSession = Depends(get_session)) -> list[
         .all()
     )
     activity = get_agent_manager().live_activity([a.id for a in agents])
+    spend = await _agent_spend(session, [a.id for a in agents])
     items: list[AgentInboxItem] = []
     for agent in agents:
         if agent.status == "needs_approval":
@@ -291,7 +343,7 @@ async def get_agent_inbox(session: AsyncSession = Depends(get_session)) -> list[
                     at=agent.last_activity_at,
                 )
             )
-        elif _is_budget_park(agent):
+        elif _is_budget_park(agent, spend.get(agent.id, 0)):
             items.append(
                 AgentInboxItem(
                     agent_id=agent.id,
@@ -430,7 +482,7 @@ async def fire_agent_webhook(
     await session.commit()
     await session.refresh(agent)
     mgr = get_agent_manager()
-    mgr.enqueue(mgr.restart_with_task(agent.id))
+    mgr.enqueue(mgr.restart_with_task(agent.id, trigger="webhook"))
     return agent
 
 
@@ -460,8 +512,16 @@ async def list_agents(
     unread = await _unread_counts(session, ids)
     workflows = await _workflow_counts(session, ids)
     activity = get_agent_manager().live_activity(ids)
+    runs = await _current_runs(session, agents)
     return [
-        _to_read(a, unread.get(a.id, 0), activity.get(a.id), workflows.get(a.id, 0)) for a in agents
+        _to_read(
+            a,
+            unread.get(a.id, 0),
+            activity.get(a.id),
+            workflows.get(a.id, 0),
+            runs.get(a.id),
+        )
+        for a in agents
     ]
 
 
@@ -603,17 +663,66 @@ async def get_agent(
     unread = await _unread_counts(session, [agent.id])
     workflows = await _workflow_counts(session, [agent.id])
     activity = get_agent_manager().live_activity([agent.id])
+    runs = await _current_runs(session, [agent])
     return _to_read(
-        agent, unread.get(agent.id, 0), activity.get(agent.id), workflows.get(agent.id, 0)
+        agent,
+        unread.get(agent.id, 0),
+        activity.get(agent.id),
+        workflows.get(agent.id, 0),
+        runs.get(agent.id),
     )
 
 
 @router.get("/{agent_id}/events", response_model=list[AgentEvent])
 async def get_agent_events(
-    agent_id: str, session: AsyncSession = Depends(get_session)
+    agent_id: str,
+    agent_run_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[AgentEvent]:
+    """The agent's transcript, optionally narrowed to one execution.
+
+    Unfiltered the timeline spans every run, which is what a single-driver agent
+    wants. Pass ``agent_run_id`` to read one execution on its own — concurrent
+    drivers otherwise interleave into one conversation (issue #242).
+    """
     agent = await _get_or_404(session, agent_id)
-    return await get_agent_manager().get_events(agent.id)
+    if agent_run_id is not None:
+        run = await session.get(AgentRun, agent_run_id)
+        if run is None or run.agent_id != agent.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent run not found")
+    return await get_agent_manager().get_events(agent.id, agent_run_id=agent_run_id)
+
+
+@router.get("/{agent_id}/runs", response_model=list[AgentRunRead])
+async def list_agent_runs(
+    agent_id: str,
+    limit: int = 50,
+    workflow_run_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[AgentRun]:
+    """This agent's execution history, newest first.
+
+    An agent is a reusable definition, so "what did it do, driven by what, and
+    what did that cost" is a per-run question. Filter by ``workflow_run_id`` to
+    see only the executions one pipeline attempt drove.
+    """
+    agent = await _get_or_404(session, agent_id)
+    stmt = select(AgentRun).where(AgentRun.agent_id == agent.id)
+    if workflow_run_id is not None:
+        stmt = stmt.where(AgentRun.workflow_run_id == workflow_run_id)
+    result = await session.execute(stmt.order_by(AgentRun.id.desc()).limit(max(1, min(limit, 200))))
+    return list(result.scalars().all())
+
+
+@router.get("/{agent_id}/runs/{run_id}", response_model=AgentRunRead)
+async def get_agent_run(
+    agent_id: str, run_id: int, session: AsyncSession = Depends(get_session)
+) -> AgentRun:
+    agent = await _get_or_404(session, agent_id)
+    run = await session.get(AgentRun, run_id)
+    if run is None or run.agent_id != agent.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent run not found")
+    return run
 
 
 @router.post("/{agent_id}/read", status_code=status.HTTP_204_NO_CONTENT)
@@ -747,9 +856,9 @@ async def update_agent(
     session to *prime* the new prompt for the next run — it is **not** replayed
     here. Saving is only a save; the caller launches the new objective
     explicitly via ``POST /{id}/start`` ("Save & run"), which clears the prior
-    run's artifacts and re-runs. ``copilot_session_id`` is preserved so
-    scheduled ``/agent <uuid>`` references keep resolving. Rejected mid-run to
-    avoid racing an active turn.
+    run's artifacts and re-runs. ``public_id`` is preserved so scheduled
+    ``/agent <uuid>`` references keep resolving. Rejected mid-run to avoid
+    racing an active turn.
     """
     agent = await _get_or_404(session, agent_id)
 
@@ -774,10 +883,13 @@ async def update_agent(
     if "token_budget" in payload.model_fields_set:
         agent.token_budget = payload.token_budget
         # Un-park a budget-blocked agent when its ceiling is raised or removed.
-        if agent.status == "blocked" and (
-            agent.token_budget is None
-            or agent.total_input_tokens + agent.total_output_tokens < agent.token_budget
-        ):
+        # Gate on cumulative spend across every run, not the agent's mirrored
+        # counters (which only carry the current run) — otherwise a raise to
+        # just above the latest run's spend un-parks an agent whose lifetime
+        # total is still over the new ceiling, and ``_enforce_budget`` simply
+        # re-parks it on the next metered round.
+        spent = (await _agent_spend(session, [agent.id])).get(agent.id, 0)
+        if agent.status == "blocked" and (agent.token_budget is None or spent < agent.token_budget):
             agent.status = "idle"
             agent.blocked_question = None
     if payload.max_retries is not None:
@@ -1088,14 +1200,17 @@ async def delete_agent_schedule(
 
 @router.get("/{agent_id}/artifacts", response_model=list[AgentArtifactRead])
 async def list_agent_artifacts(
-    agent_id: str, session: AsyncSession = Depends(get_session)
+    agent_id: str,
+    run_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[AgentArtifact]:
+    """The agent's blackboard. Pass ``run_id`` to scope it to one execution —
+    two workflows driving the same agent each publish to their own run."""
     agent = await _get_or_404(session, agent_id)
-    result = await session.execute(
-        select(AgentArtifact)
-        .where(AgentArtifact.agent_id == agent.id)
-        .order_by(AgentArtifact.created_at.desc())
-    )
+    stmt = select(AgentArtifact).where(AgentArtifact.agent_id == agent.id)
+    if run_id is not None:
+        stmt = stmt.where(AgentArtifact.agent_run_id == run_id)
+    result = await session.execute(stmt.order_by(AgentArtifact.created_at.desc()))
     return list(result.scalars().all())
 
 
@@ -1115,6 +1230,9 @@ async def create_agent_artifact(
     agent = await _get_or_404(session, agent_id)
     artifact = AgentArtifact(
         agent_id=agent.id,
+        # Hand-published artifacts join whatever the agent is executing now, so
+        # a step that publishes mid-run sees them alongside its own.
+        agent_run_id=agent.current_run_id,
         title=payload.title.strip()[:200],
         content=payload.content,
         kind=payload.kind,

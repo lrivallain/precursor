@@ -27,6 +27,13 @@ class AgentEventRecord(Base):
         ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
+    # The execution that emitted this event. Nullable for rows archived before
+    # runs existed. Keeps the timeline separable when two workflows drive the
+    # same agent at once; ``agent_session_id`` remains the agent-wide view.
+    agent_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
     # The normalised ``schemas.agent.AgentEvent`` serialised as JSON. Stored as an
     # opaque blob: the UI shape can evolve without a migration, and the manager
     # owns (de)serialisation.

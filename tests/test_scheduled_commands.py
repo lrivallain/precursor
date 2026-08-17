@@ -550,7 +550,13 @@ async def _seed_message(topic_id: int, content: str) -> None:
         await session.commit()
 
 
-async def _seed_agent(copilot_session_id: str, *, title: str = "Agent") -> int:
+async def _seed_agent(public_id: str, *, title: str = "Agent") -> int:
+    """Seed an agent addressable by ``public_id``.
+
+    ``/agent <uuid>`` nudges resolve on the agent's stable public identity, which
+    is a property of the *definition* — not of whichever run happens to hold an
+    SDK handle.
+    """
     from precursor.backend.models import AgentSession
 
     async with SessionLocal() as session:
@@ -558,7 +564,7 @@ async def _seed_agent(copilot_session_id: str, *, title: str = "Agent") -> int:
             title=title,
             task_prompt="seed",
             status="idle",
-            copilot_session_id=copilot_session_id,
+            public_id=public_id,
         )
         session.add(agent)
         await session.commit()

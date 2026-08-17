@@ -223,7 +223,7 @@ def _chat_dict(c: Chat) -> dict[str, Any]:
 def _agent_dict(a: AgentSession) -> dict[str, Any]:
     return {
         "id": a.id,
-        "copilot_session_id": a.copilot_session_id,
+        "public_id": a.public_id,
         "title": a.title,
         "task_prompt": a.task_prompt,
         "status": a.status,

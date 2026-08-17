@@ -12,6 +12,7 @@ import type {
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
+  AgentRun,
   AgentSchedule,
   AgentApprovalPolicy,
   AgentScheduleCreate,
@@ -367,7 +368,12 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    getEvents: (id: number) => request<AgentEvent[]>(`/api/agents/${id}/events`),
+    // `agentRunId` narrows the transcript to one execution — without it a
+    // reusable agent driven by two workflows at once reads as one conversation.
+    getEvents: (id: number, agentRunId?: number | null) =>
+      request<AgentEvent[]>(
+        `/api/agents/${id}/events${agentRunId != null ? `?agent_run_id=${agentRunId}` : ""}`,
+      ),
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
     listPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
     resetPermissions: () =>
@@ -426,6 +432,20 @@ export const api = {
     listArchived: () => request<AgentSession[]>(`/api/agents/archived`),
     /** Workflows that reference this agent (archived ones excluded). */
     workflows: (id: number) => request<WorkflowSummary[]>(`/api/agents/${id}/workflows`),
+    /**
+     * This agent's execution history, newest first. An agent is a reusable
+     * definition, so "what did it do, driven by what, and what did that cost"
+     * is a per-run question.
+     */
+    runs: (id: number | string, opts?: { workflowRunId?: number; limit?: number }) => {
+      const q = new URLSearchParams();
+      if (opts?.workflowRunId != null) q.set("workflow_run_id", String(opts.workflowRunId));
+      if (opts?.limit != null) q.set("limit", String(opts.limit));
+      const suffix = q.toString() ? `?${q}` : "";
+      return request<AgentRun[]>(`/api/agents/${id}/runs${suffix}`);
+    },
+    run: (id: number | string, runId: number) =>
+      request<AgentRun>(`/api/agents/${id}/runs/${runId}`),
     archive: (id: number) =>
       request<AgentSession>(`/api/agents/${id}/archive`, { method: "POST" }),
     unarchive: (id: number) =>

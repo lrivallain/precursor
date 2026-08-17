@@ -480,7 +480,7 @@ class Scheduler:
             raise RuntimeError("Agents runtime not started")
         if clear_context:
             # Wipe prior transcript (same public id) and replay the stored task.
-            await manager.rerun_task(agent_session_id)
+            await manager.rerun_task(agent_session_id, trigger="schedule")
         else:
             # Re-send the task into the existing conversation as a follow-up.
             await manager.send_message(agent_session_id, agent.task_prompt)

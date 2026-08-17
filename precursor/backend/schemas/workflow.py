@@ -44,7 +44,7 @@ class WorkflowAgentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    copilot_session_id: str | None = None
+    public_id: str | None = None
     title: str
     status: str
     # The agent's objective. Carried so an inline step (whose prompt lives with
@@ -119,6 +119,10 @@ class WorkflowRunStepRead(BaseModel):
     kind: WorkflowStepKind = "task"
     label: str | None = None
     agent_id: int | None = None
+    # The specific execution of that agent this attempt drove. Agents are shared,
+    # so the attempt's status, spend and artifacts belong to the run, not the
+    # agent row — this is the handle that ties the trace to them.
+    agent_run_id: int | None = None
     # True when that agent is private to its step (an inline prompt), so the UI
     # knows not to offer a link into the Agents section, where it isn't listed.
     agent_inline: bool = False

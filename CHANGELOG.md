@@ -11,6 +11,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Agents are now definitions, and every start opens its own run.** Execution
+  state — status, active prompt, transcript counters, token meter and the
+  Copilot SDK session handle — moved off `AgentSession` onto a new `AgentRun`
+  row, mirroring the `Workflow` → `WorkflowRun` pattern. Two workflows can now
+  point a step at the **same agent and run at the same time**: previously the
+  second start silently took over the first's live session, overwrote its
+  status, wiped its artifact blackboard, wrote its step's capability overrides
+  onto the shared agent row, and mis-attributed its tokens — and one agent going
+  idle advanced *both* pipelines. Runtime registries, artifacts, events, tool
+  grants, token accounting and the workflow advance seam are all keyed by run.
+  Each run freezes the model, role, approval policy and capability toggles it
+  started with, so editing an agent mid-flight primes the next run instead of
+  moving the ground under the current one. Runs are kept as an audit trail and
+  carry the `trigger` that opened them (`manual`, `workflow`, `schedule`,
+  `webhook`, `fleet`, `retry`, `replay`). The agent's own columns remain as a
+  write-through mirror of its current run, so the dashboard, inbox, metrics and
+  command palette are unchanged. Fixes [#242](https://github.com/lrivallain/precursor/issues/242).
+- **Agent run history.** An agent's insights sidebar gains a **Runs** rail
+  listing recent executions — trigger, status, the workflow run that drove it
+  and what it spent — with the current run highlighted; a workflow's step trace
+  now names the agent run each attempt launched. New
+  `GET /api/agents/{id}/runs` and `GET /api/agents/{id}/runs/{runId}` routes back
+  it, `AgentSessionRead` embeds a nullable `current_run`, the artifact list
+  accepts a `runId` filter, and the `agent.changed` / `read.changed` SSE events
+  carry an `agent_run_id`.
 - **Replay a single workflow step.** Every finished, agent-backed row in a run
   trace now carries a small replay icon that re-runs *that one step* on the
   exact input it first saw — the same kickoff preamble, brief and upstream
@@ -179,6 +204,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **An agent is addressed by its own `public_id`, not by a session handle.**
+  `AgentSession.copilot_session_id` doubled as the agent's URL identity and as
+  the Copilot SDK handle for whatever was running; the handle now belongs to the
+  run, so the agent gained a stable `public_id` in its place. Existing UUIDs are
+  carried across by the migration, so `/agents/{uuid}` deep links, `/agent
+  <uuid>` nudges and transfer lookups keep resolving.
 - **A running workflow now wears the holographic frame on the gallery.** The
   Workflows landing signalled a live run only with a small status dot and a
   Pause button, so a card mid-flight read the same as an idle one at a glance —
@@ -197,6 +228,72 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A workflow board shows its own run.** The step strip was rendered from the
+  shared agent row, which mirrors that agent's *current* run — so two pipelines
+  driving one agent both displayed whichever finished last, right down to the
+  answer and the question waiting on you. Each board now resolves its step
+  through the run that step actually launched.
+- **The agent transcript reads one run at a time.** Concurrent drivers produced
+  a single interleaved timeline — two prompts and two answers with nothing
+  saying which belonged to which. Every event now carries its run and the
+  transcript **defaults to the latest one**, following along when the agent
+  starts again. The **Runs** rail doubles as a filter (**All runs** restores the
+  full history) and a chip above the timeline says which run you are reading.
+  Agent-wide notices (the MCP authorisation banner) carry no run and so appear
+  only in the unfiltered view.
+- **A run records what actually started it.** Every entry point outside a
+  workflow opened its run as `manual`, so the Runs rail credited a human for
+  schedules, webhook fires, fleet releases and retries alike.
+- **A gate agent reads its own verdict.** The event archive spans every run of
+  an agent — that is what makes it the transcript you scroll — so "the newest
+  assistant message" meant "whichever concurrent run spoke last". A gate shared
+  by two workflows could hand one pipeline the other's `PASS` and wave a failing
+  deliverable through. Verdict and hand-off reads are now scoped to the run that
+  produced them; the agent-wide read remains for the transcript itself.
+- **A crash no longer leaks a concurrency slot.** Boot recovery flagged only the
+  agent rows it found mid-turn, leaving the runs the fleet governor counts stuck
+  at `running` forever. After `agents_max_concurrent` hard stops, nothing could
+  start again.
+- **Signing in to an MCP server rebuilds the right sessions.** The rebuild swept
+  the live-session registry as though it were keyed by agent when it is keyed by
+  run, so it skipped the sessions that needed rebuilding and could disconnect an
+  unrelated agent's live run mid-turn.
+- **Replaying a step of an edited workflow finishes.** If the step had been moved
+  or removed from the definition since the original run, the replay opened no
+  execution to attach to and its trace row could never be closed — leaving the
+  step pinned "in flight" on the board. The replay now always opens a run,
+  falling back to the agent's current settings when the step is gone.
+- **The concurrency governor counts executions, not agents.** A slot exists to
+  bound how many Copilot SDK sessions run at once, and there is now one session
+  per run — so two workflows driving the same agent burned two sessions while
+  charging `agents_max_concurrent` for one. The fleet count, and the
+  `running_now` gauge in the Agents header, now read the runs.
+- **Fleet token totals and the inbox's "budget" badge read every run.** Both
+  summed the agent's own counters, which mirror its *current* run — so lifetime
+  spend collapsed to the latest turn of each agent, and an agent parked by the
+  budget governor after several runs was mislabelled as having raised a
+  question.
+- **The stall watchdog watches runs, not agents.** It selected sessions whose
+  status was `running` and read their last activity — both of which now mirror
+  only the agent's *current* run. A turn wedged by a hung tool therefore became
+  invisible the moment another execution took over, and stayed pinned in
+  `running` forever: never surfaced for a Resume, and permanently holding one of
+  the `agents_max_concurrent` slots. It now sweeps the run rows, interrupts the
+  run itself, and drops only *that* run's live session — previously it tore down
+  every session the agent owned, killing a healthy concurrent workflow's
+  in-flight turn as collateral.
+- **Raising a token budget no longer un-parks an agent that is still over it.**
+  The check compared the new ceiling against the agent's own counters, which
+  mirror its current run, so a raise above the latest turn's spend flipped a
+  budget-blocked agent to idle even when its lifetime total was still past the
+  limit — and the governor simply re-parked it on the next metered round. It now
+  weighs cumulative spend across every run, matching the governor.
+- **An agent's token budget is no longer reset by starting it again.** The
+  governor read the agent's cumulative counters, which are now a mirror of its
+  *current* run — so every new run would have handed the agent a fresh
+  allowance, and two concurrent runs would each have seen only their own spend.
+  It now sums across every run of the agent, which is what "cumulative
+  governance on the definition" was always supposed to mean.
 - **Editing a workflow step over the API no longer deletes its inline agent.**
   `PATCH /api/workflows/{id}` with a step that names its private vessel via
   `agent_id` but leaves `task` out — a partial edit, say to narrow the step's

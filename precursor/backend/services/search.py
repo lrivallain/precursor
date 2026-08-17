@@ -200,7 +200,7 @@ async def search(session: AsyncSession, query: str, limit: int = _MAX_RESULTS) -
         .all()
     )
     for a in agents:
-        ref = a.copilot_session_id or str(a.id)
+        ref = a.public_id or str(a.id)
         if q.lower() in (a.title or "").lower():
             field: SearchField = "title"
             is_title = True

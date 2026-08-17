@@ -100,12 +100,23 @@ Highlights:
   `system` / `tool`. Large `tool` results can be age-pruned in place.
 - **`TopicSchedule`** / **`AgentSchedule`** — recurrence config + run state
   (interval, weekday mask, time-of-day, timezone, lease/status).
+- **`AgentSession`** / **`AgentRun`** — the **definition/execution split**.
+  `AgentSession` is the reusable definition (objective, model, role, capability
+  defaults, `public_id`, and cumulative governance: `token_budget`,
+  `max_retries`, `retry_count`, `retry_at`). `AgentRun` is *one execution* — its
+  own `status`, `copilot_session_id`, transcript counters, token meter and a
+  frozen capability snapshot, tagged with the `trigger` that opened it and,
+  when a pipeline drove it, its `workflow_run_id` / `workflow_run_step_id`.
+  This mirrors `Workflow` → `WorkflowRun` → `WorkflowRunStep`, and is what makes
+  a single agent safe to share between two concurrent workflows: every runtime
+  registry, the live SDK session, artifacts, events and token accounting are
+  keyed by **run**, not by agent. `AgentSession.current_run_id` points at the
+  live one, and the agent's execution columns are a write-through **mirror** of
+  that run so list/inbox/dashboard reads stay a single cheap lookup.
 - **`AgentTrigger`** / **`AgentArtifact`** / **`AgentBlueprint`** — the
   [agent orchestrator](/features/agents#orchestrating-agents): webhook/manual
-  triggers, the shared-artifact blackboard, and reusable task+governance
-  templates. `AgentSession` also carries
-  `token_budget`, `max_retries`, `retry_count`, `retry_at`, and cumulative
-  `total_input_tokens` / `total_output_tokens`.
+  triggers, the shared-artifact blackboard (scoped to the `AgentRun` that
+  published each artifact), and reusable task+governance templates.
 - **`Workspace`** — a git clone or local directory.
 - **`Skill`** — an enablement record for a file-backed `SKILL.md` prompt preset.
 - **`Memory`** — long-term notes injected into the system prompt.

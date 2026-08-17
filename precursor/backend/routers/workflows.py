@@ -14,15 +14,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import get_session
 from precursor.backend.models import (
+    AgentRun,
     AgentSession,
     Workflow,
     WorkflowRun,
+    WorkflowRunStep,
     WorkflowState,
     WorkflowStep,
 )
@@ -141,7 +143,54 @@ async def _load(session: AsyncSession, workflow_id: int) -> Workflow:
     return workflow
 
 
-def _read(workflows: list[Workflow]) -> list[WorkflowRead]:
+async def _step_run_state(
+    session: AsyncSession, workflows: list[Workflow]
+) -> dict[tuple[int, int], AgentRun]:
+    """Map ``(workflow_id, step position)`` to the run that step most recently drove.
+
+    A step's board node reports what *that step* did, but its ``agent`` summary
+    is an :class:`AgentSession` row — and since the execution split those columns
+    are a write-through mirror of the agent's **current** run. For a reusable
+    agent shared by two workflows that is the wrong answer on every board but the
+    one that happened to finish last: both would claim the same result, status
+    and progress (issue #242). The per-attempt truth is already recorded on
+    ``WorkflowRunStep.agent_run_id``, so resolve through it.
+
+    Only the newest workflow run is consulted — the board shows the current
+    state of the pipeline, and older runs live in the trace timeline.
+    """
+    ids = [w.id for w in workflows]
+    if not ids:
+        return {}
+    # Newest run per workflow.
+    latest = (
+        select(WorkflowRun.workflow_id, func.max(WorkflowRun.id).label("run_id"))
+        .where(WorkflowRun.workflow_id.in_(ids))
+        .group_by(WorkflowRun.workflow_id)
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(latest.c.workflow_id, WorkflowRunStep.position, WorkflowRunStep.agent_run_id)
+            .join(WorkflowRunStep, WorkflowRunStep.run_id == latest.c.run_id)
+            .where(WorkflowRunStep.agent_run_id.is_not(None))
+            # Newest attempt last, so the dict below keeps it.
+            .order_by(WorkflowRunStep.id)
+        )
+    ).all()
+    if not rows:
+        return {}
+    wanted = {(wf_id, position): run_id for wf_id, position, run_id in rows}
+    runs = (
+        (await session.execute(select(AgentRun).where(AgentRun.id.in_(set(wanted.values())))))
+        .scalars()
+        .all()
+    )
+    by_id = {run.id: run for run in runs}
+    return {key: by_id[run_id] for key, run_id in wanted.items() if run_id in by_id}
+
+
+async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[WorkflowRead]:
     """Serialise workflows, folding each step agent's *live* state into it.
 
     Narration and a parked permission request exist only in the runtime's
@@ -149,12 +198,17 @@ def _read(workflows: list[Workflow]) -> list[WorkflowRead]:
     them null. The permission in particular has to reach the board: a gate on an
     **inline** step is otherwise unanswerable anywhere, because its vessel is
     hidden from the Agents roster.
+
+    Execution-state fields are then re-pointed at the run each step actually
+    drove, so a shared agent doesn't broadcast one workflow's outcome onto every
+    board that references it.
     """
     reads = [WorkflowRead.model_validate(w) for w in workflows]
     agent_ids = [s.agent_id for w in workflows for s in w.steps if s.agent_id is not None]
     if not agent_ids:
         return reads
     activity = get_agent_manager().live_activity(agent_ids)
+    per_step = await _step_run_state(session, workflows)
     for read in reads:
         for step in read.steps:
             if step.agent is None:
@@ -165,11 +219,22 @@ def _read(workflows: list[Workflow]) -> list[WorkflowRead]:
             step.agent.pending_permission = (
                 AgentPendingPermission.model_validate(pending) if pending else None
             )
+            run = per_step.get((read.id, step.position))
+            if run is None:
+                # Never run here: the agent's own mirror is all there is, and for
+                # a private vessel it is also exactly right.
+                continue
+            step.agent.status = run.status
+            step.agent.result_summary = run.result_summary
+            step.agent.blocked_question = run.blocked_question
+            step.agent.progress = run.progress
+            step.agent.progress_label = run.progress_label
+            step.agent.finished_at = run.finished_at
     return reads
 
 
-def _read_one(workflow: Workflow) -> WorkflowRead:
-    return _read([workflow])[0]
+async def _read_one(session: AsyncSession, workflow: Workflow) -> WorkflowRead:
+    return (await _read(session, [workflow]))[0]
 
 
 async def _apply_steps(
@@ -343,7 +408,7 @@ async def list_workflows(
     if not include_archived:
         stmt = stmt.where(Workflow.archived_at.is_(None))
     result = await session.execute(stmt)
-    return _read(list(result.scalars().unique().all()))
+    return await _read(session, list(result.scalars().unique().all()))
 
 
 @router.get("/archived", response_model=list[WorkflowRead])
@@ -361,7 +426,7 @@ async def list_archived_workflows(
         .where(Workflow.archived_at.is_not(None))
         .order_by(Workflow.archived_at.desc())
     )
-    return _read(list(result.scalars().unique().all()))
+    return await _read(session, list(result.scalars().unique().all()))
 
 
 @router.post("", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)
@@ -394,14 +459,14 @@ async def create_workflow(
     workflow.status = "idle" if payload.steps else "draft"
     await session.commit()
     await publish_workflow_changed(workflow.id)
-    return _read_one(await _load(session, workflow.id))
+    return await _read_one(session, await _load(session, workflow.id))
 
 
 @router.get("/{workflow_id}", response_model=WorkflowRead)
 async def get_workflow(
     workflow_id: int, session: AsyncSession = Depends(get_session)
 ) -> WorkflowRead:
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.get("/{workflow_id}/runs", response_model=list[WorkflowRunRead])
@@ -489,7 +554,7 @@ async def update_workflow(
         workflow.current_step_id = None
     await session.commit()
     await publish_workflow_changed(workflow.id)
-    return _read_one(await _load(session, workflow.id))
+    return await _read_one(session, await _load(session, workflow.id))
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -532,7 +597,7 @@ async def run_workflow(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/pause", response_model=WorkflowRead)
@@ -542,7 +607,7 @@ async def pause_workflow(
     workflow = await workflow_svc.pause_workflow(session, workflow_id)
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/resume", response_model=WorkflowRead)
@@ -566,7 +631,7 @@ async def resume_workflow(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/permission", response_model=WorkflowRead)
@@ -597,7 +662,7 @@ async def resolve_step_permission(
             status.HTTP_409_CONFLICT,
             "That permission request is no longer waiting — it was already answered or cancelled.",
         )
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/retry", response_model=WorkflowRead)
@@ -623,7 +688,7 @@ async def retry_workflow_step(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/run-steps/{step_run_id}/replay", response_model=WorkflowRead)
@@ -650,7 +715,7 @@ async def replay_run_step(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Step attempt not found")
     if refusal:
         raise HTTPException(status.HTTP_409_CONFLICT, refusal)
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/cancel", response_model=WorkflowRead)
@@ -660,7 +725,7 @@ async def cancel_workflow(
     workflow = await workflow_svc.cancel_workflow(session, get_agent_manager(), workflow_id)
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/approve", response_model=WorkflowRead)
@@ -676,7 +741,7 @@ async def approve_workflow_step(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/reject", response_model=WorkflowRead)
@@ -700,7 +765,7 @@ async def reject_workflow_step(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/archive", response_model=WorkflowRead)
@@ -711,7 +776,7 @@ async def archive_workflow(
     workflow.archived_at = _now()
     await session.commit()
     await publish_workflow_changed(workflow_id)
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/{workflow_id}/unarchive", response_model=WorkflowRead)
@@ -722,7 +787,7 @@ async def unarchive_workflow(
     workflow.archived_at = None
     await session.commit()
     await publish_workflow_changed(workflow_id)
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 # --- Scheduling ------------------------------------------------------------
@@ -760,7 +825,7 @@ async def update_schedule(
         workflow.next_run_at = None
     await session.commit()
     await publish_workflow_changed(workflow_id)
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 # --- Webhook trigger -------------------------------------------------------
@@ -774,7 +839,7 @@ async def mint_webhook(
     workflow.webhook_token = Workflow.mint_webhook_token()
     await session.commit()
     await publish_workflow_changed(workflow_id)
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.delete("/{workflow_id}/webhook", response_model=WorkflowRead)
@@ -785,7 +850,7 @@ async def revoke_webhook(
     workflow.webhook_token = None
     await session.commit()
     await publish_workflow_changed(workflow_id)
-    return _read_one(await _load(session, workflow_id))
+    return await _read_one(session, await _load(session, workflow_id))
 
 
 @router.post("/hooks/{token}", status_code=status.HTTP_202_ACCEPTED)

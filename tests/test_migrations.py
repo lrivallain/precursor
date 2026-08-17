@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -218,3 +220,197 @@ def test_repair_migration_is_a_no_op_on_an_undamaged_database() -> None:
     assert steps[1] == ("completed", 1_000)
     assert steps[2] == ("completed", 2_000)
     assert (total_in, total_out) == (3_000, 30)
+
+
+# --- b6c8e14a92df: split agent execution state into agent_runs --------------
+
+_AGENT_RUN_REVISION = "b6c8e14a92df"
+_PRIOR_REVISION = "a7f3c91b5d20"
+
+
+def _alembic(db_path: str, revision: str) -> None:
+    """Run one Alembic command in a subprocess against ``db_path``.
+
+    A subprocess rather than an in-process call because ``env.py`` reads the
+    cached settings singleton and calls ``asyncio.run`` — pointing either at a
+    scratch database from inside the test session would leak into every other
+    test that shares the process.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PRECURSOR_DATABASE_URL": f"sqlite+aiosqlite:///{db_path}"}
+    completed = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", revision],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+_LEGACY_AGENT_COLUMNS = (
+    "copilot_session_id, title, task_prompt, status, result_summary, step_count, "
+    "total_input_tokens, total_output_tokens, use_mcp, use_skills, use_memory, "
+    "max_steps, autonomy_enabled, inline, max_retries, retry_count, created_at, updated_at"
+)
+
+
+def test_agent_run_split_preserves_addressing_and_execution_state() -> None:
+    """The split must not orphan a deep link, a transcript or a blackboard.
+
+    ``/agents/{uuid}`` links, ``/agent <uuid>`` nudges and transfer lookups all
+    address an agent by what used to be its ``copilot_session_id``. That column
+    becomes per-run, so the migration has to hand the old value to the new
+    ``public_id`` — and mint one for agents that never started, which never had
+    a handle at all. Everything the agent had already produced must land on the
+    synthetic run, or history detaches from the execution that made it.
+    """
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        _alembic(db_path, _PRIOR_REVISION)
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    f"INSERT INTO agent_sessions ({_LEGACY_AGENT_COLUMNS}) VALUES "
+                    "('sess-abc', 'Shipped', 'do it', 'completed', 'done', 3, 100, 50,"
+                    " 1, 1, 1, 12, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            # Never started: no SDK handle was ever minted for it.
+            conn.execute(
+                sa.text(
+                    f"INSERT INTO agent_sessions ({_LEGACY_AGENT_COLUMNS}) VALUES "
+                    "(NULL, 'Queued', 'x', 'pending', NULL, 0, 0, 0,"
+                    " 1, 1, 1, 12, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO agent_artifacts (agent_id, key, kind, title, content,"
+                    " created_at, updated_at) VALUES"
+                    " (1, 'result', 'text', 'R', 'body', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO agent_events (agent_session_id, payload, created_at)"
+                    " VALUES (1, '{}', CURRENT_TIMESTAMP)"
+                )
+            )
+
+        _alembic(db_path, _AGENT_RUN_REVISION)
+
+        with engine.connect() as conn:
+            agents = {
+                r[0]: (r[1], r[2])
+                for r in conn.execute(
+                    sa.text("SELECT id, public_id, current_run_id FROM agent_sessions")
+                )
+            }
+            runs = {
+                r[1]: r
+                for r in conn.execute(
+                    sa.text(
+                        "SELECT id, agent_id, trigger, copilot_session_id, status,"
+                        " step_count, total_input_tokens, total_output_tokens, result_summary"
+                        " FROM agent_runs"
+                    )
+                )
+            }
+            artifact_run = conn.execute(
+                sa.text("SELECT agent_run_id FROM agent_artifacts WHERE id = 1")
+            ).scalar()
+            event_run = conn.execute(
+                sa.text("SELECT agent_run_id FROM agent_events WHERE id = 1")
+            ).scalar()
+
+        # The handle became the addressable identity.
+        assert agents[1][0] == "sess-abc"
+        # An agent that never ran still needs one, so links minted later resolve.
+        assert agents[2][0] and agents[2][0] != "sess-abc"
+
+        # Exactly one synthetic run per agent, carrying the state off the row.
+        assert set(runs) == {1, 2}
+        shipped = runs[1]
+        assert shipped[2] == "manual"
+        assert shipped[3] == "sess-abc"  # the SDK handle moved to the run
+        assert (shipped[4], shipped[5], shipped[6], shipped[7]) == ("completed", 3, 100, 50)
+        assert shipped[8] == "done"
+        assert agents[1][1] == shipped[0]
+        assert agents[2][1] == runs[2][0]
+
+        # History attaches to the execution that produced it.
+        assert artifact_run == shipped[0]
+        assert event_run == shipped[0]
+    finally:
+        engine.dispose()
+        os.unlink(db_path)
+
+
+def test_agent_run_split_downgrade_folds_the_newest_run_back() -> None:
+    """Rolling back must return the handle, not strand the agent unaddressable.
+
+    ``copilot_session_id`` was unique and load-bearing before the split, so the
+    downgrade has to repopulate it from the agent's newest run — falling back to
+    ``public_id`` for an agent whose runs never got a handle, because a NULL
+    would leave a pre-split install unable to find the agent at all.
+    """
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        _alembic(db_path, _PRIOR_REVISION)
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    f"INSERT INTO agent_sessions ({_LEGACY_AGENT_COLUMNS}) VALUES "
+                    "('sess-abc', 'Shipped', 'do it', 'completed', 'done', 3, 100, 50,"
+                    " 1, 1, 1, 12, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    f"INSERT INTO agent_sessions ({_LEGACY_AGENT_COLUMNS}) VALUES "
+                    "(NULL, 'Queued', 'x', 'pending', NULL, 0, 0, 0,"
+                    " 1, 1, 1, 12, 0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+
+        _alembic(db_path, _AGENT_RUN_REVISION)
+        with engine.connect() as conn:
+            minted = conn.execute(
+                sa.text("SELECT public_id FROM agent_sessions WHERE id = 2")
+            ).scalar()
+
+        repo_root = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "PRECURSOR_DATABASE_URL": f"sqlite+aiosqlite:///{db_path}"}
+        completed = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", _PRIOR_REVISION],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+        with engine.connect() as conn:
+            handles = {
+                r[0]: r[1]
+                for r in conn.execute(sa.text("SELECT id, copilot_session_id FROM agent_sessions"))
+            }
+            columns = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(agent_sessions)"))}
+            tables = {
+                r[0]
+                for r in conn.execute(sa.text("SELECT name FROM sqlite_master WHERE type='table'"))
+            }
+
+        assert handles[1] == "sess-abc"
+        assert handles[2] == minted  # fell back rather than leaving it unaddressable
+        assert "public_id" not in columns
+        assert "current_run_id" not in columns
+        assert "agent_runs" not in tables
+    finally:
+        engine.dispose()
+        os.unlink(db_path)

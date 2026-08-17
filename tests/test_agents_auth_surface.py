@@ -270,38 +270,49 @@ async def test_block_turn_parks_blocked_and_advances_the_workflow(monkeypatch) -
     ``blocked`` (rather than the ``idle`` a tool-less agent would otherwise
     reach) is the status ``workflow._advance_one`` treats as "pause and ask",
     instead of recording the step as completed.
+
+    Parked on the *run*, not the agent: a shared agent's other execution may hold
+    a perfectly good session for the very server this one is missing, and parking
+    the agent would strand it.
     """
+    from types import SimpleNamespace
+
     mgr = AgentManager()
     patched: dict[str, Any] = {}
-    published: list[int] = []
+    published: list[tuple[int, int | None]] = []
     advanced: list[int] = []
 
-    async def _patch(agent_id: int, **fields: Any) -> None:
-        patched.update({"agent_id": agent_id, **fields})
+    async def _patch_run(run_id: int, **fields: Any) -> None:
+        patched.update({"run_id": run_id, **fields})
 
-    async def _publish(agent_id: int) -> None:
-        published.append(agent_id)
+    async def _load_run(run_id: int) -> tuple[Any, Any]:
+        return SimpleNamespace(id=run_id), SimpleNamespace(id=7)
 
-    async def _advance(agent_id: int) -> None:
-        advanced.append(agent_id)
+    async def _publish(agent_id: int, *, agent_run_id: int | None = None) -> None:
+        published.append((agent_id, agent_run_id))
+
+    async def _advance(run_id: int) -> None:
+        advanced.append(run_id)
 
     enqueued: list[Any] = []
 
-    monkeypatch.setattr(mgr, "_patch", _patch)
+    monkeypatch.setattr(mgr, "_patch_run", _patch_run)
+    monkeypatch.setattr(mgr, "_load_run", _load_run)
     monkeypatch.setattr(mgr, "_publish", _publish)
     monkeypatch.setattr(mgr, "_advance_workflows", _advance)
     monkeypatch.setattr(mgr, "enqueue", enqueued.append)
 
-    await mgr._block_turn(7, ["WorkIQ"])
+    await mgr._block_turn(42, ["WorkIQ"])
 
-    assert patched["agent_id"] == 7
+    assert patched["run_id"] == 42
     assert patched["status"] == "blocked"
     assert patched["error"] is None
     assert "WorkIQ" in patched["blocked_question"]
-    assert published == [7]
+    # Published against the owning agent, but stamped with the run that parked.
+    assert published == [(7, 42)]
 
     # The advance is deferred to the manager's queue (never awaited inline, which
     # would re-enter the lock this runs under); run it to prove that's what it is.
     assert len(enqueued) == 1
     await enqueued[0]
-    assert advanced == [7]
+    assert advanced == [42]

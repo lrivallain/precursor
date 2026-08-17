@@ -124,6 +124,60 @@ of agents in order and passes each step's output to the next. Individual agents
 stay independent; a workflow supplies the chaining.
 :::
 
+### An agent is a definition; each start is a run
+
+An agent is a **reusable definition** — a title, an objective, a model, a role
+and its capability defaults. Every time something starts it, Precursor opens a
+separate **run**: its own status, prompt, transcript, artifacts, token meter and
+Copilot SDK session.
+
+That split is what makes an agent **safe to share**. Two [workflows](/features/workflows)
+can point a step at the same agent and both be in flight at once — each drives
+its own run, so neither sees the other's status, wipes the other's artifacts,
+inherits the other's tool grants or is charged for the other's tokens. Before
+runs existed, the second pipeline to start quietly took over the first one's
+execution.
+
+A run records **what triggered it**, so the history reads as an audit trail:
+
+| Trigger | Opened by |
+| --- | --- |
+| `manual` | you, from the agent's header or **Start now** |
+| `workflow` | a [workflow](/features/workflows) step reaching the agent |
+| `schedule` | a [scheduled](#scheduling-agents) tick |
+| `webhook` | an [event trigger](#event-triggers-webhooks) firing |
+| `fleet` | the concurrency governor releasing a queued agent |
+| `retry` / `replay` | a re-attempt of a workflow step |
+
+Runs are kept, never garbage-collected. The agent's insights sidebar carries a
+**Runs** rail listing the most recent ones — trigger, status, the workflow run
+that drove it, and what it spent — with the current run highlighted. In a
+workflow's [step trace](/features/workflows#run-history-and-the-step-trace),
+each row names the run it launched, so you can walk from a pipeline step to the
+exact execution behind it.
+
+**The transcript shows the latest run by default**, and the rail doubles as a
+filter: click any run to read that execution on its own, or **All runs** to
+stitch the whole history back together. A chip above the timeline says which run
+you're reading. Until you pick one yourself the view follows the newest run, so
+starting the agent again pulls the transcript along instead of leaving you on a
+finished conversation.
+
+This matters most for a shared agent: two workflows driving it at once produce
+one interleaved archive — two prompts and two answers with nothing saying which
+belongs to which — and the per-run view is what pulls each conversation back
+apart.
+
+::: tip
+A handful of Precursor-generated notices — the "this MCP server needs
+authorising" banner, for instance — belong to the agent rather than to any one
+run, so they only show in the unfiltered view.
+:::
+
+The agent row itself keeps mirroring its **current** run's status and counters,
+which is what the dashboard cards, the inbox and the command palette read — so
+"what is this agent doing right now" stays a single cheap lookup.
+
 ### Park an agent until a trigger
 
 Not every agent should run the moment you create it. The composer's **Create
@@ -147,7 +201,11 @@ hood this is a `start: false` flag on agent creation plus a
 - **Token budget (per agent).** Give an agent a **token budget** in its settings
   drawer and, once its cumulative usage crosses it, the agent **parks itself in
   the [inbox](#the-unified-inbox)** for your approval instead of spending more —
-  a hard ceiling on a runaway run. Leave it blank for unlimited.
+  a hard ceiling on a runaway run. Leave it blank for unlimited. The budget is
+  **cumulative governance on the definition**: spend from *every*
+  [run](#an-agent-is-a-definition-each-start-is-a-run) counts against it, so
+  restarting the agent doesn't hand it a fresh allowance, and two concurrent
+  runs draw on the same pot. The run that trips the cap is the one that parks.
 
 ### Retry & auto-recovery
 
@@ -172,6 +230,11 @@ insights sidebar lists the artifacts it published, and a
 **[workflow](/features/workflows)** hands a step's artifacts to the next step's
 kickoff context — this is the channel that turns a series of agents into a
 pipeline.
+
+Artifacts belong to the **[run](#an-agent-is-a-definition-each-start-is-a-run)**
+that published them, not to the agent. Starting an agent clears only *its own*
+new run's slate, so a second pipeline sharing the same agent never erases a
+blackboard the first one is still reading from.
 
 An agent can also publish a **named** output on purpose, mid-run, with an
 `ARTIFACT:` directive (repeatable). Use it to hand a specific, structured result
@@ -423,6 +486,11 @@ The **settings drawer** separates *persisting* changes from *acting* on them:
 
 This makes editing safe to do at any time: tweak the prompt, governance, or
 schedule and hit **Save**, then choose *when* to re-run.
+
+Editing is also safe **while a run is in flight**. A run snapshots the model,
+role, approval policy and capability toggles it started with, so changing the
+definition mid-flight primes the *next* run rather than moving the ground under
+the current one.
 
 ## Unread badges & notifications
 

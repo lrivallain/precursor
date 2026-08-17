@@ -1,10 +1,18 @@
 """AgentManager — owns the Copilot SDK runtime and live agent sessions.
 
-This is the bridge between Precursor's thin ``AgentSession`` rows and the Copilot
-SDK's out-of-process agent runtime. One ``CopilotClient`` (one CLI server) is
-started for the app's lifetime; each Precursor agent maps to one **persistent**
-SDK session (keyed by ``copilot_session_id``, state stored under
-``agents_home``), so sessions survive restarts and can be resumed.
+This is the bridge between Precursor's ``AgentSession`` *definitions*, their
+``AgentRun`` *executions*, and the Copilot SDK's out-of-process agent runtime.
+One ``CopilotClient`` (one CLI server) is started for the app's lifetime; each
+**run** maps to one persistent SDK session (keyed by the run's
+``copilot_session_id``, state stored under ``agents_home``), so sessions survive
+restarts and can be resumed.
+
+Two agents' worth of state used to live on one row, which meant two workflows
+pointing a step at the same agent silently shared a live session, a status and a
+token ledger. Live sessions are therefore keyed by ``agent_run.id``: concurrent
+executions of one definition each get their own SDK session, capability snapshot
+and counters. The durable *timeline* caches (``_events``/``_loaded``) stay keyed
+by agent, because the visible transcript is per agent and outlives any one run.
 
 Responsibilities:
 
@@ -35,18 +43,18 @@ import logging
 import os
 import re
 import sys
-import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentEventRecord,
+    AgentRun,
     AgentSession,
     AppSetting,
     Chat,
@@ -102,6 +110,41 @@ _RESTING_STATUSES = (
     "needs_approval",
 )
 
+# Execution state written by :meth:`AgentManager._patch_run`. ``_MIRRORED`` lands
+# on the ``AgentRun`` *and* is copied onto its ``AgentSession`` (the denormalised
+# view the Agents list, inbox, metrics, fleet governor and scheduler read).
+# ``_RUN_ONLY`` has no column on the definition and stays on the run.
+_MIRRORED_RUN_FIELDS = frozenset(
+    {
+        "status",
+        "active_prompt",
+        "blocked_question",
+        "result_summary",
+        "error",
+        "step_count",
+        "progress",
+        "progress_label",
+        "total_input_tokens",
+        "total_output_tokens",
+        "finished_at",
+        "last_activity_at",
+    }
+)
+_RUN_ONLY_FIELDS = frozenset(
+    {
+        "copilot_session_id",
+        "started_at",
+        "stall_count",
+        "last_progress",
+        "workflow_run_id",
+        "workflow_run_step_id",
+    }
+)
+
+#: Anything carrying the capability toggles a live session is built from: the
+#: executing ``AgentRun``'s immutable snapshot, or the ``AgentSession`` itself
+#: when a caller has no run in hand.
+_Caps = AgentRun | AgentSession
 # Slash commands the system intercepts inside an agent session map to real actions
 # (rename/clear/archive) handled in ``AgentManager.run_command`` rather than being
 # forwarded to the SDK as prompt text. Every *other* slash command is rejected.
@@ -605,6 +648,9 @@ class AgentManager:
     def __init__(self) -> None:
         self._client: Any | None = None
         self._ready = False
+        # Live SDK sessions, keyed by ``agent_run.id`` — one per *execution*, not
+        # per definition. Two workflows driving the same agent concurrently each
+        # get their own session, grants, approval policy and pending prompt.
         self._live: dict[int, _LiveSession] = {}
         # Durable per-agent timeline. The SDK's ``get_events`` is per-connection
         # (a resumed session only replays ``SessionStartData``), so we archive
@@ -612,6 +658,9 @@ class AgentManager:
         # the ``agent_events`` table: it survives ``teardown_session`` (e.g. on
         # topic link) and, because every event is also persisted, the timeline is
         # reloaded from the DB after a process restart (see ``_ensure_loaded``).
+        # Deliberately keyed by *agent*, not run: the visible transcript spans an
+        # agent's whole history (each record carries ``agent_run_id`` so a single
+        # run's slice can still be filtered out).
         # Cleared only when the agent is deleted.
         self._events: dict[int, list[AgentEvent]] = {}
         # Agents whose DB archive has been hydrated into ``_events`` this process.
@@ -620,8 +669,10 @@ class AgentManager:
         # Per-agent locks serialising event handling so SDK events are processed
         # in arrival order — otherwise an idle handler can race ahead of the
         # assistant-message handler and post a stale answer back to the topic.
+        # Per *agent* rather than per run on purpose: ``_notify_back`` posts into
+        # the agent's shared topic/chat, so concurrent runs must still take turns.
         self._event_locks: dict[int, asyncio.Lock] = {}
-        # Per-agent locks serialising session build/resume. ``_ensure_live`` does a
+        # Per-run locks serialising session build/resume. ``_ensure_live`` does a
         # check-then-create (read ``_live``, ``create_session``, write ``_live``);
         # without this lock two concurrent callers — e.g. ``start_task`` racing the
         # timeline's ``get_events`` when the detail page is open at startup — both
@@ -630,6 +681,12 @@ class AgentManager:
         # responder mis-wired, so every tool call is denied non-interactively
         # ("Permission denied and could not request permission from user").
         self._live_locks: dict[int, asyncio.Lock] = {}
+        # ``agent.id -> agent_run.id`` for the agent's *current* run. A synchronous
+        # index over ``current_run_id`` so hot, no-``await`` readers (the dashboard
+        # cockpit's ``live_activity``) can reach an agent's live session without a
+        # DB round-trip. Populated as runs open and pruned on teardown; readers
+        # must tolerate a miss and fall back to the DB.
+        self._agent_runs: dict[int, int] = {}
         # Per-agent set of OAuth servers we've already surfaced a sign-in prompt
         # for, so a held session doesn't re-announce ``mcp_auth_required`` on
         # every rebuild/tool error. Cleared once the server attaches with valid
@@ -715,10 +772,19 @@ class AgentManager:
             self._watchdog_task = None
 
     async def _mark_interrupted_on_boot(self) -> None:
-        """Flag sessions that were mid-turn when the process last died."""
+        """Flag executions that were mid-turn when the process last died.
+
+        The runs are the authoritative rows and must be flipped too: they are
+        what the fleet governor counts, and nothing else ever revisits them, so a
+        run left ``running`` by a crash would hold one of the
+        ``agents_max_concurrent`` slots for the lifetime of the install.
+        """
         async with SessionLocal() as session:
             from sqlalchemy import update
 
+            await session.execute(
+                update(AgentRun).where(AgentRun.status == "running").values(status="interrupted")
+            )
             await session.execute(
                 update(AgentSession)
                 .where(AgentSession.status == "running")
@@ -746,43 +812,54 @@ class AgentManager:
                 logger.debug("agent watchdog sweep failed", exc_info=True)
 
     async def _watchdog_sweep(self) -> None:
+        """Interrupt every *run* that has gone silent, not every agent.
+
+        The sweep is run-scoped for two reasons. ``AgentSession.status`` and
+        ``last_activity_at`` only mirror the agent's *current* run, so a wedged
+        run that some other execution has since superseded would be invisible
+        here and stay pinned in ``running`` forever — leaking a concurrency slot
+        from the fleet governor, which counts runs. And the teardown has to hit
+        only the wedged run: an agent shared by two workflows may have a second,
+        perfectly healthy session mid-turn that must survive the sweep.
+        """
         async with SessionLocal() as session:
             timeout = await resolve_agents_watchdog_timeout(session)
             cutoff = datetime.now(UTC) - timedelta(seconds=timeout)
             rows = (
-                (
-                    await session.execute(
-                        select(AgentSession).where(AgentSession.status == "running")
-                    )
+                await session.execute(
+                    select(AgentRun, AgentSession.topic_id, AgentSession.chat_id)
+                    .join(AgentSession, AgentSession.id == AgentRun.agent_id)
+                    .where(AgentRun.status == "running")
                 )
-                .scalars()
-                .all()
-            )
-            stale: list[tuple[int, int | None, int | None]] = []
-            reason = (
-                f"No runtime activity for over {max(1, timeout // 60)} min — "
-                "interrupted by the watchdog. Resume to retry."
-            )
-            for agent in rows:
-                ref = agent.last_activity_at or agent.updated_at or agent.created_at
+            ).all()
+            stale: list[tuple[int, int, int | None, int | None]] = []
+            for run, topic_id, chat_id in rows:
+                ref = run.last_activity_at or run.started_at or run.updated_at or run.created_at
                 if ref is None:
                     continue
                 if ref.tzinfo is None:
                     ref = ref.replace(tzinfo=UTC)
                 if ref < cutoff:
-                    agent.status = "interrupted"
-                    agent.error = reason
-                    stale.append((agent.id, agent.topic_id, agent.chat_id))
-            if stale:
-                await session.commit()
-        # Drop any wedged live session so a Resume rebuilds it clean, then signal
-        # the UI. Done outside the DB transaction to keep the commit tight.
-        for agent_id, topic_id, chat_id in stale:
-            logger.warning("agent %s: interrupted by watchdog (idle > %ss)", agent_id, timeout)
+                    stale.append((run.id, run.agent_id, topic_id, chat_id))
+        reason = (
+            f"No runtime activity for over {max(1, timeout // 60)} min — "
+            "interrupted by the watchdog. Resume to retry."
+        )
+        # Drop the wedged live session so a Resume rebuilds it clean, then signal
+        # the UI. Done outside the read transaction to keep it tight, and through
+        # ``_patch_run`` so the agent-level mirror is maintained in one place.
+        for run_id, agent_id, topic_id, chat_id in stale:
+            logger.warning(
+                "agent %s run %s: interrupted by watchdog (idle > %ss)", agent_id, run_id, timeout
+            )
+            await self._patch_run(run_id, status="interrupted", error=reason)
             with contextlib.suppress(Exception):
-                await self.teardown_session(agent_id)
+                await self._teardown_run(run_id)
             await publish_agent_changed(
-                agent_session_id=agent_id, topic_id=topic_id, chat_id=chat_id
+                agent_session_id=agent_id,
+                topic_id=topic_id,
+                chat_id=chat_id,
+                agent_run_id=run_id,
             )
 
     # ------------------------------------------------------------------ helpers
@@ -908,8 +985,8 @@ class AgentManager:
             and (scope is None or name in scope)
         )
 
-    async def _expected_mcp_fingerprint(self, agent: AgentSession) -> frozenset[str]:
-        """The fingerprint a session created for ``agent`` right now would carry.
+    async def _expected_mcp_fingerprint(self, caps: _Caps) -> frozenset[str]:
+        """The fingerprint a session created for ``caps`` right now would carry.
 
         Comparing a live session against *this* — rather than against the raw
         enabled set — is what makes both halves of the tool configuration
@@ -925,8 +1002,8 @@ class AgentManager:
         toggles but *is* scopable, so a step that only re-points precursor still
         has to read as a change.
         """
-        scope = parse_mcp_scope(agent.mcp_servers)
-        if not agent.use_mcp or (scope is not None and not scope):
+        scope = parse_mcp_scope(caps.mcp_servers)
+        if not caps.use_mcp or (scope is not None and not scope):
             return _MCP_OFF_FINGERPRINT
         catalog = await self._enabled_catalog_fingerprint(scope)
         if scope_includes_precursor(scope):
@@ -1118,7 +1195,7 @@ class AgentManager:
         ]
         return "\n".join(lines)
 
-    async def _system_preamble(self, agent: AgentSession) -> str | None:
+    async def _system_preamble(self, agent: AgentSession, caps: _Caps | None = None) -> str | None:
         """Combined system-message append: role persona + operator custom prompt + memory + topic binding.
 
         The SDK base prompt isn't ours to set, so each piece is *appended*. The
@@ -1126,20 +1203,26 @@ class AgentManager:
         then the custom prompt (Settings → Agents) as general guidance, long-term
         memory as standing context (matching chat/topic turns), then the topic
         binding so the agent always knows which record it's on.
+
+        ``caps`` supplies the capability toggles — the executing run's immutable
+        snapshot, so a definition edit mid-run can't change the preamble the
+        session was built with. Identity (topic binding, scratchpad, autonomy)
+        always comes from the agent.
         """
+        caps = caps or agent
         async with SessionLocal() as session:
-            role_prompt = (await resolve_role_prompt(session, agent.role_id)).strip()
+            role_prompt = (await resolve_role_prompt(session, caps.role_id)).strip()
             custom = (await resolve_agents_system_prompt(session)).strip()
             # Long-term memory is standing context, not always wanted: a pure
             # transform step ("translate this") is better off not consulting it.
-            memory = await build_memory_prompt(session) if agent.use_memory else ""
+            memory = await build_memory_prompt(session) if caps.use_memory else ""
             # The agent's own scratchpad from previous runs. Only the *key index*
             # goes in the prompt — the bodies stay in the DB until the agent asks
             # for one with ``state_get``, so a large saved cursor costs nothing
             # per turn. Tool-less agents can't call ``state_get``, so telling them
             # what they can't read would just burn context.
             state = (
-                (await build_state_index_prompt(session, agent.id) or "") if agent.use_mcp else ""
+                (await build_state_index_prompt(session, agent.id) or "") if caps.use_mcp else ""
             )
         persona = (
             f"Active assistant role — adopt this persona for the whole task:\n{role_prompt}"
@@ -1158,42 +1241,175 @@ class AgentManager:
         # Skills are files the SDK discovers on disk, so this is a *directive*
         # rather than a hard sandbox — it tells the agent to solve the task
         # directly instead of reaching for a stored skill.
-        skills = "" if agent.use_skills else _NO_SKILLS_INSTRUCTION
+        skills = "" if caps.use_skills else _NO_SKILLS_INSTRUCTION
         parts = [
             p for p in (persona, custom, memory, state, topic, autonomy, skills, suggestions) if p
         ]
         return "\n\n".join(parts) if parts else None
 
+    # ------------------------------------------------------------------ runs
+
+    async def _open_run(
+        self,
+        agent_id: int,
+        *,
+        trigger: str = "manual",
+        workflow_run_id: int | None = None,
+        workflow_run_step_id: int | None = None,
+        inherit_session: bool = False,
+    ) -> AgentRun | None:
+        """Start a new execution of ``agent_id`` and make it the agent's current run.
+
+        A run snapshots the capabilities it will execute under (model, MCP/skills/
+        memory toggles, server scope, role, approval policy) so a later edit to the
+        definition — or a concurrent workflow step applying its own overrides —
+        can't change what an in-flight execution is running with.
+
+        ``inherit_session`` carries the previous run's ``copilot_session_id`` over
+        so the SDK resumes the same conversation (``clear_session(keep_id=True)``,
+        scheduled ``/agent <uuid>`` nudges). Otherwise the run starts with no
+        handle and mints one on its first connect.
+        """
+        async with SessionLocal() as session:
+            agent = await session.get(AgentSession, agent_id)
+            if agent is None:
+                return None
+            prior: AgentRun | None = None
+            if agent.current_run_id is not None:
+                prior = await session.get(AgentRun, agent.current_run_id)
+            run = AgentRun(
+                agent_id=agent.id,
+                trigger=trigger,
+                workflow_run_id=workflow_run_id,
+                workflow_run_step_id=workflow_run_step_id,
+                copilot_session_id=(
+                    prior.copilot_session_id if inherit_session and prior is not None else None
+                ),
+                status="pending",
+                model=agent.model,
+                use_mcp=agent.use_mcp,
+                use_skills=agent.use_skills,
+                use_memory=agent.use_memory,
+                mcp_servers=agent.mcp_servers,
+                approval_policy=agent.approval_policy,
+                role_id=agent.role_id,
+                started_at=datetime.now(UTC),
+            )
+            session.add(run)
+            await session.flush()
+            agent.current_run_id = run.id
+            await session.commit()
+            await session.refresh(run)
+            self._agent_runs[agent.id] = run.id
+            return run
+
+    async def _resolve_run(self, agent_id: int) -> AgentRun | None:
+        """Return the agent's current run, opening one if it has never executed.
+
+        Dispatch is agent-addressed everywhere the user can reach it (routers,
+        slash commands, the scheduler), so "which execution?" has to be answered
+        here. Agents migrated from before runs existed, and agents whose run was
+        deleted, get a fresh one rather than failing the call.
+        """
+        async with SessionLocal() as session:
+            agent = await session.get(AgentSession, agent_id)
+            if agent is None:
+                return None
+            if agent.current_run_id is not None:
+                run = await session.get(AgentRun, agent.current_run_id)
+                if run is not None:
+                    self._agent_runs[agent_id] = run.id
+                    return run
+        return await self._open_run(agent_id, trigger="manual")
+
+    async def _run(self, run_id: int) -> AgentRun | None:
+        async with SessionLocal() as session:
+            return await session.get(AgentRun, run_id)
+
+    async def _load_run(self, run_id: int) -> tuple[AgentRun, AgentSession] | None:
+        """Load a run together with the definition it executes, or ``None``."""
+        async with SessionLocal() as session:
+            run = await session.get(AgentRun, run_id)
+            if run is None:
+                return None
+            agent = await session.get(AgentSession, run.agent_id)
+            if agent is None:
+                return None
+            return run, agent
+
+    async def _patch_run(self, run_id: int, **values: Any) -> None:
+        """Write execution state to a run and mirror it onto its agent.
+
+        The run is authoritative; ``AgentSession`` keeps a denormalised copy of
+        the *current* run's state so the Agents list, inbox, metrics, fleet
+        governor and scheduler keep reading a single row. Keys outside
+        :data:`_MIRRORED_RUN_FIELDS` (``retry_count``, ``next_retry_at``, …) are
+        definition-level and land on the agent only — this is the one place that
+        split is made, so the mirror can't drift.
+
+        The mirror is skipped when the run is no longer the agent's current one:
+        a finished workflow step must not overwrite whatever is running now.
+        """
+        if not values:
+            return
+        run_only = {k: v for k, v in values.items() if k in _RUN_ONLY_FIELDS}
+        mirrored = {k: v for k, v in values.items() if k in _MIRRORED_RUN_FIELDS}
+        agent_only = {
+            k: v
+            for k, v in values.items()
+            if k not in _RUN_ONLY_FIELDS and k not in _MIRRORED_RUN_FIELDS
+        }
+        async with SessionLocal() as session:
+            run = await session.get(AgentRun, run_id)
+            if run is None:
+                return
+            for key, value in {**run_only, **mirrored}.items():
+                setattr(run, key, value)
+            agent = await session.get(AgentSession, run.agent_id)
+            if agent is not None:
+                for key, value in agent_only.items():
+                    setattr(agent, key, value)
+                if agent.current_run_id == run.id:
+                    for key, value in mirrored.items():
+                        setattr(agent, key, value)
+            await session.commit()
+
     # ------------------------------------------------------------------ sessions
 
-    async def _ensure_live(self, agent: AgentSession) -> _LiveSession:
-        """Return the live SDK session for ``agent``, creating/resuming it.
+    async def _ensure_live(self, agent: AgentSession, run: AgentRun) -> _LiveSession:
+        """Return the live SDK session for ``run``, creating/resuming it.
+
+        Sessions are keyed by *run*, not agent: two workflows driving the same
+        agent concurrently each get their own SDK conversation, tool grants,
+        approval policy and pending prompt. Capabilities come from the run's
+        immutable snapshot, so an edit to the definition — or another step
+        applying its own overrides — can't reshape a session already in flight.
 
         A cached session is reused unless its baked-in OAuth bearer header is
         about to expire (see :meth:`_oauth_stale`): the SDK can't refresh a static
         header, so we transparently tear the session down and recreate it, which
         re-mints the token while resuming the same conversation via
-        ``copilot_session_id``. We never refresh mid-turn — only when the agent is
-        idle, so an in-flight run is left untouched until its next dispatch.
+        ``copilot_session_id``. We never refresh mid-turn — only when the run is
+        idle, so an in-flight turn is left untouched until its next dispatch.
 
-        The whole check-then-create runs under a per-agent lock so concurrent
+        The whole check-then-create runs under a per-run lock so concurrent
         callers (e.g. ``start_task`` racing the timeline's ``get_events`` when the
         agent detail page is open at startup) can't each fire a ``session.create``
         for the same ``copilot_session_id`` — a duplicate create leaves the CLI's
         permission responder mis-wired and every tool call is then denied.
         """
         self._require_ready()
-        lock = self._live_locks.setdefault(agent.id, asyncio.Lock())
+        lock = self._live_locks.setdefault(run.id, asyncio.Lock())
         async with lock:
-            return await self._ensure_live_locked(agent)
+            return await self._ensure_live_locked(agent, run)
 
-    async def _ensure_live_locked(self, agent: AgentSession) -> _LiveSession:
-        live = self._live.get(agent.id)
+    async def _ensure_live_locked(self, agent: AgentSession, run: AgentRun) -> _LiveSession:
+        live = self._live.get(run.id)
         if live is not None:
             oauth_stale = self._oauth_stale(live)
             catalog_changed = (
                 live.mcp_fingerprint is not None
-                and live.mcp_fingerprint != await self._expected_mcp_fingerprint(agent)
+                and live.mcp_fingerprint != await self._expected_mcp_fingerprint(run)
             )
             # A server we had to skip for missing credentials doesn't move the
             # fingerprint (which tracks *enabled* servers), so without this the
@@ -1205,7 +1421,7 @@ class AgentManager:
             )
             if not oauth_stale and not catalog_changed and not auth_recovered:
                 return live
-            if agent.status in {"running", "needs_approval", "pending"}:
+            if run.status in {"running", "needs_approval", "pending"}:
                 # A turn is in flight — don't disrupt it; refresh on the next
                 # idle dispatch instead.
                 return live
@@ -1215,12 +1431,12 @@ class AgentManager:
                 reason = "pick up a changed MCP server set"
             else:
                 reason = "pick up a recovered MCP sign-in"
-            logger.info("Rebuilding agent %s session to %s", agent.id, reason)
-            await self.teardown_session(agent.id, forget=False)
+            logger.info("Rebuilding agent %s run %s session to %s", agent.id, run.id, reason)
+            await self._teardown_run(run.id, forget=False)
 
         assert self._client is not None
         kwargs: dict[str, Any] = {
-            "on_permission_request": self._make_permission_handler(agent.id),
+            "on_permission_request": self._make_permission_handler(run.id),
         }
         # Reasoning effort + context tier are global agent prefs (Settings →
         # Agents / composer toolbar). Applied at session creation, mirroring how
@@ -1229,12 +1445,13 @@ class AgentManager:
         # The model comes from the DB-resolved selection (what the composer
         # writes), not the env/config constant, so a new agent honours the
         # currently selected model instead of the factory default. An explicit
-        # per-agent pin (``agent.model``) still wins.
+        # per-agent pin (``run.model``, snapshotted from the agent or a step
+        # override) still wins.
         async with SessionLocal() as s:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
-        model = agent.model or default_model
+        model = run.model or default_model
         model = await self._sanitize_model(agent.id, model)
         if model:
             kwargs["model"] = model
@@ -1242,16 +1459,16 @@ class AgentManager:
             kwargs["reasoning_effort"] = effort
         if tier and tier != "default":
             kwargs["context_tier"] = tier
-        if agent.copilot_session_id:
-            kwargs["session_id"] = agent.copilot_session_id
+        if run.copilot_session_id:
+            kwargs["session_id"] = run.copilot_session_id
         # An agent with MCP switched off gets no tool servers at all — not even
         # the first-party one. Whole catalogues of tool schemas are a large,
         # fixed context cost, so a step that only has to transform text pays
         # nothing for tools it will never call. An explicitly *empty* server
         # scope says the same thing in the other vocabulary, and means it.
-        scope = parse_mcp_scope(agent.mcp_servers)
+        scope = parse_mcp_scope(run.mcp_servers)
         scoped_to_nothing = scope is not None and not scope
-        tools_on = agent.use_mcp and not scoped_to_nothing
+        tools_on = run.use_mcp and not scoped_to_nothing
         oauth_expires_at: datetime | None = None
         auth_required: list[str] = []
         if tools_on:
@@ -1269,11 +1486,11 @@ class AgentManager:
             mcp.update(catalog)
             if mcp:
                 kwargs["mcp_servers"] = mcp
-        # Snapshot what this session carries so a later toggle — or a step with a
-        # different scope reusing this agent — rebuilds it. Computed by the same
-        # method the reuse check compares against, so the two can't drift.
-        mcp_fingerprint = await self._expected_mcp_fingerprint(agent)
-        preamble = await self._system_preamble(agent)
+        # Snapshot what this session carries so a later toggle — or a rebuilt run
+        # with a different scope — rebuilds it. Computed by the same method the
+        # reuse check compares against, so the two can't drift.
+        mcp_fingerprint = await self._expected_mcp_fingerprint(run)
+        preamble = await self._system_preamble(agent, run)
         if preamble:
             # Append (don't replace) so the agent keeps its SDK base instructions
             # but also gets the operator's custom guidance and any topic binding.
@@ -1287,16 +1504,20 @@ class AgentManager:
             mcp_auth_skipped=await self._auth_skipped_stamps(auth_required),
             model_signature=(model, effort or None, tier or "default") if model else None,
         )
-        self._live[agent.id] = live
+        self._live[run.id] = live
+        # Synchronous index so ``live_activity`` (no ``await`` available) can find
+        # the run driving an agent without a DB round-trip.
+        self._agent_runs[agent.id] = run.id
 
         # Wire the event stream. The SDK invokes this synchronously; defer the
         # async work (DB + bus) onto the loop.
-        sdk_session.on(lambda event: self._spawn(self._handle_event(agent.id, event)))
+        sdk_session.on(lambda event: self._spawn(self._handle_event(run.id, event)))
 
         # Persist the resume handle the first time round.
         sid = getattr(sdk_session, "id", None) or getattr(sdk_session, "session_id", None)
-        if sid and not agent.copilot_session_id:
-            await self._patch(agent.id, copilot_session_id=str(sid))
+        if sid and not run.copilot_session_id:
+            run.copilot_session_id = str(sid)
+            await self._patch_run(run.id, copilot_session_id=str(sid))
 
         # Any OAuth server we couldn't attach for lack of credentials is surfaced
         # as an in-app sign-in prompt (drives the global McpAuthBanner) instead of
@@ -1405,12 +1626,16 @@ class AgentManager:
         """
         if not self.ready:
             return
-        for agent_id in list(self._live):
-            agent = await self._load(agent_id)
-            if agent is not None and agent.status in {"running", "needs_approval", "pending"}:
+        # ``_live`` is keyed by *run*, so the busy check has to read the run's own
+        # status and the teardown has to be run-scoped: tearing down by agent id
+        # would take out every other live execution of that agent as collateral.
+        for run_id in list(self._live):
+            run = await self._run(run_id)
+            if run is not None and run.status in {"running", "needs_approval", "pending"}:
                 continue
-            await self.teardown_session(agent_id, forget=False)
-            self._auth_announced.pop(agent_id, None)
+            await self._teardown_run(run_id, forget=False)
+            if run is not None:
+                self._auth_announced.pop(run.agent_id, None)
 
     async def _release_parked_turn(self, agent_id: int, live: Any) -> None:
         """Free a session parked on an unanswered permission before re-driving it.
@@ -1438,27 +1663,50 @@ class AgentManager:
         with contextlib.suppress(Exception):
             await live.sdk_session.abort()
 
-    async def start_task(self, agent_id: int, extra_context: str | None = None) -> None:
+    async def start_task(
+        self,
+        agent_id: int,
+        extra_context: str | None = None,
+        *,
+        run_id: int | None = None,
+        trigger: str = "manual",
+    ) -> None:
+        """Begin a fresh execution of the agent's objective.
+
+        Fresh human intent is a *new execution*: unless the caller supplies a run
+        (workflow steps open theirs in ``_launch_step`` so the step and the run
+        are linked), a new :class:`AgentRun` is opened here. The step/stall/prompt
+        resets below then fall out of starting on a new row rather than
+        destroying whatever another workflow is running on the same agent.
+        """
+        run: AgentRun | None = None
         try:
+            run = (
+                await self._run(run_id)
+                if run_id is not None
+                else await self._open_run(agent_id, trigger=trigger)
+            )
+            if run is None:
+                return
             agent = await self._load(agent_id)
             if agent is None:
                 return
             # A fresh objective run starts from a clean blackboard: drop any
-            # artifacts a previous run published so the new turn's deliverables
-            # replace them rather than piling up beside stale ones. A no-op on a
-            # first run (nothing published yet).
-            await self._clear_artifacts(agent_id)
-            live = await self._ensure_live(agent)
+            # artifacts *this run* published so the new turn's deliverables
+            # replace them rather than piling up beside stale ones. Scoped to the
+            # run, so a concurrent workflow's blackboard is untouched.
+            await self._clear_artifacts(run.id)
+            live = await self._ensure_live(agent, run)
             # A step that named a server it couldn't sign in to must not run: the
             # agent would answer from its own knowledge and the workflow would
             # record that as a success. Park it so the run pauses on the sign-in.
             blocked_on = self._blocked_on_missing_auth(agent, live)
             if blocked_on:
-                await self._block_turn(agent_id, blocked_on)
+                await self._block_turn(run.id, blocked_on)
                 return
             await self._release_parked_turn(agent_id, live)
-            await self._sync_selected_model(agent)
-            live.approval_policy = await self._approval_policy(agent)
+            await self._sync_selected_model(agent, run)
+            live.approval_policy = await self._approval_policy(agent, run)
             prompt = (agent.task_prompt or "").strip() or None
             live.pending_prompt = prompt
             live.pending_answer = None
@@ -1466,8 +1714,8 @@ class AgentManager:
             # the objective run starts from a clean step count.
             live.stall_count = 0
             live.last_progress = None
-            await self._patch(
-                agent_id,
+            await self._patch_run(
+                run.id,
                 status="running",
                 error=None,
                 active_prompt=prompt,
@@ -1475,7 +1723,10 @@ class AgentManager:
                 blocked_question=None,
             )
             await publish_agent_changed(
-                agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+                agent_session_id=agent_id,
+                topic_id=agent.topic_id,
+                chat_id=agent.chat_id,
+                agent_run_id=run.id,
             )
             # Fleet dependents receive their upstreams' published artifacts as a
             # kickoff preamble ahead of the durable objective, so results flow
@@ -1485,33 +1736,40 @@ class AgentManager:
                 sent = f"{extra_context}\n\n---\n\n{agent.task_prompt}"
             await live.sdk_session.send(sent)
         except Exception as exc:
-            await self._fail_turn(agent_id, exc)
+            if run is not None:
+                await self._fail_turn(run.id, exc)
 
-    async def restart_with_task(self, agent_id: int) -> None:
+    async def restart_with_task(self, agent_id: int, *, trigger: str = "manual") -> None:
         """Re-establish the SDK session after the task prompt was edited.
 
         The task is delivered only by :meth:`start_task`; a live or resumed
         session keeps the *previous* instructions in its history, so an edited
         ``task_prompt`` stays inert until it is replayed. Drop the in-memory
         session (``forget=False`` keeps the visible timeline) so the next connect
-        refreshes the system preamble, then replay the new task.
+        refreshes the system preamble, then replay the new task on a new run that
+        inherits the SDK handle.
 
-        ``copilot_session_id`` is deliberately left untouched: scheduled
-        ``/agent <uuid>`` nudges target that id, and recreating an agent (which
-        mints a new id) is exactly what silently breaks such schedules. Callers
-        that want a clean-slate context use the ``clear`` command instead.
+        The ``copilot_session_id`` is deliberately carried over: scheduled
+        ``/agent <uuid>`` nudges target the agent's ``public_id`` and the SDK
+        conversation should continue. Callers that want a clean-slate context use
+        the ``clear`` command instead.
         """
         await self.teardown_session(agent_id)
-        await self.start_task(agent_id)
+        run = await self._open_run(agent_id, trigger=trigger, inherit_session=True)
+        await self.start_task(agent_id, run_id=run.id if run else None)
 
     async def send_message(self, agent_id: int, text: str) -> None:
+        run: AgentRun | None = None
         try:
             agent = await self._load(agent_id)
             if agent is None:
                 return
-            live = await self._ensure_live(agent)
-            await self._sync_selected_model(agent)
-            live.approval_policy = await self._approval_policy(agent)
+            run = await self._resolve_run(agent_id)
+            if run is None:
+                return
+            live = await self._ensure_live(agent, run)
+            await self._sync_selected_model(agent, run)
+            live.approval_policy = await self._approval_policy(agent, run)
             prompt = text.strip() or None
             live.pending_prompt = prompt
             live.pending_answer = None
@@ -1520,19 +1778,23 @@ class AgentManager:
             # message is the answer that unsticks it.
             live.stall_count = 0
             live.last_progress = None
-            await self._patch(
-                agent_id,
+            await self._patch_run(
+                run.id,
                 status="running",
                 active_prompt=prompt,
                 step_count=0,
                 blocked_question=None,
             )
             await publish_agent_changed(
-                agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+                agent_session_id=agent_id,
+                topic_id=agent.topic_id,
+                chat_id=agent.chat_id,
+                agent_run_id=run.id,
             )
             await live.sdk_session.send(text)
         except Exception as exc:
-            await self._fail_turn(agent_id, exc)
+            if run is not None:
+                await self._fail_turn(run.id, exc)
 
     async def resume(self, agent_id: int) -> None:
         """Re-run the in-flight turn of an interrupted session.
@@ -1544,38 +1806,50 @@ class AgentManager:
         agent = await self._load(agent_id)
         if agent is None:
             return
-        prompt = (agent.active_prompt or "").strip()
+        run = await self._resolve_run(agent_id)
+        if run is None:
+            return
+        prompt = (run.active_prompt or "").strip()
         if not prompt:
             return
         try:
-            live = await self._ensure_live(agent)
-            await self._sync_selected_model(agent)
-            live.approval_policy = await self._approval_policy(agent)
+            live = await self._ensure_live(agent, run)
+            await self._sync_selected_model(agent, run)
+            live.approval_policy = await self._approval_policy(agent, run)
             live.pending_prompt = prompt
             live.pending_answer = None
-            await self._patch(agent_id, status="running", error=None)
+            await self._patch_run(run.id, status="running", error=None)
             await publish_agent_changed(
-                agent_session_id=agent_id, topic_id=agent.topic_id, chat_id=agent.chat_id
+                agent_session_id=agent_id,
+                topic_id=agent.topic_id,
+                chat_id=agent.chat_id,
+                agent_run_id=run.id,
             )
             await live.sdk_session.send(prompt)
         except Exception as exc:
-            await self._fail_turn(agent_id, exc)
+            await self._fail_turn(run.id, exc)
 
-    async def cancel(self, agent_id: int) -> None:
-        live = self._live.get(agent_id)
+    async def cancel(self, agent_id: int, *, run_id: int | None = None) -> None:
+        """Stop an execution. ``run_id`` targets a specific one — the watchdog
+        needs that, because a shared agent's *current* run may belong to another
+        workflow entirely."""
+        run = await self._run(run_id) if run_id is not None else await self._resolve_run(agent_id)
+        live = self._live.get(run.id) if run is not None else None
         if live is not None:
             with contextlib.suppress(Exception):
                 await live.sdk_session.abort()
             for fut in live.pending.values():
                 if not fut.done():
                     fut.set_result(self._reject("cancelled"))
-        await self._patch(agent_id, status="cancelled")
-        await publish_agent_changed(agent_session_id=agent_id)
+        if run is not None:
+            await self._patch_run(run.id, status="cancelled")
+        await publish_agent_changed(agent_session_id=agent_id, agent_run_id=run.id if run else None)
 
     async def resolve_permission(self, agent_id: int, request_id: str, decision: str) -> bool:
         """Resolve a parked permission request. Returns True if one matched."""
-        live = self._live.get(agent_id)
-        if live is None:
+        run = await self._resolve_run(agent_id)
+        live = self._live.get(run.id) if run is not None else None
+        if live is None or run is None:
             return False
         fut = live.pending.get(request_id)
         if fut is None or fut.done():
@@ -1604,21 +1878,41 @@ class AgentManager:
         # mask a genuinely parked agent), which means an agent left sitting in it
         # never reaches ``_on_idle`` — its turn finishes, the workflow is never
         # told, and the step stays "Running" forever.
-        await self._patch(agent_id, status="running", blocked_question=None)
+        await self._patch_run(run.id, status="running", blocked_question=None)
         agent = await self._load(agent_id)
         await publish_agent_changed(
             agent_session_id=agent_id,
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
+            agent_run_id=run.id,
         )
         return True
 
-    def list_permissions(self) -> list[dict[str, Any]]:
-        """Recap of active "approve for session" grants across live sessions."""
+    async def list_permissions(self) -> list[dict[str, Any]]:
+        """Recap of active "approve for session" grants across live sessions.
+
+        Grants are held per *run*; the recap is agent-addressed (that's the row
+        the user recognises in Settings), so runs are resolved back to their
+        agents here.
+        """
         out: list[dict[str, Any]] = []
-        for agent_id, live in self._live.items():
+        run_ids = [rid for rid, live in self._live.items() if live.grants]
+        if not run_ids:
+            return out
+        async with SessionLocal() as session:
+            runs = (
+                (await session.execute(select(AgentRun).where(AgentRun.id.in_(run_ids))))
+                .scalars()
+                .all()
+            )
+        agent_by_run = {r.id: r.agent_id for r in runs}
+        for run_id in run_ids:
+            live = self._live[run_id]
+            agent_id = agent_by_run.get(run_id)
+            if agent_id is None:
+                continue
             for grant in live.grants:
-                out.append({"agent_id": agent_id, **grant})
+                out.append({"agent_id": agent_id, "agent_run_id": run_id, **grant})
         out.sort(key=lambda g: g.get("at") or datetime.min.replace(tzinfo=UTC), reverse=True)
         return out
 
@@ -1679,7 +1973,8 @@ class AgentManager:
             # prefer them; fall back to the last full message otherwise.
             raw_narration = "".join(delta_buf) if delta_buf else narration_msg
             narration = _clean_narration(raw_narration) if raw_narration else None
-            live = self._live.get(aid)
+            run_id = self._agent_runs.get(aid)
+            live = self._live.get(run_id) if run_id is not None else None
             pending: dict[str, Any] | None = None
             if live is not None and live.pending_info:
                 info = next(iter(live.pending_info.values()))
@@ -1706,25 +2001,46 @@ class AgentManager:
         grants cleared.
         """
         cleared = sum(len(live.grants) for live in self._live.values())
-        agent_ids = list(self._live.keys())
-        for agent_id in agent_ids:
-            await self.teardown_session(agent_id)
+        for run_id in list(self._live.keys()):
+            await self._teardown_run(run_id)
         return cleared
 
-    async def get_events(self, agent_id: int) -> list[AgentEvent]:
-        """Return the normalised event history for the workflow timeline."""
+    async def get_events(
+        self, agent_id: int, *, agent_run_id: int | None = None
+    ) -> list[AgentEvent]:
+        """Return the normalised event history for the workflow timeline.
+
+        The archive is per *agent* — the transcript the user reads spans every
+        execution — but the live fallback and the pending-approval cards belong
+        to the agent's **current** run, the only execution they can act on.
+
+        Pass ``agent_run_id`` to read a single execution. Two workflows driving
+        one reusable agent at the same time otherwise interleave into a single
+        unreadable conversation, each answering the other's prompt (issue #242).
+        """
         await self._ensure_loaded(agent_id)
-        live = self._live.get(agent_id)
-        events = list(self._events.get(agent_id, []))
+        # Which execution this read is about: the requested one, else the
+        # agent's current run (the only one an approval card could act on).
+        run = (
+            await self._run(agent_run_id)
+            if agent_run_id is not None
+            else await self._resolve_run(agent_id)
+        )
+        live = self._live.get(run.id) if run is not None else None
+        events = [
+            ev
+            for ev in self._events.get(agent_id, [])
+            if agent_run_id is None or ev.agent_run_id == agent_run_id
+        ]
         if not events:
             # Nothing archived (neither in memory nor the DB) — e.g. a session
             # resumed after a restart that hasn't re-emitted yet. Fall back to
             # whatever the live session can replay.
             if live is None:
-                agent = await self._load(agent_id)
-                if agent is None or not agent.copilot_session_id:
+                loaded = await self._load_run(run.id) if run is not None else None
+                if loaded is None or not loaded[0].copilot_session_id:
                     return []
-                live = await self._ensure_live(agent)
+                live = await self._ensure_live(loaded[1], loaded[0])
             try:
                 raw = await live.sdk_session.get_events()
             except Exception:
@@ -1746,26 +2062,71 @@ class AgentManager:
                 )
         return events
 
+    async def _teardown_run(self, run_id: int, *, forget: bool = False) -> None:
+        """Disconnect a single run's live SDK session and drop its runtime state.
+
+        ``forget`` additionally clears the run's *agent-level* timeline (memory
+        cache and archive). That's deliberately broader than the run — the
+        archive is per-agent — and is only used when the agent itself is going
+        away or its conversation is being erased wholesale.
+        """
+        live = self._live.pop(run_id, None)
+        self._live_locks.pop(run_id, None)
+        if live is not None:
+            with contextlib.suppress(Exception):
+                await live.sdk_session.disconnect()
+        run = await self._run(run_id)
+        agent_id = run.agent_id if run is not None else None
+        if agent_id is not None and self._agent_runs.get(agent_id) == run_id:
+            self._agent_runs.pop(agent_id, None)
+        if not forget or agent_id is None:
+            return
+        self._events.pop(agent_id, None)
+        self._loaded.discard(agent_id)
+        self._event_locks.pop(agent_id, None)
+        self._auth_announced.pop(agent_id, None)
+        # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
+        # pragma is on, so clear the archive explicitly (the codebase manages
+        # such cleanups in the app layer — see roles/topics delete).
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
+            )
+            await session.commit()
+
     async def teardown_session(self, agent_id: int, *, forget: bool = False) -> None:
-        """Disconnect a live session (e.g. before deleting the row).
+        """Disconnect an agent's live sessions (e.g. before deleting the row).
 
         The archived timeline is kept by default so linking a topic — which
         recreates the session to re-inject context — doesn't wipe the workflow
         view. Pass ``forget=True`` when the agent is being deleted.
+
+        Tears down *every* run of the agent that is live in-process, not just the
+        current one: a second workflow may still be holding a session against the
+        same definition, and leaving it connected would outlive the row.
         """
-        live = self._live.pop(agent_id, None)
-        if live is not None:
-            with contextlib.suppress(Exception):
-                await live.sdk_session.disconnect()
+        run_ids: list[int] = []
+        async with SessionLocal() as session:
+            run_ids = [
+                r
+                for r in (
+                    await session.execute(select(AgentRun.id).where(AgentRun.agent_id == agent_id))
+                )
+                .scalars()
+                .all()
+                if r in self._live or r in self._live_locks
+            ]
+        current = self._agent_runs.get(agent_id)
+        if current is not None and current not in run_ids:
+            run_ids.append(current)
+        for run_id in run_ids:
+            await self._teardown_run(run_id)
         if forget:
             self._events.pop(agent_id, None)
             self._loaded.discard(agent_id)
             self._event_locks.pop(agent_id, None)
-            self._live_locks.pop(agent_id, None)
             self._auth_announced.pop(agent_id, None)
-            # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
-            # pragma is on, so clear the archive explicitly (the codebase manages
-            # such cleanups in the app layer — see roles/topics delete).
+            self._agent_runs.pop(agent_id, None)
             async with SessionLocal() as session:
                 await session.execute(
                     delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
@@ -1774,57 +2135,60 @@ class AgentManager:
 
     # ------------------------------------------------------------------ commands
 
-    async def clear_session(self, agent_id: int, *, keep_id: bool = False) -> None:
+    async def clear_session(
+        self, agent_id: int, *, keep_id: bool = False, trigger: str = "manual"
+    ) -> None:
         """Erase an agent's conversation and start its SDK context from scratch.
 
         Disconnects + forgets the live session and wipes the archived timeline
-        (``teardown_session(forget=True)``), clears the agent's published
-        artifacts (a cleared context should also freshen the blackboard, so a
-        ``/clear`` doesn't leave stale deliverables from the discarded run beside
-        the new one), then resets the in-flight/status fields back to idle so the
-        next message opens a brand-new SDK session with no prior history resumed.
+        (``teardown_session(forget=True)``), then opens a **fresh run** — which
+        is what "start from scratch" now means: a new execution row with its own
+        status, counters, capability snapshot and (empty) artifact set. The prior
+        run stays as audit history.
 
-        ``keep_id`` selects what happens to the public handle:
+        ``keep_id`` selects what happens to the SDK handle:
 
-        * ``False`` (default, interactive ``/clear``) mints a **fresh**
-          ``copilot_session_id`` — a brand-new, shareable conversation.
-        * ``True`` keeps the **same** ``copilot_session_id`` and instead deletes
-          the SDK's on-disk state for it, so a scheduled ``/agent <uuid>``
-          reference (which targets that id) keeps resolving while still getting a
-          clean context on the next turn. Without the delete, reusing the id
-          would resume the old transcript from disk and defeat the clear.
+        * ``False`` (default, interactive ``/clear``) starts the new run with no
+          handle, so the next turn mints a brand-new conversation.
+        * ``True`` carries the previous run's ``copilot_session_id`` over and
+          deletes the SDK's on-disk state for it, so a scheduled ``/agent <uuid>``
+          reference (which targets the agent's ``public_id``) keeps resolving
+          while still getting a clean context on the next turn. Without the
+          delete, reusing the id would resume the old transcript from disk and
+          defeat the clear.
         """
-        old_id: str | None = None
-        if keep_id:
-            agent = await self._load(agent_id)
-            old_id = agent.copilot_session_id if agent else None
+        prior = await self._resolve_run(agent_id)
+        old_id = prior.copilot_session_id if prior is not None else None
 
         await self.teardown_session(agent_id, forget=True)
 
-        # A freshened context starts from a clean blackboard too: drop the prior
-        # run's artifacts so a `/clear` (or a scheduled rerun via `keep_id`)
-        # doesn't leave stale deliverables next to the new turn's outputs. The
-        # trailing `_publish` re-broadcasts `agent.changed`, so the sidebar and
-        # in-chat deliverables refetch and empty on their own.
-        await self._clear_artifacts(agent_id)
-
-        patch: dict[str, Any] = {
-            "status": "idle",
-            "active_prompt": None,
-            "result_summary": None,
-            "error": None,
-        }
-        if keep_id:
+        if keep_id and old_id and self._client is not None:
             # Best-effort: a never-connected (pending) agent has nothing on disk.
-            if old_id and self._client is not None:
-                with contextlib.suppress(Exception):
-                    await self._client.delete_session(old_id)
-        else:
-            patch["copilot_session_id"] = str(uuid.uuid4())
-        await self._patch(agent_id, **patch)
-        await self._publish(agent_id)
+            with contextlib.suppress(Exception):
+                await self._client.delete_session(old_id)
 
-    async def rerun_task(self, agent_id: int, *, extra: str | None = None) -> None:
+        # A freshened context starts from a clean blackboard too. Artifacts are
+        # run-scoped, so the new run is empty by construction; the old run's
+        # deliverables are dropped explicitly because `/clear` means "discard
+        # that attempt", not "archive it". The trailing `_publish` re-broadcasts
+        # `agent.changed`, so the sidebar and in-chat deliverables refetch.
+        if prior is not None:
+            await self._clear_artifacts(prior.id)
+
+        run = await self._open_run(agent_id, trigger=trigger, inherit_session=keep_id)
+        if run is not None:
+            await self._patch_run(
+                run.id,
+                status="idle",
+                active_prompt=None,
+                result_summary=None,
+                error=None,
+            )
+        await self._publish(agent_id, agent_run_id=run.id if run else None)
+
+    async def rerun_task(
+        self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"
+    ) -> None:
         """Reset the agent's context (same uuid) and replay its stored task.
 
         Backs the scheduled ``/agent <uuid> /run`` nudge: instead of the schedule
@@ -1835,7 +2199,7 @@ class AgentManager:
         resolving), then re-delivers ``task_prompt`` — optionally with an
         ``extra`` one-off note appended for this run — as a clean turn.
         """
-        await self.clear_session(agent_id, keep_id=True)
+        await self.clear_session(agent_id, keep_id=True, trigger=trigger)
         agent = await self._load(agent_id)
         if agent is None:
             return
@@ -1914,13 +2278,16 @@ class AgentManager:
         """Names of slash commands an agent session accepts (registry keys)."""
         return tuple(cls._COMMAND_HANDLERS)
 
-    async def _publish(self, agent_id: int) -> None:
+    async def _publish(self, agent_id: int, *, agent_run_id: int | None = None) -> None:
         """Emit an ``agent.changed`` signal for an agent by id (loads its links)."""
         agent = await self._load(agent_id)
         await publish_agent_changed(
             agent_session_id=agent_id,
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
+            agent_run_id=agent_run_id
+            if agent_run_id is not None
+            else (agent.current_run_id if agent else None),
         )
 
     async def _available_model_ids(self) -> set[str]:
@@ -1977,25 +2344,31 @@ class AgentManager:
         missing = [name for name, _ in live.mcp_auth_skipped if name in scope]
         return [server_label(name) for name in collapse_by_credential(sorted(missing))]
 
-    async def _block_turn(self, agent_id: int, labels: list[str]) -> None:
-        """Park the agent as ``blocked`` instead of dispatching a tool-less turn.
+    async def _block_turn(self, run_id: int, labels: list[str]) -> None:
+        """Park this run as ``blocked`` instead of dispatching a tool-less turn.
 
         Like :meth:`_fail_turn` this lands *outside* the SDK event seam — no turn
         is ever sent, so nothing will emit an event — hence the explicit workflow
         advance. ``blocked`` is what pauses the run (rather than letting the step
         complete on an ``idle`` the agent reached without ever calling a tool),
         and the question tells the user exactly which sign-in unblocks it.
+
+        Scoped to the run: a shared agent's *other* execution may hold a valid
+        session for the very server this one is missing, and parking the agent
+        would strand it.
         """
         joined = ", ".join(labels)
         question = (
             f"This step needs {joined}, but the sign-in has expired. Re-authenticate, then resume."
         )
-        logger.info("agent %s: blocking turn — no credentials for %s", agent_id, joined)
-        await self._patch(agent_id, status="blocked", blocked_question=question, error=None)
-        await self._publish(agent_id)
-        self.enqueue(self._advance_workflows(agent_id))
+        logger.info("agent run %s: blocking turn — no credentials for %s", run_id, joined)
+        await self._patch_run(run_id, status="blocked", blocked_question=question, error=None)
+        loaded = await self._load_run(run_id)
+        if loaded is not None:
+            await self._publish(loaded[1].id, agent_run_id=run_id)
+        self.enqueue(self._advance_workflows(run_id))
 
-    async def _fail_turn(self, agent_id: int, exc: BaseException) -> None:
+    async def _fail_turn(self, run_id: int, exc: BaseException) -> None:
         """Mark a turn as failed so a dispatch error is visible, not a silent hang.
 
         Turn dispatch runs as a detached background task (:meth:`enqueue`), so an
@@ -2008,12 +2381,14 @@ class AgentManager:
         and without this its run would sit in ``running`` until the watchdog (if
         one is configured at all) noticed.
         """
-        logger.exception("agent %s: turn dispatch failed", agent_id)
+        logger.exception("agent run %s: turn dispatch failed", run_id)
         message = str(exc).strip() or exc.__class__.__name__
         with contextlib.suppress(Exception):
-            await self._patch(agent_id, status="failed", error=message[:2000])
-            await self._publish(agent_id)
-            self.enqueue(self._advance_workflows(agent_id))
+            await self._patch_run(run_id, status="failed", error=message[:2000])
+            loaded = await self._load_run(run_id)
+            if loaded is not None:
+                await self._publish(loaded[1].id, agent_run_id=run_id)
+            self.enqueue(self._advance_workflows(run_id))
 
     async def list_models(self) -> list[dict[str, Any]]:
         """Return the runtime's available models, or empty.
@@ -2060,15 +2435,18 @@ class AgentManager:
         default_model: str,
         effort: str,
         tier: str,
+        pinned: str | None = None,
     ) -> None:
         """``set_model`` a single idle live agent to its selected model.
 
-        The model is ``agent.model or default_model`` — an explicit per-agent pin
-        wins, otherwise the current composer/Settings selection applies. History
-        preserving and effective on the agent's next turn. No-op when the target
-        (model, effort, tier) already matches what we last applied.
+        The model is ``pinned or agent.model or default_model`` — the executing
+        run's snapshot wins (a workflow step can pin a model for its turn), then
+        an explicit per-agent pin, otherwise the current composer/Settings
+        selection applies. History preserving and effective on the agent's next
+        turn. No-op when the target (model, effort, tier) already matches what we
+        last applied.
         """
-        model = agent.model or default_model
+        model = pinned or agent.model or default_model
         if not model:
             return
         signature = (model, effort or None, tier or "default")
@@ -2086,15 +2464,15 @@ class AgentManager:
         except Exception:
             logger.debug("set_model failed for agent %s", agent.id, exc_info=True)
 
-    async def _sync_selected_model(self, agent: AgentSession) -> None:
-        """Reconcile ``agent``'s live session to the current model selection.
+    async def _sync_selected_model(self, agent: AgentSession, run: AgentRun) -> None:
+        """Reconcile ``run``'s live session to the current model selection.
 
         Called right before a turn is dispatched so every next turn follows the
         composer/Settings selection, even on a long-lived reused session. Skipped
         when there's no live session yet (a fresh build already bakes in the
         selection).
         """
-        live = self._live.get(agent.id)
+        live = self._live.get(run.id)
         if live is None:
             return
         async with SessionLocal() as s:
@@ -2102,7 +2480,7 @@ class AgentManager:
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
         await self._apply_agent_model(
-            agent, live, default_model=default_model, effort=effort, tier=tier
+            agent, live, default_model=default_model, effort=effort, tier=tier, pinned=run.model
         )
 
     async def apply_session_overrides(self) -> None:
@@ -2117,31 +2495,44 @@ class AgentManager:
         """
         if not self._ready:
             return
-        live_ids = list(self._live.keys())
-        if not live_ids:
+        run_ids = list(self._live.keys())
+        if not run_ids:
             return
         async with SessionLocal() as s:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
+            runs = (
+                (await s.execute(select(AgentRun).where(AgentRun.id.in_(run_ids)))).scalars().all()
+            )
+            agent_ids = {r.agent_id for r in runs}
             rows = (
-                (await s.execute(select(AgentSession).where(AgentSession.id.in_(live_ids))))
+                (await s.execute(select(AgentSession).where(AgentSession.id.in_(agent_ids))))
                 .scalars()
                 .all()
+                if agent_ids
+                else []
             )
         by_id = {a.id: a for a in rows}
-        for agent_id in live_ids:
-            live = self._live.get(agent_id)
-            agent = by_id.get(agent_id)
-            if live is None or agent is None:
+        by_run = {r.id: r for r in runs}
+        for run_id in run_ids:
+            live = self._live.get(run_id)
+            run = by_run.get(run_id)
+            agent = by_id.get(run.agent_id) if run is not None else None
+            if live is None or run is None or agent is None:
                 continue
-            if agent.status in {"running", "needs_approval", "pending"}:
+            if run.status in {"running", "needs_approval", "pending"}:
                 continue
             await self._apply_agent_model(
-                agent, live, default_model=default_model, effort=effort, tier=tier
+                agent,
+                live,
+                default_model=default_model,
+                effort=effort,
+                tier=tier,
+                pinned=run.model,
             )
 
-    def _make_permission_handler(self, agent_id: int) -> Any:
+    def _make_permission_handler(self, run_id: int) -> Any:
         async def handler(request: Any, invocation: Any) -> Any:
             # The default approval policy decides how much we gate. ``autonomous``
             # approves everything; ``balanced`` (default) auto-approves read-only
@@ -2155,42 +2546,42 @@ class AgentManager:
             # a silent, detail-less SDK denial.
             req_name = type(request).__name__
             try:
-                live = self._live.get(agent_id)
+                live = self._live.get(run_id)
                 policy = (
                     live.approval_policy if live else None
                 ) or get_settings().agents_approval_policy
                 logger.info(
-                    "agent %s: permission handler hit — request=%s policy=%s live=%s",
-                    agent_id,
+                    "run %s: permission handler hit — request=%s policy=%s live=%s",
+                    run_id,
                     req_name,
                     policy,
                     live is not None,
                 )
                 if policy == "autonomous":
-                    logger.info("agent %s: %s auto-approved (autonomous)", agent_id, req_name)
+                    logger.info("run %s: %s auto-approved (autonomous)", run_id, req_name)
                     return self._approve_once()
                 if policy != "manual" and should_auto_approve(request):
-                    logger.info("agent %s: %s auto-approved (read-only)", agent_id, req_name)
+                    logger.info("run %s: %s auto-approved (read-only)", run_id, req_name)
                     return self._approve_once()
                 info = describe_permission(request)
                 # Honour a prior "approve for session" for the same action.
                 if live is not None and permission_signature(info) in live.session_approvals:
-                    logger.info("agent %s: %s auto-approved (session grant)", agent_id, req_name)
+                    logger.info("run %s: %s auto-approved (session grant)", run_id, req_name)
                     return self._approve_once()
                 logger.info(
-                    "agent %s: %s requires approval — parking (%s)",
-                    agent_id,
+                    "run %s: %s requires approval — parking (%s)",
+                    run_id,
                     req_name,
                     info.get("title"),
                 )
-                return await self._park_permission(agent_id, request, info)
+                return await self._park_permission(run_id, request, info)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 fallback = get_settings().agents_approval_policy
                 logger.exception(
-                    "agent %s: permission handler failed for %s; falling back to %r policy",
-                    agent_id,
+                    "run %s: permission handler failed for %s; falling back to %r policy",
+                    run_id,
                     req_name,
                     fallback,
                 )
@@ -2203,12 +2594,16 @@ class AgentManager:
 
         return handler
 
-    async def _approval_policy(self, agent: AgentSession | None = None) -> str:
-        # A per-agent override wins over the global default when it's a valid
-        # policy; ``None``/unset falls through to the DB-backed global setting.
-        override = getattr(agent, "approval_policy", None)
-        if override in AGENTS_APPROVAL_POLICIES:
-            return str(override)
+    async def _approval_policy(
+        self, agent: AgentSession | None = None, run: AgentRun | None = None
+    ) -> str:
+        # The executing run's snapshot wins (it froze the policy a workflow step
+        # asked for), then a per-agent override, then the DB-backed global
+        # setting. ``None``/unset at each level falls through.
+        for source in (run, agent):
+            override = getattr(source, "approval_policy", None)
+            if override in AGENTS_APPROVAL_POLICIES:
+                return str(override)
         try:
             async with SessionLocal() as session:
                 return await resolve_agents_approval_policy(session)
@@ -2222,13 +2617,11 @@ class AgentManager:
             return fallback
 
     async def _park_permission(
-        self, agent_id: int, request: Any, info: dict[str, Any] | None = None
+        self, run_id: int, request: Any, info: dict[str, Any] | None = None
     ) -> Any:
-        live = self._live.get(agent_id)
+        live = self._live.get(run_id)
         if live is None:
-            logger.warning(
-                "agent %s: cannot park permission — no live session; rejecting", agent_id
-            )
+            logger.warning("run %s: cannot park permission — no live session; rejecting", run_id)
             return self._reject("session gone")
         request_id = str(getattr(request, "tool_call_id", "") or id(request))
         loop = asyncio.get_running_loop()
@@ -2238,12 +2631,14 @@ class AgentManager:
             "request_id": request_id,
             **(info if info is not None else describe_permission(request)),
         }
-        await self._patch(agent_id, status="needs_approval")
-        agent = await self._load(agent_id)
+        await self._patch_run(run_id, status="needs_approval")
+        loaded = await self._load_run(run_id)
+        agent = loaded[1] if loaded else None
         await publish_agent_changed(
-            agent_session_id=agent_id,
+            agent_session_id=agent.id if agent else 0,
             topic_id=agent.topic_id if agent else None,
             chat_id=agent.chat_id if agent else None,
+            agent_run_id=run_id,
         )
         try:
             return await fut
@@ -2284,17 +2679,22 @@ class AgentManager:
             if agent_id in self._loaded:
                 return
             async with SessionLocal() as session:
-                payloads = (
-                    await session.scalars(
-                        select(AgentEventRecord.payload)
+                rows = (
+                    await session.execute(
+                        select(AgentEventRecord.payload, AgentEventRecord.agent_run_id)
                         .where(AgentEventRecord.agent_session_id == agent_id)
                         .order_by(AgentEventRecord.id)
                     )
                 ).all()
             archived: list[AgentEvent] = []
-            for payload in payloads:
+            for payload, run_id in rows:
                 try:
-                    archived.append(AgentEvent.model_validate_json(payload))
+                    parsed = AgentEvent.model_validate_json(payload)
+                    # The column is the authority: rows archived before the event
+                    # payload carried a run id still resolve to their execution.
+                    if run_id is not None:
+                        parsed.agent_run_id = run_id
+                    archived.append(parsed)
                 except Exception:
                     logger.debug(
                         "skipping malformed archived event for agent %s", agent_id, exc_info=True
@@ -2303,13 +2703,16 @@ class AgentManager:
                 self._events[agent_id] = archived
             self._loaded.add(agent_id)
 
-    async def _archive_event(self, agent_id: int, event: AgentEvent) -> None:
+    async def _archive_event(
+        self, agent_id: int, event: AgentEvent, *, agent_run_id: int | None = None
+    ) -> None:
         """Persist one normalised event to the durable timeline archive."""
         try:
             async with SessionLocal() as session:
                 session.add(
                     AgentEventRecord(
                         agent_session_id=agent_id,
+                        agent_run_id=agent_run_id,
                         payload=event.model_dump_json(),
                     )
                 )
@@ -2317,16 +2720,26 @@ class AgentManager:
         except Exception:
             logger.debug("failed to archive event for agent %s", agent_id, exc_info=True)
 
-    async def _handle_event(self, agent_id: int, event: Any) -> None:
-        # Serialise per-agent so events are handled in arrival order: the idle
-        # handler must run *after* the assistant-message handler has committed
-        # ``result_summary``, otherwise ``_notify_back`` posts the previous
-        # turn's answer.
-        lock = self._event_locks.setdefault(agent_id, asyncio.Lock())
+    async def _handle_event(self, run_id: int, event: Any) -> None:
+        # Events arrive keyed by the *run* that produced them, but are serialised
+        # per *agent*: the idle handler must run after the assistant-message
+        # handler has committed ``result_summary`` (otherwise ``_notify_back``
+        # posts the previous turn's answer), and ``_notify_back`` writes into the
+        # agent's shared topic/chat, so concurrent runs of one agent must take
+        # turns even though their sessions are independent.
+        loaded = await self._load_run(run_id)
+        if loaded is None:
+            return
+        lock = self._event_locks.setdefault(loaded[1].id, asyncio.Lock())
         async with lock:
-            await self._handle_event_locked(agent_id, event)
+            await self._handle_event_locked(run_id, event)
 
-    async def _handle_event_locked(self, agent_id: int, event: Any) -> None:
+    async def _handle_event_locked(self, run_id: int, event: Any) -> None:
+        loaded = await self._load_run(run_id)
+        if loaded is None:
+            return
+        run, agent = loaded
+        agent_id = agent.id
         # Archive every event so the timeline persists across session teardown
         # (e.g. on topic link) and process restart, where the SDK would otherwise
         # drop it (``get_events`` only replays ``SessionStartData`` on resume).
@@ -2335,13 +2748,15 @@ class AgentManager:
         # around the final patch below: handlers reached from here (``_on_idle``,
         # and ``_enforce_budget`` via ``_record_usage``) commit status changes of
         # their own mid-flight, and those are transitions the workflow seam must
-        # still see.
-        before = await self._load(agent_id)
-        before_status = before.status if before is not None else None
+        # still see. Read from the *run* — a sibling execution's status must not
+        # look like this one transitioning.
+        before_status = run.status
         normalised = normalize_event(event)
         normalised.at = datetime.now(UTC)
+        # Stamp the producing run so the timeline can be split per execution.
+        normalised.agent_run_id = run_id
         self._events.setdefault(agent_id, []).append(normalised)
-        await self._archive_event(agent_id, normalised)
+        await self._archive_event(agent_id, normalised, agent_run_id=run_id)
 
         # A workiq tool that errors after the session was built with valid creds
         # usually means the OAuth token lapsed mid-turn. Surface the same sign-in
@@ -2366,18 +2781,18 @@ class AgentManager:
                 patch["result_summary"] = strip_control_directives(str(content))[:2000]
                 # Keep the full answer for the topic/chat repost — the summary
                 # column is capped for the agent list.
-                live = self._live.get(agent_id)
+                live = self._live.get(run_id)
                 if live is not None:
                     live.pending_answer = str(content)
         elif name == "AssistantUsageData":
-            await self._record_usage(agent_id, data)
+            await self._record_usage(run_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
-            agent = await self._load(agent_id)
+            fresh = await self._run(run_id)
             # Don't let a trailing idle event mask a turn that just errored, was
             # paused/cancelled, or already reached a terminal/blocked resting
             # state — those statuses are sticky so the outcome stays visible (and
             # any in-flight prompt stays resumable).
-            if agent is not None and agent.status not in (
+            if fresh is not None and fresh.status not in (
                 "needs_approval",
                 "cancelled",
                 "failed",
@@ -2387,7 +2802,7 @@ class AgentManager:
                 # The goal loop decides the resting status (idle/blocked/completed)
                 # or continues autonomously; it mutates ``patch`` and reposts only
                 # at rest transitions.
-                await self._on_idle(agent, patch)
+                await self._on_idle(agent, fresh, patch)
         elif name in ("AbortData",):
             patch["status"] = "cancelled"
             patch["finished_at"] = datetime.now(UTC)
@@ -2397,18 +2812,23 @@ class AgentManager:
             patch["finished_at"] = datetime.now(UTC)
             # Auto-recovery: if a retry budget remains, arm a backoff re-run the
             # scheduler will pick up. Keeps a flaky turn from parking the fleet.
+            # The budget is cumulative governance and lives on the definition.
             failed_agent = await self._load(agent_id)
             if failed_agent is not None and failed_agent.retry_count < failed_agent.max_retries:
                 patch["next_retry_at"] = self._retry_due_at(failed_agent.retry_count)
 
-        await self._patch(agent_id, **patch)
-        agent = await self._load(agent_id)
+        await self._patch_run(run_id, **patch)
+        after = await self._run(run_id)
+        # Re-read the definition: ``_patch_run`` expired it, and the notification
+        # needs its current topic/chat routing.
+        owner = await self._load(agent_id)
         await publish_agent_changed(
             agent_session_id=agent_id,
-            topic_id=agent.topic_id if agent else None,
-            chat_id=agent.chat_id if agent else None,
+            topic_id=owner.topic_id if owner else None,
+            chat_id=owner.chat_id if owner else None,
+            agent_run_id=run_id,
         )
-        # Workflow coordination advances when this agent *transitions into* a
+        # Workflow coordination advances when this run *transitions into* a
         # resting/terminal state — a workflow chains plain agents itself. Testing
         # the status alone would re-fire for every subsequent event an already
         # resting agent emits (pending-message, MCP-status and tool-list updates
@@ -2416,13 +2836,13 @@ class AgentManager:
         # others into re-entering the same step: duplicate trace rows, a second
         # real ``start_task``, and double-counted tokens.
         if (
-            agent is not None
-            and agent.status != before_status
-            and agent.status in _RESTING_STATUSES
+            after is not None
+            and after.status != before_status
+            and after.status in _RESTING_STATUSES
         ):
-            self.enqueue(self._advance_workflows(agent_id))
+            self.enqueue(self._advance_workflows(run_id))
 
-    async def _record_usage(self, agent_id: int, data: Any) -> None:
+    async def _record_usage(self, run_id: int, data: Any) -> None:
         """Meter an ``AssistantUsageData`` round into the shared usage ledger.
 
         Each agent LLM call lands as one ``source="agent"`` row tagged with the
@@ -2436,9 +2856,10 @@ class AgentManager:
         if not prompt_tokens and not completion_tokens:
             return
         model = getattr(data, "model", None)
-        agent = await self._load(agent_id)
-        if agent is None:
+        loaded = await self._load_run(run_id)
+        if loaded is None:
             return
+        run, agent = loaded
         try:
             async with SessionLocal() as session:
                 await record_usage(
@@ -2446,42 +2867,69 @@ class AgentManager:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     source="agent",
-                    model=str(model) if model else agent.model,
+                    model=str(model) if model else (run.model or agent.model),
                     topic_id=agent.topic_id,
                     chat_id=agent.chat_id,
                 )
                 await session.commit()
         except Exception:
-            logger.debug("failed to record agent usage for %s", agent_id, exc_info=True)
+            logger.debug("failed to record agent usage for run %s", run_id, exc_info=True)
 
-        # Accumulate the running totals on the agent row (drives the budget cap
-        # and aggregate observability). Kept in a separate write so a usage-ledger
-        # failure above doesn't lose the meter, and vice versa.
-        await self._patch(
-            agent_id,
-            total_input_tokens=agent.total_input_tokens + prompt_tokens,
-            total_output_tokens=agent.total_output_tokens + completion_tokens,
+        # Accumulate the running totals on the run (drives the workflow step's
+        # token delta and aggregate observability; mirrored onto the agent row for
+        # the list view). Kept in a separate write so a usage-ledger failure above
+        # doesn't lose the meter, and vice versa.
+        await self._patch_run(
+            run_id,
+            total_input_tokens=run.total_input_tokens + prompt_tokens,
+            total_output_tokens=run.total_output_tokens + completion_tokens,
         )
-        await self._enforce_budget(agent_id)
+        await self._enforce_budget(run_id)
 
-    async def _enforce_budget(self, agent_id: int) -> None:
+    async def _agent_spend(self, agent_id: int) -> int:
+        """Total tokens this agent has ever burned, across every execution.
+
+        Summed from the runs rather than read off ``AgentSession.total_*``: those
+        columns are a write-through mirror of the agent's *current* run, so they
+        reset whenever a new one opens and flip between concurrent drivers. The
+        budget is cumulative governance, so it needs the real total — which the
+        migration preserved by backfilling pre-split spend onto a synthetic run.
+        """
+        async with SessionLocal() as session:
+            total = await session.execute(
+                select(
+                    func.coalesce(
+                        func.sum(AgentRun.total_input_tokens + AgentRun.total_output_tokens), 0
+                    )
+                ).where(AgentRun.agent_id == agent_id)
+            )
+            return int(total.scalar() or 0)
+
+    async def _enforce_budget(self, run_id: int) -> None:
         """Park an agent as ``blocked`` once it burns through its token budget.
 
         The governor is a *soft* cap checked after each metered round: an
         in-flight turn finishes, but the next autonomous step won't start. Null
-        budget = ungoverned. Already-terminal/blocked agents are left alone so we
+        budget = ungoverned. Already-terminal/blocked runs are left alone so we
         don't clobber a completion that landed in the same turn.
+
+        The budget itself is cumulative governance and lives on the **definition**
+        (spend across every execution counts against it), while the status change
+        it triggers lands on the run that tripped it.
         """
-        agent = await self._load(agent_id)
-        if agent is None or agent.token_budget is None:
+        loaded = await self._load_run(run_id)
+        if loaded is None:
             return
-        spent = agent.total_input_tokens + agent.total_output_tokens
+        run, agent = loaded
+        if agent.token_budget is None:
+            return
+        spent = await self._agent_spend(agent.id)
         if spent < agent.token_budget:
             return
-        if agent.status not in ("running", "needs_approval"):
+        if run.status not in ("running", "needs_approval"):
             return
-        await self._patch(
-            agent_id,
+        await self._patch_run(
+            run_id,
             status="blocked",
             active_prompt=None,
             blocked_question=(
@@ -2491,12 +2939,13 @@ class AgentManager:
             ),
         )
         await publish_agent_changed(
-            agent_session_id=agent_id,
+            agent_session_id=agent.id,
             topic_id=agent.topic_id,
             chat_id=agent.chat_id,
+            agent_run_id=run_id,
         )
 
-    async def _on_idle(self, agent: AgentSession, patch: dict[str, Any]) -> None:
+    async def _on_idle(self, agent: AgentSession, run: AgentRun, patch: dict[str, Any]) -> None:
         """Resolve what a finished turn means for an agent's mission.
 
         This is the goal loop. For a **plain** agent it just rests at ``idle`` and
@@ -2513,8 +2962,11 @@ class AgentManager:
 
         Progress (``PROGRESS: n | label``) is applied whenever present and resets
         the stall counter on a fresh value. Mutates ``patch`` in place.
+
+        Step count and progress are read from ``run``: each execution pursues the
+        objective on its own budget, so a sibling run can't spend this one's steps.
         """
-        live = self._live.get(agent.id)
+        live = self._live.get(run.id)
         directives = (
             parse_agent_directives(live.pending_answer)
             if live is not None and agent.autonomy_enabled
@@ -2538,7 +2990,7 @@ class AgentManager:
         # emitted (not only at completion).
         artifacts = directives.get("artifacts")
         if artifacts:
-            await self._persist_artifacts(agent.id, artifacts, kind="output")
+            await self._persist_artifacts(run.id, artifacts, kind="output")
 
         # 1) Objective met — terminal. The single repost carries the summary.
         if directives.get("complete"):
@@ -2566,9 +3018,9 @@ class AgentManager:
             # get the deliverable even when the model didn't emit an ARTIFACT line.
             if summary:
                 await self._persist_artifacts(
-                    agent.id, [{"title": "Result", "content": summary}], kind="result"
+                    run.id, [{"title": "Result", "content": summary}], kind="result"
                 )
-            await self._notify_back(agent)
+            await self._notify_back(agent, run)
             return
 
         # 2) Agent raised a decision only the human can make — park it.
@@ -2576,7 +3028,7 @@ class AgentManager:
             patch["status"] = "blocked"
             patch["blocked_question"] = str(directives["blocked"])[:2000]
             patch["active_prompt"] = None
-            await self._notify_back(agent)
+            await self._notify_back(agent, run)
             return
 
         # 3) Autonomous continuation — keep pursuing the objective if allowed.
@@ -2588,17 +3040,17 @@ class AgentManager:
                     "the objective. Please review and advise on how to proceed."
                 )
                 patch["active_prompt"] = None
-                await self._notify_back(agent)
+                await self._notify_back(agent, run)
                 return
-            if agent.step_count < agent.max_steps:
+            if run.step_count < agent.max_steps:
                 # Keep going. No repost — the mission is still in flight; the
                 # single objective→result exchange lands when it rests.
                 patch["status"] = "running"
-                patch["step_count"] = agent.step_count + 1
+                patch["step_count"] = run.step_count + 1
                 # No progress advance this step counts toward a stall.
                 if live is not None and progress is None:
                     live.stall_count += 1
-                self.enqueue(self._advance_goal_loop(agent.id))
+                self.enqueue(self._advance_goal_loop(run.id))
                 return
             # Budget spent without completing — hand back rather than run forever.
             patch["status"] = "blocked"
@@ -2608,40 +3060,46 @@ class AgentManager:
                 "whether to continue, adjust the objective, or stop."
             )
             patch["active_prompt"] = None
-            await self._notify_back(agent)
+            await self._notify_back(agent, run)
             return
 
         # 4) Plain agent: rest at idle and repost this turn's exchange.
         patch["status"] = "idle"
         patch["active_prompt"] = None
-        await self._notify_back(agent)
+        await self._notify_back(agent, run)
 
-    async def _advance_goal_loop(self, agent_id: int) -> None:
+    async def _advance_goal_loop(self, run_id: int) -> None:
         """Take the next autonomous step toward the objective.
 
         Enqueued (never called inline) from the idle handler — we must not
-        ``send`` from inside the locked event handler. Reloads the agent,
-        re-checks it's still an autonomous run that should continue, refreshes the
-        per-turn approval policy, and nudges the SDK session to keep working.
-        ``pending_prompt`` is deliberately left untouched so the eventual single
-        repost still shows the objective + final answer.
+        ``send`` from inside the locked event handler. Reloads the run,
+        re-checks it's still an autonomous execution that should continue,
+        refreshes the per-turn approval policy, and nudges the SDK session to keep
+        working. ``pending_prompt`` is deliberately left untouched so the eventual
+        single repost still shows the objective + final answer.
         """
+        agent_id: int | None = None
         try:
-            agent = await self._load(agent_id)
-            if agent is None or not agent.autonomy_enabled or agent.status != "running":
+            loaded = await self._load_run(run_id)
+            if loaded is None:
                 return
-            live = self._live.get(agent_id)
+            run, agent = loaded
+            agent_id = agent.id
+            if not agent.autonomy_enabled or run.status != "running":
+                return
+            live = self._live.get(run_id)
             if live is None:
                 return
-            live.approval_policy = await self._approval_policy(agent)
+            live.approval_policy = await self._approval_policy(agent, run)
             # Reset the per-turn answer buffer so the next directive parse reads
             # only the upcoming step's message.
             live.pending_answer = None
             await live.sdk_session.send(_CONTINUE_NUDGE)
         except Exception as exc:
-            await self._fail_turn(agent_id, exc)
+            if agent_id is not None:
+                await self._fail_turn(run_id, exc)
 
-    async def _notify_back(self, agent: AgentSession) -> None:
+    async def _notify_back(self, agent: AgentSession, run: AgentRun) -> None:
         """Post the just-finished turn's exchange into the linked container.
 
         Posts the turn's **prompt** (as a user turn) and the agent's **answer**
@@ -2657,7 +3115,7 @@ class AgentManager:
         if agent.topic_id is None and agent.chat_id is None:
             return
 
-        live = self._live.get(agent.id)
+        live = self._live.get(run.id)
         if live is None or live.pending_prompt is None:
             return
         prompt = live.pending_prompt
@@ -2665,9 +3123,7 @@ class AgentManager:
 
         # Prefer the full assistant text captured this turn; fall back to the
         # (capped) summary so a resumed turn without a tracked answer still posts.
-        answer = (
-            live.pending_answer or agent.result_summary or ""
-        ).strip() or "Agent task finished."
+        answer = (live.pending_answer or run.result_summary or "").strip() or "Agent task finished."
         live.pending_answer = None
         answer, suggestions = split_suggestions(answer)
         now = datetime.now(UTC)
@@ -2738,7 +3194,7 @@ class AgentManager:
     # ---------------------------------------------------------------- fleet ----
 
     async def _persist_artifacts(
-        self, agent_id: int, artifacts: list[dict[str, str]], *, kind: str
+        self, run_id: int, artifacts: list[dict[str, str]], *, kind: str
     ) -> None:
         """Write published outputs to the shared blackboard (``agent_artifacts``).
 
@@ -2749,9 +3205,17 @@ class AgentManager:
         ``text``). De-duplicates an identical ``result`` so a completion that
         reposts the same summary doesn't stack duplicates. Best-effort: a
         blackboard write must never break the turn.
+
+        Artifacts are scoped to the **run** that published them (``agent_id`` is
+        kept alongside for agent-wide queries), so two workflows driving the same
+        agent keep separate blackboards.
         """
         from precursor.backend.models.agent_artifact import AgentArtifact
 
+        loaded = await self._load_run(run_id)
+        if loaded is None:
+            return
+        _run, agent = loaded
         try:
             async with SessionLocal() as session:
                 for art in artifacts:
@@ -2762,7 +3226,7 @@ class AgentManager:
                     if kind == "result":
                         existing = await session.execute(
                             select(AgentArtifact.id).where(
-                                AgentArtifact.agent_id == agent_id,
+                                AgentArtifact.agent_run_id == run_id,
                                 AgentArtifact.key == "result",
                                 AgentArtifact.content == content,
                             )
@@ -2771,7 +3235,8 @@ class AgentManager:
                             continue
                     session.add(
                         AgentArtifact(
-                            agent_id=agent_id,
+                            agent_id=agent.id,
+                            agent_run_id=run_id,
                             key=kind,
                             kind="text",
                             title=title,
@@ -2780,10 +3245,10 @@ class AgentManager:
                     )
                 await session.commit()
         except Exception:
-            logger.debug("failed to persist artifacts for %s", agent_id, exc_info=True)
+            logger.debug("failed to persist artifacts for run %s", run_id, exc_info=True)
 
-    async def _clear_artifacts(self, agent_id: int) -> None:
-        """Wipe an agent's published artifacts ahead of a fresh objective run.
+    async def _clear_artifacts(self, run_id: int) -> None:
+        """Wipe a run's published artifacts ahead of a fresh objective.
 
         A re-run (manual restart, retry, edited task, a webhook re-trigger, or an
         upstream re-driving an already-completed dependent) should start with a
@@ -2791,17 +3256,35 @@ class AgentManager:
         rather than accumulating. Best-effort and idempotent — a no-op on first
         run. Deliberately *not* called from :meth:`send_message`: a conversational
         follow-up keeps the existing artifacts.
+
+        Scoped to the run: a sibling execution of the same agent keeps its own
+        blackboard intact. Rows with no run attribution at all — published
+        straight through the API, or predating the split — belong to the agent
+        rather than to any one execution, so they go too; leaving them would
+        make them permanently unclearable.
         """
         from precursor.backend.models.agent_artifact import AgentArtifact
+        from precursor.backend.models.agent_run import AgentRun
 
         try:
             async with SessionLocal() as session:
+                run = await session.get(AgentRun, run_id)
+                if run is None:
+                    return
                 await session.execute(
-                    delete(AgentArtifact).where(AgentArtifact.agent_id == agent_id)
+                    delete(AgentArtifact).where(
+                        or_(
+                            AgentArtifact.agent_run_id == run_id,
+                            and_(
+                                AgentArtifact.agent_id == run.agent_id,
+                                AgentArtifact.agent_run_id.is_(None),
+                            ),
+                        )
+                    )
                 )
                 await session.commit()
         except Exception:
-            logger.debug("failed to clear artifacts for %s", agent_id, exc_info=True)
+            logger.debug("failed to clear artifacts for run %s", run_id, exc_info=True)
 
     def _retry_due_at(self, retry_count: int) -> datetime:
         """Next-attempt time with exponential backoff off the base interval."""
@@ -2810,21 +3293,23 @@ class AgentManager:
         delay = base * (2**retry_count)
         return datetime.now(UTC) + timedelta(seconds=delay)
 
-    async def _advance_workflows(self, agent_id: int) -> None:
-        """Advance any running workflow whose current step is this agent.
+    async def _advance_workflows(self, run_id: int) -> None:
+        """Advance the workflow this run belongs to, if any.
 
-        Enqueued from the completion seam when an agent reaches a resting or
+        Enqueued from the completion seam when a run reaches a resting or
         terminal state. Delegates to the workflow coordinator (imported lazily to
         avoid a circular import) in a fresh session so the advance commits
-        independently of the turn that triggered it.
+        independently of the turn that triggered it. Because a run belongs to at
+        most one workflow run, a shared agent no longer fans an advance out to
+        every workflow pointing at it.
         """
         try:
             from precursor.backend.services.agents import workflow as workflow_svc
 
             async with SessionLocal() as session:
-                await workflow_svc.advance_for_agent(session, self, agent_id)
+                await workflow_svc.advance_for_run(session, self, run_id)
         except Exception:
-            logger.debug("failed to advance workflows after %s", agent_id, exc_info=True)
+            logger.debug("failed to advance workflows after run %s", run_id, exc_info=True)
 
     async def release_ready_fleet(self) -> None:
         """Sweep for orphaned ``pending`` agents and start them.
@@ -2851,7 +3336,7 @@ class AgentManager:
                 async with SessionLocal() as session:
                     if await fleet.running_count(session) >= settings.agents_max_concurrent:
                         break
-                await self.start_task(agent_id)
+                await self.start_task(agent_id, trigger="fleet")
         except Exception:
             logger.debug("fleet sweep failed", exc_info=True)
 
@@ -2872,7 +3357,7 @@ class AgentManager:
             next_retry_at=None,
             error=None,
         )
-        await self.restart_with_task(agent_id)
+        await self.restart_with_task(agent_id, trigger="retry")
 
 
 # Map SDK event class names → coarse workflow step kinds for the UI.
