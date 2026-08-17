@@ -145,6 +145,12 @@ survives), and removing the step deletes it. The one place it still surfaces is
 the **needs-attention** list, deliberately: if an inline step blocks on a tool
 approval it has to stay discoverable, or a workflow could wedge invisibly.
 
+A vessel is only ever cleaned up when **no saved step points at it any more**.
+That matters if you edit a pipeline over the [API](/reference/api) rather than in
+the builder: a step that names its vessel with `agent_id` keeps it, whether or
+not the save resends the prompt — so changing one policy field is safe and never
+costs you the step's history.
+
 A gate is often the clearest case for it: "is *this specific joke* safe for
 kids?" is rarely worth a permanent agent.
 
@@ -492,6 +498,16 @@ this machine can't attach shows as a struck-through chip and simply matches
 nothing — **red** if nothing by that name is installed here, **amber** if it is
 installed but switched off in **Settings → MCP**, which is the case you can fix
 without leaving the app.
+
+A server that's installed *and* enabled but merely **signed out** is a different
+case, and it used to be the dangerous one: the session was built without it, the
+agent answered the step from its own knowledge, rested idle, and the run recorded
+a **success**. A step that named a server stated a hard requirement, so it is now
+treated as one — if an allowlisted server can't be attached because its
+[OAuth sign-in](./mcp.md) has lapsed, the step parks
+**Blocked** naming the server instead of running without it. Sign in, then
+**Resume** the run. A step left on **All** is unaffected: it asked for whatever
+happens to be available, not for that server in particular.
 
 The name is kept rather than dropped, so an exported workflow imports cleanly
 onto a machine with a different server set, and survives the trip back. Import

@@ -137,7 +137,10 @@ class WorkIQKeepAlive:
             return
 
         # Near expiry (or expiry unknown for a legacy token) → silently refresh.
-        await self._silent_refresh(profile)
+        # ``tokens`` is only forwarded when the expiry is known, so the
+        # no-refresh-token short-circuit can't misfire on a legacy token that may
+        # well still be valid.
+        await self._silent_refresh(profile, tokens if expiry is not None else None)
 
     async def _tick_idle(self, profile: WorkIQOAuthProfile, tokens: OAuthToken) -> None:
         """Handle a credential nobody has used within the idle window.
@@ -163,9 +166,29 @@ class WorkIQKeepAlive:
             return
         # Access token has demonstrably expired → probe once to learn whether it
         # now needs an interactive sign-in.
-        await self._silent_refresh(profile)
+        await self._silent_refresh(profile, tokens)
 
-    async def _silent_refresh(self, profile: WorkIQOAuthProfile) -> None:
+    async def _silent_refresh(
+        self, profile: WorkIQOAuthProfile, tokens: OAuthToken | None = None
+    ) -> None:
+        """Drive a silent refresh, or short-circuit one that cannot succeed.
+
+        ``tokens`` is supplied when the caller has established the access token is
+        genuinely at or past expiry. A credential stored *without* a
+        ``refresh_token`` — every WorkIQ sign-in predating the ``offline_access``
+        request — has nothing left to refresh with, so skip the round trip that
+        can only fail and raise the re-authenticate prompt directly. That's also
+        the upgrade path for those installs: the sign-in it asks for mints a
+        renewable credential.
+        """
+        if tokens is not None and not tokens.refresh_token:
+            logger.info(
+                "WorkIQ keep-alive: stored %s credential has no refresh token; "
+                "requesting an interactive sign-in.",
+                profile.server,
+            )
+            await self._on_refresh_failed(profile)
+            return
         result = await resolve_workiq_bearer_token(profile)
         if result is None:
             await self._on_refresh_failed(profile)

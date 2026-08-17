@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -328,8 +328,15 @@ async def _apply_steps(
                 "Each step needs an existing agent, or instructions to run inline",
             )
         else:
-            if await session.get(AgentSession, agent_id) is None:
+            referenced = await session.get(AgentSession, agent_id)
+            if referenced is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, f"Agent {agent_id} not found")
+            if referenced.inline:
+                # A partial edit: the step still points at its private vessel but
+                # didn't resend the prompt. Claim it, or the sweep below would
+                # delete the very agent this request just attached — silently,
+                # since the response still carries the ``agent_id``.
+                kept_inline.add(referenced.id)
         session.add(
             WorkflowStep(
                 workflow_id=workflow.id,
@@ -375,8 +382,16 @@ async def _apply_steps(
     # no owner left — remove it so it can't linger as an invisible agent.
     for orphan_id in prior_inline - kept_inline:
         orphan = await session.get(AgentSession, orphan_id)
-        if orphan is not None and orphan.inline:
-            await session.delete(orphan)
+        if orphan is None or not orphan.inline:
+            continue
+        # SQLite runs with foreign keys off, so the step→agent ``ON DELETE SET
+        # NULL`` never fires there: detach anything still pointing at the vessel
+        # ourselves rather than leaving a dangling ``agent_id`` behind. Reachable
+        # across workflows — another pipeline may reference this vessel by id.
+        await session.execute(
+            update(WorkflowStep).where(WorkflowStep.agent_id == orphan_id).values(agent_id=None)
+        )
+        await session.delete(orphan)
     await session.flush()
 
 

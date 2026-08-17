@@ -168,6 +168,11 @@ WORKIQ_OAUTH_REDIRECT_URI = (
     f"http://localhost:{WORKIQ_OAUTH_REDIRECT_PORT}{WORKIQ_OAUTH_REDIRECT_PATH}"
 )
 
+# The OAuth scope that makes Entra return a refresh token alongside the access
+# token. Without it the credential is terminal: once the access token expires the
+# only recovery is an interactive sign-in, so nothing can be renewed unattended.
+OFFLINE_ACCESS_SCOPE = "offline_access"
+
 # AppSetting keys.
 PREVIEW_FLAG_KEY = "mcp_workiq_preview"
 OAUTH_TOKENS_KEY = "workiq_oauth_tokens"
@@ -604,23 +609,52 @@ async def _stored_token_expiry(
     return issued + timedelta(seconds=token.expires_in)
 
 
+def _with_offline_access(scope: str) -> str:
+    """Return ``scope`` with ``offline_access`` appended if it isn't already there.
+
+    Order is preserved and the operation is idempotent, so re-augmenting an
+    already-augmented URL is a no-op.
+    """
+    scopes = scope.split()
+    if OFFLINE_ACCESS_SCOPE in scopes:
+        return scope
+    return " ".join([*scopes, OFFLINE_ACCESS_SCOPE])
+
+
 def _augment_authorization_url(url: str, *, login_hint: str | None, prompt: str | None) -> str:
-    """Splice ``login_hint``/``prompt`` into the SDK-built Entra auth URL.
+    """Splice ``offline_access`` and ``login_hint``/``prompt`` into the auth URL.
 
     The MCP SDK constructs the authorization URL itself and doesn't expose these
     OAuth parameters, so we add them to the finished URL before it's opened.
     Existing query params are never clobbered — if the SDK ever sets one, it
     wins — and empty values are skipped. ``login_hint`` pre-selects the account;
     ``prompt=none`` requests a silent (no-UI) authorization.
+
+    ``scope`` is the exception to the never-clobber rule: it is *merged* rather
+    than skipped, because it's the one parameter the SDK always sets. Requesting
+    ``offline_access`` is what makes Entra return a refresh token, without which
+    the credential is terminal — when the access token dies the only recovery is
+    a human at a browser. It has to happen here rather than on
+    ``OAuthClientMetadata`` because the SDK unconditionally overwrites
+    ``client_metadata.scope`` from the discovery documents (see
+    ``mcp.client.auth.oauth2`` handling of 401 and ``insufficient_scope``), so
+    anything we pass in is discarded before the URL is built. The finished URL is
+    the last point we control.
+
+    A URL with no ``scope`` at all is left alone: a lone ``scope=offline_access``
+    would ask Entra for a token with no resource.
     """
-    if not login_hint and not prompt:
-        return url
     split = urlsplit(url)
     params = dict(parse_qsl(split.query, keep_blank_values=True))
+    original = dict(params)
     if login_hint and "login_hint" not in params:
         params["login_hint"] = login_hint
     if prompt and "prompt" not in params:
         params["prompt"] = prompt
+    if params.get("scope"):
+        params["scope"] = _with_offline_access(params["scope"])
+    if params == original:
+        return url
     return urlunsplit(split._replace(query=urlencode(params)))
 
 
