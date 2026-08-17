@@ -3613,6 +3613,102 @@ async def test_inline_step_reuses_its_vessel_across_saves() -> None:
             assert list(owned) == [vessel_id]
 
 
+async def test_referencing_an_inline_vessel_without_a_task_keeps_it() -> None:
+    """A partial step edit must not delete the vessel it just referenced.
+
+    A non-SPA client (script, REST call, agent) may re-save a step by pointing at
+    its vessel with ``agent_id`` and changing only a policy field, leaving
+    ``task`` out. That step still owns its vessel, so the orphan sweep has to let
+    it through — the prompt is simply unchanged.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        wf_id = await _make_workflow(client, [{"kind": "inline", "task": "do the thing"}])
+        async with SessionLocal() as session:
+            vessel_id = (
+                await session.execute(
+                    select(WorkflowStep.agent_id).where(WorkflowStep.workflow_id == wf_id)
+                )
+            ).scalar_one()
+
+        resp = client.patch(
+            f"/api/workflows/{wf_id}",
+            json={
+                "steps": [
+                    {
+                        "agent_id": vessel_id,
+                        "kind": "inline",
+                        "name": "Worker",
+                        "mcp_servers": "precursor",
+                    }
+                ]
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        async with SessionLocal() as session:
+            agent = await session.get(AgentSession, vessel_id)
+            assert agent is not None  # the vessel survived the save
+            assert agent.task_prompt == "do the thing"  # …with its prompt intact
+            step = (
+                await session.execute(select(WorkflowStep).where(WorkflowStep.workflow_id == wf_id))
+            ).scalar_one()
+            assert step.agent_id == vessel_id
+            assert step.name == "Worker"  # the policy edit landed
+            assert step.mcp_servers == "precursor"
+
+        # …and the API doesn't report a step pointing at a vanished agent.
+        served = client.get(f"/api/workflows/{wf_id}").json()["steps"][0]
+        assert served["agent_id"] == vessel_id
+        assert served["agent"] is not None
+
+
+async def test_sweeping_a_vessel_detaches_any_step_still_pointing_at_it() -> None:
+    """Deleting a vessel must not leave a dangling ``agent_id`` behind.
+
+    Another workflow may reference a vessel by id. SQLite runs with foreign keys
+    off, so ``ON DELETE SET NULL`` never fires and the referencing step would
+    keep an id pointing at a deleted row — an id SQLite may later hand to an
+    unrelated agent.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import WorkflowStep
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        owner_id = await _make_workflow(client, [{"kind": "inline", "task": "Owned"}], name="Owner")
+        async with SessionLocal() as session:
+            vessel_id = (
+                await session.execute(
+                    select(WorkflowStep.agent_id).where(WorkflowStep.workflow_id == owner_id)
+                )
+            ).scalar_one()
+
+        # A second workflow points a step at the same vessel…
+        other_id = await _make_workflow(client, [{"agent_id": vessel_id}], name="Bystander")
+        # …then the owner drops the step that owned it.
+        assert (
+            client.patch(
+                f"/api/workflows/{owner_id}", json={"steps": [{"kind": "inline", "task": "Fresh"}]}
+            ).status_code
+            == 200
+        )
+
+        async with SessionLocal() as session:
+            assert await session.get(AgentSession, vessel_id) is None
+            stranded = (
+                await session.execute(
+                    select(WorkflowStep).where(WorkflowStep.workflow_id == other_id)
+                )
+            ).scalar_one()
+            assert stranded.agent_id is None
+
+
 async def test_removing_an_inline_step_deletes_its_vessel() -> None:
     """A vessel with no owning step must not linger as an invisible agent."""
     from precursor.backend.db import SessionLocal

@@ -131,6 +131,12 @@ survives), and removing the step deletes it. The one place it still surfaces is
 the **needs-attention** list, deliberately: if an inline step blocks on a tool
 approval it has to stay discoverable, or a workflow could wedge invisibly.
 
+A vessel is only ever cleaned up when **no saved step points at it any more**.
+That matters if you edit a pipeline over the [API](/reference/api) rather than in
+the builder: a step that names its vessel with `agent_id` keeps it, whether or
+not the save resends the prompt — so changing one policy field is safe and never
+costs you the step's history.
+
 A gate is often the clearest case for it: "is *this specific joke* safe for
 kids?" is rarely worth a permanent agent.
 
