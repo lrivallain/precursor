@@ -197,6 +197,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Editing a workflow step over the API no longer deletes its inline agent.**
+  `PATCH /api/workflows/{id}` with a step that names its private vessel via
+  `agent_id` but leaves `task` out — a partial edit, say to narrow the step's
+  server allowlist — attached the step to that vessel and then swept the vessel
+  up as an orphan in the same request. The call returned `200` with `agent_id`
+  still in the body, so nothing signalled the loss: the step was left pointing
+  at a deleted agent, and the prompt was gone. Referencing a vessel now *claims*
+  it, which makes the endpoint idempotent for partial step edits; the prompt is
+  simply left as it was. The builder was never affected — it resends the prompt
+  on every save — but scripts, direct REST calls and agents driving a pipeline
+  were, and a single edit could wipe every inline prompt in a workflow. The
+  sweep also detaches any step still referencing a vessel before deleting it,
+  rather than trusting `ON DELETE SET NULL`: SQLite runs with foreign keys off,
+  so that dangling id survived — and SQLite may later hand the same id to an
+  unrelated agent.
+
 - **WorkIQ sign-ins now ask for a refresh token, so they can be renewed
   unattended.** The OAuth flow never requested `offline_access`, so Entra
   returned an access token with **no refresh token** — a terminal credential. The
