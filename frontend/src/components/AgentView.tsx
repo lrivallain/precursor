@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Eye,
   HelpCircle,
+  History,
   Link2,
   Loader2,
   Package,
@@ -67,6 +68,7 @@ import type {
   AgentArtifact,
   AgentEvent,
   AgentPermissionDecisionValue,
+  AgentRun,
   AgentSession,
   AgentState,
   AgentTrigger,
@@ -187,6 +189,8 @@ function AgentInsightsPanel({
       <div className="flex flex-col gap-4 overflow-y-auto p-3">
         <AgentUsageSection events={events} model={model} />
         <div className="border-t border-border" />
+        <AgentRunsSection agent={agent} />
+        <div className="border-t border-border" />
         <AgentOrchestrationSection agent={agent} />
         <div className="border-t border-border" />
         <div className="space-y-2">
@@ -220,6 +224,103 @@ function AgentInsightsPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+// Short label for what set a run going. Kept terse — it sits in a 60-wide rail.
+const RUN_TRIGGER_LABEL: Record<AgentRun["trigger"], string> = {
+  manual: "Manual",
+  workflow: "Workflow",
+  schedule: "Schedule",
+  webhook: "Webhook",
+  fleet: "Fleet",
+  retry: "Retry",
+  replay: "Replay",
+};
+
+// Execution history for one agent.
+//
+// An agent is a reusable *definition*, so it can be driven by several things at
+// once — two workflows, a schedule and a manual nudge. Each of those is a run
+// with its own status, capability snapshot, artifacts and token spend, and this
+// is where that separation becomes visible: without it a shared agent looks like
+// a single confusing timeline where concurrent drivers appear to overwrite
+// each other.
+function AgentRunsSection({ agent }: { agent: AgentSession }) {
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+
+  const loadRuns = useCallback(() => {
+    void api.agents
+      .runs(agent.id, { limit: 12 })
+      .then(setRuns)
+      .catch(() => setRuns([]));
+  }, [agent.id]);
+
+  useEffect(() => {
+    loadRuns();
+    // A run opens and closes as the agent works, so the rail has to follow the
+    // live stream rather than wait for a manual reload.
+    const off = eventBus.subscribe((ev) => {
+      if (ev.type !== "agent.changed") return;
+      if (ev.agent_session_id == null || ev.agent_session_id === agent.id) loadRuns();
+    });
+    return off;
+  }, [agent.id, loadRuns]);
+
+  if (runs.length === 0) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          <History size={14} />
+          <span>Runs</span>
+        </div>
+        <p className="text-[11px] text-muted">
+          No executions yet. Each start — manual, workflow, schedule or webhook — opens its own run
+          so concurrent drivers stay separate.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5 text-sm font-medium">
+        <History size={14} />
+        <span>Runs</span>
+        <span className="text-[11px] text-muted">({runs.length})</span>
+      </div>
+      {runs.map((run) => {
+        const current = agent.current_run?.id === run.id;
+        const spend = run.total_input_tokens + run.total_output_tokens;
+        return (
+          <div
+            key={run.id}
+            className={`rounded border px-2 py-1 ${
+              current ? "border-accent/50 bg-accent/5" : "border-border bg-surface/50"
+            }`}
+            data-tooltip={`Run #${run.id} · ${RUN_TRIGGER_LABEL[run.trigger]}${
+              run.workflow_run_id ? ` · workflow run #${run.workflow_run_id}` : ""
+            }\n${run.total_input_tokens.toLocaleString()} in · ${run.total_output_tokens.toLocaleString()} out`}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
+                {RUN_TRIGGER_LABEL[run.trigger]}
+                {run.workflow_run_id ? ` · #${run.workflow_run_id}` : ""}
+              </span>
+              {current && (
+                <span className="shrink-0 rounded bg-accent/20 px-1 text-[10px] text-accent">
+                  now
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] text-muted">
+              <span className="truncate">{run.status}</span>
+              {spend > 0 && <span className="shrink-0">· {spend.toLocaleString()} tok</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -600,7 +701,7 @@ function ArtifactViewer({
 }) {
   const [copied, setCopied] = useState<"content" | "link" | null>(null);
   const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
-  const ref = agent.copilot_session_id ?? String(agent.id);
+  const ref = agent.public_id ?? String(agent.id);
   const permalink = `${window.location.origin}/agents/${encodeURIComponent(
     ref,
   )}?artifact=${artifact.id}`;
@@ -737,7 +838,7 @@ function DeliverableAnswer({
 }) {
   const [copied, setCopied] = useState<null | "content" | "link">(null);
   const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
-  const ref = agent.copilot_session_id ?? String(agent.id);
+  const ref = agent.public_id ?? String(agent.id);
   const permalink = `${window.location.origin}/agents/${encodeURIComponent(
     ref,
   )}?artifact=${artifact.id}`;

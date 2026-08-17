@@ -130,7 +130,7 @@ async def test_export_omits_runtime_state_and_secrets() -> None:
         raw = client.get(f"/api/transfer/workflows/{wf_id}").text
 
     assert "super-secret-token" not in raw
-    for leaked in ("run_count", "result_summary", "webhook_token", "copilot_session_id", "status"):
+    for leaked in ("run_count", "result_summary", "webhook_token", "public_id", "status"):
         assert leaked not in raw, f"{leaked} leaked into the export"
 
 

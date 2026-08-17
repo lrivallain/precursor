@@ -11,6 +11,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Agents are now definitions, and every start opens its own run.** Execution
+  state — status, active prompt, transcript counters, token meter and the
+  Copilot SDK session handle — moved off `AgentSession` onto a new `AgentRun`
+  row, mirroring the `Workflow` → `WorkflowRun` pattern. Two workflows can now
+  point a step at the **same agent and run at the same time**: previously the
+  second start silently took over the first's live session, overwrote its
+  status, wiped its artifact blackboard, wrote its step's capability overrides
+  onto the shared agent row, and mis-attributed its tokens — and one agent going
+  idle advanced *both* pipelines. Runtime registries, artifacts, events, tool
+  grants, token accounting and the workflow advance seam are all keyed by run.
+  Each run freezes the model, role, approval policy and capability toggles it
+  started with, so editing an agent mid-flight primes the next run instead of
+  moving the ground under the current one. Runs are kept as an audit trail and
+  carry the `trigger` that opened them (`manual`, `workflow`, `schedule`,
+  `webhook`, `fleet`, `retry`, `replay`). The agent's own columns remain as a
+  write-through mirror of its current run, so the dashboard, inbox, metrics and
+  command palette are unchanged. Fixes [#242](https://github.com/lrivallain/precursor/issues/242).
+- **Agent run history.** An agent's insights sidebar gains a **Runs** rail
+  listing recent executions — trigger, status, the workflow run that drove it
+  and what it spent — with the current run highlighted; a workflow's step trace
+  now names the agent run each attempt launched. New
+  `GET /api/agents/{id}/runs` and `GET /api/agents/{id}/runs/{runId}` routes back
+  it, `AgentSessionRead` embeds a nullable `current_run`, the artifact list
+  accepts a `runId` filter, and the `agent.changed` / `read.changed` SSE events
+  carry an `agent_run_id`.
 - **Replay a single workflow step.** Every finished, agent-backed row in a run
   trace now carries a small replay icon that re-runs *that one step* on the
   exact input it first saw — the same kickoff preamble, brief and upstream
@@ -179,6 +204,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **An agent is addressed by its own `public_id`, not by a session handle.**
+  `AgentSession.copilot_session_id` doubled as the agent's URL identity and as
+  the Copilot SDK handle for whatever was running; the handle now belongs to the
+  run, so the agent gained a stable `public_id` in its place. Existing UUIDs are
+  carried across by the migration, so `/agents/{uuid}` deep links, `/agent
+  <uuid>` nudges and transfer lookups keep resolving.
 - **A running workflow now wears the holographic frame on the gallery.** The
   Workflows landing signalled a live run only with a small status dot and a
   Pause button, so a card mid-flight read the same as an idle one at a glance —
@@ -197,6 +228,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The concurrency governor counts executions, not agents.** A slot exists to
+  bound how many Copilot SDK sessions run at once, and there is now one session
+  per run — so two workflows driving the same agent burned two sessions while
+  charging `agents_max_concurrent` for one. The fleet count, and the
+  `running_now` gauge in the Agents header, now read the runs.
+- **Fleet token totals and the inbox's "budget" badge read every run.** Both
+  summed the agent's own counters, which mirror its *current* run — so lifetime
+  spend collapsed to the latest turn of each agent, and an agent parked by the
+  budget governor after several runs was mislabelled as having raised a
+  question.
+- **An agent's token budget is no longer reset by starting it again.** The
+  governor read the agent's cumulative counters, which are now a mirror of its
+  *current* run — so every new run would have handed the agent a fresh
+  allowance, and two concurrent runs would each have seen only their own spend.
+  It now sums across every run of the agent, which is what "cumulative
+  governance on the definition" was always supposed to mean.
 - **The test suite no longer calls a real model.** Three live-meeting tests
   (`ask`, `summary`, `summary/from-transcript`) never stubbed a provider — they
   relied on `get_llm_provider` falling back to the offline mock, which only

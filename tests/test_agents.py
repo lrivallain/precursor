@@ -585,17 +585,53 @@ def test_parse_agent_command() -> None:
 
 
 async def _make_agent(**overrides: object) -> int:
+    """Seed an agent definition. ``copilot_session_id`` seeds its current
+    :class:`AgentRun` instead — execution state lives on the run now."""
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun, AgentSession
 
     fields: dict[str, object] = {"title": "Old title", "task_prompt": "seed", "status": "idle"}
     fields.update(overrides)
+    sdk_id = fields.pop("copilot_session_id", None)
     async with SessionLocal() as session:
         agent = AgentSession(**fields)
         session.add(agent)
+        await session.flush()
+        run = AgentRun(
+            agent_id=agent.id,
+            trigger="manual",
+            copilot_session_id=sdk_id,
+            status=agent.status,
+            active_prompt=agent.active_prompt,
+            result_summary=agent.result_summary,
+            error=agent.error,
+            model=agent.model,
+            use_mcp=agent.use_mcp,
+            use_skills=agent.use_skills,
+            use_memory=agent.use_memory,
+            mcp_servers=agent.mcp_servers,
+            approval_policy=agent.approval_policy,
+            role_id=agent.role_id,
+        )
+        session.add(run)
+        await session.flush()
+        agent.current_run_id = run.id
         await session.commit()
         await session.refresh(agent)
         return agent.id
+
+
+async def _current_sdk_id(agent_id: int) -> str | None:
+    """The SDK handle of the agent's current run."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        if agent is None or agent.current_run_id is None:
+            return None
+        run = await session.get(AgentRun, agent.current_run_id)
+        return run.copilot_session_id if run else None
 
 
 async def test_run_command_rename() -> None:
@@ -697,10 +733,12 @@ async def test_run_command_clear_resets_session_and_timeline() -> None:
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
-        # A fresh SDK session id is minted (so the next turn starts clean) — never
-        # left null, and never the previous handle.
-        assert agent.copilot_session_id is not None
-        assert agent.copilot_session_id != "sess-123"
+        # `/clear` opens a *fresh run* with no SDK handle, so the next turn mints a
+        # brand-new conversation instead of resuming the old one. The agent stays
+        # addressable throughout because `public_id` — not the SDK handle — is the
+        # public identity.
+        assert await _current_sdk_id(agent_id) is None
+        assert agent.public_id
         assert agent.status == "idle"
         assert agent.active_prompt is None
         assert agent.result_summary is None
@@ -745,8 +783,8 @@ async def test_clear_session_keep_id_preserves_uuid_and_deletes_sdk_state() -> N
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
-        # Same public handle — the schedule's "/agent <uuid>" keeps targeting it.
-        assert agent.copilot_session_id == "sess-keep"
+        # Same SDK handle — the new run inherits it, so the transcript continues.
+        assert await _current_sdk_id(agent_id) == "sess-keep"
         assert agent.status == "idle"
         assert agent.active_prompt is None
         assert agent.result_summary is None
@@ -788,7 +826,7 @@ async def test_notify_back_posts_full_answer_not_truncated_summary() -> None:
     from sqlalchemy import select
 
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession, Message, Topic
+    from precursor.backend.models import AgentRun, AgentSession, Message, Topic
     from precursor.backend.models.message import MessageRole
     from precursor.backend.services.agents.manager import AgentManager, _LiveSession
 
@@ -806,16 +844,20 @@ async def test_notify_back_posts_full_answer_not_truncated_summary() -> None:
 
     agent_id = await _make_agent(topic_id=topic_id, result_summary=long_answer[:2000])
 
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+
     mgr = AgentManager()
     live = _LiveSession(sdk_session=None)
     live.pending_prompt = "Run the briefing"
     live.pending_answer = long_answer
-    mgr._live[agent_id] = live
+    mgr._live[run_id] = live  # live sessions are keyed by execution, not agent
 
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
-        assert agent is not None
-        await mgr._notify_back(agent)
+        run = await session.get(AgentRun, run_id)
+        assert agent is not None and run is not None
+        await mgr._notify_back(agent, run)
 
     async with SessionLocal() as session:
         rows = (
@@ -1002,26 +1044,40 @@ async def test_update_agent_task_rejected_while_running() -> None:
         assert "stop the agent" in resp.json()["detail"].lower()
 
 
-async def test_restart_with_task_replays_and_keeps_session_id() -> None:
-    """Re-seeding drops the live session and replays the task, never minting a new
-    ``copilot_session_id`` (which would break scheduled ``/agent <uuid>`` nudges)."""
+async def test_restart_with_task_replays_on_a_fresh_run_inheriting_the_sdk_handle() -> None:
+    """Re-seeding drops the live session and replays the task on a *new run* that
+    carries the previous run's ``copilot_session_id`` over.
+
+    A new run is what makes the replay safe: counters, capability snapshot and
+    artifacts start clean instead of being destructively reset on a row another
+    execution might be using. The SDK handle is deliberately inherited so the
+    conversation continues — clean-slate context is what ``/clear`` is for.
+    """
     from precursor.backend.services.agents.manager import AgentManager
 
+    await _ensure_schema()
+    agent_id = await _make_agent(copilot_session_id="sess-restart")
+    first_run = await _current_run_id(agent_id)
+
     mgr = AgentManager()
-    calls: list[tuple[str, int, bool]] = []
+    calls: list[tuple[str, int, object]] = []
 
     async def fake_teardown(agent_id: int, *, forget: bool = False) -> None:
         calls.append(("teardown", agent_id, forget))
 
-    async def fake_start(agent_id: int) -> None:
-        calls.append(("start", agent_id, False))
+    async def fake_start(agent_id: int, *, run_id: int | None = None, **_: object) -> None:
+        calls.append(("start", agent_id, run_id))
 
     mgr.teardown_session = fake_teardown  # type: ignore[method-assign]
     mgr.start_task = fake_start  # type: ignore[method-assign]
 
-    await mgr.restart_with_task(7)
+    await mgr.restart_with_task(agent_id)
 
-    assert calls == [("teardown", 7, False), ("start", 7, False)]
+    new_run = await _current_run_id(agent_id)
+    assert new_run is not None and new_run != first_run
+    assert calls == [("teardown", agent_id, False), ("start", agent_id, new_run)]
+    # The handle rides along, so the SDK resumes the same conversation.
+    assert await _current_sdk_id(agent_id) == "sess-restart"
 
 
 async def test_agent_unread_lifecycle() -> None:
@@ -1084,7 +1140,7 @@ async def test_agent_notify_back_marks_never_opened_container_unread() -> None:
     shows reliably.
     """
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession, Topic
+    from precursor.backend.models import AgentRun, AgentSession, Topic
     from precursor.backend.services.agents.manager import AgentManager, _LiveSession
 
     def find(nodes: list[dict], tid: int) -> dict | None:
@@ -1107,15 +1163,19 @@ async def test_agent_notify_back_marks_never_opened_container_unread() -> None:
             session.add(agent)
             await session.commit()
             aid = agent.id
+            run = await _seed_agent_run(session, aid, None)
+            await session.commit()
+            run_id = run.id
 
         mgr = AgentManager()
-        mgr._live[aid] = _LiveSession(
+        mgr._live[run_id] = _LiveSession(
             sdk_session=None, pending_prompt="do the thing", pending_answer="all done"
         )
         async with SessionLocal() as session:
             agent = await session.get(AgentSession, aid)
-            assert agent is not None
-            await mgr._notify_back(agent)
+            run = await session.get(AgentRun, run_id)
+            assert agent is not None and run is not None
+            await mgr._notify_back(agent, run)
 
         # The reply landed and the never-opened topic now reads as unread.
         node = find(client.get("/api/topics/tree").json(), tid)
@@ -1443,20 +1503,60 @@ async def test_spawn_agent_parked_stays_waiting() -> None:
         assert row.status == "waiting"
 
 
-async def test_fleet_running_count_counts_busy_agents() -> None:
-    """``running_count`` is the concurrency governor: it counts agents that
-    currently occupy a slot (running / needs_approval / …)."""
+async def test_fleet_running_count_counts_busy_runs() -> None:
+    """``running_count`` is the concurrency governor: it counts the *executions*
+    that currently occupy a slot (running / needs_approval / …).
+
+    A slot bounds live Copilot SDK sessions, and there is one session per run —
+    so the count is over ``agent_runs``, not agents.
+    """
     from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
     from precursor.backend.services.agents import fleet
 
     await _ensure_schema()
-    await _make_agent(title="d2", status="running")
-    await _make_agent(title="busy", status="needs_approval")
+    a_running = await _make_agent(title="d2", status="running")
+    a_gated = await _make_agent(title="busy", status="needs_approval")
 
     async with SessionLocal() as session:
+        before = await fleet.running_count(session)
+        session.add_all(
+            [
+                AgentRun(agent_id=a_running, trigger="manual", status="running"),
+                AgentRun(agent_id=a_gated, trigger="manual", status="needs_approval"),
+            ]
+        )
+        await session.commit()
         # running + needs_approval both occupy a slot. Other tests share this
         # DB, so assert the two we added are counted, not an exact total.
-        assert await fleet.running_count(session) >= 2
+        assert await fleet.running_count(session) == before + 2
+
+
+async def test_fleet_running_count_bills_each_run_of_a_shared_agent() -> None:
+    """Two workflows driving one agent burn two SDK sessions — and two slots.
+
+    Regression for #242: while the governor counted agents, concurrent runs of a
+    shared definition charged it for one slot no matter how many sessions they
+    actually held, so ``agents_max_concurrent`` silently under-counted exactly
+    when the pool was most contended.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.services.agents import fleet
+
+    await _ensure_schema()
+    shared = await _make_agent(title="shared worker", status="running")
+
+    async with SessionLocal() as session:
+        before = await fleet.running_count(session)
+        session.add_all(
+            [
+                AgentRun(agent_id=shared, trigger="workflow", status="running"),
+                AgentRun(agent_id=shared, trigger="workflow", status="running"),
+            ]
+        )
+        await session.commit()
+        assert await fleet.running_count(session) == before + 2
 
 
 async def test_list_agents_serializes_waiting_status() -> None:
@@ -1491,7 +1591,9 @@ async def test_clear_artifacts_wipes_previous_run() -> None:
         )
         await session.commit()
 
-    await AgentManager()._clear_artifacts(agent_id)
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+    await AgentManager()._clear_artifacts(run_id)
 
     async with SessionLocal() as session:
         rows = (
@@ -1534,10 +1636,12 @@ async def test_clear_session_wipes_artifacts() -> None:
 
     await _ensure_schema()
     agent_id = await _make_agent(status="completed")
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
     mgr = AgentManager()
     art = [{"title": "Result", "content": "the answer"}]
-    await mgr._persist_artifacts(agent_id, art, kind="result")
-    await mgr._persist_artifacts(agent_id, art, kind="result")  # identical → skipped
+    await mgr._persist_artifacts(run_id, art, kind="result")
+    await mgr._persist_artifacts(run_id, art, kind="result")  # identical → skipped
 
     async with SessionLocal() as session:
         rows = (
@@ -1608,12 +1712,39 @@ def _get(client, path: str):
     return resp.json()
 
 
+async def _seed_run_spend(agent_id: int, input_tokens: int, output_tokens: int) -> None:
+    """Record an agent's token spend where it actually lives: on a run.
+
+    ``AgentSession.total_*`` is only a mirror of the agent's current run, so a
+    fixture that sets it alone describes a state the runtime can't produce.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+
+    async with SessionLocal() as session:
+        run = AgentRun(
+            agent_id=agent_id,
+            trigger="manual",
+            status="completed",
+            total_input_tokens=input_tokens,
+            total_output_tokens=output_tokens,
+        )
+        session.add(run)
+        await session.flush()
+        agent = await session.get(AgentSession, agent_id)
+        if agent is not None:
+            agent.current_run_id = run.id
+        await session.commit()
+
+
 async def test_metrics_rollup_counts_and_tokens() -> None:
     await _ensure_schema()
-    await _make_agent(status="running", total_input_tokens=100, total_output_tokens=50)
-    await _make_agent(status="completed", total_input_tokens=10, total_output_tokens=5)
+    busy = await _make_agent(status="running", total_input_tokens=100, total_output_tokens=50)
+    done = await _make_agent(status="completed", total_input_tokens=10, total_output_tokens=5)
     await _make_agent(status="failed")
     await _make_agent(status="needs_approval")
+    await _seed_run_spend(busy, 100, 50)
+    await _seed_run_spend(done, 10, 5)
 
     with TestClient(create_app()) as client:
         metrics = _get(client, "/api/agents/metrics")
@@ -1630,8 +1761,10 @@ async def test_inbox_classifies_blocked_budget_and_approval() -> None:
     await _ensure_schema()
     # A plain raised-question block.
     await _make_agent(title="asker", status="blocked", blocked_question="Which region?")
-    # A budget park: blocked + spend >= budget.
-    await _make_agent(
+    # A budget park: blocked + spend >= budget. The spend is split across two
+    # runs so the badge is only correct if it sums the agent's whole history —
+    # neither run alone reaches the ceiling.
+    spender = await _make_agent(
         title="spender",
         status="blocked",
         token_budget=100,
@@ -1639,6 +1772,8 @@ async def test_inbox_classifies_blocked_budget_and_approval() -> None:
         total_output_tokens=40,
         blocked_question="I've reached my token budget",
     )
+    await _seed_run_spend(spender, 40, 20)
+    await _seed_run_spend(spender, 40, 20)
     # A permission gate.
     await _make_agent(title="gated", status="needs_approval")
 
@@ -1886,13 +2021,26 @@ async def _ensure_schema() -> None:
 
 
 class _FakeWorkflowManager:
-    """Captures ``enqueue(start_task(agent_id, extra_context=…))`` hand-offs."""
+    """Captures ``enqueue(start_task(agent_id, extra_context=…, run_id=…))`` hand-offs."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, str | None]] = []
+        self.runs: list[int | None] = []
+        self.cancelled: list[tuple[int, int | None]] = []
 
-    def start_task(self, agent_id: int, extra_context: str | None = None):
+    def start_task(
+        self,
+        agent_id: int,
+        extra_context: str | None = None,
+        *,
+        run_id: int | None = None,
+    ):
+        self.runs.append(run_id)
         return (agent_id, extra_context)
+
+    def cancel(self, agent_id: int, *, run_id: int | None = None):
+        self.cancelled.append((agent_id, run_id))
+        return ("cancel", agent_id)
 
     def enqueue(self, item) -> None:
         self.calls.append(item)
@@ -2314,7 +2462,7 @@ async def test_completed_result_shows_deliverable_not_objective_reason() -> None
     from sqlalchemy import select
 
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentArtifact, AgentSession
+    from precursor.backend.models import AgentArtifact, AgentRun, AgentSession
     from precursor.backend.services.agents.manager import AgentManager, _LiveSession
 
     await _ensure_schema()
@@ -2327,13 +2475,16 @@ async def test_completed_result_shows_deliverable_not_objective_reason() -> None
     live.pending_answer = (
         f"{joke}\nOBJECTIVE_COMPLETE: Told the user a joke as requested. No further work needed."
     )
-    mgr._live[agent_id] = live
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+    mgr._live[run_id] = live
 
     patch: dict[str, object] = {}
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
-        assert agent is not None
-        await mgr._on_idle(agent, patch)
+        run = await session.get(AgentRun, run_id)
+        assert agent is not None and run is not None
+        await mgr._on_idle(agent, run, patch)
 
     # The displayed result is the joke, not the OBJECTIVE_COMPLETE meta-reason.
     assert patch["status"] == "completed"
@@ -2359,7 +2510,7 @@ async def test_completed_result_falls_back_to_reason_when_body_is_directive_only
     than an empty summary.
     """
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun, AgentSession
     from precursor.backend.services.agents.manager import AgentManager, _LiveSession
 
     await _ensure_schema()
@@ -2369,13 +2520,16 @@ async def test_completed_result_falls_back_to_reason_when_body_is_directive_only
     mgr = AgentManager()
     live = _LiveSession(sdk_session=None)
     live.pending_answer = "OBJECTIVE_COMPLETE: Completed the three-stage mission."
-    mgr._live[agent_id] = live
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+    mgr._live[run_id] = live
 
     patch: dict[str, object] = {}
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
-        assert agent is not None
-        await mgr._on_idle(agent, patch)
+        run = await session.get(AgentRun, run_id)
+        assert agent is not None and run is not None
+        await mgr._on_idle(agent, run, patch)
 
     assert patch["status"] == "completed"
     assert patch["result_summary"] == "Completed the three-stage mission."
@@ -2420,21 +2574,90 @@ async def _open_run_for(workflow_id: int, *, trigger: str = "manual") -> int:
         wf.current_run_id = run.id
         current = await session.get(WorkflowStep, wf.current_step_id)
         if current is not None and current.agent_id is not None:
-            session.add(
-                WorkflowRunStep(
-                    run_id=run.id,
-                    position=current.position,
-                    kind=current.kind,
-                    label=current.name,
-                    agent_id=current.agent_id,
-                    attempt=1,
-                    status="running",
-                    input_context=None,
-                    started_at=datetime.now(UTC),
-                )
+            agent_run = await _seed_agent_run(session, current.agent_id, run.id)
+            step_trace = WorkflowRunStep(
+                run_id=run.id,
+                position=current.position,
+                kind=current.kind,
+                label=current.name,
+                agent_id=current.agent_id,
+                agent_run_id=agent_run.id,
+                attempt=1,
+                status="running",
+                input_context=None,
+                started_at=datetime.now(UTC),
             )
+            session.add(step_trace)
+            await session.flush()
+            agent_run.workflow_run_step_id = step_trace.id
         await session.commit()
         return run.id
+
+
+async def _seed_agent_run(session, agent_id: int, workflow_run_id: int | None):
+    """Open the ``AgentRun`` ``_launch_step`` would have created for a step.
+
+    Execution state lives on the run now, so a hand-seeded workflow needs one or
+    the advance seam has nothing to key on.
+    """
+    from datetime import UTC, datetime
+
+    from precursor.backend.models import AgentRun, AgentSession
+
+    agent = await session.get(AgentSession, agent_id)
+    assert agent is not None
+    run = AgentRun(
+        agent_id=agent_id,
+        trigger="workflow",
+        workflow_run_id=workflow_run_id,
+        status=agent.status,
+        active_prompt=agent.active_prompt,
+        result_summary=agent.result_summary,
+        error=agent.error,
+        model=agent.model,
+        use_mcp=agent.use_mcp,
+        use_skills=agent.use_skills,
+        use_memory=agent.use_memory,
+        mcp_servers=agent.mcp_servers,
+        approval_policy=agent.approval_policy,
+        role_id=agent.role_id,
+        started_at=datetime.now(UTC),
+    )
+    session.add(run)
+    await session.flush()
+    agent.current_run_id = run.id
+    return run
+
+
+async def _latest_run(agent_id: int | None):
+    """The newest ``AgentRun`` for an agent — the execution a launch just opened."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+
+    assert agent_id is not None
+    async with SessionLocal() as session:
+        return (
+            (
+                await session.execute(
+                    select(AgentRun)
+                    .where(AgentRun.agent_id == agent_id)
+                    .order_by(AgentRun.id.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+
+async def _current_run_id(agent_id: int) -> int | None:
+    """The agent's current run id — how the manager addresses an advance."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        return agent.current_run_id if agent else None
 
 
 async def _open_attempt_for(workflow_id: int, agent_id: int) -> None:
@@ -2449,7 +2672,6 @@ async def _open_attempt_for(workflow_id: int, agent_id: int) -> None:
     from datetime import UTC, datetime
 
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
     from precursor.backend.models.workflow import Workflow, WorkflowRunStep, WorkflowStep
 
     async with SessionLocal() as session:
@@ -2469,21 +2691,24 @@ async def _open_attempt_for(workflow_id: int, agent_id: int) -> None:
                 WorkflowRunStep.position == step.position,
             )
         )
-        agent = await session.get(AgentSession, agent_id)
-        session.add(
-            WorkflowRunStep(
-                run_id=wf.current_run_id,
-                position=step.position,
-                kind=step.kind,
-                label=step.name or "Step",
-                agent_id=agent_id,
-                attempt=int(prior.scalar() or 0) + 1,
-                status="running",
-                started_at=datetime.now(UTC),
-                token_baseline_in=agent.total_input_tokens if agent else 0,
-                token_baseline_out=agent.total_output_tokens if agent else 0,
-            )
+        agent_run = await _seed_agent_run(session, agent_id, wf.current_run_id)
+        trace = WorkflowRunStep(
+            run_id=wf.current_run_id,
+            position=step.position,
+            kind=step.kind,
+            label=step.name or "Step",
+            agent_id=agent_id,
+            agent_run_id=agent_run.id,
+            attempt=int(prior.scalar() or 0) + 1,
+            status="running",
+            started_at=datetime.now(UTC),
+            # A fresh run starts at zero, so its own counters are the spend.
+            token_baseline_in=0,
+            token_baseline_out=0,
         )
+        session.add(trace)
+        await session.flush()
+        agent_run.workflow_run_step_id = trace.id
         await session.commit()
 
 
@@ -3112,9 +3337,14 @@ async def test_step_failure_policy_fail_is_the_default() -> None:
 
 
 async def test_token_spend_is_recorded_per_attempt_and_rolled_up() -> None:
-    """Each attempt records its own delta; the run accumulates the total."""
+    """Each attempt records its own delta; the run accumulates the total.
+
+    The delta is measured against the **agent run's** counters, not the agent's
+    cumulative ones — that is what keeps two workflows driving the same agent from
+    billing each other's tokens to their own step.
+    """
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun
     from precursor.backend.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
     from precursor.backend.services.agents import workflow as wf_mod
 
@@ -3122,7 +3352,8 @@ async def test_token_spend_is_recorded_per_attempt_and_rolled_up() -> None:
     wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
     run_id = await _open_run_for(wf_id)
 
-    # The open trace was seeded without a baseline; set one, then "spend".
+    # The open trace was seeded without a baseline; set one, then "spend" on the
+    # run that is driving the step.
     async with SessionLocal() as session:
         trace = (
             await session.execute(
@@ -3133,10 +3364,11 @@ async def test_token_spend_is_recorded_per_attempt_and_rolled_up() -> None:
         ).scalar_one()
         trace.token_baseline_in = 100
         trace.token_baseline_out = 10
-        agent = await session.get(AgentSession, agents[0])
-        assert agent is not None
-        agent.total_input_tokens = 350
-        agent.total_output_tokens = 60
+        assert trace.agent_run_id is not None
+        agent_run = await session.get(AgentRun, trace.agent_run_id)
+        assert agent_run is not None
+        agent_run.total_input_tokens = 350
+        agent_run.total_output_tokens = 60
         await session.commit()
 
     mgr = _FakeWorkflowManager()
@@ -3186,14 +3418,17 @@ async def test_watchdog_unsticks_a_stalled_step() -> None:
         trace.started_at = datetime.now(UTC) - timedelta(minutes=30)
         await session.commit()
 
+    stalled_run = await _current_run_id(agents[0])
     mgr = _FakeWorkflowManager()
-    mgr.cancel = lambda agent_id: ("cancel", agent_id)  # type: ignore[method-assign]
     async with SessionLocal() as session:
         swept = await wf_mod.sweep_stalled_steps(session, mgr)
     assert swept == 1
 
-    # The stuck agent was cancelled and the policy carried the run onward.
+    # The stuck agent was cancelled and the policy carried the run onward. The
+    # cancel targets the wedged *run*, so a second workflow driving the same
+    # agent keeps running.
     assert ("cancel", agents[0]) in mgr.calls
+    assert mgr.cancelled == [(agents[0], stalled_run)]
     assert agents[1] in [c[0] for c in mgr.calls if isinstance(c[0], int)]
     steps = await _run_steps(run_id)
     stalled = next(s for s in steps if s.agent_id == agents[0])
@@ -3504,13 +3739,21 @@ async def test_step_capability_overrides_and_workflow_role_apply_at_launch() -> 
         assert wf is not None
         await wf_mod._advance_one(session, mgr, wf, agents[0], "idle")
 
+    # The snapshot lands on the *run*, never on the shared definition — that is
+    # what lets a second workflow drive the same agent with its own toggles.
+    run = await _latest_run(agents[1])
+    assert run is not None
+    assert run.use_mcp is False
+    assert run.use_memory is False
+    assert run.use_skills is True  # not overridden → inherited
+    assert run.role_id == role_id  # workflow-wide persona
+
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agents[1])
         assert agent is not None
-        assert agent.use_mcp is False
-        assert agent.use_memory is False
-        assert agent.use_skills is True  # not overridden → inherited
-        assert agent.role_id == role_id  # workflow-wide persona
+        assert agent.use_mcp is True  # the definition is untouched
+        assert agent.use_memory is True
+        assert agent.role_id is None
 
 
 async def test_workflow_events_carry_status_for_notifications() -> None:
@@ -4552,7 +4795,7 @@ async def test_replay_appends_a_marked_attempt_without_advancing() -> None:
 async def test_replay_is_closed_by_the_completion_seam() -> None:
     """Nothing else would ever close a replay's trace, so the seam must."""
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun, AgentSession
     from precursor.backend.models.workflow import Workflow
     from precursor.backend.services.agents import workflow as wf_mod
 
@@ -4572,14 +4815,21 @@ async def test_replay_is_closed_by_the_completion_seam() -> None:
     async with SessionLocal() as session:
         await wf_mod.replay_step(session, mgr2, wf_id, step_run_id=original.id)
 
-    # The replayed agent lands its turn with a fresh deliverable.
+    # The replayed agent lands its turn with a fresh deliverable. The replay
+    # opened its own run, so that is the execution the advance is fired for.
+    replay_run_id = await _current_run_id(agents[0])
+    assert replay_run_id is not None
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agents[0])
         assert agent is not None
         agent.status = "idle"
         agent.result_summary = "A sharper second take."
+        agent_run = await session.get(AgentRun, replay_run_id)
+        assert agent_run is not None
+        agent_run.status = "idle"
+        agent_run.result_summary = "A sharper second take."
         await session.commit()
-        await wf_mod.advance_for_agent(session, mgr2, agents[0])
+        await wf_mod.advance_for_run(session, mgr2, replay_run_id)
 
     # Closing the replay handed nothing downstream: step 2 was never launched.
     assert [c[0] for c in mgr2.calls] == [agents[0]]
@@ -4802,6 +5052,32 @@ async def test_step_attempt_events_reject_a_foreign_workflow() -> None:
         assert await wf_mod.step_attempt_events(session, theirs, step_id) is not None
 
 
+async def _snapshot_policy(wf_id: int, agent_id: int) -> str | None:
+    """Snapshot step 0's overrides onto a fresh run and report its policy."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        step = (
+            (
+                await session.execute(
+                    select(WorkflowStep).where(
+                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        run = await _seed_agent_run(session, agent_id, None)
+        await wf_mod._snapshot_step_overrides(run, wf, step)
+        await session.commit()
+        return run.approval_policy
+
+
 async def test_workflow_approval_policy_applies_to_each_step_agent() -> None:
     """The pipeline's stance wins for the run, without rewriting shared agents.
 
@@ -4812,8 +5088,7 @@ async def test_workflow_approval_policy_applies_to_each_step_agent() -> None:
     """
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentSession
-    from precursor.backend.models.workflow import Workflow, WorkflowStep
-    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.models.workflow import Workflow
 
     await _ensure_schema()
     wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
@@ -4829,68 +5104,33 @@ async def test_workflow_approval_policy_applies_to_each_step_agent() -> None:
         wf.approval_policy = "autonomous"
         await session.commit()
 
-    async with SessionLocal() as session:
-        wf = await wf_mod._load_workflow(session, wf_id)
-        assert wf is not None
-        step = (
-            (
-                await session.execute(
-                    select(WorkflowStep).where(
-                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
-                    )
-                )
-            )
-            .scalars()
-            .one()
-        )
-        await wf_mod._apply_step_overrides(session, wf, step)
-        await session.commit()
+    policy = await _snapshot_policy(wf_id, agent_id)
+    assert policy == "autonomous"
 
-    async with SessionLocal() as session:
-        agent = await session.get(AgentSession, agent_id)
-        assert agent is not None
-        assert agent.approval_policy == "autonomous"
-
-    # A workflow that states no policy leaves the agent's own alone.
-    async with SessionLocal() as session:
-        wf = await session.get(Workflow, wf_id)
-        assert wf is not None
-        wf.approval_policy = None
-        agent = await session.get(AgentSession, agent_id)
-        assert agent is not None
-        agent.approval_policy = "manual"
-        await session.commit()
-
-    async with SessionLocal() as session:
-        wf = await wf_mod._load_workflow(session, wf_id)
-        assert wf is not None
-        step = (
-            (
-                await session.execute(
-                    select(WorkflowStep).where(
-                        WorkflowStep.workflow_id == wf_id, WorkflowStep.position == 0
-                    )
-                )
-            )
-            .scalars()
-            .one()
-        )
-        await wf_mod._apply_step_overrides(session, wf, step)
-        await session.commit()
-
+    # And the shared definition still carries its own stance.
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
         assert agent.approval_policy == "manual"
 
+    # A workflow that states no policy leaves the run on the agent's own.
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_id)
+        assert wf is not None
+        wf.approval_policy = None
+        await session.commit()
 
-async def test_step_mcp_scope_reaches_the_agent_and_is_cleared_again() -> None:
-    """The step's allowlist lands on the agent, and never outlives the step.
+    assert await _snapshot_policy(wf_id, agent_id) == "manual"
 
-    ``_apply_step_overrides`` is the only channel to the runtime — the manager
-    reads the agent row, not the step. It must also *clear* the scope, because a
-    reusable agent that kept step N's narrow allowlist would silently starve
-    step N+1 of the tools it does need.
+
+async def test_step_mcp_scope_reaches_the_run_and_never_leaks_to_the_next() -> None:
+    """The step's allowlist lands on its run, and never outlives that run.
+
+    ``_snapshot_step_overrides`` is the only channel to the runtime — the manager
+    reads the run's snapshot, not the step. It must also *clear* the scope,
+    because a run that inherited step N's narrow allowlist would silently starve
+    step N+1 of the tools it does need. Writing to the run rather than the shared
+    agent is what keeps a concurrent workflow's scope out of this one.
     """
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentSession
@@ -4905,7 +5145,7 @@ async def test_step_mcp_scope_reaches_the_agent_and_is_cleared_again() -> None:
     agent_id = agents[0]
     assert agent_id is not None
 
-    async def _apply(position: int) -> None:
+    async def _apply(position: int) -> str | None:
         async with SessionLocal() as session:
             wf = await wf_mod._load_workflow(session, wf_id)
             assert wf is not None
@@ -4922,16 +5162,16 @@ async def test_step_mcp_scope_reaches_the_agent_and_is_cleared_again() -> None:
                 .one()
             )
             step.agent_id = agent_id  # the shared-agent case
-            await wf_mod._apply_step_overrides(session, wf, step)
+            run = await _seed_agent_run(session, agent_id, None)
+            await wf_mod._snapshot_step_overrides(run, wf, step)
             await session.commit()
+            return run.mcp_servers
 
-    await _apply(0)
-    async with SessionLocal() as session:
-        agent = await session.get(AgentSession, agent_id)
-        assert agent is not None
-        assert agent.mcp_servers == "fetch,workiq"
+    assert await _apply(0) == "fetch,workiq"
+    # Step 1 declares no scope, so its own run gets the whole catalogue back.
+    assert await _apply(1) is None
 
-    await _apply(1)
+    # Neither snapshot touched the shared definition.
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
@@ -5138,7 +5378,7 @@ async def test_a_raised_question_still_parks_the_run() -> None:
 async def test_approving_a_permission_on_a_paused_run_puts_it_back_in_flight() -> None:
     """A run parked *before* the split (or by a raised question) still recovers.
 
-    ``advance_for_agent`` only looks at running workflows, so resolving the gate
+    ``advance_for_run`` only looks at running workflows, so resolving the gate
     of a paused run without restoring it would leave the approved agent
     finishing its turn into a pipeline that had stopped listening.
     """
@@ -5250,7 +5490,10 @@ async def test_resolving_a_permission_unsticks_the_agent_status() -> None:
             self.session_approvals: set = set()
             self.grants: list = []
 
-    mgr._live[agent_id] = _Live()  # type: ignore[assignment]
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+    # Live sessions are keyed by *run*, so a sibling execution keeps its own.
+    mgr._live[run_id] = _Live()  # type: ignore[assignment]
     # The decision object needs the SDK; the status reset is what's under test.
     mgr._decision = lambda decision: decision  # type: ignore[method-assign]
 
@@ -5278,8 +5521,10 @@ async def _advance_in_own_session(agent_id: int, mgr) -> None:
     from precursor.backend.db import SessionLocal
     from precursor.backend.services.agents import workflow as wf_mod
 
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
     async with SessionLocal() as session:
-        await wf_mod.advance_for_agent(session, mgr, agent_id)
+        await wf_mod.advance_for_run(session, mgr, run_id)
 
 
 async def test_concurrent_advances_enter_the_next_step_once() -> None:
@@ -5338,7 +5583,7 @@ async def test_concurrent_advances_retry_a_failed_step_once() -> None:
     import asyncio
 
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun
     from precursor.backend.models.workflow import WorkflowStep
 
     await _ensure_schema()
@@ -5349,10 +5594,10 @@ async def test_concurrent_advances_retry_a_failed_step_once() -> None:
     run_id = await _open_run_for(wf_id)
     assert agents[0] is not None
     async with SessionLocal() as session:
-        agent = await session.get(AgentSession, agents[0])
-        assert agent is not None
-        agent.status = "failed"
-        agent.error = "boom"
+        run = await session.get(AgentRun, await _current_run_id(agents[0]))
+        assert run is not None
+        run.status = "failed"
+        run.error = "boom"
         await session.commit()
 
     mgr = _FakeWorkflowManager()
@@ -5416,7 +5661,7 @@ async def test_duplicate_advances_do_not_double_count_a_step_s_tokens() -> None:
     import asyncio
 
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun
     from precursor.backend.models.workflow import WorkflowRun
 
     await _ensure_schema()
@@ -5424,10 +5669,10 @@ async def test_duplicate_advances_do_not_double_count_a_step_s_tokens() -> None:
     run_id = await _open_run_for(wf_id)
     assert agents[0] is not None
     async with SessionLocal() as session:
-        agent = await session.get(AgentSession, agents[0])
-        assert agent is not None
-        agent.total_input_tokens = 1_253_092
-        agent.total_output_tokens = 4_000
+        agent_run = await session.get(AgentRun, await _current_run_id(agents[0]))
+        assert agent_run is not None
+        agent_run.total_input_tokens = 1_253_092
+        agent_run.total_output_tokens = 4_000
         await session.commit()
 
     mgr = _FakeWorkflowManager()
@@ -5441,6 +5686,59 @@ async def test_duplicate_advances_do_not_double_count_a_step_s_tokens() -> None:
         assert run is not None
         assert run.total_input_tokens == 1_253_092
         assert run.total_output_tokens == 4_000
+
+
+async def test_each_attempt_bills_only_its_own_run() -> None:
+    """A retried step must bill each attempt separately, not cumulatively.
+
+    Before runs existed the delta was ``agent.total_input_tokens - baseline``
+    against the agent's *cumulative* counters, so attempt 2 of a step inherited
+    attempt 1's spend in its baseline and any interleaved execution on the same
+    agent leaked into both. Each attempt now opens its own :class:`AgentRun`
+    whose counters start at zero, so the trace's delta is exactly what that
+    attempt spent — and the run rollup is their honest sum.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.models.workflow import WorkflowRun
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(
+        kinds=["task"],
+        step_kwargs=[{"on_error": "retry", "max_retries": 2}],
+    )
+    run_id = await _open_run_for(wf_id)
+    assert agents[0] is not None
+
+    async def _spend(status: str, tokens_in: int, tokens_out: int) -> None:
+        async with SessionLocal() as session:
+            agent_run = await session.get(AgentRun, await _current_run_id(agents[0]))
+            assert agent_run is not None
+            agent_run.status = status
+            agent_run.error = "boom" if status == "failed" else None
+            agent_run.total_input_tokens = tokens_in
+            agent_run.total_output_tokens = tokens_out
+            await session.commit()
+        await _advance_in_own_session(agents[0], _FakeWorkflowManager())
+
+    # Attempt 1 fails after 500/50; the retry opens a *fresh* run, which spends
+    # 700/70 of its own. A cumulative counter would have billed attempt 2 twice.
+    await _spend("failed", 500, 50)
+    await _spend("completed", 700, 70)
+
+    steps = await _run_steps(run_id)
+    assert [(s.position, s.attempt, s.status) for s in steps] == [
+        (0, 1, "failed"),
+        (0, 2, "completed"),
+    ]
+    assert [(s.input_tokens, s.output_tokens) for s in steps] == [(500, 50), (700, 70)]
+    # Each attempt ran as its own execution, so the traces point at distinct runs.
+    assert len({s.agent_run_id for s in steps}) == 2
+
+    async with SessionLocal() as session:
+        run = await session.get(WorkflowRun, run_id)
+        assert run is not None
+        assert (run.total_input_tokens, run.total_output_tokens) == (1_200, 120)
 
 
 async def test_entering_a_step_supersedes_a_trace_left_open() -> None:
@@ -5515,10 +5813,14 @@ async def test_only_a_transition_into_rest_advances_workflows() -> None:
 
     await _ensure_schema()
     agent_id = await _make_agent(title="Stepper", status="running")
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
 
     mgr = AgentManager()
+    # The advance is addressed by *run*, so a second workflow driving the same
+    # agent is never dragged forward by this one's turn ending.
     advanced: list[int] = []
-    mgr._advance_workflows = lambda aid: advanced.append(aid)  # type: ignore[method-assign]
+    mgr._advance_workflows = lambda rid: advanced.append(rid)  # type: ignore[method-assign]
     mgr.enqueue = lambda coro: None  # type: ignore[method-assign]
 
     # Named exactly as the SDK does — the handler dispatches on the class name.
@@ -5532,8 +5834,8 @@ async def test_only_a_transition_into_rest_advances_workflows() -> None:
         pass
 
     # The turn ends: running → idle is a real transition, so the run advances.
-    await mgr._handle_event_locked(agent_id, SessionIdleData())
-    assert advanced == [agent_id]
+    await mgr._handle_event_locked(run_id, SessionIdleData())
+    assert advanced == [run_id]
 
     # Everything trailing behind it is not.
     for event in (
@@ -5542,8 +5844,8 @@ async def test_only_a_transition_into_rest_advances_workflows() -> None:
         SessionIdleData(),
         PendingMessagesModifiedData(),
     ):
-        await mgr._handle_event_locked(agent_id, event)
-    assert advanced == [agent_id]
+        await mgr._handle_event_locked(run_id, event)
+    assert advanced == [run_id]
 
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
@@ -5564,10 +5866,12 @@ async def test_a_status_change_made_mid_event_still_advances_workflows() -> None
 
     await _ensure_schema()
     agent_id = await _make_agent(title="Spender", status="running", token_budget=1000)
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
 
     mgr = AgentManager()
     advanced: list[int] = []
-    mgr._advance_workflows = lambda aid: advanced.append(aid)  # type: ignore[method-assign]
+    mgr._advance_workflows = lambda rid: advanced.append(rid)  # type: ignore[method-assign]
     mgr.enqueue = lambda coro: None  # type: ignore[method-assign]
 
     class AssistantUsageData:
@@ -5576,10 +5880,529 @@ async def test_a_status_change_made_mid_event_still_advances_workflows() -> None
             self.input_tokens = 900
             self.output_tokens = 200
 
-    await mgr._handle_event_locked(agent_id, AssistantUsageData())
+    await mgr._handle_event_locked(run_id, AssistantUsageData())
 
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
         assert agent.status == "blocked"
-    assert advanced == [agent_id]
+    assert advanced == [run_id]
+
+
+# ---------------------------------------------------------------------------
+# Shared-agent concurrency (issue #242)
+#
+# An agent is a reusable *definition*. Two workflows are allowed to point a step
+# at the same one and run at the same time. Before execution state was split onto
+# ``AgentRun`` that silently corrupted both: capability overrides were written
+# onto the shared agent row, artifacts were wiped agent-wide, one going idle
+# advanced both pipelines, and token deltas were computed against cumulative
+# counters so each attempt billed the other's spend.
+#
+# These tests pin every one of those seams.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_shared_agent_workflows(
+    *,
+    a_use_mcp: bool | None = None,
+    b_use_mcp: bool | None = None,
+    a_policy: str | None = None,
+    b_policy: str | None = None,
+) -> tuple[int, int, int]:
+    """Two one-step workflows pointing at the *same* agent.
+
+    Returns ``(workflow_a_id, workflow_b_id, shared_agent_id)``. Each workflow can
+    carry a different capability override so a run's snapshot can be told apart
+    from its neighbour's.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowStep
+
+    async with SessionLocal() as session:
+        shared = AgentSession(
+            title="Shared worker",
+            task_prompt="do the thing",
+            status="idle",
+            use_mcp=False,
+            approval_policy="ask",
+        )
+        session.add(shared)
+        await session.commit()
+        await session.refresh(shared)
+
+        wf_a = Workflow(name="Pipeline A", status="idle", approval_policy=a_policy)
+        wf_b = Workflow(name="Pipeline B", status="idle", approval_policy=b_policy)
+        session.add_all([wf_a, wf_b])
+        await session.commit()
+        await session.refresh(wf_a)
+        await session.refresh(wf_b)
+
+        session.add_all(
+            [
+                WorkflowStep(
+                    workflow_id=wf_a.id,
+                    position=0,
+                    agent_id=shared.id,
+                    kind="task",
+                    name="A0",
+                    use_mcp=a_use_mcp,
+                ),
+                WorkflowStep(
+                    workflow_id=wf_b.id,
+                    position=0,
+                    agent_id=shared.id,
+                    kind="task",
+                    name="B0",
+                    use_mcp=b_use_mcp,
+                ),
+            ]
+        )
+        await session.commit()
+        return wf_a.id, wf_b.id, shared.id
+
+
+async def _start_both(wf_a_id: int, wf_b_id: int):
+    """Launch both pipelines back to back and return the fake manager."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    mgr = _FakeWorkflowManager()
+    for wf_id in (wf_a_id, wf_b_id):
+        async with SessionLocal() as session:
+            await wf_mod.start_workflow(session, mgr, wf_id)
+    return mgr
+
+
+async def _runs_for_agent(agent_id: int) -> list:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+
+    async with SessionLocal() as session:
+        return list(
+            (
+                await session.execute(
+                    select(AgentRun).where(AgentRun.agent_id == agent_id).order_by(AgentRun.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def test_two_workflows_sharing_an_agent_get_separate_runs() -> None:
+    """The core of #242: concurrent drivers must not share execution state."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import Workflow
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows()
+    await _start_both(wf_a_id, wf_b_id)
+
+    runs = await _runs_for_agent(agent_id)
+    assert len(runs) == 2, "each pipeline must open its own execution"
+    assert runs[0].id != runs[1].id
+
+    # Each run is bound to exactly one workflow run — no fan-out.
+    async with SessionLocal() as session:
+        wf_a = await session.get(Workflow, wf_a_id)
+        wf_b = await session.get(Workflow, wf_b_id)
+        assert wf_a is not None and wf_b is not None
+        assert {r.workflow_run_id for r in runs} == {wf_a.current_run_id, wf_b.current_run_id}
+    assert runs[0].workflow_run_id != runs[1].workflow_run_id
+
+
+async def test_step_overrides_land_on_the_run_not_the_shared_agent() -> None:
+    """Capability bleed (failure mode 1): the definition must stay untouched."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows(
+        a_use_mcp=True,
+        b_use_mcp=False,
+        a_policy="auto",
+        b_policy="ask",
+    )
+    await _start_both(wf_a_id, wf_b_id)
+
+    runs = await _runs_for_agent(agent_id)
+    by_wf = {r.workflow_run_id: r for r in runs}
+    snapshots = sorted((r.use_mcp, r.approval_policy) for r in by_wf.values())
+    assert snapshots == [(False, "ask"), (True, "auto")], (
+        "each run must carry its own workflow's capability snapshot"
+    )
+
+    # The shared definition kept its own settings throughout.
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.use_mcp is False
+        assert agent.approval_policy == "ask"
+
+
+async def test_editing_the_agent_mid_run_does_not_change_an_in_flight_snapshot() -> None:
+    """A run executes with what it started with, whatever the definition becomes."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows(a_use_mcp=True)
+    await _start_both(wf_a_id, wf_b_id)
+
+    before = {r.id: (r.use_mcp, r.model) for r in await _runs_for_agent(agent_id)}
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        agent.use_mcp = True
+        agent.use_skills = True
+        agent.model = "some-other-model"
+        await session.commit()
+
+    async with SessionLocal() as session:
+        for run_id, (use_mcp, model) in before.items():
+            run = await session.get(AgentRun, run_id)
+            assert run is not None
+            assert run.use_mcp is use_mcp
+            assert run.model == model
+
+
+async def test_advancing_one_run_leaves_the_other_workflow_alone() -> None:
+    """Advance fan-out (failure mode 4): one idle agent, one pipeline advances."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows()
+    await _start_both(wf_a_id, wf_b_id)
+
+    runs = await _runs_for_agent(agent_id)
+    async with SessionLocal() as session:
+        wf_a = await session.get(Workflow, wf_a_id)
+        assert wf_a is not None
+        run_a = next(r for r in runs if r.workflow_run_id == wf_a.current_run_id)
+
+    # Only run A finishes.
+    async with SessionLocal() as session:
+        row = await session.get(AgentRun, run_a.id)
+        assert row is not None
+        row.status = "idle"
+        row.result_summary = "OBJECTIVE_COMPLETE: done"
+        await session.commit()
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.advance_for_run(session, mgr, run_a.id)
+
+    async with SessionLocal() as session:
+        wf_a = await session.get(Workflow, wf_a_id)
+        wf_b = await session.get(Workflow, wf_b_id)
+        assert wf_a is not None and wf_b is not None
+        # A ran out of steps and completed; B never moved.
+        assert wf_a.status == "completed"
+        assert wf_b.status == "running"
+
+
+async def test_clearing_one_runs_artifacts_leaves_the_other_run_intact() -> None:
+    """Artifact wipe (failure mode 3): the blackboard is per-run."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentArtifact
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows()
+    await _start_both(wf_a_id, wf_b_id)
+    runs = await _runs_for_agent(agent_id)
+    run_a, run_b = runs[0], runs[1]
+
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                AgentArtifact(
+                    agent_id=agent_id, agent_run_id=run_a.id, title="A", content="from A"
+                ),
+                AgentArtifact(
+                    agent_id=agent_id, agent_run_id=run_b.id, title="B", content="from B"
+                ),
+            ]
+        )
+        await session.commit()
+
+    mgr = AgentManager()
+    await mgr._clear_artifacts(run_a.id)
+
+    async with SessionLocal() as session:
+        rows = (
+            (await session.execute(select(AgentArtifact).where(AgentArtifact.agent_id == agent_id)))
+            .scalars()
+            .all()
+        )
+    assert [r.content for r in rows] == ["from B"], "clearing one run must not touch the other"
+
+
+async def test_launching_a_second_workflow_does_not_wipe_the_first_blackboard() -> None:
+    """``start_workflow`` used to pre-clear every step agent's artifacts."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentArtifact
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows()
+
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf_a_id)
+    run_a = (await _runs_for_agent(agent_id))[0]
+
+    async with SessionLocal() as session:
+        session.add(
+            AgentArtifact(
+                agent_id=agent_id,
+                agent_run_id=run_a.id,
+                title="Note",
+                content="A's working note",
+            )
+        )
+        await session.commit()
+
+    # B starts while A is mid-flight.
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf_b_id)
+
+    async with SessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AgentArtifact).where(AgentArtifact.agent_run_id == run_a.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [r.content for r in rows] == ["A's working note"]
+
+
+async def test_concurrent_runs_bill_their_own_tokens() -> None:
+    """Token attribution (failure mode 5) across *simultaneous* runs."""
+    from types import SimpleNamespace
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    def _usage(inp: int, out: int) -> SimpleNamespace:
+        return SimpleNamespace(input_tokens=inp, output_tokens=out, model="test-model")
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows()
+    await _start_both(wf_a_id, wf_b_id)
+    run_a, run_b = await _runs_for_agent(agent_id)
+
+    mgr = AgentManager()
+    await mgr._record_usage(run_a.id, _usage(300, 30))
+    await mgr._record_usage(run_b.id, _usage(900, 90))
+    await mgr._record_usage(run_a.id, _usage(200, 20))
+
+    async with SessionLocal() as session:
+        a = await session.get(AgentRun, run_a.id)
+        b = await session.get(AgentRun, run_b.id)
+        agent = await session.get(AgentSession, agent_id)
+        assert a is not None and b is not None and agent is not None
+        assert (a.total_input_tokens, a.total_output_tokens) == (500, 50)
+        assert (b.total_input_tokens, b.total_output_tokens) == (900, 90)
+        # The agent's own counters are a mirror of its *current* run, not a
+        # cumulative total — B opened last, so that's what the list view shows.
+        assert agent.current_run_id == run_b.id
+        assert (agent.total_input_tokens, agent.total_output_tokens) == (900, 90)
+
+    # Budget governance is cumulative, so it reads the real total across runs
+    # rather than the mirror (which resets whenever a new run opens).
+    assert await mgr._agent_spend(agent_id) == 1400 + 140
+
+
+async def test_advance_ignores_a_run_from_a_superseded_workflow_run() -> None:
+    """A late advance from a previous pipeline run must not move the current one."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.models.workflow import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_a_id, _wf_b_id, agent_id = await _seed_shared_agent_workflows()
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf_a_id)
+    stale_run = (await _runs_for_agent(agent_id))[0]
+
+    # Restart the pipeline: a brand new workflow run supersedes the first.
+    # ``start_workflow`` refuses a running pipeline, so park it the way a stop
+    # would before re-launching.
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_a_id)
+        assert wf is not None
+        wf.status = "idle"
+        await session.commit()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf_a_id)
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_a_id)
+        assert wf is not None
+        assert stale_run.workflow_run_id != wf.current_run_id
+        current_run_id = wf.current_run_id
+        before_step = wf.current_step_id
+
+    # The old run finally reports in.
+    async with SessionLocal() as session:
+        row = await session.get(AgentRun, stale_run.id)
+        assert row is not None
+        row.status = "idle"
+        row.result_summary = "OBJECTIVE_COMPLETE: late"
+        await session.commit()
+
+    async with SessionLocal() as session:
+        await wf_mod.advance_for_run(session, _FakeWorkflowManager(), stale_run.id)
+
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, wf_a_id)
+        assert wf is not None
+        assert wf.current_run_id == current_run_id
+        assert wf.current_step_id == before_step
+        assert wf.status == "running"
+
+
+async def test_token_budget_counts_spend_across_every_run() -> None:
+    """The budget is cumulative governance, not a per-run allowance.
+
+    ``AgentSession.total_*`` is a mirror of the *current* run, so reading it
+    would silently hand the agent a fresh allowance on every start — and would
+    see only one of two concurrent drivers' spend.
+    """
+    from types import SimpleNamespace
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun, AgentSession
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows()
+    await _start_both(wf_a_id, wf_b_id)
+    run_a, run_b = await _runs_for_agent(agent_id)
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        agent.token_budget = 1000
+        await session.commit()
+        for run_id in (run_a.id, run_b.id):
+            run = await session.get(AgentRun, run_id)
+            assert run is not None
+            run.status = "running"
+        await session.commit()
+
+    mgr = AgentManager()
+    # Neither run alone crosses the cap; together they do.
+    await mgr._record_usage(run_a.id, SimpleNamespace(input_tokens=600, output_tokens=0))
+    async with SessionLocal() as session:
+        assert (await session.get(AgentRun, run_a.id)).status == "running"
+
+    await mgr._record_usage(run_b.id, SimpleNamespace(input_tokens=600, output_tokens=0))
+    async with SessionLocal() as session:
+        tripped = await session.get(AgentRun, run_b.id)
+        assert tripped is not None
+        assert tripped.status == "blocked"
+        assert "token budget" in (tripped.blocked_question or "")
+
+
+@pytest.mark.asyncio
+async def test_clear_artifacts_decides_whether_the_board_spans_runs() -> None:
+    """``Workflow.clear_artifacts`` still governs the blackboard's lifetime.
+
+    Before runs existed the flag wiped every step agent's artifacts at launch.
+    Wiping agent-wide rows is exactly the bleed the run split exists to stop, so
+    the flag moved to the *read* side: set (the default), a step sees only this
+    workflow run's board; unset, it deliberately accumulates across runs — which
+    is what a pipeline that builds on yesterday's output relies on.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentArtifact, AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun, WorkflowStep
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        agent = AgentSession(title="Producer", task_prompt="produce", status="idle")
+        wf = Workflow(name="Accumulator", status="idle")
+        session.add_all([agent, wf])
+        await session.commit()
+        await session.refresh(agent)
+        await session.refresh(wf)
+
+        step = WorkflowStep(workflow_id=wf.id, position=0, agent_id=agent.id, use_mcp=False)
+        old_wf_run = WorkflowRun(
+            workflow_id=wf.id, run_number=1, status="completed", trigger="manual"
+        )
+        new_wf_run = WorkflowRun(
+            workflow_id=wf.id, run_number=2, status="running", trigger="manual"
+        )
+        session.add_all([step, old_wf_run, new_wf_run])
+        await session.commit()
+        await session.refresh(old_wf_run)
+        await session.refresh(new_wf_run)
+
+        # One artifact per workflow run, each on that run's own AgentRun.
+        old_run = await _seed_agent_run(session, agent.id, old_wf_run.id)
+        new_run = await _seed_agent_run(session, agent.id, new_wf_run.id)
+        session.add_all(
+            [
+                AgentArtifact(
+                    agent_id=agent.id,
+                    agent_run_id=old_run.id,
+                    kind="text",
+                    title="Yesterday",
+                    content="carried over from the previous run",
+                ),
+                AgentArtifact(
+                    agent_id=agent.id,
+                    agent_run_id=new_run.id,
+                    kind="text",
+                    title="Today",
+                    content="produced during this run",
+                ),
+            ]
+        )
+        await session.commit()
+        agent_id, wf_id, step_id, new_wf_run_id = agent.id, wf.id, step.id, new_wf_run.id
+
+    async def _board(clear: bool) -> str:
+        async with SessionLocal() as session:
+            wf = await session.get(Workflow, wf_id)
+            step = await session.get(WorkflowStep, step_id)
+            assert wf is not None and step is not None
+            wf.clear_artifacts = clear
+            return (
+                await wf_mod._build_context(
+                    session,
+                    wf,
+                    step,
+                    None,
+                    earlier_agent_ids=[agent_id],
+                    workflow_run_id=new_wf_run_id,
+                )
+            ) or ""
+
+    # Default: the board is this run's only — the previous run's output is gone.
+    scoped = await _board(True)
+    assert "produced during this run" in scoped
+    assert "carried over from the previous run" not in scoped
+
+    # Opted out: the board is cumulative, so both runs' artifacts are in scope.
+    cumulative = await _board(False)
+    assert "produced during this run" in cumulative
+    assert "carried over from the previous run" in cumulative

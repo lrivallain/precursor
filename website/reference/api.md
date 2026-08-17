@@ -61,7 +61,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. |
 | `skills` / `memories` | Skill enablement and long-term memory. |
 | `schedules` | Topic/agent recurrence and **Run now**. |
-| `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL), `/state` (the [durable cross-run scratchpad](/features/agents#durable-state-the-private-scratchpad): `GET` to list, `PUT` to upsert by key, `DELETE /state/{key}` or `DELETE /state` to reset), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
+| `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/runs` and `/runs/{runId}` (the agent's [execution history](/features/agents#an-agent-is-a-definition-each-start-is-a-run) — trigger, status, capability snapshot, per-run token spend), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL; the list accepts `?runId=` to scope to one run), `/state` (the [durable cross-run scratchpad](/features/agents#durable-state-the-private-scratchpad): `GET` to list, `PUT` to upsert by key, `DELETE /state/{key}` or `DELETE /state` to reset), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
 | `stt` | Short-lived Azure Speech token minting for live sessions. |
 | `transfer` | [YAML export/import](/features/transfer) of agents and workflows: `GET /workflows/{id}` and `GET /agents/{id}` download a definition; `POST /preview` reports name conflicts without writing; `POST /import` applies them with a per-agent `replace` / `create` / `link` resolution. |
 | `plugins` | Descriptors for frontend extensions contributed by plugins. |
@@ -71,11 +71,24 @@ Health and version:
 - `GET /api/health` — liveness + version.
 - `GET /api/version` — the CalVer version (derived from git tags at build time).
 
+## Addressing an agent
+
+An agent's URL-safe identity is its **`public_id`** — the UUID behind
+`/agents/{uuid}` deep links, `/agent <uuid>` nudges and
+[transfer](/features/transfer) lookups. It is stable for the life of the agent
+and independent of any Copilot SDK session handle, which now belongs to an
+individual [run](/features/agents#an-agent-is-a-definition-each-start-is-a-run)
+rather than the agent. `AgentSessionRead` also embeds a nullable `current_run`,
+so one fetch tells you both what the agent *is* and what it's doing right now.
+
 ## Real-time events
 
 - `GET /api/events` — a Server-Sent Events stream the SPA subscribes to for
   cross-window sync (`message.changed`, `stream.ended`, `mcp.auth_url`,
   `mcp.auth_required`, `mcp.auth_resolved`, …).
+- `agent.changed` and `read.changed` carry an `agent_run_id` alongside
+  `agent_session_id`, so a listener can tell *which* execution of a shared agent
+  moved.
 - Streamed chat responses are their own SSE stream, delivering text deltas and
   tool-call events for a single turn.
 

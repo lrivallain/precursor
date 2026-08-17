@@ -155,9 +155,57 @@ export type AgentStatus =
   | "cancelled"
   | "interrupted";
 
+// What set an execution going (mirrors backend AGENT_RUN_TRIGGERS).
+export type AgentRunTrigger =
+  | "manual"
+  | "workflow"
+  | "schedule"
+  | "webhook"
+  | "fleet"
+  | "retry"
+  | "replay";
+
+// One execution of an agent (mirrors backend AgentRunRead).
+//
+// The agent row is the *definition*; a run is one execution of it. Two workflows
+// driving the same agent get a run each, which is what keeps their status,
+// capability snapshot, artifacts, token spend and SDK session separate.
+export interface AgentRun {
+  id: number;
+  agent_id: number;
+  trigger: AgentRunTrigger;
+  status: AgentStatus;
+  // Which pipeline attempt drove this run, when a workflow did.
+  workflow_run_id: number | null;
+  workflow_run_step_id: number | null;
+  active_prompt: string | null;
+  blocked_question: string | null;
+  result_summary: string | null;
+  error: string | null;
+  step_count: number;
+  progress: number | null;
+  progress_label: string | null;
+  // Spend for *this execution only*. The agent's own totals stay cumulative.
+  total_input_tokens: number;
+  total_output_tokens: number;
+  // The capability snapshot taken when the run opened — editing the agent
+  // mid-run does not change what the run is already executing with.
+  model: string | null;
+  use_mcp: boolean;
+  use_skills: boolean;
+  use_memory: boolean;
+  approval_policy: AgentApprovalPolicy | null;
+  role_id: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  last_activity_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AgentSession {
   id: number;
-  copilot_session_id: string | null;
+  public_id: string | null;
   title: string;
   task_prompt: string;
   active_prompt: string | null;
@@ -232,6 +280,10 @@ export interface AgentSession {
   // waiting). Deep-links the out-of-band "agent is waiting" signal.
   pending_permission: AgentPendingPermission | null;
   // --- Orchestration relations (eager-loaded by the router) ---
+  // The execution currently driving this agent, if any. The execution fields
+  // above mirror it so existing surfaces keep working; this is the authoritative
+  // record and the handle for per-run artifacts, events and spend.
+  current_run: AgentRun | null;
   // External webhook triggers registered on this agent.
   triggers: AgentTrigger[];
   // Published blackboard outputs, newest first.
@@ -253,6 +305,9 @@ export interface AgentTrigger {
 export interface AgentArtifact {
   id: number;
   agent_id: number;
+  // The execution that published this artifact (null for rows written before
+  // runs existed, or attached out-of-band).
+  agent_run_id: number | null;
   key: string | null;
   kind: string;
   title: string;
@@ -379,6 +434,9 @@ export interface AgentModelInfo {
 // An active "approve for session" grant, shown in the Settings security recap.
 export interface AgentPermissionGrant {
   agent_id: number;
+  // Grants are held per execution, so two concurrent runs of a shared agent
+  // never inherit each other's approvals.
+  agent_run_id: number | null;
   type: string;
   title: string | null;
   target: string | null;
@@ -511,7 +569,7 @@ export type WorkflowStatus =
 // Just enough of a step's agent to render its node + drive the strip.
 export interface WorkflowAgentSummary {
   id: number;
-  copilot_session_id: string | null;
+  public_id: string | null;
   title: string;
   status: string;
   /** The agent's objective — lets an inline step be edited from the board. */
@@ -595,6 +653,12 @@ export interface WorkflowRunStep {
   kind: WorkflowStepKind;
   label: string | null;
   agent_id: number | null;
+  /**
+   * The specific execution of that agent this attempt drove. Agents are shared,
+   * so the attempt's status, spend and artifacts belong to the run, not the
+   * agent row — this is the handle that ties the trace to them.
+   */
+  agent_run_id: number | null;
   /** True when that agent is private to its step, so it isn't in the Agents list. */
   agent_inline: boolean;
   attempt: number;

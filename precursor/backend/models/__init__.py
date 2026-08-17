@@ -6,6 +6,7 @@ from precursor.backend.models.agent_artifact import (
 )
 from precursor.backend.models.agent_blueprint import AgentBlueprint
 from precursor.backend.models.agent_event import AgentEventRecord
+from precursor.backend.models.agent_run import AGENT_RUN_TRIGGERS, AgentRun
 from precursor.backend.models.agent_schedule import AgentSchedule
 from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.agent_state import (
@@ -63,6 +64,7 @@ from precursor.backend.models.workspace import Workspace
 
 __all__ = [
     "AGENT_ARTIFACT_KINDS",
+    "AGENT_RUN_TRIGGERS",
     "AGENT_STATE_MAX_KEY",
     "AGENT_STATE_MAX_KEYS",
     "AGENT_STATE_MAX_VALUE",
@@ -77,6 +79,7 @@ __all__ = [
     "AgentArtifact",
     "AgentBlueprint",
     "AgentEventRecord",
+    "AgentRun",
     "AgentSchedule",
     "AgentSession",
     "AgentState",

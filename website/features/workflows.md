@@ -106,6 +106,15 @@ normal agent — editable in Agents, pickable by other steps and other workflows
 Once saved it *is* an existing agent, so reopening the step shows it as a plain
 reference; creating is a one-time act, not a mode the step stays in.
 
+::: tip Sharing one agent across pipelines
+**Existing agent** is safe to reuse from several workflows — even ones running
+at the same time. Each step opens its own
+[agent run](/features/agents#an-agent-is-a-definition-each-start-is-a-run), so
+concurrent pipelines don't share a status, a transcript, a blackboard, a set of
+tool grants or a token meter. The only thing they share is the *definition*: edit
+the agent and both pick the change up on their next run.
+:::
+
 An **Agent** step only offers those first two, because writing a one-off prompt
 there would be an Inline step under another name. A **Gate** offers all three:
 there's no "inline gate" kind, so a one-off check has to be authored in the step.
@@ -311,7 +320,7 @@ It is deliberately *not* the same as an agent's
 | | Scope | Survives a run? |
 | --- | --- | --- |
 | Agent state | One agent — which several pipelines may share | Yes |
-| Artifacts | One agent, one run | **No** — cleared per run |
+| Artifacts | One agent **run** | **No** — a new run starts with a clean slate |
 | **Pipeline state** | **One workflow, all its steps** | **Yes** |
 
 That distinction is the whole point. A step points at a *reusable* agent, so a
@@ -429,6 +438,13 @@ Because these change what's baked into the session, flipping one rebuilds the
 agent's session on its next run. The agent itself carries the same three toggles
 as its baseline (editable from the step modal); the step overrides them for the
 duration of its turn.
+
+The override is **snapshotted onto that step's
+[agent run](/features/agents#an-agent-is-a-definition-each-start-is-a-run)**, never
+written back onto the shared agent. So a step that narrows an agent to "no tools"
+doesn't silently disarm the same agent in another pipeline, and the snapshot is
+frozen for the life of the run — editing the agent mid-flight primes the next
+run instead of changing the one in progress.
 
 ### Picking which tool servers a step gets
 
@@ -568,6 +584,10 @@ rather than overwriting the previous one — so the trace reads as a faithful,
 inspectable record of how the pipeline actually converged. The step modal mirrors
 this: it shows the **Input received** by that step and its full **Run history**
 across every attempt and run.
+
+Each agent-backed row also names the **agent run** it launched (`run #123`), so
+you can walk from a pipeline step straight to the execution behind it — useful
+when the same agent is driven by more than one workflow.
 
 An attempt that was opened but never ran is marked **`Superseded`** and greyed
 out. Entering a step always opens a fresh trace, so a row left behind by a

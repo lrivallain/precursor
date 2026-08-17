@@ -64,9 +64,7 @@ async def export_agent(
         agent = await session.get(AgentSession, int(agent_id))
     if agent is None:
         agent = (
-            await session.execute(
-                select(AgentSession).where(AgentSession.copilot_session_id == agent_id)
-            )
+            await session.execute(select(AgentSession).where(AgentSession.public_id == agent_id))
         ).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent session not found")

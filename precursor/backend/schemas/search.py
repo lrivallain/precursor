@@ -36,7 +36,7 @@ class SearchResult(BaseModel):
     """A single match, ready to render + navigate to.
 
     ``ref`` is the navigation handle the SPA already understands: a topic /
-    chat / live slug, or an agent's public ``copilot_session_id``.
+    chat / live slug, or an agent's ``public_id``.
     """
 
     section: SearchSection

@@ -3,7 +3,7 @@
 The workflow is the coordinator (n8n/Temporal-style): agents stay plain,
 reusable units and never reference each other. Starting a workflow runs step 0's
 agent; when that agent *rests* (idle / completed) the manager's completion seam
-calls :func:`advance_for_agent`, which starts the next step's agent — injecting
+calls :func:`advance_for_run`, which starts the next step's agent — injecting
 the previous step's published artifacts as a kickoff preamble — until the last
 step finishes and the workflow is marked ``completed``.
 
@@ -22,7 +22,7 @@ Design notes
 * **One advance at a time per workflow.** The completion seam fires from a
   fire-and-forget task, so several advances for the same agent can be in flight
   at once; :func:`_workflow_lock` serialises them and each re-reads the run
-  state after acquiring it. See :func:`advance_for_agent`.
+  state after acquiring it. See :func:`advance_for_run`.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.models.agent_artifact import AgentArtifact
 from precursor.backend.models.agent_event import AgentEventRecord
+from precursor.backend.models.agent_run import AgentRun
 from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.workflow import (
     WORKFLOW_PRODUCING_KINDS,
@@ -298,7 +299,35 @@ async def _last_assistant_message(session: AsyncSession, agent_id: int) -> str |
     return None
 
 
-async def collect_step_context(session: AsyncSession, prev_agent_id: int) -> str:
+async def _run_scoped_artifacts(
+    session: AsyncSession,
+    agent_id: int,
+    workflow_run_id: int | None,
+) -> list[AgentArtifact]:
+    """The artifacts an agent published, narrowed to one workflow run when known.
+
+    A shared agent's ``agent_artifacts`` rows span every execution it has ever
+    had. Scoping them through ``AgentRun.workflow_run_id`` keeps a workflow's
+    blackboard to what *this* run produced, so a concurrent workflow driving the
+    same agent can't leak its deliverables into this one's context. Falls back to
+    the agent-wide read when no workflow run is in play (a manual call, or rows
+    written before runs existed).
+    """
+    stmt = select(AgentArtifact).where(AgentArtifact.agent_id == agent_id)
+    if workflow_run_id is not None:
+        stmt = stmt.join(AgentRun, AgentArtifact.agent_run_id == AgentRun.id).where(
+            AgentRun.workflow_run_id == workflow_run_id
+        )
+    result = await session.execute(stmt.order_by(AgentArtifact.created_at.asc()))
+    return list(result.scalars().all())
+
+
+async def collect_step_context(
+    session: AsyncSession,
+    prev_agent_id: int,
+    *,
+    workflow_run_id: int | None = None,
+) -> str:
     """Format the previous step's output + artifacts as a kickoff preamble.
 
     Workflow-specific (no agent-deps): the next step is fed *only* the immediately
@@ -313,16 +342,13 @@ async def collect_step_context(session: AsyncSession, prev_agent_id: int) -> str
     body = await _last_assistant_message(session, prev_agent_id)
     if body:
         body = _DIRECTIVE_LINE_RE.sub("", body).strip()
-    if not body and agent.result_summary:
-        body = agent.result_summary.strip()
+    if not body:
+        summary = await _prev_step_summary(session, prev_agent_id, workflow_run_id)
+        if summary:
+            body = summary.strip()
     if body:
         parts.append(body)
-    arts = await session.execute(
-        select(AgentArtifact)
-        .where(AgentArtifact.agent_id == prev_agent_id)
-        .order_by(AgentArtifact.created_at.asc())
-    )
-    for art in arts.scalars().all():
+    for art in await _run_scoped_artifacts(session, prev_agent_id, workflow_run_id):
         parts.append(f"[{art.title}]\n{art.content}".strip())
     if not parts:
         return ""
@@ -334,7 +360,48 @@ async def collect_step_context(session: AsyncSession, prev_agent_id: int) -> str
     )
 
 
-async def collect_prior_artifacts(session: AsyncSession, agent_ids: list[int]) -> str:
+async def _prev_step_summary(
+    session: AsyncSession,
+    agent_id: int,
+    workflow_run_id: int | None,
+) -> str | None:
+    """The previous step's result summary, read from its run when we can.
+
+    The agent's own ``result_summary`` is a mirror of whatever ran last on it,
+    which for a shared agent may be another workflow's turn entirely.
+    """
+    if workflow_run_id is not None:
+        result = await session.execute(
+            select(AgentRun.result_summary)
+            .where(
+                AgentRun.agent_id == agent_id,
+                AgentRun.workflow_run_id == workflow_run_id,
+            )
+            .order_by(AgentRun.id.desc())
+            .limit(1)
+        )
+        summary = result.scalar_one_or_none()
+        if summary:
+            return summary
+    agent = await session.get(AgentSession, agent_id)
+    return agent.result_summary if agent else None
+
+
+async def _last_run_summary(
+    session: AsyncSession,
+    agent_id: int,
+    workflow_run_id: int | None,
+) -> str | None:
+    """This agent's newest result summary within one workflow run."""
+    return await _prev_step_summary(session, agent_id, workflow_run_id)
+
+
+async def collect_prior_artifacts(
+    session: AsyncSession,
+    agent_ids: list[int],
+    *,
+    workflow_run_id: int | None = None,
+) -> str:
     """Format artifacts published by *earlier* steps as a shared-board digest.
 
     A workflow accumulates a **blackboard**: beyond the immediate hand-off, each
@@ -349,12 +416,7 @@ async def collect_prior_artifacts(session: AsyncSession, agent_ids: list[int]) -
         return ""
     sections: list[str] = []
     for aid in agent_ids:
-        arts = await session.execute(
-            select(AgentArtifact)
-            .where(AgentArtifact.agent_id == aid)
-            .order_by(AgentArtifact.created_at.asc())
-        )
-        items = arts.scalars().all()
+        items = await _run_scoped_artifacts(session, aid, workflow_run_id)
         if not items:
             continue
         agent = await session.get(AgentSession, aid)
@@ -376,9 +438,18 @@ async def _clear_agent_artifacts(session: AsyncSession, agent_id: int) -> None:
         await session.delete(art)
 
 
+async def _clear_run_artifacts(session: AsyncSession, agent_run_id: int) -> None:
+    arts = await session.execute(
+        select(AgentArtifact).where(AgentArtifact.agent_run_id == agent_run_id)
+    )
+    for art in arts.scalars().all():
+        await session.delete(art)
+
+
 async def _tidy_gate_result(
     session: AsyncSession,
     agent: AgentSession | None,
+    agent_run: AgentRun | None,
     verdict_text: str,
     passed: bool,
 ) -> None:
@@ -389,15 +460,21 @@ async def _tidy_gate_result(
     artifact. Left as-is that leaks the raw ``PASS:``/``FAIL:`` directive token into
     the step's displayed result and drops a non-deliverable verdict onto the shared
     blackboard. We rewrite the summary to a plain human phrasing and delete the
-    gate's artifacts so downstream steps only ever inherit real content.
+    gate run's artifacts so downstream steps only ever inherit real content.
     """
-    if agent is None:
+    if agent is None and agent_run is None:
         return
     reason = _verdict_reason(verdict_text)
     label = "Passed" if passed else "Rejected"
     summary = f"{label} — {reason}" if reason else label
-    agent.result_summary = summary[:2000]
-    await _clear_agent_artifacts(session, agent.id)
+    if agent_run is not None:
+        agent_run.result_summary = summary[:2000]
+        await _clear_run_artifacts(session, agent_run.id)
+    if agent is not None and (agent_run is None or agent.current_run_id == agent_run.id):
+        # Keep the mirror consistent with the run whose state it reflects.
+        agent.result_summary = summary[:2000]
+    if agent_run is None and agent is not None:
+        await _clear_agent_artifacts(session, agent.id)
     await session.commit()
 
 
@@ -498,6 +575,7 @@ async def _build_context(
     blocked_question: str | None = None,
     run_input: str | None = None,
     approval_notes: str | None = None,
+    workflow_run_id: int | None = None,
 ) -> str | None:
     """Assemble a step's kickoff preamble: the run's brief, reviewer directives,
     rejection/loop-back reason, previous output, earlier-step artifacts (the
@@ -515,12 +593,20 @@ async def _build_context(
         parts.append(_rejection_preamble(human_feedback))
     if fail_reason:
         parts.append(_fail_preamble(fail_reason))
+    # ``clear_artifacts`` decides the blackboard's lifetime. Set (the default),
+    # each run starts clean, so we narrow the reads to this workflow run — which
+    # is also what stops a concurrent workflow driving the same agent from
+    # leaking its deliverables in here. Unset, the board is deliberately
+    # cumulative across runs, so we read agent-wide as before runs existed.
+    board_run_id = workflow_run_id if workflow.clear_artifacts else None
     if prev_agent_id is not None:
-        ctx = await collect_step_context(session, prev_agent_id)
+        ctx = await collect_step_context(session, prev_agent_id, workflow_run_id=board_run_id)
         if ctx:
             parts.append(ctx)
     if earlier_agent_ids:
-        prior = await collect_prior_artifacts(session, earlier_agent_ids)
+        prior = await collect_prior_artifacts(
+            session, earlier_agent_ids, workflow_run_id=board_run_id
+        )
         if prior:
             parts.append(prior)
     # The pipeline's own memory, as a **key index only**. A step that wants a
@@ -627,12 +713,22 @@ async def _begin_run(
     workflow.current_run_id = run.id
 
 
-async def _step_output(session: AsyncSession, agent_id: int) -> str | None:
+async def _step_output(
+    session: AsyncSession,
+    agent_id: int,
+    agent_run: AgentRun | None = None,
+) -> str | None:
     """A trace-worthy snapshot of what a step produced: its result summary, or —
-    when a bare turn left none — its (directive-stripped) assistant body."""
-    agent = await session.get(AgentSession, agent_id)
-    if agent is not None and agent.result_summary:
-        return agent.result_summary
+    when a bare turn left none — its (directive-stripped) assistant body.
+
+    Prefers the run's own summary; the agent's is a mirror that a concurrent
+    execution may already have overwritten."""
+    if agent_run is not None and agent_run.result_summary:
+        return agent_run.result_summary
+    if agent_run is None:
+        agent = await session.get(AgentSession, agent_id)
+        if agent is not None and agent.result_summary:
+            return agent.result_summary
     body = await _last_assistant_message(session, agent_id)
     if body:
         return _DIRECTIVE_LINE_RE.sub("", body).strip() or body
@@ -701,6 +797,93 @@ async def _supersede_open_run_steps(session: AsyncSession, run_id: int, position
         row.finished_at = row.started_at or datetime.now(UTC)
 
 
+async def _snapshot_step_overrides(run: AgentRun, workflow: Workflow, step: WorkflowStep) -> None:
+    """Bake the step's (and workflow's) overrides into the run's own snapshot.
+
+    Agents are shared, reusable rows, so a step's capability choices and the
+    workflow's Assistant Role belong to *this execution*, not to the definition.
+    Writing them onto the run means two workflows can drive the same agent with
+    different toggles at the same time, and an edit to the definition mid-run
+    can't change what an in-flight step is executing with. A ``None`` override
+    leaves the run's inherited setting alone — except for the MCP server scope,
+    which is always assigned (see below).
+    """
+    if step.use_mcp is not None:
+        run.use_mcp = step.use_mcp
+    if step.use_skills is not None:
+        run.use_skills = step.use_skills
+    if step.use_memory is not None:
+        run.use_memory = step.use_memory
+    # Unlike the toggles above, the server scope is assigned even when null:
+    # null means "the whole enabled catalogue", not "whatever the definition
+    # happens to carry". Without this a narrow step would silently inherit a
+    # scope it never asked for.
+    run.mcp_servers = step.mcp_servers
+    if workflow.role_id is not None:
+        run.role_id = workflow.role_id
+    if workflow.approval_policy is not None:
+        # The pipeline's tool-approval stance wins for the duration of the run.
+        # On the run rather than the agent, so a shared agent keeps its own
+        # policy everywhere else it is used — including in a concurrent workflow.
+        run.approval_policy = workflow.approval_policy
+
+
+async def _open_agent_run(
+    session: AsyncSession,
+    agent_id: int,
+    workflow: Workflow,
+    step: WorkflowStep,
+    *,
+    trigger: str = "workflow",
+    workflow_run_id: int | None = None,
+) -> AgentRun | None:
+    """Open the :class:`AgentRun` this step will execute as.
+
+    Created here rather than in the manager because the run id has to land on the
+    ``WorkflowRunStep`` trace in the same transaction — the trace is the link
+    between "attempt 2 of step 3" and "the execution that produced it".
+    """
+    agent = await session.get(AgentSession, agent_id)
+    if agent is None:
+        return None
+    run = AgentRun(
+        agent_id=agent.id,
+        trigger=trigger,
+        workflow_run_id=workflow_run_id,
+        status="pending",
+        model=agent.model,
+        use_mcp=agent.use_mcp,
+        use_skills=agent.use_skills,
+        use_memory=agent.use_memory,
+        mcp_servers=agent.mcp_servers,
+        approval_policy=agent.approval_policy,
+        role_id=agent.role_id,
+        started_at=datetime.now(UTC),
+    )
+    await _snapshot_step_overrides(run, workflow, step)
+    session.add(run)
+    await session.flush()
+    agent.current_run_id = run.id
+    return run
+
+
+async def _current_run_for(
+    session: AsyncSession,
+    agent_id: int,
+    workflow_run_id: int | None,
+) -> AgentRun | None:
+    """The newest run this agent opened for a given workflow run."""
+    if workflow_run_id is None:
+        return None
+    result = await session.execute(
+        select(AgentRun)
+        .where(AgentRun.agent_id == agent_id, AgentRun.workflow_run_id == workflow_run_id)
+        .order_by(AgentRun.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _launch_step(
     session: AsyncSession,
     manager: AgentManager,
@@ -708,10 +891,11 @@ async def _launch_step(
     step: WorkflowStep,
     context: str | None,
 ) -> None:
-    """Record a run-step trace (its input snapshot) then enqueue its agent.
+    """Open the step's agent run, record its trace, then enqueue it.
 
     The single choke point through which every step is started, so every attempt
-    — including gate loop-backs — leaves a trace with the exact input it saw.
+    — including gate loop-backs — leaves a trace with the exact input it saw and
+    the exact execution that ran it.
     """
     agent_id = step.agent_id
     if agent_id is None:
@@ -719,6 +903,10 @@ async def _launch_step(
         return
 
     run_id = workflow.current_run_id
+    agent_run = await _open_agent_run(session, agent_id, workflow, step, workflow_run_id=run_id)
+    if agent_run is None:
+        return
+
     if run_id is not None:
         await _supersede_open_run_steps(session, run_id, step.position)
         prior = await session.execute(
@@ -731,26 +919,28 @@ async def _launch_step(
             )
         )
         attempt = int(prior.scalar() or 0) + 1
-        # Snapshot the agent's cumulative token counters so this attempt's spend
-        # can be computed as a delta when it finalizes.
-        agent = await session.get(AgentSession, agent_id)
-        session.add(
-            WorkflowRunStep(
-                run_id=run_id,
-                position=step.position,
-                kind=step.kind,
-                label=_step_label(step),
-                agent_id=agent_id,
-                attempt=attempt,
-                status="running",
-                input_context=context,
-                started_at=datetime.now(UTC),
-                token_baseline_in=agent.total_input_tokens if agent else 0,
-                token_baseline_out=agent.total_output_tokens if agent else 0,
-            )
+        run_step = WorkflowRunStep(
+            run_id=run_id,
+            position=step.position,
+            kind=step.kind,
+            label=_step_label(step),
+            agent_id=agent_id,
+            agent_run_id=agent_run.id,
+            attempt=attempt,
+            status="running",
+            input_context=context,
+            started_at=datetime.now(UTC),
+            # The run starts at zero, so its own counters *are* the attempt's
+            # spend — no baseline arithmetic against a shared cumulative total,
+            # and no cross-attribution when two workflows share an agent.
+            token_baseline_in=0,
+            token_baseline_out=0,
         )
-        await session.commit()
-    manager.enqueue(manager.start_task(agent_id, extra_context=context))
+        session.add(run_step)
+        await session.flush()
+        agent_run.workflow_run_step_id = run_step.id
+    await session.commit()
+    manager.enqueue(manager.start_task(agent_id, extra_context=context, run_id=agent_run.id))
 
 
 async def _close_run_step(
@@ -774,6 +964,9 @@ async def _close_run_step(
         run_step.gate_verdict = gate_verdict
 
     agent = await session.get(AgentSession, run_step.agent_id) if run_step.agent_id else None
+    agent_run = (
+        await session.get(AgentRun, run_step.agent_run_id) if run_step.agent_run_id else None
+    )
 
     # Keep the agent's Agents-section unread badge clear for turns it ran *as a
     # workflow step*: the workflow is the coordinator here, so these replies
@@ -784,12 +977,21 @@ async def _close_run_step(
     if agent is not None:
         agent.last_read_at = run_step.finished_at
 
-    # Cost accounting: this attempt spent whatever the agent's cumulative
-    # counters moved by since launch. Clamped at zero because an agent whose
-    # context was cleared mid-run can see its totals reset.
-    if agent is not None:
+    # Cost accounting: this attempt's spend is its *own* run's counters. Baselines
+    # are kept for rows written before runs existed (and stay at zero for new
+    # ones), so a legacy trace still subtracts correctly. Clamped at zero because
+    # a run whose context was cleared mid-flight can see its totals reset.
+    if agent_run is not None:
+        run_step.input_tokens = max(
+            0, (agent_run.total_input_tokens or 0) - run_step.token_baseline_in
+        )
+        run_step.output_tokens = max(
+            0, (agent_run.total_output_tokens or 0) - run_step.token_baseline_out
+        )
+    elif agent is not None:
         run_step.input_tokens = max(0, agent.total_input_tokens - run_step.token_baseline_in)
         run_step.output_tokens = max(0, agent.total_output_tokens - run_step.token_baseline_out)
+    if agent_run is not None or agent is not None:
         run = await session.get(WorkflowRun, run_step.run_id)
         if run is not None:
             run.total_input_tokens = (run.total_input_tokens or 0) + run_step.input_tokens
@@ -934,43 +1136,6 @@ async def _finalize_step_by_position(
         run_step.output_summary = output_summary[:8000]
 
 
-async def _apply_step_overrides(
-    session: AsyncSession, workflow: Workflow, step: WorkflowStep
-) -> None:
-    """Push the step's (and workflow's) overrides onto the agent before it runs.
-
-    Agents are shared, reusable rows, so a step's capability choices and the
-    workflow's Assistant Role are applied *as the step is launched* rather than
-    baked into the agent. Only one step of a workflow runs at a time, so the
-    agent always reflects the step currently driving it. A ``None`` override
-    leaves the agent's own setting alone — except for the MCP server scope,
-    which is always assigned (see below).
-    """
-    if step.agent_id is None:
-        return
-    agent = await session.get(AgentSession, step.agent_id)
-    if agent is None:
-        return
-    if step.use_mcp is not None:
-        agent.use_mcp = step.use_mcp
-    if step.use_skills is not None:
-        agent.use_skills = step.use_skills
-    if step.use_memory is not None:
-        agent.use_memory = step.use_memory
-    # Unlike the toggles above, the server scope is assigned even when null:
-    # null means "the whole enabled catalogue", not "whatever the last step to
-    # borrow this agent left behind". Without this a narrow step would silently
-    # keep scoping the steps that follow it.
-    agent.mcp_servers = step.mcp_servers
-    if workflow.role_id is not None:
-        agent.role_id = workflow.role_id
-    if workflow.approval_policy is not None:
-        # The pipeline's tool-approval stance wins for the duration of the run.
-        # Applied here rather than written onto the agent permanently, so a
-        # shared agent keeps its own policy everywhere else it is used.
-        agent.approval_policy = workflow.approval_policy
-
-
 def _selected_source_positions(step: WorkflowStep, max_position: int) -> list[int]:
     """Parse ``context_sources`` into valid, ordered, de-duplicated positions."""
     raw = (step.context_sources or "").replace(";", ",")
@@ -1019,9 +1184,8 @@ async def _enter_step(
         parked = await session.get(AgentSession, step.agent_id)
         blocked_question = parked.blocked_question if parked else None
 
-    # Capability overrides + the workflow's role land on the agent before the
-    # session is (re)built, so the toggles apply to the turn we're about to run.
-    await _apply_step_overrides(session, workflow, step)
+    # Capability overrides are snapshotted onto the run in ``_launch_step`` below,
+    # not written onto the agent — the definition is shared, the execution isn't.
     await session.commit()
     await _publish(workflow)
 
@@ -1060,6 +1224,7 @@ async def _enter_step(
         blocked_question=blocked_question,
         run_input=await _run_input(session, workflow),
         approval_notes=await _approval_notes(session, workflow),
+        workflow_run_id=workflow.current_run_id,
     )
     await _launch_step(session, manager, workflow, step, context)
 
@@ -1069,15 +1234,21 @@ async def _complete_run(
     workflow: Workflow,
     *,
     last_agent_id: int | None,
+    last_agent_run: AgentRun | None = None,
 ) -> None:
     """Finish the pipeline: stamp the workflow and run with the final deliverable."""
     workflow.status = "completed"
     workflow.finished_at = datetime.now(UTC)
     workflow.current_step_id = None
-    if last_agent_id is not None:
-        done_agent = await session.get(AgentSession, last_agent_id)
-        if done_agent and done_agent.result_summary:
-            workflow.result_summary = done_agent.result_summary[:2000]
+    # The final step's *run* holds the deliverable; the agent row only mirrors
+    # whichever execution touched it last, which for a shared agent may be
+    # another workflow's.
+    if last_agent_run is not None and last_agent_run.result_summary:
+        workflow.result_summary = last_agent_run.result_summary[:2000]
+    elif last_agent_id is not None:
+        summary = await _last_run_summary(session, last_agent_id, workflow.current_run_id)
+        if summary:
+            workflow.result_summary = summary[:2000]
     await _finalize_run(
         session, workflow, status="completed", result_summary=workflow.result_summary
     )
@@ -1093,11 +1264,14 @@ async def _advance_from(
     from_idx: int,
     *,
     last_agent_id: int | None = None,
+    last_agent_run: AgentRun | None = None,
 ) -> None:
     """Move to the next runnable step after ``from_idx``, or finish the run."""
     next_idx = _next_runnable_idx(steps, from_idx)
     if next_idx is None:
-        await _complete_run(session, workflow, last_agent_id=last_agent_id)
+        await _complete_run(
+            session, workflow, last_agent_id=last_agent_id, last_agent_run=last_agent_run
+        )
         return
     await _enter_step(session, manager, workflow, steps, next_idx)
 
@@ -1207,14 +1381,12 @@ async def start_workflow(
         step.attempt_count = 0
         step.retry_count = 0
 
-    # When configured, pre-clear every step agent's artifacts so the whole strip
-    # visually resets at run start (start_task also clears the running agent's
-    # own artifacts just before it sends, so per-step freshness is guaranteed
-    # regardless of this flag).
-    if workflow.clear_artifacts:
-        for step in steps:
-            if step.agent_id is not None:
-                await _clear_agent_artifacts(session, step.agent_id)
+    # Runs start clean by construction: each step opens a fresh ``AgentRun`` and
+    # artifacts are scoped to it, so nothing needs pre-clearing. Wiping the
+    # agent-wide rows here would destroy a concurrent workflow's blackboard —
+    # exactly the bleed the run split exists to stop. ``clear_artifacts`` keeps
+    # its meaning at the *read* side instead (see ``_build_context``): set, a
+    # step sees only this run's board; unset, it sees every run's.
 
     await _begin_run(session, workflow, trigger, run_input)
     await session.commit()
@@ -1225,19 +1397,20 @@ async def start_workflow(
     return workflow
 
 
-async def advance_for_agent(session: AsyncSession, manager: AgentManager, agent_id: int) -> None:
-    """Completion-seam hook: advance any running workflow parked on this agent.
+async def advance_for_run(session: AsyncSession, manager: AgentManager, agent_run_id: int) -> None:
+    """Completion-seam hook: advance the workflow this agent *run* belongs to.
 
-    Called (via the manager) after an agent's status commit reaches a resting or
-    terminal state. Finds the running workflow whose *current step* is this
-    agent and either advances to the next step, completes, fails, pauses, or
-    cancels the workflow accordingly.
+    Called (via the manager) after a run's status commit reaches a resting or
+    terminal state. A run belongs to exactly one workflow run, so this resolves
+    a single workflow rather than fanning out across every workflow that happens
+    to share the agent — the fan-out was the reason one agent going idle could
+    advance two unrelated pipelines at once.
 
     Runs under the per-workflow advance lock, and everything it decides on is
     re-read **inside** that lock. The seam is fire-and-forget, so a second
-    advance for the same agent is routinely already queued behind this one; by
-    the time it acquires the lock the run has moved on, the match below fails,
-    and it returns having done nothing — instead of re-entering the same step.
+    advance for the same run is routinely already queued behind this one; by the
+    time it acquires the lock the run has moved on, the match below fails, and it
+    returns having done nothing — instead of re-entering the same step.
 
     ``entered_at`` carries the moment this advance was asked for, which settles
     the case the moved-on cursor can't: a step re-entered *in place* (an
@@ -1247,6 +1420,15 @@ async def advance_for_agent(session: AsyncSession, manager: AgentManager, agent_
     attempt that began after it did.
     """
     entered_at = datetime.now(UTC)
+    agent_run = await session.get(AgentRun, agent_run_id)
+    if agent_run is None:
+        return
+    # Read the run's identity out now: ``expire_all`` below invalidates the
+    # instance, and a lazy re-read of an expired attribute is IO in a place
+    # SQLAlchemy's async layer can't await.
+    agent_id = agent_run.agent_id
+    launched_for_run = agent_run.workflow_run_id
+
     # A manual replay runs outside the pipeline, so no advance will ever close
     # its trace. Handled here because this is the one seam every ended turn
     # reaches, and it is independent of the workflow match below (a replay only
@@ -1254,44 +1436,54 @@ async def advance_for_agent(session: AsyncSession, manager: AgentManager, agent_
     # Isolated behind a rollback: a half-written replay close must not leave a
     # dirty session for the advance that follows it.
     try:
-        await finalize_replays_for_agent(session, agent_id)
+        await finalize_replays_for_run(session, agent_run_id)
     except Exception:
-        logger.debug("failed to close replay traces for %s", agent_id, exc_info=True)
+        logger.debug("failed to close replay traces for run %s", agent_run_id, exc_info=True)
         await session.rollback()
 
-    # Which running workflows have their current step pointing at this agent?
-    # Only the ids: the rows themselves are re-read under the lock.
-    result = await session.execute(
-        select(Workflow.id)
-        .join(WorkflowStep, Workflow.current_step_id == WorkflowStep.id)
-        .where(Workflow.status == "running", WorkflowStep.agent_id == agent_id)
-    )
-    workflow_ids = list(dict.fromkeys(result.scalars().all()))
-    if not workflow_ids:
+    # A run knows the workflow run it was launched for, so there is exactly one
+    # candidate. A run with no ``workflow_run_id`` (manual, scheduled, fleet) has
+    # nothing to advance.
+    if launched_for_run is None:
         return
+    wf_run = await session.get(WorkflowRun, launched_for_run)
+    if wf_run is None:
+        return
+    workflow_id = wf_run.workflow_id
 
-    for workflow_id in workflow_ids:
-        async with _workflow_lock(workflow_id):
-            # Re-read under the lock. ``expire_all`` drops anything this session
-            # cached before waiting, so a workflow another advance just moved on
-            # isn't re-advanced off a stale copy.
-            session.expire_all()
-            workflow = await _load_workflow(session, workflow_id)
-            if workflow is None or workflow.status != "running":
-                continue
-            current = next(
-                (s for s in _ordered_steps(workflow) if s.id == workflow.current_step_id), None
-            )
-            if current is None or current.agent_id != agent_id:
-                # The run has already been advanced past this agent's turn.
-                continue
-            agent = await session.get(AgentSession, agent_id)
-            status = agent.status if agent else "failed"
-            await _advance_one(session, manager, workflow, agent_id, status, entered_at=entered_at)
-            # Every terminal path in ``_advance_one`` commits, but flush anything
-            # a future one might leave pending: the next advance waiting on this
-            # lock must not re-read a step entry that hasn't landed yet.
-            await session.commit()
+    async with _workflow_lock(workflow_id):
+        # Re-read under the lock. ``expire_all`` drops anything this session
+        # cached before waiting, so a workflow another advance just moved on
+        # isn't re-advanced off a stale copy.
+        session.expire_all()
+        workflow = await _load_workflow(session, workflow_id)
+        if workflow is None or workflow.status != "running":
+            return
+        # Only the run that is *currently* driving the workflow may advance it: a
+        # superseded attempt finishing late must not move the cursor.
+        if workflow.current_run_id != launched_for_run:
+            return
+        current = next(
+            (s for s in _ordered_steps(workflow) if s.id == workflow.current_step_id), None
+        )
+        if current is None or current.agent_id != agent_id:
+            # The run has already been advanced past this agent's turn.
+            return
+        fresh = await session.get(AgentRun, agent_run_id)
+        status = fresh.status if fresh else "failed"
+        await _advance_one(
+            session,
+            manager,
+            workflow,
+            agent_id,
+            status,
+            entered_at=entered_at,
+            agent_run_id=agent_run_id,
+        )
+        # Every terminal path in ``_advance_one`` commits, but flush anything
+        # a future one might leave pending: the next advance waiting on this
+        # lock must not re-read a step entry that hasn't landed yet.
+        await session.commit()
 
 
 async def _advance_one(
@@ -1302,6 +1494,7 @@ async def _advance_one(
     agent_status: str,
     *,
     entered_at: datetime | None = None,
+    agent_run_id: int | None = None,
 ) -> None:
     steps = _ordered_steps(workflow)
     # Locate the current step by id, then its index.
@@ -1329,11 +1522,18 @@ async def _advance_one(
             if entered_at is not None and _started_after(open_trace, entered_at):
                 return
 
+    # The execution's own state, never the agent's mirror: a shared agent's row
+    # may already be reporting whatever a concurrent workflow is doing to it.
+    agent_run = await session.get(AgentRun, agent_run_id) if agent_run_id else None
+
     now = datetime.now(UTC)
 
     if agent_status in STEP_FAILED_STATUSES:
-        agent = await session.get(AgentSession, agent_id)
-        reason = agent.error if agent and agent.error else "A step failed."
+        if agent_run is not None and agent_run.error:
+            reason = agent_run.error
+        else:
+            agent = await session.get(AgentSession, agent_id)
+            reason = agent.error if agent and agent.error else "A step failed."
         await _apply_failure_policy(
             session, manager, workflow, steps, current_idx, agent_id, reason
         )
@@ -1383,11 +1583,16 @@ async def _advance_one(
         # source of the PASS/FAIL verdict. Fall back to the summary if unavailable.
         verdict_text = await _last_assistant_message(session, agent_id) or ""
         if not verdict_text:
-            verdict_text = (agent.result_summary if agent and agent.result_summary else "") or ""
+            fallback = (
+                agent_run.result_summary
+                if agent_run is not None and agent_run.result_summary
+                else (agent.result_summary if agent and agent.result_summary else "")
+            )
+            verdict_text = fallback or ""
         passed = _parse_verdict(verdict_text)
         # Normalise the gate's stored result to a plain verdict and drop its
         # auto-captured artifact — a gate judges, it doesn't publish deliverables.
-        await _tidy_gate_result(session, agent, verdict_text, passed)
+        await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
         if not passed:
             # Where to retry: explicit on_fail_position, else the previous step.
             target_idx = current.on_fail_position
@@ -1478,9 +1683,17 @@ async def _advance_one(
             workflow,
             agent_id,
             status="completed",
-            output_summary=await _step_output(session, agent_id),
+            output_summary=await _step_output(session, agent_id, agent_run),
         )
-    await _advance_from(session, manager, workflow, steps, current_idx, last_agent_id=agent_id)
+    await _advance_from(
+        session,
+        manager,
+        workflow,
+        steps,
+        current_idx,
+        last_agent_id=agent_id,
+        last_agent_run=agent_run,
+    )
 
 
 async def pause_workflow(session: AsyncSession, workflow_id: int) -> Workflow | None:
@@ -1553,7 +1766,7 @@ async def resolve_step_permission(
     """Answer the tool-permission gate parking a step, and let the run carry on.
 
     Resolving the gate in the runtime is only half of it. The block paused the
-    *workflow* and closed the step's trace, and ``advance_for_agent`` only ever
+    *workflow* and closed the step's trace, and ``advance_for_run`` only ever
     looks at ``running`` workflows — so an approved agent would happily finish
     its turn into a pipeline that had stopped listening, leaving the board stuck
     on "Blocked" forever. Putting the run back to ``running`` and opening a trace
@@ -1600,7 +1813,9 @@ async def resolve_step_permission(
                     WorkflowRunStep.position == target.position,
                 )
             )
-            agent = await session.get(AgentSession, agent_id)
+            # The gate resumed the *same* execution, so the continuing attempt
+            # baselines against that run's counters as they stand right now.
+            agent_run = await _current_run_for(session, agent_id, run_id)
             session.add(
                 WorkflowRunStep(
                     run_id=run_id,
@@ -1608,6 +1823,7 @@ async def resolve_step_permission(
                     kind=target.kind,
                     label=_step_label(target),
                     agent_id=agent_id,
+                    agent_run_id=agent_run.id if agent_run is not None else None,
                     attempt=int(prior.scalar() or 0) + 1,
                     status="running",
                     input_context=(
@@ -1615,8 +1831,12 @@ async def resolve_step_permission(
                         "the step continued from where it stopped."
                     ),
                     started_at=datetime.now(UTC),
-                    token_baseline_in=agent.total_input_tokens if agent else 0,
-                    token_baseline_out=agent.total_output_tokens if agent else 0,
+                    token_baseline_in=(
+                        (agent_run.total_input_tokens or 0) if agent_run is not None else 0
+                    ),
+                    token_baseline_out=(
+                        (agent_run.total_output_tokens or 0) if agent_run is not None else 0
+                    ),
                 )
             )
         await session.commit()
@@ -1749,10 +1969,10 @@ async def replay_step(
     if agent.status in _REPLAY_BUSY_STATUSES:
         return workflow, "That step's agent is busy — wait for its current turn to end."
 
-    # Re-apply the step's capability scope and the workflow's role, so the replay
-    # runs under the same conditions the pipeline gave it. Best-effort: the
-    # definition may have been edited since this run, in which case the agent's
-    # own settings stand.
+    # Re-apply the step's capability scope and the workflow's role onto a fresh
+    # run, so the replay executes under the same conditions the pipeline gave it.
+    # Best-effort: the definition may have been edited since, in which case the
+    # agent's current settings stand.
     step = next(
         (
             s
@@ -1761,8 +1981,16 @@ async def replay_step(
         ),
         None,
     )
+    agent_run: AgentRun | None = None
     if step is not None:
-        await _apply_step_overrides(session, workflow, step)
+        agent_run = await _open_agent_run(
+            session,
+            run_step.agent_id,
+            workflow,
+            step,
+            trigger="replay",
+            workflow_run_id=run_step.run_id,
+        )
 
     prior_replays = await session.execute(
         select(func.count(WorkflowRunStep.id)).where(
@@ -1772,43 +2000,59 @@ async def replay_step(
         )
     )
     context = run_step.input_context
-    session.add(
-        WorkflowRunStep(
-            run_id=run_step.run_id,
-            position=run_step.position,
-            kind=run_step.kind,
-            label=run_step.label,
-            agent_id=run_step.agent_id,
-            attempt=int(prior_replays.scalar() or 0) + 1,
-            replay=True,
-            status="running",
-            input_context=context,
-            started_at=datetime.now(UTC),
-            token_baseline_in=agent.total_input_tokens,
-            token_baseline_out=agent.total_output_tokens,
-        )
+    replay_step = WorkflowRunStep(
+        run_id=run_step.run_id,
+        position=run_step.position,
+        kind=run_step.kind,
+        label=run_step.label,
+        agent_id=run_step.agent_id,
+        agent_run_id=agent_run.id if agent_run is not None else None,
+        attempt=int(prior_replays.scalar() or 0) + 1,
+        replay=True,
+        status="running",
+        input_context=context,
+        started_at=datetime.now(UTC),
+        token_baseline_in=0 if agent_run is not None else agent.total_input_tokens,
+        token_baseline_out=0 if agent_run is not None else agent.total_output_tokens,
     )
+    session.add(replay_step)
+    await session.flush()
+    if agent_run is not None:
+        agent_run.workflow_run_step_id = replay_step.id
     await session.commit()
     await _publish(workflow)
 
-    manager.enqueue(manager.start_task(run_step.agent_id, extra_context=context))
+    manager.enqueue(
+        manager.start_task(
+            run_step.agent_id,
+            extra_context=context,
+            run_id=agent_run.id if agent_run is not None else None,
+        )
+    )
     return workflow, None
 
 
-async def finalize_replays_for_agent(session: AsyncSession, agent_id: int) -> None:
-    """Close any open replay trace for an agent that just ended its turn.
+async def finalize_replays_for_run(session: AsyncSession, agent_run_id: int) -> None:
+    """Close the open replay trace this agent *run* was driving, if any.
 
     A replay is invisible to the coordinator by design, so nothing else would
     ever close its row — it would render as a step forever in flight. This runs
     off the same completion seam as the advance, but independently of it: a
     replay happens precisely when no run is active, which is exactly when the
     advance has nothing to do.
+
+    Matched by run rather than by agent so a shared agent's *other* execution
+    can't close a replay it never started.
     """
+    agent_run = await session.get(AgentRun, agent_run_id)
+    if agent_run is None:
+        return
+    agent_id = agent_run.agent_id
     run_step = (
         await session.execute(
             select(WorkflowRunStep)
             .where(
-                WorkflowRunStep.agent_id == agent_id,
+                WorkflowRunStep.agent_run_id == agent_run_id,
                 WorkflowRunStep.replay.is_(True),
                 WorkflowRunStep.finished_at.is_(None),
             )
@@ -1820,7 +2064,7 @@ async def finalize_replays_for_agent(session: AsyncSession, agent_id: int) -> No
         return
 
     agent = await session.get(AgentSession, agent_id)
-    status = agent.status if agent else "failed"
+    status = agent_run.status
     if status in STEP_AWAITING_PERMISSION_STATUSES:
         # The turn is still alive and resumes the moment the gate is answered.
         return
@@ -1834,10 +2078,10 @@ async def finalize_replays_for_agent(session: AsyncSession, agent_id: int) -> No
     elif status in STEP_DONE_STATUSES:
         if run_step.kind == "gate":
             verdict_text = await _last_assistant_message(session, agent_id) or (
-                (agent.result_summary if agent and agent.result_summary else "") or ""
+                agent_run.result_summary or ""
             )
             passed = _parse_verdict(verdict_text)
-            await _tidy_gate_result(session, agent, verdict_text, passed)
+            await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
             await _close_run_step(
                 session,
                 run_step,
@@ -2186,7 +2430,7 @@ async def sweep_stalled_steps(session: AsyncSession, manager: AgentManager) -> i
             # Stop the wedged agent before re-driving or moving past it, so a
             # retry doesn't race a turn that may still be alive somewhere.
             try:
-                manager.enqueue(manager.cancel(agent_id))
+                manager.enqueue(manager.cancel(agent_id, run_id=open_step.agent_run_id))
             except Exception:  # pragma: no cover - manager is best-effort here
                 logger.exception("Watchdog could not cancel agent %s", agent_id)
 
@@ -2220,12 +2464,17 @@ async def cancel_workflow(
     workflow.status = "cancelled"
     workflow.finished_at = datetime.now(UTC)
     workflow.current_step_id = None
+    cancelled_run_id: int | None = None
     if current is not None and current.agent_id is not None:
+        # Resolve *this* workflow's execution before the trace closes; a shared
+        # agent's current run may belong to a different pipeline.
+        agent_run = await _current_run_for(session, current.agent_id, workflow.current_run_id)
+        cancelled_run_id = agent_run.id if agent_run is not None else None
         await _finalize_run_step(session, workflow, current.agent_id, status="cancelled")
     await _finalize_run(session, workflow, status="cancelled")
     await session.commit()
     await _publish(workflow)
 
     if current is not None and current.agent_id is not None:
-        manager.enqueue(manager.cancel(current.agent_id))
+        manager.enqueue(manager.cancel(current.agent_id, run_id=cancelled_run_id))
     return workflow

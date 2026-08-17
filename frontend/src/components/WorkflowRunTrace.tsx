@@ -225,6 +225,18 @@ export function WorkflowRunTrace({ run, workflowId, onReplay, onOpenAgent }: Pro
                       Open
                     </button>
                   )}
+                  {/* Which execution of that agent this attempt drove. Agents are
+                      shared, so the same agent may be running for another
+                      pipeline right now — naming the run is what makes this
+                      attempt's status, spend and artifacts unambiguous. */}
+                  {s.agent_run_id != null && (
+                    <span
+                      className="tabular-nums text-muted/70"
+                      data-tooltip={"This attempt's agent run\nAgents are shared; each execution is its own run"}
+                    >
+                      run #{s.agent_run_id}
+                    </span>
+                  )}
                 </span>
               </div>
 

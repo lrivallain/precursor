@@ -40,11 +40,66 @@ class AgentPendingPermission(BaseModel):
     data: dict[str, Any] | None = None
 
 
+AgentRunTrigger = Literal[
+    "manual",
+    "workflow",
+    "schedule",
+    "webhook",
+    "fleet",
+    "retry",
+    "replay",
+]
+
+
+class AgentRunRead(BaseModel):
+    """One execution of an agent.
+
+    The agent row is the *definition* (title, task prompt, capability defaults);
+    a run is a single execution of it. Two workflows driving the same agent get a
+    run each, which is what keeps their status, capability snapshot, artifacts,
+    token spend and SDK session from overwriting one another.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    agent_id: int
+    trigger: AgentRunTrigger
+    status: AgentStatus
+    # Which pipeline attempt drove this run, when a workflow did.
+    workflow_run_id: int | None = None
+    workflow_run_step_id: int | None = None
+    active_prompt: str | None = None
+    blocked_question: str | None = None
+    result_summary: str | None = None
+    error: str | None = None
+    step_count: int = 0
+    progress: int | None = None
+    progress_label: str | None = None
+    # Spend for *this execution only*, so a shared agent's per-step cost is
+    # attributable. The agent's own totals stay cumulative for budgeting.
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    # The capability snapshot taken when the run opened. Editing the agent
+    # mid-run must not change what the run is already executing with.
+    model: str | None = None
+    use_mcp: bool = True
+    use_skills: bool = True
+    use_memory: bool = True
+    approval_policy: AgentApprovalPolicy | None = None
+    role_id: int | None = None
+    started_at: UtcDateTime | None = None
+    finished_at: UtcDateTime | None = None
+    last_activity_at: UtcDateTime | None = None
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+
+
 class AgentSessionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    copilot_session_id: str | None = None
+    public_id: str | None = None
     title: str
     task_prompt: str
     active_prompt: str | None = None
@@ -107,6 +162,10 @@ class AgentSessionRead(BaseModel):
     active_narration: str | None = None
     pending_permission: AgentPendingPermission | None = None
     # --- Orchestration relations (eager-loaded by the router) ---
+    # The execution currently driving this agent, if any. The execution columns
+    # above mirror it so existing surfaces keep working; this is the authoritative
+    # record and the handle for per-run artifacts, events and spend.
+    current_run: AgentRunRead | None = None
     # External webhook triggers registered on this agent.
     triggers: list[AgentTriggerRead] = []
     # Published blackboard outputs, newest first.
@@ -130,6 +189,9 @@ class AgentArtifactRead(BaseModel):
 
     id: int
     agent_id: int
+    # The execution that published this artifact (null for rows written before
+    # runs existed, or attached out-of-band).
+    agent_run_id: int | None = None
     key: str | None = None
     kind: str
     title: str
@@ -245,6 +307,9 @@ class AgentPermissionGrant(BaseModel):
     """An active "approve for session" grant, for the Settings security recap."""
 
     agent_id: int
+    # Grants are held per execution, so two concurrent runs of a shared agent
+    # never inherit each other's approvals.
+    agent_run_id: int | None = None
     type: str
     title: str | None = None
     target: str | None = None

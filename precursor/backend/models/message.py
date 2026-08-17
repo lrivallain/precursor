@@ -96,4 +96,4 @@ class Message(Base, TimestampMixin):
     @property
     def agent_session_public_id(self) -> str | None:
         """The linked agent's public (UUID) id, or ``None`` when unlinked."""
-        return self.agent_session.copilot_session_id if self.agent_session else None
+        return self.agent_session.public_id if self.agent_session else None
