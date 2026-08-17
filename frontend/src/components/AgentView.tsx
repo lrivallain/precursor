@@ -136,6 +136,7 @@ function AgentInsightsPanel({
   events,
   model,
   agent,
+  runs,
   runFilter,
   onRunFilterChange,
 }: {
@@ -144,8 +145,9 @@ function AgentInsightsPanel({
   events: AgentEvent[];
   model: string | null;
   agent: AgentSession;
+  runs: AgentRun[];
   runFilter: number | null;
-  onRunFilterChange: (runId: number | null) => void;
+  onRunFilterChange: (choice: number | "all") => void;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -193,11 +195,7 @@ function AgentInsightsPanel({
       <div className="flex flex-col gap-4 overflow-y-auto p-3">
         <AgentUsageSection events={events} model={model} />
         <div className="border-t border-border" />
-        <AgentRunsSection
-          agent={agent}
-          selected={runFilter}
-          onSelect={onRunFilterChange}
-        />
+        <AgentRunsSection agent={agent} runs={runs} selected={runFilter} onSelect={onRunFilterChange} />
         <div className="border-t border-border" />
         <AgentOrchestrationSection agent={agent} />
         <div className="border-t border-border" />
@@ -256,33 +254,15 @@ const RUN_TRIGGER_LABEL: Record<AgentRun["trigger"], string> = {
 // each other.
 function AgentRunsSection({
   agent,
+  runs,
   selected,
   onSelect,
 }: {
   agent: AgentSession;
+  runs: AgentRun[];
   selected: number | null;
-  onSelect: (runId: number | null) => void;
+  onSelect: (choice: number | "all") => void;
 }) {
-  const [runs, setRuns] = useState<AgentRun[]>([]);
-
-  const loadRuns = useCallback(() => {
-    void api.agents
-      .runs(agent.id, { limit: 12 })
-      .then(setRuns)
-      .catch(() => setRuns([]));
-  }, [agent.id]);
-
-  useEffect(() => {
-    loadRuns();
-    // A run opens and closes as the agent works, so the rail has to follow the
-    // live stream rather than wait for a manual reload.
-    const off = eventBus.subscribe((ev) => {
-      if (ev.type !== "agent.changed") return;
-      if (ev.agent_session_id == null || ev.agent_session_id === agent.id) loadRuns();
-    });
-    return off;
-  }, [agent.id, loadRuns]);
-
   if (runs.length === 0) {
     return (
       <div className="space-y-2">
@@ -307,7 +287,7 @@ function AgentRunsSection({
       </div>
       <button
         type="button"
-        onClick={() => onSelect(null)}
+        onClick={() => onSelect("all")}
         className={`w-full rounded border px-2 py-1 text-left text-[11px] ${
           selected == null
             ? "border-accent/50 bg-accent/10 font-medium"
@@ -325,7 +305,7 @@ function AgentRunsSection({
           <button
             type="button"
             key={run.id}
-            onClick={() => onSelect(active ? null : run.id)}
+            onClick={() => onSelect(active ? "all" : run.id)}
             aria-pressed={active}
             className={`w-full rounded border px-2 py-1 text-left transition-colors ${
               active
@@ -1743,8 +1723,21 @@ export function AgentView({
   const [events, setEvents] = useState<AgentEvent[]>([]);
   // Narrows the transcript to a single execution. A reusable agent driven by two
   // workflows at once produces two conversations in one archive; reading them
-  // interleaved is meaningless (issue #242). `null` shows every run.
-  const [runFilter, setRunFilter] = useState<number | null>(null);
+  // interleaved is meaningless (issue #242).
+  //
+  // This holds the user's *choice*, not the filter: `null` means "follow the
+  // newest run", which is the default so opening an agent shows what it just
+  // did rather than every execution ever stitched together. Picking a run or
+  // "All runs" pins the view until the user switches agent.
+  const [runChoice, setRunChoice] = useState<number | "all" | null>(null);
+  // The agent's executions. Loaded here rather than inside the Runs rail because
+  // the transcript defaults to the newest one — a collapsed insights panel must
+  // not change what you read. Tagged with the agent they belong to so switching
+  // agents can't briefly scope the transcript to the previous one's run.
+  const [runsState, setRunsState] = useState<{ agentId: number | null; items: AgentRun[] }>({
+    agentId: null,
+    items: [],
+  });
   const [topics, setTopics] = useState<Topic[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [me, setMe] = useState<Me | null>(null);
@@ -1999,6 +1992,33 @@ export function AgentView({
     [events],
   );
 
+  useEffect(() => {
+    if (agentId == null) {
+      setRunsState({ agentId: null, items: [] });
+      return;
+    }
+    const load = () => {
+      void api.agents
+        .runs(agentId, { limit: 12 })
+        .then((items) => setRunsState({ agentId, items }))
+        .catch(() => setRunsState({ agentId, items: [] }));
+    };
+    load();
+    // A run opens and closes as the agent works, so the rail — and the default
+    // filter riding on it — follow the live stream rather than a manual reload.
+    return eventBus.subscribe((ev) => {
+      if (ev.type !== "agent.changed") return;
+      if (ev.agent_session_id == null || ev.agent_session_id === agentId) load();
+    });
+  }, [agentId]);
+
+  const runs = runsState.agentId === agentId ? runsState.items : [];
+  // `runChoice` is what the user asked for; this is what the transcript shows.
+  // Left alone it tracks the newest run, so starting the agent again pulls the
+  // view along instead of stranding you on a finished conversation.
+  const latestRunId = runs[0]?.id ?? null;
+  const runFilter = runChoice === "all" ? null : (runChoice ?? latestRunId);
+
   // Load the selected session's timeline, and keep it live on agent.changed.
   useEffect(() => {
     // Drop an optimistic echo when leaving the agent it targeted (it survives the
@@ -2017,10 +2037,11 @@ export function AgentView({
     });
   }, [agentId, loadEvents, runFilter]);
 
-  // A run filter belongs to the agent it was chosen on — switching agents must
-  // not leave the next transcript scoped to a run that isn't even theirs.
+  // A pinned run belongs to the agent it was chosen on — switching agents must
+  // not leave the next transcript scoped to a run that isn't even theirs, or
+  // stuck on "all runs" when the default is to read the latest.
   useEffect(() => {
-    setRunFilter(null);
+    setRunChoice(null);
   }, [agentId]);
 
   // Drive the app-global sign-in banner when a turn surfaces an MCP server that
@@ -2392,16 +2413,19 @@ export function AgentView({
 
         {/* The transcript is scoped to one execution. Shown in the transcript
             itself, not only in the Runs rail, so the filter can't strand a user
-            who has the insights panel collapsed. */}
-        {runFilter != null && (
+            who has the insights panel collapsed. Silent on a single-run agent,
+            where "the latest run" and "everything" are the same timeline. */}
+        {runFilter != null && runs.length > 1 && (
           <div className="mb-3 flex items-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[11px]">
             <History size={13} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              Showing run #{runFilter} only — other executions of this agent are hidden.
+              {runChoice == null
+                ? `Showing the latest run (#${runFilter}). Earlier executions are hidden.`
+                : `Showing run #${runFilter} only — other executions of this agent are hidden.`}
             </span>
             <button
               type="button"
-              onClick={() => setRunFilter(null)}
+              onClick={() => setRunChoice("all")}
               className="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/15"
             >
               Show all runs
@@ -2659,8 +2683,9 @@ export function AgentView({
         events={events}
         model={selected.model ?? null}
         agent={selected}
+        runs={runs}
         runFilter={runFilter}
-        onRunFilterChange={setRunFilter}
+        onRunFilterChange={setRunChoice}
       />
     </div>
   );
