@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import hashlib
 import json
 import logging
 import os
@@ -47,6 +48,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentEventRecord,
     AgentSession,
+    AppSetting,
     Chat,
     Message,
     MessageRole,
@@ -571,6 +573,16 @@ class _LiveSession:
     # built stays invisible to the agent until a restart. ``None`` means we didn't
     # attach a catalog (SDK unavailable) and should never rebuild on this basis.
     mcp_fingerprint: frozenset[str] | None = None
+    # Enabled OAuth servers this session was built *without*, because no valid
+    # credential could be minted for them — each paired with a stamp of the
+    # credential as it stood at build time (see ``_auth_skipped_stamps``). The
+    # fingerprint above deliberately tracks *enabled* servers, so a signed-out
+    # server doesn't read as a change there; without this second signal the
+    # tool-less session would be reused forever, even after the user signs back
+    # in. Comparing stamps rather than bare names is what keeps it loop-free: a
+    # rebuild that still can't attach re-records the same stamps, so nothing
+    # fires again until fresh tokens are actually persisted.
+    mcp_auth_skipped: frozenset[tuple[str, str]] = frozenset()
     # The (model, reasoning_effort, context_tier) triple currently applied to the
     # live SDK session — set at build time and whenever we ``set_model``. Lets us
     # skip a redundant model switch when the selection hasn't drifted, so every
@@ -1038,6 +1050,41 @@ class AgentManager:
             return None
         return {"Authorization": f"Bearer {token}"}, expires_at
 
+    @staticmethod
+    async def _auth_skipped_stamps(servers: list[str]) -> frozenset[tuple[str, str]]:
+        """Stamp each of ``servers`` with the credential it would sign in with.
+
+        Answers "has anything changed about the sign-in for the servers we had to
+        skip?" cheaply enough to run on every dispatch: it reads the stored
+        credential rows straight from the DB and does no network I/O, no bearer
+        minting and no profile/tenant resolution — unlike
+        :meth:`_oauth_bearer_header`, which drives a real token refresh.
+
+        The stamp is a digest of the stored credential (empty string when the row
+        is absent), never the credential itself, so no token material is retained
+        in the manager's memory. Servers sharing one credential — the Agent 365
+        pair — naturally stamp identically, since
+        :func:`~precursor.backend.services.mcp.oauth_registry.credential_key`
+        resolves both to the same row.
+        """
+        if not servers:
+            return frozenset()
+
+        from precursor.backend.services.mcp.oauth_registry import credential_key
+
+        keys = {credential_key(name) for name in servers}
+        async with SessionLocal() as session:
+            rows = (
+                (await session.execute(select(AppSetting).where(AppSetting.key.in_(keys))))
+                .scalars()
+                .all()
+            )
+        values = {row.key: row.value or "" for row in rows}
+        return frozenset(
+            (name, hashlib.sha256(values.get(credential_key(name), "").encode()).hexdigest())
+            for name in servers
+        )
+
     async def _topic_context(self, agent: AgentSession) -> str | None:
         """Build a system-message preamble binding the agent to its topic.
 
@@ -1148,17 +1195,26 @@ class AgentManager:
                 live.mcp_fingerprint is not None
                 and live.mcp_fingerprint != await self._expected_mcp_fingerprint(agent)
             )
-            if not oauth_stale and not catalog_changed:
+            # A server we had to skip for missing credentials doesn't move the
+            # fingerprint (which tracks *enabled* servers), so without this the
+            # tool-less session would be reused forever. Comparing credential
+            # stamps rather than names means a rebuild that still can't attach
+            # re-records the same stamps and doesn't fire again.
+            auth_recovered = live.mcp_auth_skipped != await self._auth_skipped_stamps(
+                [name for name, _ in live.mcp_auth_skipped]
+            )
+            if not oauth_stale and not catalog_changed and not auth_recovered:
                 return live
             if agent.status in {"running", "needs_approval", "pending"}:
                 # A turn is in flight — don't disrupt it; refresh on the next
                 # idle dispatch instead.
                 return live
-            reason = (
-                "refresh an expiring OAuth token"
-                if oauth_stale
-                else "pick up a changed MCP server set"
-            )
+            if oauth_stale:
+                reason = "refresh an expiring OAuth token"
+            elif catalog_changed:
+                reason = "pick up a changed MCP server set"
+            else:
+                reason = "pick up a recovered MCP sign-in"
             logger.info("Rebuilding agent %s session to %s", agent.id, reason)
             await self.teardown_session(agent.id, forget=False)
 
@@ -1228,6 +1284,7 @@ class AgentManager:
             sdk_session=sdk_session,
             oauth_expires_at=oauth_expires_at,
             mcp_fingerprint=mcp_fingerprint,
+            mcp_auth_skipped=await self._auth_skipped_stamps(auth_required),
             model_signature=(model, effort or None, tier or "default") if model else None,
         )
         self._live[agent.id] = live
@@ -1392,6 +1449,13 @@ class AgentManager:
             # first run (nothing published yet).
             await self._clear_artifacts(agent_id)
             live = await self._ensure_live(agent)
+            # A step that named a server it couldn't sign in to must not run: the
+            # agent would answer from its own knowledge and the workflow would
+            # record that as a success. Park it so the run pauses on the sign-in.
+            blocked_on = self._blocked_on_missing_auth(agent, live)
+            if blocked_on:
+                await self._block_turn(agent_id, blocked_on)
+                return
             await self._release_parked_turn(agent_id, live)
             await self._sync_selected_model(agent)
             live.approval_policy = await self._approval_policy(agent)
@@ -1887,6 +1951,49 @@ class AgentManager:
             )
             return "auto"
         return model
+
+    @staticmethod
+    def _blocked_on_missing_auth(agent: AgentSession, live: _LiveSession) -> list[str]:
+        """Servers this agent *explicitly* asked for but couldn't authenticate.
+
+        Restricted to an explicit allowlist on purpose. An operator who named a
+        server in a workflow step's ``mcp_servers`` stated a hard requirement:
+        running the step without it produces a confident answer improvised from
+        the model's own knowledge, which the workflow then records as a success.
+        An agent left on the whole enabled catalogue made no such claim, and
+        hard-blocking it on one lapsed credential would be a regression.
+
+        Returns human-facing labels, collapsed per credential so a pair sharing
+        one sign-in reads as one thing to fix.
+        """
+        scope = parse_mcp_scope(agent.mcp_servers)
+        if not scope:
+            return []
+        from precursor.backend.services.mcp.oauth_registry import (
+            collapse_by_credential,
+            server_label,
+        )
+
+        missing = [name for name, _ in live.mcp_auth_skipped if name in scope]
+        return [server_label(name) for name in collapse_by_credential(sorted(missing))]
+
+    async def _block_turn(self, agent_id: int, labels: list[str]) -> None:
+        """Park the agent as ``blocked`` instead of dispatching a tool-less turn.
+
+        Like :meth:`_fail_turn` this lands *outside* the SDK event seam — no turn
+        is ever sent, so nothing will emit an event — hence the explicit workflow
+        advance. ``blocked`` is what pauses the run (rather than letting the step
+        complete on an ``idle`` the agent reached without ever calling a tool),
+        and the question tells the user exactly which sign-in unblocks it.
+        """
+        joined = ", ".join(labels)
+        question = (
+            f"This step needs {joined}, but the sign-in has expired. Re-authenticate, then resume."
+        )
+        logger.info("agent %s: blocking turn — no credentials for %s", agent_id, joined)
+        await self._patch(agent_id, status="blocked", blocked_question=question, error=None)
+        await self._publish(agent_id)
+        self.enqueue(self._advance_workflows(agent_id))
 
     async def _fail_turn(self, agent_id: int, exc: BaseException) -> None:
         """Mark a turn as failed so a dispatch error is visible, not a silent hang.

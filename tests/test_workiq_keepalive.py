@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from mcp.shared.auth import OAuthToken
 
 from precursor.backend.services.mcp import agent365
 from precursor.backend.services.mcp import workiq_keepalive as ka
@@ -20,12 +21,14 @@ from precursor.backend.services.mcp.usage import reset_usage
 class _FakeStorage:
     """Stand-in for ``DbTokenStorage`` returning a fixed token (or none)."""
 
-    token: object | None = object()
+    # A real ``OAuthToken`` rather than a sentinel: the ticker reads
+    # ``refresh_token`` off it to decide whether a refresh can succeed at all.
+    token: OAuthToken | None = OAuthToken(access_token="tok", refresh_token="rt")
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         pass
 
-    async def get_tokens(self) -> object | None:
+    async def get_tokens(self) -> OAuthToken | None:
         return type(self).token
 
 
@@ -54,7 +57,7 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
         "auth_banner_calls": [],
         "manager": _FakeManager(),
     }
-    _FakeStorage.token = object()
+    _FakeStorage.token = OAuthToken(access_token="tok", refresh_token="rt")
     reset_usage()
 
     async def _resolve_preview() -> bool:
@@ -259,3 +262,55 @@ async def test_auth_banner_rearms_after_recovery(patched: dict) -> None:
     await keepalive._tick_once()  # fail again → publish again
 
     assert patched["auth_banner_calls"] == ["workiq", "workiq"]
+
+
+async def test_no_refresh_token_prompts_without_a_round_trip(patched: dict) -> None:
+    """A credential stored without a refresh token can't be renewed — say so.
+
+    Every WorkIQ sign-in predating the ``offline_access`` request produced one of
+    these. There is nothing to refresh *with*, so attempting the round trip only
+    burns a request to reach the same conclusion; go straight to the banner,
+    which is also the upgrade path (the sign-in it asks for mints a renewable
+    credential).
+    """
+    _FakeStorage.token = OAuthToken(access_token="tok", refresh_token=None)
+    keepalive = ka.WorkIQKeepAlive()
+    margin = keepalive._settings.workiq_keepalive_refresh_margin_seconds
+    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=margin - 30)
+
+    await keepalive._tick_once()
+
+    assert patched["refresh_calls"] == 0  # no doomed round trip
+    assert patched["auth_banner_calls"] == ["workiq"]
+    assert patched["manager"].marked == ["workiq"]
+
+
+async def test_no_refresh_token_still_refreshes_when_expiry_unknown(patched: dict) -> None:
+    """A legacy token with no derivable expiry is probed, not pre-emptively failed.
+
+    We only know such a token is *due* for refresh by convention, not fact — it
+    may well still be valid — so the short-circuit deliberately stays out of the
+    way and lets the real probe decide.
+    """
+    _FakeStorage.token = OAuthToken(access_token="tok", refresh_token=None)
+    patched["expiry"] = None
+
+    await ka.WorkIQKeepAlive()._tick_once()
+
+    assert patched["refresh_calls"] == 1
+    assert patched["auth_banner_calls"] == []
+
+
+async def test_idle_lapse_without_refresh_token_prompts_directly(
+    patched: dict, monkeypatch
+) -> None:
+    """Same short-circuit on the idle path, which only runs once expiry has passed."""
+    _FakeStorage.token = OAuthToken(access_token="tok", refresh_token=None)
+    patched["expiry"] = datetime.now(UTC) - timedelta(minutes=5)
+    keepalive = ka.WorkIQKeepAlive()
+    _force_idle(keepalive, monkeypatch)
+
+    await keepalive._tick_once()
+
+    assert patched["refresh_calls"] == 0
+    assert patched["auth_banner_calls"] == ["workiq"]

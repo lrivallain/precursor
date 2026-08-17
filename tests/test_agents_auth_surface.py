@@ -10,6 +10,10 @@ needing the live Copilot SDK:
 - ``_announce_auth_required`` emits once per server and re-fires after the
   server later authenticates (so a lapsed token prompts again).
 - ``_auth_server_from_failed_tool`` only nags on a genuine WorkIQ auth failure.
+- ``_auth_skipped_stamps`` / ``_blocked_on_missing_auth``: the credential
+  fingerprint that lets a tool-less session be rebuilt once the user signs back
+  in, and the guard that stops an explicitly-scoped step "succeeding" without
+  the server it asked for.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
 from precursor.backend.schemas.agent import AgentEvent
-from precursor.backend.services.agents.manager import AgentManager
+from precursor.backend.services.agents.manager import AgentManager, _LiveSession
 
 
 async def _set_mcp_enabled(mapping: dict[str, bool]) -> None:
@@ -150,3 +154,154 @@ async def test_auth_server_from_failed_tool(monkeypatch) -> None:
 
     monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _has_creds)
     assert await mgr._auth_server_from_failed_tool(_tool("error", "workiq")) is None
+
+
+async def _set_setting(key: str, value: str | None) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, key)
+        if value is None:
+            if row is not None:
+                await session.delete(row)
+        elif row is None:
+            session.add(AppSetting(key=key, value=value))
+        else:
+            row.value = value
+        await session.commit()
+
+
+async def test_auth_skipped_stamps_track_the_stored_credential() -> None:
+    """The stamp changes only when the credential behind a server changes.
+
+    This is what makes rebuilding a tool-less session loop-free: a rebuild that
+    still can't authenticate re-records the same stamps, so nothing fires again
+    until real tokens land.
+    """
+    from precursor.backend.services.mcp.oauth_registry import credential_key
+
+    with TestClient(create_app()):
+        pass
+
+    mgr = AgentManager()
+    key = credential_key("workiq")
+
+    assert await mgr._auth_skipped_stamps([]) == frozenset()
+
+    await _set_setting(key, None)
+    absent = await mgr._auth_skipped_stamps(["workiq"])
+    try:
+        # An absent credential still stamps, so signing *in* is a detectable change.
+        assert {name for name, _ in absent} == {"workiq"}
+        assert await mgr._auth_skipped_stamps(["workiq"]) == absent  # stable
+
+        await _set_setting(key, '{"access_token": "one"}')
+        signed_in = await mgr._auth_skipped_stamps(["workiq"])
+        assert signed_in != absent
+
+        await _set_setting(key, '{"access_token": "two"}')
+        assert await mgr._auth_skipped_stamps(["workiq"]) != signed_in
+
+        # Never the credential itself — only a digest of it.
+        assert all("two" not in stamp for _, stamp in await mgr._auth_skipped_stamps(["workiq"]))
+    finally:
+        await _set_setting(key, None)
+
+
+async def test_auth_skipped_stamps_share_one_credential() -> None:
+    """Servers behind a single sign-in stamp identically — one thing to fix."""
+    from precursor.backend.services.mcp.agent365 import AGENT365_SERVERS
+
+    if len(AGENT365_SERVERS) < 2:  # pragma: no cover - guards a config change
+        return
+
+    with TestClient(create_app()):
+        pass
+
+    names = [spec.name for spec in AGENT365_SERVERS[:2]]
+    stamps = await AgentManager()._auth_skipped_stamps(names)
+    assert {name for name, _ in stamps} == set(names)
+    assert len({stamp for _, stamp in stamps}) == 1
+
+
+def _agent(mcp_servers: str | None) -> Any:
+    from precursor.backend.models import AgentSession
+
+    return AgentSession(id=1, title="t", mcp_servers=mcp_servers)
+
+
+def test_blocked_on_missing_auth_only_for_an_explicit_scope() -> None:
+    """Only a server the agent *named* blocks the turn."""
+    live = _LiveSession(sdk_session=object(), mcp_auth_skipped=frozenset({("workiq", "abc")}))
+
+    # No scope at all → the agent asked for the whole catalogue, not this server.
+    assert AgentManager._blocked_on_missing_auth(_agent(None), live) == []
+    assert AgentManager._blocked_on_missing_auth(_agent(""), live) == []
+    # Scoped elsewhere → unaffected by WorkIQ's lapsed sign-in.
+    assert AgentManager._blocked_on_missing_auth(_agent("github"), live) == []
+    # Scoped to it → blocked, reported by human-facing label.
+    blocked = AgentManager._blocked_on_missing_auth(_agent("workiq,github"), live)
+    assert blocked and "workiq" not in blocked  # the label, not the raw name
+
+    # Nothing was skipped → nothing blocks, however the agent is scoped.
+    attached = _LiveSession(sdk_session=object())
+    assert AgentManager._blocked_on_missing_auth(_agent("workiq"), attached) == []
+
+
+def test_blocked_on_missing_auth_collapses_shared_credential() -> None:
+    """A pair sharing one sign-in reads as a single thing to re-authenticate."""
+    from precursor.backend.services.mcp.agent365 import AGENT365_SERVERS
+
+    if len(AGENT365_SERVERS) < 2:  # pragma: no cover - guards a config change
+        return
+
+    names = [spec.name for spec in AGENT365_SERVERS[:2]]
+    live = _LiveSession(
+        sdk_session=object(),
+        mcp_auth_skipped=frozenset((name, "abc") for name in names),
+    )
+    assert len(AgentManager._blocked_on_missing_auth(_agent(",".join(names)), live)) == 1
+
+
+async def test_block_turn_parks_blocked_and_advances_the_workflow(monkeypatch) -> None:
+    """The turn is parked ``blocked`` — which is what pauses the run.
+
+    ``blocked`` (rather than the ``idle`` a tool-less agent would otherwise
+    reach) is the status ``workflow._advance_one`` treats as "pause and ask",
+    instead of recording the step as completed.
+    """
+    mgr = AgentManager()
+    patched: dict[str, Any] = {}
+    published: list[int] = []
+    advanced: list[int] = []
+
+    async def _patch(agent_id: int, **fields: Any) -> None:
+        patched.update({"agent_id": agent_id, **fields})
+
+    async def _publish(agent_id: int) -> None:
+        published.append(agent_id)
+
+    async def _advance(agent_id: int) -> None:
+        advanced.append(agent_id)
+
+    enqueued: list[Any] = []
+
+    monkeypatch.setattr(mgr, "_patch", _patch)
+    monkeypatch.setattr(mgr, "_publish", _publish)
+    monkeypatch.setattr(mgr, "_advance_workflows", _advance)
+    monkeypatch.setattr(mgr, "enqueue", enqueued.append)
+
+    await mgr._block_turn(7, ["WorkIQ"])
+
+    assert patched["agent_id"] == 7
+    assert patched["status"] == "blocked"
+    assert patched["error"] is None
+    assert "WorkIQ" in patched["blocked_question"]
+    assert published == [7]
+
+    # The advance is deferred to the manager's queue (never awaited inline, which
+    # would re-enter the lock this runs under); run it to prove that's what it is.
+    assert len(enqueued) == 1
+    await enqueued[0]
+    assert advanced == [7]
