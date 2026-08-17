@@ -621,22 +621,21 @@ async def test_resolve_bearer_falls_back_on_transient_error(monkeypatch) -> None
 
 def test_augment_authorization_url_adds_and_preserves() -> None:
     """We splice in login_hint/prompt without clobbering SDK-set params."""
+    from urllib.parse import parse_qs, urlsplit
+
     from precursor.backend.services.mcp import workiq_preview as wp
 
     base = "https://login.example/authorize?client_id=abc&scope=openid"
 
-    # No-op when nothing to add.
-    assert wp._augment_authorization_url(base, login_hint=None, prompt=None) == base
-
     out = wp._augment_authorization_url(base, login_hint="user@contoso.com", prompt="none")
-    from urllib.parse import parse_qs, urlsplit
 
     params = parse_qs(urlsplit(out).query)
     assert params["login_hint"] == ["user@contoso.com"]
     assert params["prompt"] == ["none"]
     # Original params survive untouched.
     assert params["client_id"] == ["abc"]
-    assert params["scope"] == ["openid"]
+    # ...except scope, which is merged rather than skipped (see below).
+    assert params["scope"] == ["openid offline_access"]
 
     # An existing param wins — we never overwrite what the SDK set.
     preset = base + "&prompt=login&login_hint=someone@else.com"
@@ -644,6 +643,52 @@ def test_augment_authorization_url_adds_and_preserves() -> None:
     p2 = parse_qs(urlsplit(out2).query)
     assert p2["prompt"] == ["login"]
     assert p2["login_hint"] == ["someone@else.com"]
+
+
+def test_augment_authorization_url_requests_offline_access() -> None:
+    """offline_access is merged into the URL's scope — the refresh-token switch.
+
+    It can't be set on ``OAuthClientMetadata``: the SDK overwrites
+    ``client_metadata.scope`` from the discovery documents before building the
+    URL, so the finished URL is the only point we control.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    from precursor.backend.services.mcp import workiq_preview as wp
+
+    def scope_of(url: str) -> list[str]:
+        return parse_qs(urlsplit(url).query).get("scope", [])
+
+    # Appended even with nothing else to splice in.
+    base = "https://login.example/authorize?client_id=abc&scope=Files.Read"
+    assert scope_of(wp._augment_authorization_url(base, login_hint=None, prompt=None)) == [
+        "Files.Read offline_access"
+    ]
+
+    # Idempotent: re-augmenting doesn't duplicate it.
+    once = wp._augment_authorization_url(base, login_hint=None, prompt=None)
+    assert scope_of(wp._augment_authorization_url(once, login_hint=None, prompt=None)) == [
+        "Files.Read offline_access"
+    ]
+
+    # Already present in any position → untouched.
+    with_it = "https://login.example/authorize?scope=offline_access+Files.Read"
+    assert scope_of(wp._augment_authorization_url(with_it, login_hint=None, prompt=None)) == [
+        "offline_access Files.Read"
+    ]
+
+    # An Entra ``/.default`` scope may legally carry offline_access alongside it.
+    default = "https://login.example/authorize?scope=api%3A%2F%2Fresource%2F.default"
+    assert scope_of(wp._augment_authorization_url(default, login_hint=None, prompt=None)) == [
+        "api://resource/.default offline_access"
+    ]
+
+    # No scope at all → left exactly as-is. A lone ``scope=offline_access`` would
+    # ask Entra for a token with no resource.
+    scopeless = "https://login.example/authorize?client_id=abc"
+    assert wp._augment_authorization_url(scopeless, login_hint=None, prompt=None) == scopeless
+    blank = "https://login.example/authorize?client_id=abc&scope="
+    assert wp._augment_authorization_url(blank, login_hint=None, prompt=None) == blank
 
 
 def _fake_jwt(claims: dict) -> str:

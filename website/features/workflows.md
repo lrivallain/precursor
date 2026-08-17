@@ -472,6 +472,16 @@ nothing — **red** if nothing by that name is installed here, **amber** if it i
 installed but switched off in **Settings → MCP**, which is the case you can fix
 without leaving the app.
 
+A server that's installed *and* enabled but merely **signed out** is a different
+case, and it used to be the dangerous one: the session was built without it, the
+agent answered the step from its own knowledge, rested idle, and the run recorded
+a **success**. A step that named a server stated a hard requirement, so it is now
+treated as one — if an allowlisted server can't be attached because its
+[OAuth sign-in](./mcp.md) has lapsed, the step parks
+**Blocked** naming the server instead of running without it. Sign in, then
+**Resume** the run. A step left on **All** is unaffected: it asked for whatever
+happens to be available, not for that server in particular.
+
 The name is kept rather than dropped, so an exported workflow imports cleanly
 onto a machine with a different server set, and survives the trip back. Import
 carries the allowlist verbatim, and the preview warns before you commit to it,

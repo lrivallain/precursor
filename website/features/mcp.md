@@ -110,6 +110,25 @@ turns pause and stream an auth prompt rather than failing. A background keep-ali
 ticker refreshes the token before it expires so the hosted session survives
 without frequent re-sign-in.
 
+#### A credential that can actually be renewed
+
+None of that renewal is possible unless the sign-in *asks* for it, so every
+authorization Precursor drives requests **`offline_access`** alongside the
+server's own scope. That's what makes Entra return a **refresh token** — without
+one the credential is terminal: the moment its access token expires the only way
+back is a human at a browser, which is exactly what an unattended agent or a
+scheduled workflow doesn't have.
+
+::: warning Existing sign-ins are upgraded once
+Tokens stored *before* this was requested have no refresh token and can't gain
+one retroactively. Rather than let the keep-alive attempt a renewal that cannot
+succeed, Precursor spots the missing refresh token and raises the ordinary
+`McpAuthBanner` straight away — so you sign in **once** more and come back with
+a renewable credential. Depending on how the WorkIQ preview client is
+registered, that sign-in may show a one-off **consent** screen for the new
+`offline_access` permission.
+:::
+
 When the refresh token itself ages out, Precursor runs a **hands-free,
 self-triggering re-auth** — it prefers automation over interrupting you:
 

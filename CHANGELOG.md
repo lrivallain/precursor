@@ -197,6 +197,46 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **WorkIQ sign-ins now ask for a refresh token, so they can be renewed
+  unattended.** The OAuth flow never requested `offline_access`, so Entra
+  returned an access token with **no refresh token** — a terminal credential. The
+  background keep-alive would try to renew it, fail, and the only way back was a
+  human at a browser, which is exactly what a scheduled workflow or a
+  backgrounded agent doesn't have; overnight runs came back having quietly
+  answered without their tools. Because the MCP SDK overwrites the requested
+  scope during discovery, `offline_access` is merged into the finished
+  authorization URL — the last point before the browser — alongside whatever
+  scope discovery resolved. Both built-in profiles are covered. Tokens stored
+  *before* this can't gain a refresh token retroactively, so instead of
+  attempting a renewal that cannot succeed, Precursor now spots the missing
+  refresh token and raises the ordinary sign-in banner straight away: you
+  re-authenticate **once** and come back with a renewable credential. Depending
+  on how the WorkIQ preview client is registered, that sign-in may show a one-off
+  consent screen for the new `offline_access` permission. (The Agent 365 pair
+  requests `<resource>/.default`, which replays already-consented permissions, so
+  it was getting a refresh token by accident and is unaffected.)
+
+- **An agent that lost an MCP sign-in now picks it back up.** When a server was
+  enabled but couldn't be authenticated, the session was built without it — and
+  the reuse check tracks the set of *enabled* servers (deliberately, to avoid
+  looping against a server that can't authenticate), so signing back in changed
+  nothing it looked at. The tool-less session was reused indefinitely and the
+  only cure was restarting Precursor. The live session now also records a digest
+  of the stored credential for each server it had to skip, and rebuilds when that
+  digest changes. It stays loop-free by construction: a rebuild that still can't
+  attach records the same digest and doesn't fire again until fresh tokens are
+  actually persisted, and the credential is never held in memory in the clear.
+
+- **A workflow step whose named server never attached no longer reports
+  success.** A step that allowlisted a server it couldn't sign in to ran anyway:
+  the agent answered from its own knowledge, rested idle, and the coordinator
+  read idle as done and marked the step **completed** — the worst outcome, since
+  the run looked fine. Naming a server in a step's allowlist is a hard
+  requirement, so the turn is now parked **Blocked** naming the server(s), which
+  pauses the run for a sign-in and a **Resume**. Scoped to explicit allowlists on
+  purpose: an agent running the whole enabled catalogue asked for whatever was
+  available, not for that server in particular, and is left alone.
+
 - **The test suite no longer calls a real model.** Three live-meeting tests
   (`ask`, `summary`, `summary/from-transcript`) never stubbed a provider — they
   relied on `get_llm_provider` falling back to the offline mock, which only
