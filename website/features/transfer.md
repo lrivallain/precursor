@@ -28,7 +28,7 @@ not as co-equal exports.
 
 Everything that describes *what to run*: the prompt and objective, the model,
 autonomy and step budget, the approval policy, token budget and retries, the
-capability toggles (MCP, skills, memory), the [Assistant Role](/features/roles)
+capability toggles (MCP, skills, memory), the [Assistant Role](/features/skills-memory#assistant-roles)
 persona, and — for a workflow — its full step wiring, including gate loop-back
 targets, approval checkpoints, per-step instructions, context sourcing and
 capability overrides.

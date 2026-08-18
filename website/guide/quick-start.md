@@ -17,8 +17,8 @@ uvx precursor-ai              # single-process, zero setup
 ```
 
 Open the URL printed in the startup banner. You'll land on the **home** launcher:
-a greeting and a grid of section cards (Topics, Chats, Live, Agents, Files, and —
-when configured — Kanban).
+a greeting and a grid of section cards (Topics, Chats, Live, Agents, Workflows,
+Files, and — when configured — Kanban).
 
 <Screenshot src="/screenshots/home.png" alt="The Precursor home launcher with section cards" />
 

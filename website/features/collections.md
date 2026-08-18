@@ -87,7 +87,7 @@ while a single topic can still opt out.
 
 ## Per-collection default role
 
-A collection can nominate a default [Assistant Role](/features/topics) — the
+A collection can nominate a default [Assistant Role](/features/skills-memory#assistant-roles) — the
 persona new topics start with. When you create a topic in a collection, it
 inherits that collection's **Default role** unless you pick a different one; a
 collection with no default leaves new topics on the built-in default role.

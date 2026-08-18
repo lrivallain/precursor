@@ -38,7 +38,7 @@ when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
 ::: tip Narrow the catalogue per workflow step
 Enabling a server here offers it to everything. Tool schemas are re-sent on
 every turn, so a large registry is a standing context cost. A
-[workflow](/features/workflows#picking-which-tool-servers-a-step-gets) step can
+[workflow](/features/workflows/steps#picking-which-tool-servers-a-step-gets) step can
 name the handful of servers it may use — the rest are never attached to that
 step's session.
 :::
@@ -328,7 +328,7 @@ data to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 (meeting) sessions, cross-entity search, skills, memory (read + write),
 [agent state](/features/agents#durable-state-the-private-scratchpad) (an agent's
 durable cross-run scratchpad, read + write),
-[workflow state](/features/workflows#pipeline-state-what-a-workflow-remembers) (a
+[workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) (a
 pipeline's shared memory, read + write), `post_message` (runs a full turn),
 schedules, and reminders.
 

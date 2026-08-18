@@ -93,8 +93,29 @@ It works in the default **context** mode too, where the expanded description
 rides along as standing discussion-level context instead of being enforced per
 turn.
 
-An **assistant role** expands references the same way. Because every surface
-that adopts a role resolves it through the same code path, a role prompt like
+## Assistant roles
+
+A **role** is a named, reusable **persona** — a system prompt injected into
+every turn of whatever adopts it. Where a skill is a one-shot instruction you
+invoke, a role is *persistent*: assign it once and it re-applies until you
+change it.
+
+Roles are managed in **Settings → Roles**, and assigned either from a
+conversation's settings panel or with the `/role <name>` command (matched
+case-insensitively). Every install seeds one built-in **`default`** role whose
+prompt is empty — so out of the box a role injects nothing. It can be edited but
+not renamed or deleted, which guarantees every discussion always has a fallback.
+
+The same role can be adopted by a **topic**, a **chat**, a
+[workspace](/features/workspaces), an [agent](/features/agents), a
+[Live session](/features/live-sessions), and a
+[workflow](/features/workflows/steps#one-voice-for-the-whole-pipeline) — all
+resolved through one code path, so a role behaves identically everywhere. A
+[collection](/features/collections) can nominate a default role that new topics
+inside it start from.
+
+An assistant role expands skill references the same way a chat description does.
+Because every surface resolves a role through that same path, a role prompt like
 "For every reply: `/role-skill`" applies on topics, chats, workspaces, agents
 and Live sessions alike — useful when you want the behaviour to follow you
 across many conversations rather than living on one chat.

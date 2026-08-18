@@ -28,9 +28,10 @@ that work at hand.
 
 Around that core it layers the other things a follow-up assistant needs: a place
 for throwaway [chats](/features/chats), a [live meeting](/features/live-sessions)
-recorder, autonomous [agents](/features/agents) for long-running tasks, a
-[scheduler](/features/scheduler) for recurring nudges, and [MCP](/features/mcp)
-tools in both directions.
+recorder, autonomous [agents](/features/agents) for long-running tasks,
+[workflows](/features/workflows) that chain those agents into a reusable
+pipeline, a [scheduler](/features/scheduler) for recurring nudges, and
+[MCP](/features/mcp) tools in both directions.
 
 ## Highlights
 
@@ -45,6 +46,9 @@ tools in both directions.
 - **Live meeting assistant** — Meeting transcription via Azure Speech, live
   insights, Q&A, and an editable summary.
 - **Agents mode** (opt-in) — hand a complex task to an autonomous Copilot SDK agent and follow it in a workflow-style timeline.
+- **Workflows** (opt-in) — chain those agents into a reusable, named pipeline
+  (`research → draft → review`) that runs unattended on a schedule or a webhook,
+  with quality gates and human approval checkpoints.
 - **Skills & memory**, a **scheduler** with recurrence and guards, **reminders**,
   **workspaces** the assistant can edit, and a **Kanban** board over your issues.
 - **Plugin-ready** — backend entry points plus a frontend extension registry.

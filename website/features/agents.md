@@ -157,7 +157,7 @@ A run records **what triggered it**, so the history reads as an audit trail:
 Runs are kept, never garbage-collected. The agent's insights sidebar carries a
 **Runs** rail listing the most recent ones — trigger, status, the workflow run
 that drove it, and what it spent — with the current run highlighted. In a
-workflow's [step trace](/features/workflows#run-history-and-the-step-trace),
+workflow's [step trace](/features/workflows/running#run-history-and-the-step-trace),
 each row names the run it launched, so you can walk from a pipeline step to the
 exact execution behind it.
 

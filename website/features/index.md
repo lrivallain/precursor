@@ -19,7 +19,8 @@ of working:
 | 💬 **[Chats](/features/chats)** | Quick, throwaway conversations for fast answers. |
 | 🎙️ **[Live sessions](/features/live-sessions)** | Record & transcribe a meeting with live insights, Q&A, and a summary. |
 | 🤖 **[Agents](/features/agents)** | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
-| 🗂️ **[Workspaces & files](/features/workspaces)** | Git clones / local dirs the assistant can browse and edit. |
+| 🔗 **[Workflows](/features/workflows)** | Chain those agents into a reusable pipeline the coordinator runs unattended, with gates and approval checkpoints (opt-in). |
+| 🗂️ **[Workspaces & files](/features/workspaces)** | Git clones / local dirs the assistant can browse and edit. Shown as **Files** in the sidebar. |
 | 📋 **[Kanban](/features/kanban)** | A board over the GitHub issues linked to your topics. |
 
 **Rearrange them to taste.** Drag any section in the sidebar — whether you use
@@ -36,9 +37,9 @@ These work across the sections above:
 - **[Collections](/features/collections)** — split topics into separate
   workspaces of work, filter the sidebar to one at a time, and give each its own
   GitHub repo.
-- **[Skills & memory](/features/skills-memory)** — reusable `/slash` prompt
-  presets (stored as `SKILL.md` files) and long-term memory injected into every
-  conversation.
+- **[Skills, roles & memory](/features/skills-memory)** — reusable `/slash` prompt
+  presets (stored as `SKILL.md` files), named assistant personas, and long-term
+  memory injected into every conversation.
 - **[Scheduler & reminders](/features/scheduler)** — put a topic or agent on a
   cadence, gate runs behind cheap MCP probes with `/guard`, or set one-shot
   reminders.

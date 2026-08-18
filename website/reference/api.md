@@ -55,14 +55,26 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `collections` | CRUD for [collections](/features/collections); deleting one re-homes its topics via `?reassign_to=`. |
 | `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events. |
 | `chats` | Quick throwaway chats, including read/unread state. |
+| `commands` | The `/slash` [commands](/features/skills-memory) a topic composer can run. |
+| `attachments` | Upload / fetch [attachments](/features/attachments) on a topic or chat. |
 | `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed). |
+| `llm` | The provider catalogue and the models the active provider offers. |
 | `me` | The connected GitHub identity for the sidebar persona, plus `GET /api/me/copilot` for Copilot AI-credit usage (both degrade to `null` when no token is configured). |
 | `github` | Issue/label/comment operations behind topic linking. |
+| `github/projects` | GitHub Projects v2 columns and cards behind the [Kanban board](/features/kanban). |
 | `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. |
 | `skills` / `memories` | Skill enablement and long-term memory. |
+| `roles` | Assistant [roles](/features/skills-memory) (persona presets). |
 | `schedules` | Topic/agent recurrence and **Run now**. |
+| `reminders` | One-shot [reminders](/features/scheduler) that resurface a topic or chat. |
 | `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/runs` and `/runs/{runId}` (the agent's [execution history](/features/agents#an-agent-is-a-definition-each-start-is-a-run) — trigger, status, capability snapshot, per-run token spend), `/events` (the transcript; every event carries the `agentRunId` it belongs to, and `?agentRunId=` narrows the reply to one run — a run belonging to another agent is a `404`), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL; the list accepts `?runId=` to scope to one run), `/state` (the [durable cross-run scratchpad](/features/agents#durable-state-the-private-scratchpad): `GET` to list, `PUT` to upsert by key, `DELETE /state/{key}` or `DELETE /state` to reset), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
+| `workflows` | [Workflow](/features/workflows) definitions, steps, lifecycle (`/run`, `/pause`, `/resume`, `/cancel`, `/retry`), run traces, per-step replay, approval and tool-permission decisions, pipeline state, schedules, and the public `POST /hooks/{token}` webhook. See the [workflows API reference](/features/workflows/reference#api-surface). |
+| `workspaces` | [Workspace](/features/workspaces) clones, the sandboxed file tree, file reads/writes, and workspace chat. |
+| `live` | [Live sessions](/features/live-sessions) — transcript segments, insights, notes, summary, and attendees. |
 | `stt` | Short-lived Azure Speech token minting for live sessions. |
+| `search` | The cross-entity lookup behind the ⌘K command palette. |
+| `refine` | One-shot text rephrasing for the notes panel and composer. |
+| `stats` | Token-usage rollups for **Settings → Usage stats**. |
 | `transfer` | [YAML export/import](/features/transfer) of agents and workflows: `GET /workflows/{id}` and `GET /agents/{id}` download a definition; `POST /preview` reports name conflicts without writing; `POST /import` applies them with a per-agent `replace` / `create` / `link` resolution. |
 | `plugins` | Descriptors for frontend extensions contributed by plugins. |
 
@@ -83,14 +95,31 @@ so one fetch tells you both what the agent *is* and what it's doing right now.
 
 ## Real-time events
 
-- `GET /api/events` — a Server-Sent Events stream the SPA subscribes to for
-  cross-window sync (`message.changed`, `stream.ended`, `mcp.auth_url`,
-  `mcp.auth_required`, `mcp.auth_resolved`, …).
-- `agent.changed` and `read.changed` carry an `agent_run_id` alongside
-  `agent_session_id`, so a listener can tell *which* execution of a shared agent
-  moved.
-- Streamed chat responses are their own SSE stream, delivering text deltas and
-  tool-call events for a single turn.
+`GET /api/events` is a Server-Sent Events stream the SPA subscribes to for
+cross-window sync. Requests carry an `X-Client-Id` header so the originating
+client's own events are filtered back out.
+
+| Event | Fires when |
+| --- | --- |
+| `topic.changed` | A topic's metadata or state is mutated. |
+| `message.changed` | A message is added or edited in a topic or chat. |
+| `stream.started` | A chat turn begins. |
+| `stream.ended` | A chat turn completes. |
+| `read.changed` | A conversation is marked read (distinct from `message.changed`). |
+| `reminder.changed` | A [reminder](/features/scheduler) is created, fires, or is cleared. |
+| `agent.changed` | An [agent](/features/agents) session's state or event stream moves. |
+| `meeting.changed` | A [live session](/features/live-sessions) is created, renamed, ended, or deleted. |
+| `workflow.changed` | A [workflow](/features/workflows) step advances, its status flips, or its definition is edited. Carries the run status and workflow name so a client can raise a notification without re-fetching. |
+| `mcp.auth_required` | An [MCP server](/features/mcp) needs an interactive sign-in. |
+| `mcp.auth_url` | The OAuth authorization URL to open for that sign-in. |
+| `mcp.auth_resolved` | An MCP server sign-in completed. |
+
+`agent.changed` and `read.changed` carry an `agent_run_id` alongside
+`agent_session_id`, so a listener can tell *which* execution of a shared agent
+moved.
+
+Streamed chat responses are their own SSE stream, delivering text deltas and
+tool-call events for a single turn.
 
 ::: tip Contributions welcome
 Want to help build the generated reference? See the
