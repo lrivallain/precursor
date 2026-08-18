@@ -204,6 +204,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Installing the `agents` extra is now the opt-in.** Agents mode took two steps
+  — install a ~150 MB extra, then find a toggle in **Settings → Agents** — so the
+  people who had just paid for the payload still saw nothing until they went
+  looking. It now follows the capability probe: on once the Copilot CLI runtime
+  resolves, off (with the existing "install this" explanation) when it doesn't.
+  The toggle stays as the one control on top of that — it is the kill switch and
+  the spend control, and still reconciles the runtime live without a restart.
+  There is deliberately no env-level default to go with it: the probe already
+  answers "can this run?" and the toggle answers "should it?", so a third input
+  would only have contradicted the premise that installing the extra *is* the
+  opt-in. The probe is still checked at every use, so a stored `true` on a
+  machine without the SDK stays inert.
 - **An agent is addressed by its own `public_id`, not by a session handle.**
   `AgentSession.copilot_session_id` doubled as the agent's URL identity and as
   the Copilot SDK handle for whatever was running; the handle now belongs to the

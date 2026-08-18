@@ -103,8 +103,8 @@ uv run precursor               # serves API + SPA on :8000
 
 ## Optional: Agents mode
 
-[Agents mode](/features/agents) is **opt-in and off by default**. It is *not*
-installed by the steps above — it lives behind its own `agents` extra:
+[Agents mode](/features/agents) is **opt-in**: it is *not* installed by the steps
+above — it lives behind its own `agents` extra:
 
 ```bash
 uv sync --extra agents                 # adds github-copilot-sdk on top of dev deps
@@ -114,8 +114,8 @@ uv run --extra agents precursor --dev  # …or run the dev stack with it (= make
 ::: warning ~90 MB native runtime
 The `github-copilot-sdk` wheel **bundles the native Copilot CLI runtime binary**
 (~90 MB download, ~145 MB on disk), which is why it's kept out of the default
-install. Installing the extra only makes the runtime *available* — agents stay
-disabled until you turn them on in **Settings → Agents**.
+install. Installing the extra is the opt-in — agents follow the runtime and come
+on once it resolves, with the switch in **Settings → Agents**.
 :::
 
 ## Automatic upgrades on startup

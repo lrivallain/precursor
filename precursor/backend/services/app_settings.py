@@ -577,16 +577,26 @@ async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:
 async def resolve_agents_enabled(session: AsyncSession) -> bool:
     """Whether Agents mode (Copilot SDK) is enabled.
 
-    DB override on top of the ``agents_enabled`` env default. Note this is the
-    *preference*; whether the runtime is actually usable is a separate capability
-    probe (``services.agents.runtime.agents_available``).
+    Two inputs, no env-level default: the **Settings → Agents** toggle if it has
+    ever been set, otherwise the capability probe. Installing the optional
+    ``agents`` extra is itself the opt-in — a ~150 MB deliberate act — so the
+    feature comes on once the runtime resolves rather than waiting on a second
+    switch the user has to go find. With the extra absent the probe fails and this
+    stays off, which is what the Settings panel explains.
+
+    This is still only the *preference*: ``runtime.agents_available`` is checked
+    again at every use, so a stored ``true`` on a machine without the SDK stays
+    inert.
     """
+    from precursor.backend.services.agents import runtime
+
     return await resolve(
         session,
         SettingSpec(
             "agents_enabled",
             _boolean,
-            default_factory=lambda: get_settings().agents_enabled,
+            # Attribute lookup (not a from-import) so the probe stays patchable.
+            default_factory=lambda: runtime.agents_available()[0],
         ),
     )
 

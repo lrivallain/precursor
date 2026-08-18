@@ -235,11 +235,12 @@ class Settings(BaseSettings):
         default="", validation_alias="PRECURSOR_PLAYWRIGHT_PROFILE_DIR"
     )
 
-    # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
-    # by default at the env level; the effective on/off lives in the DB app
-    # settings (Settings → Agents) so it can be toggled at runtime. The SDK
-    # persists each session's state under ``agents_home`` (its ``COPILOT_HOME``).
-    agents_enabled: bool = False
+    # Agents mode — long-running Copilot SDK agent sessions. There is no env-level
+    # on/off: installing the optional ``agents`` extra (a ~150 MB payload carrying
+    # the native Copilot CLI) *is* the opt-in, so the feature follows the
+    # capability probe and the DB app setting (Settings → Agents) is the one
+    # control on top of it. The SDK persists each session's state under
+    # ``agents_home`` (its ``COPILOT_HOME``).
     # Model used for new agent sessions when the caller doesn't specify one.
     # ``auto`` lets the runtime pick a current model, so this never goes stale as
     # the SDK's model catalogue rotates (a pinned id that later vanishes would

@@ -81,8 +81,10 @@ a `PRECURSOR_SKILLS_DIR` override.
 ## Agents
 
 [Agents mode](/features/agents) is toggled at runtime (**Settings → Agents**),
-but the [agent orchestrator](/features/agents#orchestrating-agents) governance
-has two process-level knobs:
+which is the only on/off control — there is no env-level default, because
+installing the `agents` extra is itself the opt-in. The
+[agent orchestrator](/features/agents#orchestrating-agents) governance has two
+process-level knobs:
 
 | Variable | Default | Description |
 | --- | --- | --- |
