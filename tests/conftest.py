@@ -71,6 +71,33 @@ def _stub_playwright_browser_probe():
 
 
 @pytest.fixture(autouse=True)
+def _no_agents_runtime():
+    """Keep app startup from spawning the real Copilot CLI child process.
+
+    ``lifespan`` calls ``AgentManager.start()``, which spawns the native Copilot
+    CLI bundled in the optional ``github-copilot-sdk`` wheel whenever the SDK is
+    importable *and* the persisted ``agents_enabled`` flag is on. Both hold in a
+    developer venv that ever ran ``make dev``: exercising Agents mode means
+    turning that flag on (~40 call sites across the suite), and it is written to
+    the session-wide scratch DB, so those tests — and every later app startup
+    while it stays on — paid a real process spawn and teardown. At ~12.8s each
+    that took the suite from ~75s to ~9min, on machines with the extra installed
+    only, so it silently punished exactly the people running the app.
+
+    Reporting the runtime as unavailable is the capability seam the manager
+    already consults, so the suite behaves identically with or without the extra
+    installed. Tests that want the runtime live monkeypatch this same attribute
+    back (see ``test_agents.py``), which still wins over this fixture.
+    """
+    from precursor.backend.services.agents import runtime
+
+    prev = runtime.agents_available
+    runtime.agents_available = lambda: (False, "test: agents runtime stubbed out")  # type: ignore[assignment]
+    yield
+    runtime.agents_available = prev  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
 def _no_llm_credentials():
     """Keep the LLM provider off the network by pretending there's no token.
 

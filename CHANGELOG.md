@@ -228,6 +228,18 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The test suite no longer spawns the real Copilot CLI.** `make check` took
+  ~9 minutes on machines that had ever run `make dev`, and ~75s on machines that
+  hadn't — the same code, six times slower for exactly the people running the
+  app. App startup starts the agents runtime when the optional
+  `github-copilot-sdk` is importable *and* the persisted `agents_enabled` flag is
+  on; exercising Agents mode means turning that flag on, and it persists in the
+  session-wide scratch database, so those tests — and every later app startup
+  while it stayed on — spawned and tore down the bundled native CLI. At ~12.8s
+  each the suite sat **87% idle** (70s of CPU for 539s of wall clock), which read
+  as "the tests are slow" rather than as a process spawn. Tests now report the
+  agents runtime as unavailable by construction, so timings no longer depend on
+  which extras a developer happens to have installed.
 - **A workflow board shows its own run.** The step strip was rendered from the
   shared agent row, which mirrors that agent's *current* run — so two pipelines
   driving one agent both displayed whichever finished last, right down to the
