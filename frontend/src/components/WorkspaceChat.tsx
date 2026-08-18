@@ -178,8 +178,13 @@ export function WorkspaceChat({
     if (cmd) {
       const skill = skillsStore.byName(cmd.name);
       if (skill) {
-        promptOverride = `${skill.instructions.trim()}\n\n---\n\n${cmd.argument}`;
+        promptOverride = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
       }
+    }
+    if (promptOverride === undefined) {
+      // No leading skill command, but a `/skill-name` may appear mid-prompt.
+      const inlined = skillsStore.expandReferences(content);
+      if (inlined !== content) promptOverride = inlined;
     }
 
     // History sent to the backend is only the user/assistant text turns.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
@@ -212,3 +214,36 @@ def test_role_persona_grounds_live_chat() -> None:
 
         grounding = anyio.run(_ground)
         assert "Answer as a domain expert." in grounding
+
+
+def test_role_prompt_expands_skill_references() -> None:
+    """A `/skill-name` in a role prompt resolves wherever the role is adopted."""
+    import anyio
+
+    from precursor.backend.config import get_settings
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.roles import resolve_role_prompt
+
+    skill_md = Path(get_settings().skills_dir) / "role-skill" / "SKILL.md"
+    skill_md.parent.mkdir(parents=True, exist_ok=True)
+    skill_md.write_text("---\nname: role-skill\n---\n\nSpeak only in haiku.\n", encoding="utf-8")
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.get("/api/skills")  # discovery
+        client.patch("/api/skills/role-skill", json={"enabled": True})
+        role = client.post(
+            "/api/roles",
+            json={"name": "haiku-bot", "system_prompt": "For every reply: /role-skill"},
+        ).json()
+
+        async def _resolve(role_id: int | None) -> str:
+            async with SessionLocal() as session:
+                return await resolve_role_prompt(session, role_id)
+
+        prompt = anyio.run(_resolve, role["id"])
+        assert prompt == "For every reply: Speak only in haiku."
+
+        # A disabled skill must not leak its body into any role prompt.
+        client.patch("/api/skills/role-skill", json={"enabled": False})
+        assert anyio.run(_resolve, role["id"]) == "For every reply: /role-skill"

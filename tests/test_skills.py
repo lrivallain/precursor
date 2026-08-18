@@ -16,6 +16,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import Skill
+from precursor.backend.services import skills as skills_service
 
 
 def _skills_root() -> Path:
@@ -284,3 +285,61 @@ def test_update_file_skill_rewrites_file() -> None:
         text = (_skills_root() / "edit-me" / "SKILL.md").read_text(encoding="utf-8")
         assert "Updated body." in text
         assert "Original." not in text
+
+
+# ---------------------------------------------------------------------------
+# inline `/skill-name` references
+# ---------------------------------------------------------------------------
+def test_expand_references_substitutes_in_place() -> None:
+    """A mid-prompt `/name` is replaced where it was written, not hoisted."""
+    table = {"rewrite": "Rewrite the text formally."}
+    out = skills_service.expand_references_with("please /rewrite this: hello", table)
+    assert out == "please Rewrite the text formally. this: hello"
+
+
+def test_expand_references_ignores_non_skill_slashes() -> None:
+    """Paths, URLs and prose must never be mistaken for a skill call."""
+    table = {"rewrite": "BODY", "usr": "NOPE", "or": "NOPE"}
+    for text in (
+        "/usr/bin/env",
+        "see https://example.com/rewrite for details",
+        "and/or maybe",
+        "cd /usr",  # trailing `/usr` is a real match, but the path form below isn't
+    ):
+        out = skills_service.expand_references_with(text, table)
+        if text == "cd /usr":
+            assert out == "cd NOPE"
+        else:
+            assert out == text, text
+
+
+def test_expand_references_unknown_name_left_alone() -> None:
+    assert skills_service.expand_references_with("/nope hi", {"a": "A"}) == "/nope hi"
+
+
+def test_expand_references_nested_and_cycle_safe() -> None:
+    """Nested refs expand up to the depth cap; cycles terminate."""
+    nested = skills_service.expand_references_with("/a", {"a": "A /b", "b": "B"})
+    assert nested == "A B"
+
+    # A ↔ B cycle must not recurse forever; the repeated name is left literal.
+    cyclic = skills_service.expand_references_with("/a", {"a": "A /b", "b": "B /a"})
+    assert cyclic == "A B /a"
+
+
+def test_expand_references_uses_active_skills_only() -> None:
+    """Disabled file-backed skills don't expand; enabling one makes it resolve."""
+    _write_external_skill("inline-me", "desc", "INLINE BODY")
+    app = create_app()
+    with TestClient(app) as client:
+        client.get("/api/skills")  # discovery/reconciliation
+
+        async def _expand() -> str:
+            async with SessionLocal() as session:
+                return await skills_service.expand_references(session, "go /inline-me now")
+
+        # Freshly discovered files default to disabled → no expansion.
+        assert asyncio.run(_expand()) == "go /inline-me now"
+
+        assert client.patch("/api/skills/inline-me", json={"enabled": True}).status_code == 200
+        assert asyncio.run(_expand()) == "go INLINE BODY now"

@@ -401,7 +401,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       const skill = skillsStore.byName(cmd.name);
       if (skill) {
         setDraft("");
-        const expanded = `${skill.instructions.trim()}\n\n---\n\n${cmd.argument}`;
+        const expanded = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
         const atts = pendingAttachments;
         setPendingAttachments([]);
         // Persist the literal slash command as the user message;
@@ -414,10 +414,13 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     setDraft("");
     const atts = pendingAttachments;
     setPendingAttachments([]);
+    // No leading skill command, but a `/skill-name` may appear mid-prompt: send
+    // the expanded text to the LLM while the transcript keeps what was typed.
+    const inlined = content ? skillsStore.expandReferences(content) : content;
     void streamStore.start(
       streamKey,
       content || "(attachment attached)",
-      undefined,
+      inlined && inlined !== content ? inlined : undefined,
       atts,
     );
   }
