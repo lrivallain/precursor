@@ -25,6 +25,7 @@ Built-in servers ship in-tree:
 | `fetch` | Fetch and read web content. |
 | `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
 | `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
+| `drawio` | Author native `.drawio` diagrams into a workspace, with server-side layout (see below). |
 | `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
 | `workiq-teams` | Microsoft Teams via [Agent 365](#agent-365-workiq-teams-and-workiq-user) — chats, channels, messages, presence. |
@@ -97,6 +98,98 @@ sign-in needs a real display. Treat it like the host-mode
 [command runner](/features/command-runner): a single-user, trusted-machine
 capability, not something to expose on a shared/headless server.
 :::
+
+### draw.io — diagrams as files, not pictures
+
+`drawio` writes native **`.drawio`** documents (plain mxGraph XML) into a
+[workspace](/features/workspaces) working tree. Because the output is a *file*
+in a git-backed tree, a diagram is reviewable in a `git diff` and commit-able
+from the Workspace UI — and it stays editable in draw.io, the desktop app or the
+VS Code extension, unlike a rendered image.
+
+It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
+nothing outside `workspaces_dir/<slug>` is reachable.
+
+| Tool | What it does |
+| --- | --- |
+| `list_workspaces` | Find the `workspace_id` to write into. |
+| `search_shapes` | Find real product icons (Azure) and their exact style strings. |
+| `list_shapes` | The generic shape / colour / edge presets. |
+| `create_diagram` | Build a laid-out diagram from nodes, edges and groups. |
+| `write_diagram_xml` | Escape hatch — write raw mxGraph XML (validated, wrapper added). |
+| `read_diagram` | Read a diagram back to edit and rewrite it. |
+
+Two things exist here because a model left to itself gets them wrong.
+
+#### Real icons, not blank boxes
+
+draw.io's Azure library is a set of **SVG images** (`image=img/lib/azure2/…`),
+*not* `shape=mxgraph.azure2.*` stencils. Models reliably invent the stencil form,
+draw.io can't resolve it, and every service silently degrades to a featureless
+rectangle — which is how an "Azure architecture" ends up as a grid of blue
+squares.
+
+So Precursor ships a **catalogue of ~700 verified Azure shapes**, generated from
+draw.io's own palette by `scripts/build_drawio_shapes.py`, and serves it through
+`search_shapes`:
+
+```text
+search_shapes("express route")
+→ networking/expressroute-circuits  (Azure ExpressRoute Circuits)
+  image;aspect=fixed;html=1;…;image=img/lib/azure2/networking/ExpressRoute_Circuits.svg;
+```
+
+Pass the `key` as a node's `shape` and the icon — and its correct aspect ratio —
+comes with it. `create_diagram` also resolves free text (`"azure firewall"`) and
+**reports what it matched** in `notes`, so an unresolved shape is something you
+get told about rather than something you discover in the rendered file.
+
+::: tip Colours are for boxes, not icons
+`color` tints plain shapes. It's ignored for catalogue icons — painting a fill
+over an SVG icon is precisely what flattens it into a coloured square.
+:::
+
+#### Layout, including nested containers
+
+Models write plausible mxGraph but pick poor `x`/`y` coordinates, so shapes
+overlap and edges cross. Describe the *graph* instead — nodes, edges and
+**groups** — and the server derives the geometry: layered along `direction`, with
+a barycenter pass to cut crossings, and every container sized to fit its children
+and its own title.
+
+`groups` nest freely via their own `group` field, which is what makes real cloud
+topologies expressible — region → VNet → subnet → resource — without dropping to
+raw XML:
+
+```text
+create_diagram(
+  workspace_id = 1,
+  path         = "docs/hub-spoke",            # .drawio is appended for you
+  direction    = "horizontal",
+  groups       = [{"id": "hub",   "label": "Hub VNet — 10.0.0.0/16", "color": "blue"},
+                  {"id": "fwsub", "label": "AzureFirewallSubnet",    "group": "hub"},
+                  {"id": "spoke", "label": "Spoke 1 — Production",   "color": "green"}],
+  nodes        = [{"id": "fw",  "label": "Azure Firewall", "shape": "networking/firewalls", "group": "fwsub"},
+                  {"id": "app", "label": "App Tier",       "shape": "compute/vm-scale-sets", "group": "spoke"}],
+  edges        = [{"source": "fw", "target": "spoke", "label": "VNet peering"}],
+)
+```
+
+Edges may join **groups** as well as nodes, and an edge between two nested nodes
+also orders the containers they sit in. `direction` sets the flow axis; siblings
+with no edges between them are packed along it and wrap instead of running off
+the page.
+
+::: tip Diagrams that diff cleanly
+Output is deterministic — no timestamps, no random ids. Regenerating an
+unchanged diagram produces an empty `git diff` instead of churning the file.
+:::
+
+Presets and catalogue keys aside, **any field that takes a preset also accepts a
+raw mxGraph style** (anything containing `=`), so the rest of the draw.io
+catalogue — AWS, UML, BPMN — stays reachable. Cycles are fine (state machines,
+retry loops): the layering cuts the loop rather than rejecting the graph.
+Existing files are never clobbered unless you pass `overwrite=true`.
 
 ### WorkIQ preview & OAuth
 

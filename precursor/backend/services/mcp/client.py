@@ -367,6 +367,18 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
         args=("-m", "precursor.backend.services.mcp.workspace_fs_server"),
         forward_env=True,
     ),
+    # draw.io MCP — in-tree stdio subprocess that authors native ``.drawio``
+    # files (mxGraph XML) into a Workspace working tree, with server-side
+    # layered layout so the model describes a graph instead of guessing
+    # coordinates. Shares workspace-fs's sandbox, so it needs the app's DB +
+    # config to resolve a workspace to its on-disk path.
+    _BuiltinSpec(
+        "drawio",
+        "stdio",
+        command=sys.executable,
+        args=("-m", "precursor.backend.services.mcp.drawio_server"),
+        forward_env=True,
+    ),
     # Command runner MCP — in-tree stdio subprocess that runs bash/python/node
     # either inside a Docker "jail" (default) or directly on the host. Enable-time
     # Docker availability is checked in the connect router.

@@ -23,8 +23,9 @@ Every file operation is routed through `safe_join`, which:
 - rejects path traversal outside the workspace root, and
 - blocks access to `.git`.
 
-The same sandbox backs the **`workspace-fs`** [MCP server](/features/mcp), so
-when the assistant reads or edits files during a turn, it stays inside the jail.
+The same sandbox backs the **`workspace-fs`** and **`drawio`**
+[MCP servers](/features/mcp), so when the assistant reads, edits or diagrams
+files during a turn, it stays inside the jail.
 
 ## Working with files
 
