@@ -256,6 +256,61 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **The agents feature page is `agents-mode.md`.** On macOS and Windows the
+  filesystem is case-insensitive, so `website/features/agents.md` *is*
+  `AGENTS.md` — the filename coding agents treat as an instruction file. Every
+  agent opening this repo was loading a 550-line product page as if it were
+  repo instructions. The page moved to `/features/agents-mode`, and every
+  internal link, the sidebar and the landing grid moved with it. There is
+  deliberately no stub left behind at the old path, since that would recreate
+  the collision.
+- **Documentation screenshots are reproducible, and six pages now have one.**
+  Workflows — the largest feature in the app — had no screenshot at all, and
+  neither did the scheduler, skills, command runner or import/export pages.
+  Retaking a shot previously meant pointing a browser at your own instance,
+  which is exactly how a real account or a real repository ends up in the docs.
+  Three scripts now do it from a clean room: `scripts/seed_demo.py` builds a
+  throwaway database of invented fixtures (and refuses to run unless the
+  database URL says `demo`), `scripts/demo_server.sh` serves it with `gh`
+  stripped from `PATH` so the persona can only resolve to "Guest / Not
+  connected", and `scripts/capture_screenshots.js` drives each scene and writes
+  the light and dark variants at `deviceScaleFactor: 2`. Added shots for the
+  workflow board, a workflow run trace (with a gate's loop-back and its
+  `attempt 2`), the recurrence editor, Settings → Skills, Settings → System's
+  command-runner jail, and the workflows gallery.
+
+- **The workflows guide is four short pages instead of one 786-line wall.** The
+  page had accreted a feature at a time until it was by far the longest in the
+  docs — 30 headings covering authoring, execution, cost, failure handling and
+  the REST surface in one scroll, with no screenshot to break it up. It is now an
+  **overview** (what a workflow is, how it differs from agent `depends-on`, the
+  four step kinds, the autonomy rule) plus **Building a pipeline**, **Configuring
+  a step**, **Running a pipeline** and a **Reference**. The `/features/workflows`
+  URL is unchanged; deep links from the agents and MCP pages were repointed at
+  the section that now owns each anchor. Also fixes a markdown bug that had
+  silently merged the "Manual" and "Schedule" trigger bullets into one line.
+- **Workflows are listed where the other sections are.** Workflows mode was
+  missing from every "what's in the app" list except the landing feature grid —
+  the sections table in the feature guides, the introduction, the quick-start's
+  home-card list, the README highlights, and the API reference's router table all
+  described a six-section app. Added to each.
+- **Assistant roles are documented.** A role had a Settings tab, a `/role`
+  command, a per-collection default and a per-workflow override, but no
+  documentation at all — and two pages linked to a `/features/roles` page that
+  never existed (one of them a dead link, the other pointing at Topics). They now
+  have a section on **Skills, roles & memory**, which the sidebar and both links
+  now name.
+- **The API and configuration references cover the whole surface.** The API
+  reference's router table described 13 of 31 routers — `workflows`,
+  `workspaces`, `live`, `reminders`, `roles`, `search`, `stats`, `commands`,
+  `attachments`, `projects`, `llm` and `refine` were absent — and listed 5 of the
+  12 SSE events. The configuration reference was missing 12 `PRECURSOR_*`
+  variables (`CORS_ORIGINS`, `DATA_DIR`, the four scheduler/reminder cadences,
+  `MCP_IDLE_TTL_SECONDS`, `GITHUB_MCP_TOOLSETS` and four WorkIQ keep-alive
+  knobs), and still closed with a "runtime settings layer over env defaults" note
+  that contradicted the no-env-twin rule stated at the top of the same page. A
+  cross-check against `config.Settings` now shows no drift in either direction.
+
 - **Settings you can change in the app no longer have a hidden env twin.**
   `config.Settings` sets `env_prefix="PRECURSOR_"`, so every field on it silently
   became a `PRECURSOR_*` variable — including 24 that already had a control in the

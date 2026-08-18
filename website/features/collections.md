@@ -51,7 +51,7 @@ two collections, so only same-collection parents are offered.
 
 Everything that merely *refers* to a topic spans all collections: the
 [live-session](/features/live-sessions) topic picker, an
-[agent](/features/agents)'s linked topic, unread totals, notification titles,
+[agent](/features/agents-mode)'s linked topic, unread totals, notification titles,
 global ⌘K search, and the archive. Attaching a live session to a topic in
 another collection is a perfectly ordinary thing to do, and stays available.
 
@@ -87,7 +87,7 @@ while a single topic can still opt out.
 
 ## Per-collection default role
 
-A collection can nominate a default [Assistant Role](/features/topics) — the
+A collection can nominate a default [Assistant Role](/features/skills-memory#assistant-roles) — the
 persona new topics start with. When you create a topic in a collection, it
 inherits that collection's **Default role** unless you pick a different one; a
 collection with no default leaves new topics on the built-in default role.

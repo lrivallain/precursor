@@ -103,7 +103,7 @@ uv run precursor               # serves API + SPA on :8000
 
 ## Optional: Agents mode
 
-[Agents mode](/features/agents) is **opt-in**: it is *not* installed by the steps
+[Agents mode](/features/agents-mode) is **opt-in**: it is *not* installed by the steps
 above — it lives behind its own `agents` extra:
 
 ```bash

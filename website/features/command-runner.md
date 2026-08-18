@@ -11,6 +11,8 @@ or, when you explicitly disable the jail, directly on the host.
 It's exposed as the **`cmd-runner`** [MCP server](/features/mcp), backed by
 `services/cmd_runner.py`.
 
+<Screenshot src="/screenshots/command-runner.png" alt="Settings → System showing the Command runner (jail) section: a Docker jail toggle, container image, network access toggle and command timeout" caption="Settings → System — the jail is on by default, and network access is off inside it." />
+
 ## The Docker jail (default)
 
 By default, commands run inside a **throwaway Docker container**:

@@ -5,8 +5,10 @@ title: Scheduler & reminders
 # Scheduler & reminders
 
 Precursor runs an in-process **scheduler** that drives recurring
-[topics](/features/topics) **and** scheduled [agents](/features/agents), plus
+[topics](/features/topics) **and** scheduled [agents](/features/agents-mode), plus
 one-shot **reminders** that resurface a topic at a set time.
+
+<Screenshot src="/screenshots/scheduler.png" alt="A topic's settings panel with Run on a schedule enabled, showing the prompt to run each time, an interval-or-time-of-day recurrence choice, and a weekday picker" caption="The recurrence editor — the same control scheduled topics, agents and workflows share." />
 
 ## Recurring topics and agents
 
@@ -41,7 +43,7 @@ transcript first while keeping the same uuid so the schedule keeps resolving:
 
 When a scheduled agent pauses mid-run for an approval, you don't have to be
 watching: it raises the [out-of-band "agent needs you"
-signal](/features/agents#the-agent-needs-you-signal) — a focus-independent
+signal](/features/agents-mode#the-agent-needs-you-signal) — a focus-independent
 notification, a 🔔 in the tab title, and top billing in the ⌘K palette.
 
 ## `/guard` — gate a run behind a cheap probe

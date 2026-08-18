@@ -22,6 +22,9 @@ older ones.
   SDK agent attached to a topic/chat, followed in a workflow-style tab. Needs
   the `agents` extra, and turns itself on once that resolves — with a switch in
   **Settings → Agents** (see [Optional: Agents mode](#optional-agents-mode))
+- **Workflows** (opt-in): chain agents into a reusable, named pipeline that a
+  coordinator runs unattended — with quality gates, human approval checkpoints,
+  and schedule/webhook triggers
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Plugin-ready**: backend entry points + a frontend extension registry,

@@ -39,7 +39,7 @@ when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
 ::: tip Narrow the catalogue per workflow step
 Enabling a server here offers it to everything. Tool schemas are re-sent on
 every turn, so a large registry is a standing context cost. A
-[workflow](/features/workflows#picking-which-tool-servers-a-step-gets) step can
+[workflow](/features/workflows/steps#picking-which-tool-servers-a-step-gets) step can
 name the handful of servers it may use — the rest are never attached to that
 step's session.
 :::
@@ -85,7 +85,7 @@ and you don't sign in again. The browser opens **headed**, so the first time:
 1. Enable `playwright` in **Settings → MCP** and ask for the page. Edge opens; if
    the SSO broker can't sign you in silently, the Entra sign-in appears.
 2. **Sign in once** — the cookies/session are written to the shared profile.
-3. Every later turn (in any chat, topic, or [agent](/features/agents)) reuses that
+3. Every later turn (in any chat, topic, or [agent](/features/agents-mode)) reuses that
    profile, so the model reaches the authenticated content without signing in
    again — until the session naturally expires.
 
@@ -419,9 +419,9 @@ than pointing at an unusable URL.
 Precursor runs a `FastMCP` server named **`precursor`** that exposes its own
 data to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 (meeting) sessions, cross-entity search, skills, memory (read + write),
-[agent state](/features/agents#durable-state-the-private-scratchpad) (an agent's
+[agent state](/features/agents-mode#durable-state-the-private-scratchpad) (an agent's
 durable cross-run scratchpad, read + write),
-[workflow state](/features/workflows#pipeline-state-what-a-workflow-remembers) (a
+[workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) (a
 pipeline's shared memory, read + write), `post_message` (runs a full turn),
 schedules, and reminders.
 

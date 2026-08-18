@@ -53,7 +53,7 @@ features:
     title: Autonomous agents
     details: >-
       Hand complex, long-running tasks to Copilot SDK agents that run in the background, and monitor the whole fleet from a control-tower dashboard that surfaces the ones that need you.
-    link: /features/agents
+    link: /features/agents-mode
     linkText: About agents
   - icon: 🔗
     title: Workflows
