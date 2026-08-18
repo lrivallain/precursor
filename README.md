@@ -19,9 +19,9 @@ older ones.
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
 - **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
-  SDK agent attached to a topic/chat, followed in a workflow-style tab. Off by
-  default — needs the `agents` extra and a toggle in **Settings → Agents**
-  (see [Optional: Agents mode](#optional-agents-mode))
+  SDK agent attached to a topic/chat, followed in a workflow-style tab. Needs
+  the `agents` extra, and turns itself on once that resolves — with a switch in
+  **Settings → Agents** (see [Optional: Agents mode](#optional-agents-mode))
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Plugin-ready**: backend entry points + a frontend extension registry,
@@ -80,9 +80,10 @@ uv run --extra agents precursor --dev # …or run the dev stack with it in one s
 > payload — there is no separate, smaller "download the runtime later" path for
 > the published `1.0.x` wheels.
 
-Installing the extra only makes the runtime *available*. Agents stay **disabled**
-until you turn them on in **Settings → Agents**, where the UI also reports
-whether the runtime resolved on your platform.
+Installing the extra *is* the opt-in: with no stored preference Agents mode
+follows the runtime, so it comes on as soon as the CLI resolves on your platform.
+**Settings → Agents** is the one control on top of that, and reports whether the
+runtime resolved.
 
 ### Run it (one command)
 

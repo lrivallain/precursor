@@ -41,6 +41,13 @@ logger = logging.getLogger(__name__)
 # Retention clamp bounds — a bad value can't wedge the sweep.
 _MIN_RETENTION, _MAX_RETENTION = 1, 3650
 
+# Factory defaults. Backups are configured entirely in Settings → Backup, so
+# these are the starting point rather than an env-level knob: an env twin would
+# be a second, undiscoverable way to set what the UI already owns.
+DEFAULT_ENABLED = False
+DEFAULT_DIR = ""
+DEFAULT_RETENTION = 7
+
 # AppSetting keys tracking the outcome of the last run (surfaced read-only in
 # the Settings UI so the user can confirm backups are actually happening).
 _LAST_RUN_KEY = "backup_last_run_at"
@@ -73,21 +80,20 @@ async def resolve_backup_enabled(session: AsyncSession) -> bool:
     db_value = await _get_db_value(session, "backup_enabled")
     if isinstance(db_value, bool):
         return db_value
-    return get_settings().backup_enabled
+    return DEFAULT_ENABLED
 
 
 async def resolve_backup_dir(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "backup_dir")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return get_settings().backup_dir.strip()
+    return DEFAULT_DIR
 
 
 async def resolve_backup_retention(session: AsyncSession) -> int:
     db_value = await _get_db_value(session, "backup_retention")
-    default = get_settings().backup_retention
     if isinstance(db_value, bool) or not isinstance(db_value, (int, float)):
-        value = default
+        value = DEFAULT_RETENTION
     else:
         value = int(db_value)
     return max(_MIN_RETENTION, min(value, _MAX_RETENTION))

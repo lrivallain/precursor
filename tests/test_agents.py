@@ -1,9 +1,10 @@
 """Agents API tests — the non-SDK seams of Agents mode.
 
 The live Copilot SDK runtime can't run here (no subscription / binary in CI), so
-these tests cover the HTTP surface that's independent of it: the feature is
-opt-in and off by default, so listing is empty and creating a task is refused
-until the operator enables it. The settings endpoint advertises the gate.
+these tests cover the HTTP surface that's independent of it. The feature follows
+the runtime: with no SDK installed the capability probe fails, so listing is
+empty and creating a task is refused until the operator enables it explicitly.
+The settings endpoint advertises the gate.
 """
 
 from __future__ import annotations
@@ -56,6 +57,64 @@ def test_enabling_agents_persists_and_is_reported(monkeypatch) -> None:
         # app startup would otherwise try to launch the real Copilot runtime.
         reset = client.put("/api/settings", json={"agents_enabled": False})
         assert reset.json()["agents_enabled"] is False
+
+
+# --- the default: no env knob, just the runtime probe + the Settings toggle ----
+
+
+async def _resolve_enabled() -> bool:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.app_settings import resolve_agents_enabled
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        return await resolve_agents_enabled(session)
+
+
+async def _clear_agents_enabled_row() -> None:
+    """Drop the DB override so the derived default is what gets resolved."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, "agents_enabled")
+        if row is not None:
+            await session.delete(row)
+            await session.commit()
+
+
+async def test_unset_preference_follows_the_runtime_probe(monkeypatch) -> None:
+    """Installing the extra is the opt-in: no second toggle to go find.
+
+    The ``agents`` extra is a ~150 MB deliberate install, so with no stored
+    preference the feature tracks whether the runtime can actually run.
+    """
+    from precursor.backend.services.agents import runtime
+
+    await _clear_agents_enabled_row()
+
+    monkeypatch.setattr(runtime, "agents_available", lambda: (True, "test: ready"))
+    assert await _resolve_enabled() is True
+
+    # No runtime → off, which is the state the Settings panel explains.
+    monkeypatch.setattr(runtime, "agents_available", lambda: (False, "test: no sdk"))
+    assert await _resolve_enabled() is False
+
+
+async def test_stored_preference_wins_over_the_probe(monkeypatch) -> None:
+    """The Settings toggle stays authoritative — it's the kill switch.
+
+    Turning agents off on a machine that *can* run them has to stick, otherwise
+    there is no way to stop the runtime short of uninstalling the extra.
+    """
+    from precursor.backend.services.agents import runtime
+
+    monkeypatch.setattr(runtime, "agents_available", lambda: (True, "test: ready"))
+
+    await _set_agents_enabled(False)
+    assert await _resolve_enabled() is False
+    await _clear_agents_enabled_row()
 
 
 async def _set_mcp_enabled(mapping: dict[str, bool]) -> None:

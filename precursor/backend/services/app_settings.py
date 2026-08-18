@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
 from precursor.backend.models import AppSetting
+from precursor.backend.services import cmd_runner
 from precursor.backend.services.cmd_runner import CmdRunnerConfig
 
 # Factory defaults — surface in the UI before the user has saved a preference.
@@ -368,12 +369,21 @@ async def azure_stt_ready(session: AsyncSession) -> bool:
     )
 
 
-# -- System settings (env-default + DB override) ---------------------------
+# -- System settings (factory default + DB override) ------------------------
 #
-# These mirror fields on ``config.Settings`` (env / .env). The env value is the
-# factory default; a DB row written from the Settings → System panel overrides
-# it at runtime. Helpers below clamp to sane ranges so a bad value can't wedge
-# the app.
+# These are owned entirely by the Settings → System panel: the constants below
+# are the factory defaults and a DB row overrides them at runtime. They are
+# deliberately *not* fields on ``config.Settings`` — ``env_prefix`` would turn
+# each one into an undocumented ``PRECURSOR_*`` twin of a control the UI already
+# provides. Helpers below clamp to sane ranges so a bad value can't wedge the app.
+
+# Context budget for one turn: total prompt tokens, and the per-message ceiling
+# applied to a single tool result before it is trimmed.
+DEFAULT_LLM_MAX_INPUT_TOKENS = 600_000
+DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS = 20_000
+
+# Wall-clock ceiling for one scheduled/automated run.
+DEFAULT_SCHEDULED_RUN_TIMEOUT_SECONDS = 600
 
 # Retention window (in days) for full TOOL-result content. 0 disables pruning.
 DEFAULT_TOOL_RESULT_RETENTION_DAYS = 0
@@ -404,7 +414,7 @@ async def resolve_llm_max_input_tokens(session: AsyncSession) -> int:
         SettingSpec(
             "llm_max_input_tokens",
             _clamped_int(_MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS),
-            default_factory=lambda: get_settings().llm_max_input_tokens,
+            default=DEFAULT_LLM_MAX_INPUT_TOKENS,
         ),
     )
 
@@ -415,7 +425,7 @@ async def resolve_llm_max_tool_result_tokens(session: AsyncSession) -> int:
         SettingSpec(
             "llm_max_tool_result_tokens",
             _clamped_int(_MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS),
-            default_factory=lambda: get_settings().llm_max_tool_result_tokens,
+            default=DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS,
         ),
     )
 
@@ -426,7 +436,7 @@ async def resolve_scheduled_run_timeout_seconds(session: AsyncSession) -> int:
         SettingSpec(
             "scheduled_run_timeout_seconds",
             _clamped_int(_MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT),
-            default_factory=lambda: get_settings().scheduled_run_timeout_seconds,
+            default=DEFAULT_SCHEDULED_RUN_TIMEOUT_SECONDS,
         ),
     )
 
@@ -438,7 +448,7 @@ async def resolve_tool_result_retention_days(session: AsyncSession) -> int:
         SettingSpec(
             "tool_result_retention_days",
             _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
-            default_factory=lambda: get_settings().tool_result_retention_days,
+            default=DEFAULT_TOOL_RESULT_RETENTION_DAYS,
         ),
     )
 
@@ -450,49 +460,48 @@ async def resolve_live_transcript_retention_days(session: AsyncSession) -> int:
         SettingSpec(
             "live_transcript_retention_days",
             _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
-            default_factory=lambda: get_settings().live_transcript_retention_days,
+            default=DEFAULT_LIVE_TRANSCRIPT_RETENTION_DAYS,
         ),
     )
 
 
 async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
-    """Effective cmd-runner config: env defaults with DB overrides applied."""
-    settings = get_settings()
+    """Effective cmd-runner config: factory defaults with DB overrides applied."""
     jail = await _get_db_value(session, "cmd_runner_jail")
     image = await _get_db_value(session, "cmd_runner_image")
     network = await _get_db_value(session, "cmd_runner_network")
     memory = await _get_db_value(session, "cmd_runner_memory")
     cpus = await _get_db_value(session, "cmd_runner_cpus")
     return CmdRunnerConfig(
-        jail=jail if isinstance(jail, bool) else settings.cmd_runner_jail,
+        jail=jail if isinstance(jail, bool) else cmd_runner.DEFAULT_JAIL,
         image=(
-            image.strip() if isinstance(image, str) and image.strip() else settings.cmd_runner_image
+            image.strip() if isinstance(image, str) and image.strip() else cmd_runner.DEFAULT_IMAGE
         ),
-        network=network if isinstance(network, bool) else settings.cmd_runner_network,
+        network=network if isinstance(network, bool) else cmd_runner.DEFAULT_NETWORK,
         timeout_seconds=_clamp_int(
             await _get_db_value(session, "cmd_runner_timeout_seconds"),
-            settings.cmd_runner_timeout_seconds,
+            cmd_runner.DEFAULT_TIMEOUT_SECONDS,
             _MIN_CMD_TIMEOUT,
             _MAX_CMD_TIMEOUT,
         ),
         max_output_bytes=_clamp_int(
             await _get_db_value(session, "cmd_runner_max_output_bytes"),
-            settings.cmd_runner_max_output_bytes,
+            cmd_runner.DEFAULT_MAX_OUTPUT_BYTES,
             _MIN_CMD_OUTPUT,
             _MAX_CMD_OUTPUT,
         ),
         memory=(
             memory.strip()
             if isinstance(memory, str) and memory.strip()
-            else settings.cmd_runner_memory
+            else cmd_runner.DEFAULT_MEMORY
         ),
         pids_limit=_clamp_int(
             await _get_db_value(session, "cmd_runner_pids_limit"),
-            settings.cmd_runner_pids_limit,
+            cmd_runner.DEFAULT_PIDS_LIMIT,
             _MIN_PIDS,
             _MAX_PIDS,
         ),
-        cpus=(cpus.strip() if isinstance(cpus, str) and cpus.strip() else settings.cmd_runner_cpus),
+        cpus=(cpus.strip() if isinstance(cpus, str) and cpus.strip() else cmd_runner.DEFAULT_CPUS),
     )
 
 
@@ -577,28 +586,38 @@ async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:
 async def resolve_agents_enabled(session: AsyncSession) -> bool:
     """Whether Agents mode (Copilot SDK) is enabled.
 
-    DB override on top of the ``agents_enabled`` env default. Note this is the
-    *preference*; whether the runtime is actually usable is a separate capability
-    probe (``services.agents.runtime.agents_available``).
+    Two inputs, no env-level default: the **Settings → Agents** toggle if it has
+    ever been set, otherwise the capability probe. Installing the optional
+    ``agents`` extra is itself the opt-in — a ~150 MB deliberate act — so the
+    feature comes on once the runtime resolves rather than waiting on a second
+    switch the user has to go find. With the extra absent the probe fails and this
+    stays off, which is what the Settings panel explains.
+
+    This is still only the *preference*: ``runtime.agents_available`` is checked
+    again at every use, so a stored ``true`` on a machine without the SDK stays
+    inert.
     """
+    from precursor.backend.services.agents import runtime
+
     return await resolve(
         session,
         SettingSpec(
             "agents_enabled",
             _boolean,
-            default_factory=lambda: get_settings().agents_enabled,
+            # Attribute lookup (not a from-import) so the probe stays patchable.
+            default_factory=lambda: runtime.agents_available()[0],
         ),
     )
 
 
 async def resolve_agents_default_model(session: AsyncSession) -> str:
-    """Default model for new agent sessions (DB override on env default)."""
+    """Default model for new agent sessions (DB override on the factory default)."""
     return await resolve(
         session,
         SettingSpec(
             "agents_default_model",
             _nonempty_str(strip=False),
-            default_factory=lambda: get_settings().agents_default_model,
+            default=DEFAULT_AGENTS_MODEL,
         ),
     )
 
@@ -639,25 +658,27 @@ async def resolve_agents_context_tier(session: AsyncSession) -> str:
 
 
 AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+# ``manual`` asks for everything, ``balanced`` auto-approves read-only actions,
+# ``autonomous`` approves all.
+DEFAULT_AGENTS_APPROVAL_POLICY = "balanced"
+# ``auto`` lets the runtime pick a current model, so this never goes stale as the
+# SDK's model catalogue rotates (a pinned id that later vanishes would fail every
+# turn at ``create_session``).
+DEFAULT_AGENTS_MODEL = "auto"
+# Appended to the SDK's own base prompt; empty means add nothing.
+DEFAULT_AGENTS_SYSTEM_PROMPT = ""
+# Seconds a running session may stall before the watchdog interrupts it.
+DEFAULT_AGENTS_WATCHDOG_TIMEOUT_SECONDS = 600
 
 
 async def resolve_agents_approval_policy(session: AsyncSession) -> str:
-    """Default approval policy gating agent actions (DB override on env default).
-
-    See ``Settings.agents_approval_policy``: ``manual`` asks for everything,
-    ``balanced`` auto-approves read-only actions, ``autonomous`` approves all.
-    """
-
-    def _env_default() -> str:
-        default = get_settings().agents_approval_policy
-        return default if default in AGENTS_APPROVAL_POLICIES else "balanced"
-
+    """Default approval policy gating agent actions (DB override on the default)."""
     return await resolve(
         session,
         SettingSpec(
             "agents_approval_policy",
             _str_in(AGENTS_APPROVAL_POLICIES),
-            default_factory=_env_default,
+            default=DEFAULT_AGENTS_APPROVAL_POLICY,
         ),
     )
 
@@ -665,29 +686,22 @@ async def resolve_agents_approval_policy(session: AsyncSession) -> str:
 async def resolve_agents_system_prompt(session: AsyncSession) -> str:
     """Extra system-message preamble appended to every agent session.
 
-    DB override on top of the ``agents_system_prompt`` env default. The SDK base
-    prompt isn't ours to set, so this is appended (alongside any topic binding).
+    The SDK base prompt isn't ours to set, so this is appended (alongside any
+    topic binding).
     """
     return await resolve(
         session,
-        SettingSpec(
-            "agents_system_prompt",
-            _any_str,
-            default_factory=lambda: get_settings().agents_system_prompt,
-        ),
+        SettingSpec("agents_system_prompt", _any_str, default=DEFAULT_AGENTS_SYSTEM_PROMPT),
     )
 
 
 async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
     """Seconds a running session may stall before the watchdog interrupts it.
 
-    DB override on top of the ``agents_watchdog_timeout_seconds`` env default.
     Clamped to a sane floor so a misconfigured value can't kill live turns.
     """
     db_value = await _get_db_value(session, "agents_watchdog_timeout_seconds")
-    value = (
-        db_value if isinstance(db_value, int) else get_settings().agents_watchdog_timeout_seconds
-    )
+    value = db_value if isinstance(db_value, int) else DEFAULT_AGENTS_WATCHDOG_TIMEOUT_SECONDS
     return max(30, int(value))
 
 
@@ -695,29 +709,24 @@ async def resolve_agents_watchdog_timeout(session: AsyncSession) -> int:
 # Seed values for a newly-created workflow (its watchdog) and its steps (what
 # they may draw on). Every one of them stays overridable per workflow/step; these
 # only decide where a fresh one starts.
-
-
-def _const(value: bool) -> Callable[[], bool]:
-    """A default factory bound to ``value`` now, not when it is called."""
-    return lambda: value
+DEFAULT_WORKFLOWS_USE_MCP = True
+DEFAULT_WORKFLOWS_USE_SKILLS = True
+DEFAULT_WORKFLOWS_USE_MEMORY = True
+# 0 = no stall watchdog.
+DEFAULT_WORKFLOWS_STEP_TIMEOUT_SECONDS = 0
 
 
 async def resolve_workflows_default_capabilities(session: AsyncSession) -> dict[str, bool]:
     """Default MCP / skills / memory enablement for new workflow steps."""
-    env = get_settings()
     out: dict[str, bool] = {}
-    for field, env_default in (
-        ("use_mcp", env.workflows_default_use_mcp),
-        ("use_skills", env.workflows_default_use_skills),
-        ("use_memory", env.workflows_default_use_memory),
+    for field, seed in (
+        ("use_mcp", DEFAULT_WORKFLOWS_USE_MCP),
+        ("use_skills", DEFAULT_WORKFLOWS_USE_SKILLS),
+        ("use_memory", DEFAULT_WORKFLOWS_USE_MEMORY),
     ):
         out[field] = await resolve(
             session,
-            SettingSpec(
-                f"workflows_default_{field}",
-                _boolean,
-                default_factory=_const(env_default),
-            ),
+            SettingSpec(f"workflows_default_{field}", _boolean, default=seed),
         )
     return out
 
@@ -725,9 +734,5 @@ async def resolve_workflows_default_capabilities(session: AsyncSession) -> dict[
 async def resolve_workflows_default_step_timeout(session: AsyncSession) -> int:
     """Default stall-watchdog timeout (seconds) for a new workflow. 0 = off."""
     db_value = await _get_db_value(session, "workflows_default_step_timeout_seconds")
-    value = (
-        db_value
-        if isinstance(db_value, int)
-        else get_settings().workflows_default_step_timeout_seconds
-    )
+    value = db_value if isinstance(db_value, int) else DEFAULT_WORKFLOWS_STEP_TIMEOUT_SECONDS
     return max(0, int(value))

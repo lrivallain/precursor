@@ -21,9 +21,14 @@ uv sync --extra agents                 # adds github-copilot-sdk
 uv run --extra agents precursor --dev  # …or run the dev stack with it
 ```
 
-Installing the extra only makes the runtime *available*. Agents stay **disabled**
-until you turn them on in **Settings → Agents**, where the UI also reports whether
-the runtime resolved on your platform.
+Installing the extra *is* the opt-in: with no stored preference, Agents mode
+follows the runtime, so it comes on as soon as the CLI resolves on your platform.
+**Settings → Agents** is the one control on top of that — turn it off there to
+stop the runtime without uninstalling anything, and the panel reports whether the
+runtime resolved.
+
+Without the extra the probe fails, agents stay off, and Settings tells you which
+install command to run.
 
 ::: tip Recovering a stalled runtime
 Settings distinguishes *available* (the runtime is installed and resolves) from

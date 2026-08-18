@@ -204,6 +204,36 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Settings you can change in the app no longer have a hidden env twin.**
+  `config.Settings` sets `env_prefix="PRECURSOR_"`, so every field on it silently
+  became a `PRECURSOR_*` variable — including 24 that already had a control in the
+  Settings panel. None were documented, so the only way to find one was to read
+  `config.py`, and two of them (`PRECURSOR_CMD_RUNNER_JAIL`,
+  `PRECURSOR_CMD_RUNNER_NETWORK`) were an undocumented second way to switch off
+  the command-runner sandbox. The factory default for each now lives as a constant
+  beside its `resolve_*` helper, leaving the DB row — and the panel that writes it
+  — as the single way to set the value. `.env` keeps only what must be known
+  before the database exists: bind address, database URL, data directory, ticker
+  cadences. A test pins the split so it can't creep back. Affected:
+  `LLM_MAX_INPUT_TOKENS`, `LLM_MAX_TOOL_RESULT_TOKENS`,
+  `SCHEDULED_RUN_TIMEOUT_SECONDS`, `TOOL_RESULT_RETENTION_DAYS`,
+  `LIVE_TRANSCRIPT_RETENTION_DAYS`, the eight `CMD_RUNNER_*`, the four `AGENTS_*`
+  defaults, the four `WORKFLOWS_DEFAULT_*`, and the three `BACKUP_*`.
+  `PRECURSOR_WORKIQ_TENANT_ID` and `PRECURSOR_PLAYWRIGHT_BROWSER` are kept
+  deliberately: both describe the machine or tenant rather than a preference, and
+  both are documented.
+- **Installing the `agents` extra is now the opt-in.** Agents mode took two steps
+  — install a ~150 MB extra, then find a toggle in **Settings → Agents** — so the
+  people who had just paid for the payload still saw nothing until they went
+  looking. It now follows the capability probe: on once the Copilot CLI runtime
+  resolves, off (with the existing "install this" explanation) when it doesn't.
+  The toggle stays as the one control on top of that — it is the kill switch and
+  the spend control, and still reconciles the runtime live without a restart.
+  There is deliberately no env-level default to go with it: the probe already
+  answers "can this run?" and the toggle answers "should it?", so a third input
+  would only have contradicted the premise that installing the extra *is* the
+  opt-in. The probe is still checked at every use, so a stored `true` on a
+  machine without the SDK stays inert.
 - **An agent is addressed by its own `public_id`, not by a session handle.**
   `AgentSession.copilot_session_id` doubled as the agent's URL identity and as
   the Copilot SDK handle for whatever was running; the handle now belongs to the
@@ -228,6 +258,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Workspace chat now honours the context-budget settings.** `POST
+  /api/workspaces/{slug}/chat` trimmed its prompt using the env-level token
+  limits while topic and chat turns resolved them from the database, so changing
+  **max input / tool-result tokens** in Settings silently had no effect on
+  workspace conversations — the one surface most likely to hit the ceiling, since
+  it reads files.
+- **The test suite no longer spawns the real Copilot CLI.** `make check` took
+  ~9 minutes on machines that had ever run `make dev`, and ~75s on machines that
+  hadn't — the same code, six times slower for exactly the people running the
+  app. App startup starts the agents runtime when the optional
+  `github-copilot-sdk` is importable *and* the persisted `agents_enabled` flag is
+  on; exercising Agents mode means turning that flag on, and it persists in the
+  session-wide scratch database, so those tests — and every later app startup
+  while it stayed on — spawned and tore down the bundled native CLI. At ~12.8s
+  each the suite sat **87% idle** (70s of CPU for 539s of wall clock), which read
+  as "the tests are slow" rather than as a process spawn. Tests now report the
+  agents runtime as unavailable by construction, so timings no longer depend on
+  which extras a developer happens to have installed.
 - **A workflow board shows its own run.** The step strip was rendered from the
   shared agent row, which mirrors that agent's *current* run — so two pipelines
   driving one agent both displayed whichever finished last, right down to the

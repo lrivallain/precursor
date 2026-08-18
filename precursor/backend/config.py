@@ -77,39 +77,27 @@ class Settings(BaseSettings):
 
     # LLM — the active provider and its credentials live in the app settings
     # (Settings → Model), not in the environment, so they can be changed at
-    # runtime without a restart. See services/llm/registry.py.
-
-    # Prompt budgeting — caps how much of the (history + tool results) transcript
-    # is sent to the model, so a few large file reads / fetches across tool
-    # rounds can't overflow the context window. Lower these for smaller models.
-    llm_max_input_tokens: int = 600_000
-    llm_max_tool_result_tokens: int = 20_000
+    # runtime without a restart. See services/llm/registry.py. The prompt budget
+    # (max input / tool-result tokens) lives there too — see
+    # ``services/app_settings.py``.
 
     # Scheduler — drives recurring "scheduled" topics. Single in-process ticker
     # + a small worker pool; see services/scheduler.py.
     scheduler_enabled: bool = True
     scheduler_poll_seconds: int = 30
     scheduler_concurrency: int = 2
-    scheduled_run_timeout_seconds: int = 600
     # One-shot reminders (services/reminder_ticker.py) — how often to poll for
     # due reminders. Gated by the same ``scheduler_enabled`` flag.
     reminder_poll_seconds: int = 30
 
-    # Tool-result retention (services/tool_result_retention.py) — how long full
-    # TOOL-result content is kept before its ``content`` is replaced in place
-    # with a short placeholder to bound DB growth. 0 = disabled / keep forever.
-    # The sweep runs on startup and periodically via a ticker gated by
-    # ``scheduler_enabled`` (poll interval below, default daily).
-    tool_result_retention_days: int = 0
+    # Tool-result retention (services/tool_result_retention.py) — how often the
+    # sweep that trims full TOOL-result content runs. Gated by
+    # ``scheduler_enabled``; the retention *window* is a Settings → System value.
     tool_result_retention_poll_seconds: int = 86_400
 
-    # Live transcript retention (services/live_transcript_retention.py) — how many
-    # days after a Live meeting session ends its raw transcript segments are kept
-    # before being deleted, to bound DB growth. 0 = keep forever. Only the
-    # transcript is removed; the session, its insights, notes and summary are
-    # preserved. The sweep runs on startup and periodically via a ticker gated by
-    # ``scheduler_enabled`` (poll interval below, default daily).
-    live_transcript_retention_days: int = 7
+    # Live transcript retention (services/live_transcript_retention.py) — how
+    # often the sweep that deletes old Live transcript segments runs. Gated by
+    # ``scheduler_enabled``; the retention *window* is a Settings → System value.
     live_transcript_retention_poll_seconds: int = 86_400
 
     # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
@@ -185,15 +173,9 @@ class Settings(BaseSettings):
 
     # Command runner (cmd-runner MCP) — runs bash/python/node either inside a
     # throwaway Docker "jail" (default) or, when the jail is disabled, directly
-    # on the host with full local disk access. See services/cmd_runner.py.
-    cmd_runner_jail: bool = True
-    cmd_runner_image: str = "python:3.14-slim"
-    cmd_runner_network: bool = False
-    cmd_runner_timeout_seconds: int = 120
-    cmd_runner_max_output_bytes: int = 100_000
-    cmd_runner_memory: str = "512m"
-    cmd_runner_pids_limit: int = 256
-    cmd_runner_cpus: str = "1"
+    # on the host with full local disk access. Its settings (jail, image, network,
+    # limits) are Settings → System values; only the scratch dir below is derived
+    # from ``data_dir``. See services/cmd_runner.py.
 
     # MCP client — the chat/tool loop keeps each enabled server's session warm
     # across turns instead of re-spawning/initialising it every message (that
@@ -235,40 +217,16 @@ class Settings(BaseSettings):
         default="", validation_alias="PRECURSOR_PLAYWRIGHT_PROFILE_DIR"
     )
 
-    # Agents mode (opt-in) — long-running Copilot SDK agent sessions. Disabled
-    # by default at the env level; the effective on/off lives in the DB app
-    # settings (Settings → Agents) so it can be toggled at runtime. The SDK
-    # persists each session's state under ``agents_home`` (its ``COPILOT_HOME``).
-    agents_enabled: bool = False
-    # Model used for new agent sessions when the caller doesn't specify one.
-    # ``auto`` lets the runtime pick a current model, so this never goes stale as
-    # the SDK's model catalogue rotates (a pinned id that later vanishes would
-    # otherwise fail every turn at ``create_session``).
-    agents_default_model: str = "auto"
-    # Default approval policy gating an agent's actions. One of:
-    #   "manual"     — ask before every action (most cautious)
-    #   "balanced"   — auto-approve read-only actions, ask for writes/shell/etc.
-    #   "autonomous" — auto-approve everything (no prompts)
-    agents_approval_policy: str = "balanced"
-    # Extra system-message preamble appended to every agent session, on top of
-    # the SDK's base prompt (which we cannot override) and any topic binding.
-    # Empty by default; editable at runtime via Settings → Agents.
-    agents_system_prompt: str = ""
-    # How long (seconds) a running agent session may go without any new runtime
-    # event before the watchdog marks it ``interrupted`` (resumable). Guards
-    # against a stuck/runaway turn pinning a session in "running" forever.
-    agents_watchdog_timeout_seconds: int = 600
-    # --- Workflow defaults --------------------------------------------------
-    # What a newly-created workflow step may draw on. These seed the per-step
-    # capability toggles (each step can still override). Tool schemas are a large
-    # fixed per-turn cost, so a fleet that mostly transforms text can default
-    # them off here rather than switching every step by hand.
-    workflows_default_use_mcp: bool = True
-    workflows_default_use_skills: bool = True
-    workflows_default_use_memory: bool = True
-    # Seconds a workflow step may run before the stall watchdog stops it and
-    # applies the step's failure policy. 0 = no watchdog (the safe default).
-    workflows_default_step_timeout_seconds: int = 0
+    # Agents mode — long-running Copilot SDK agent sessions. There is no env-level
+    # on/off: installing the optional ``agents`` extra (a ~150 MB payload carrying
+    # the native Copilot CLI) *is* the opt-in, so the feature follows the
+    # capability probe and the DB app setting (Settings → Agents) is the one
+    # control on top of it. The SDK persists each session's state under
+    # ``agents_home`` (its ``COPILOT_HOME``). The per-agent defaults it starts
+    # from (model, approval policy, system prompt, watchdog timeout) and the
+    # workflow step seeds are Settings values too — see
+    # ``services/app_settings.py``.
+
     # --- Fleet orchestration governance -------------------------------------
     # Max agents the concurrency governor lets execute a turn at once. Extra
     # ready agents queue on a semaphore so a big fleet can't stampede the host
@@ -287,14 +245,11 @@ class Settings(BaseSettings):
 
     # Backup (services/backup.py) — periodic copy of the SQLite DB + blob store
     # into a plain folder the user picks (e.g. a OneDrive-synced directory).
-    # Disabled by default at the env level; the effective on/off, target dir and
-    # retention live in the DB app settings (Settings → Backup) so they can be
-    # changed at runtime. The ticker polls on ``backup_poll_seconds`` and runs a
-    # backup once ``backup_interval_seconds`` has elapsed since the last success.
-    backup_enabled: bool = False
-    backup_dir: str = ""
+    # The on/off, target dir and retention are Settings → Backup values so they
+    # can be changed at runtime; only the ticker's cadence is process-level. It
+    # polls on ``backup_poll_seconds`` and runs a backup once
+    # ``backup_interval_seconds`` has elapsed since the last success.
     backup_interval_seconds: int = 86_400
-    backup_retention: int = 7
     backup_poll_seconds: int = 3_600
 
 

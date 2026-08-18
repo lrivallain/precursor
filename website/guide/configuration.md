@@ -93,8 +93,9 @@ Precursor's **Settings** panel is organized into tabs:
 - **Collections** — create, edit, and delete
   [collections](/features/collections) (name, description, colour accent, and an
   optional repository override).
-- **Agents** — turn [Agents mode](/features/agents) on/off; reports whether the
-  native runtime resolved on your platform. Sets the **global approval policy**
+- **Agents** — turn [Agents mode](/features/agents) on/off; it defaults on once
+  the native runtime resolves on your platform, and the panel reports whether it
+  did. Sets the **global approval policy**
   (`manual` / `balanced` / `autonomous`) that gates agent actions — each agent
   can [override it per session](/features/agents#approval-policy-per-agent).
   Per-agent **orchestration governance** (token budget, max retries) lives in
