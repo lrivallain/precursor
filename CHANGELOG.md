@@ -11,6 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A failed turn can be retried from the prompt that failed.** When a provider
+  rejects a turn — or the tool loop hits its round cap — the prompt bubble now
+  carries a **Retry** button that replays *that* prompt, so there is no ambiguity
+  about what gets re-sent. The stream endpoints accept a `retry_message_id`:
+  instead of persisting a second copy of the prompt, the backend reuses the
+  original user message (attachments included) and deletes the failed tail — the
+  partial answer, its tool rows and the error notice — so retrying after
+  switching model or fixing credentials leaves a clean transcript. Works in both
+  topics and chats.
+
 - **Skills can be referenced mid-prompt, and from a chat description.** A
   `/skill-name` token is no longer only recognised at the *start* of a message:
   written anywhere in the text it is now substituted **in place** with the
@@ -273,6 +283,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A failed turn no longer reads as a success.** Stream errors are persisted as
+  system messages, and *every* system message rendered as a green check-marked
+  acknowledgement — so "The model provider rejected the request" looked exactly
+  like "Run now accepted". Error notices now render red with a warning icon (and
+  an `alert` role), while acknowledgements keep the green treatment.
 - **Workspace chat now honours the context-budget settings.** `POST
   /api/workspaces/{slug}/chat` trimmed its prompt using the env-level token
   limits while topic and chat turns resolved them from the database, so changing
