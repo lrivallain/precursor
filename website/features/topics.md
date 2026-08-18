@@ -70,6 +70,20 @@ Within a topic's chat you get the full composer toolkit:
 - **Lazy history** — long transcripts load the most recent page and fetch older
   messages as you scroll up.
 
+## When a turn fails
+
+If the provider rejects a turn (an unsupported model, bad credentials) or the
+tool loop hits its round cap, the failure is persisted as a **red error notice**
+in the transcript — never a green acknowledgement — so a dead turn is never
+mistaken for an answer. It survives a reload, so you can come back to it.
+
+The prompt that failed grows a **Retry** button. Retrying replays *that* prompt:
+the failed tail (a partial answer, its tool rows, the error notice) is dropped
+and the turn runs again against the current model and settings — the prompt keeps
+its id and attachments instead of being posted a second time, so the transcript
+stays clean. Fix what caused the failure first (switch model in the composer,
+add a token in **Settings → Models**) and the retry picks the new setting up.
+
 ## Data model
 
 Under the hood a topic is a `Topic` row (a self-referencing tree) with `Message`

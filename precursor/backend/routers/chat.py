@@ -32,6 +32,7 @@ from precursor.backend.services.turn_engine import (
     hydrate_history,
     lifecycle_stream,
     load_enabled_mcp_servers,
+    prepare_retry_turn,
     run_message_stream,
 )
 
@@ -126,46 +127,54 @@ async def stream_chat(
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
 
-    # Persist the user turn immediately.
-    user_msg = Message(topic_id=topic_id, role=MessageRole.USER, content=payload.content)
-    session.add(user_msg)
-    await session.commit()
-    await session.refresh(user_msg)
-    await publish_message_changed(topic_id)
-
-    # Bind any pre-uploaded attachments to this user message. We only adopt
-    # rows that belong to the same topic and are still unbound, so a stale id
-    # from another topic / already-sent turn is silently dropped.
     bound_attachments: list[Attachment] = []
-    if payload.attachment_ids:
-        att_rows = await session.execute(
-            select(Attachment).where(
-                Attachment.id.in_(payload.attachment_ids),
-                Attachment.topic_id == topic_id,
-                Attachment.message_id.is_(None),
-            )
+    if payload.retry_message_id is not None:
+        # Replay an existing prompt: reuse its message (and attachments) and
+        # drop the failed tail instead of persisting the turn again.
+        user_msg = await prepare_retry_turn(
+            session, kind="topic", container_id=topic_id, message_id=payload.retry_message_id
         )
-        bound_attachments = list(att_rows.scalars().all())
-        if bound_attachments:
-            await session.execute(
-                update(Attachment)
-                .where(Attachment.id.in_([a.id for a in bound_attachments]))
-                .values(message_id=user_msg.id)
+        bound_attachments = list(user_msg.attachments)
+    else:
+        # Persist the user turn immediately.
+        user_msg = Message(topic_id=topic_id, role=MessageRole.USER, content=payload.content)
+        session.add(user_msg)
+        await session.commit()
+        await session.refresh(user_msg)
+        await publish_message_changed(topic_id)
+
+        # Bind any pre-uploaded attachments to this user message. We only adopt
+        # rows that belong to the same topic and are still unbound, so a stale id
+        # from another topic / already-sent turn is silently dropped.
+        if payload.attachment_ids:
+            att_rows = await session.execute(
+                select(Attachment).where(
+                    Attachment.id.in_(payload.attachment_ids),
+                    Attachment.topic_id == topic_id,
+                    Attachment.message_id.is_(None),
+                )
             )
-            await session.commit()
-            for a in bound_attachments:
-                a.message_id = user_msg.id
-    if payload.note_attachment_ids:
-        note_bound = await consume_note_draft_attachments_to_message(
-            session,
-            kind="topic",
-            container_id=topic_id,
-            message_id=user_msg.id,
-            attachment_ids=payload.note_attachment_ids,
-        )
-        if note_bound:
-            await session.commit()
-            bound_attachments.extend(note_bound)
+            bound_attachments = list(att_rows.scalars().all())
+            if bound_attachments:
+                await session.execute(
+                    update(Attachment)
+                    .where(Attachment.id.in_([a.id for a in bound_attachments]))
+                    .values(message_id=user_msg.id)
+                )
+                await session.commit()
+                for a in bound_attachments:
+                    a.message_id = user_msg.id
+        if payload.note_attachment_ids:
+            note_bound = await consume_note_draft_attachments_to_message(
+                session,
+                kind="topic",
+                container_id=topic_id,
+                message_id=user_msg.id,
+                attachment_ids=payload.note_attachment_ids,
+            )
+            if note_bound:
+                await session.commit()
+                bound_attachments.extend(note_bound)
 
     # Snapshot history + system context now, before the session closes.
     system_prompt = await build_system_context(session, topic)

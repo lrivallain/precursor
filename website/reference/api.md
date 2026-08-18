@@ -90,7 +90,13 @@ so one fetch tells you both what the agent *is* and what it's doing right now.
   `agent_session_id`, so a listener can tell *which* execution of a shared agent
   moved.
 - Streamed chat responses are their own SSE stream, delivering text deltas and
-  tool-call events for a single turn.
+  tool-call events for a single turn. A turn that dies (a provider rejection, the
+  tool-round cap) emits an `error` event *and* persists an `Error: …` system
+  message, so the failure is still there after a reload.
+- `POST .../messages/stream` accepts `retry_message_id` to **replay** such a
+  turn: instead of persisting a new user message it reuses that one — attachments
+  and all — and deletes every message recorded after it. The id must name a user
+  turn of the same container (`400` otherwise, `404` when unknown).
 
 ::: tip Contributions welcome
 Want to help build the generated reference? See the

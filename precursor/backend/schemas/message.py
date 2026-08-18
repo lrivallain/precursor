@@ -111,6 +111,11 @@ class ChatRequest(BaseModel):
     attachment_ids: list[int] = Field(default_factory=list)
     # IDs of note-draft attachments selected in /notes "add & ask AI".
     note_attachment_ids: list[int] = Field(default_factory=list)
+    # Replay an existing user turn whose answer failed: instead of persisting a
+    # new user message, reuse this one and drop everything recorded after it
+    # (partial answer, tool rows, the error notice). Attachments stay bound to
+    # the message, so a retry keeps its images and documents.
+    retry_message_id: int | None = None
 
 
 class NotesRephraseRequest(BaseModel):
