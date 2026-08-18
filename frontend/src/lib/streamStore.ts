@@ -47,6 +47,16 @@ interface Session {
 
 type Listener = () => void;
 
+/** Request body shared by the topic and chat stream endpoints. */
+interface ChatStreamBody {
+  content: string;
+  model?: string;
+  prompt_override?: string;
+  attachment_ids?: number[];
+  note_attachment_ids?: number[];
+  retry_message_id?: number;
+}
+
 function hashString(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
@@ -139,6 +149,44 @@ class StreamStore {
     attachments?: Attachment[],
     noteAttachmentIds?: number[],
   ): Promise<void> {
+    return this.run(
+      key,
+      {
+        content,
+        ...(promptOverride ? { prompt_override: promptOverride } : {}),
+        ...(attachments && attachments.length
+          ? { attachment_ids: attachments.map((a) => a.id) }
+          : {}),
+        ...(noteAttachmentIds && noteAttachmentIds.length
+          ? { note_attachment_ids: noteAttachmentIds }
+          : {}),
+      },
+      content,
+      attachments,
+    );
+  }
+
+  /**
+   * Replay a persisted user turn whose answer failed. The backend reuses that
+   * message (attachments included) and deletes everything recorded after it, so
+   * the optimistic bubble reconciles onto the same id and the transcript keeps
+   * a single copy of the prompt.
+   */
+  async retry(
+    key: string,
+    messageId: number,
+    content: string,
+    attachments?: Attachment[],
+  ): Promise<void> {
+    return this.run(key, { content, retry_message_id: messageId }, content, attachments);
+  }
+
+  private async run(
+    key: string,
+    body: ChatStreamBody,
+    content: string,
+    attachments?: Attachment[],
+  ): Promise<void> {
     if (this.sessions.get(key)?.streaming) return;
     const { kind, id } = parseKey(key);
     const controller = new AbortController();
@@ -171,35 +219,9 @@ class StreamStore {
       const onEvent = (ev: { event: string; data: string }): void =>
         this.handleEvent(key, ev);
       if (kind === "topic") {
-        await streamChat(
-          id,
-          {
-            content,
-            ...(promptOverride ? { prompt_override: promptOverride } : {}),
-            ...(attachments && attachments.length
-              ? { attachment_ids: attachments.map((a) => a.id) }
-              : {}),
-            ...(noteAttachmentIds && noteAttachmentIds.length
-              ? { note_attachment_ids: noteAttachmentIds }
-              : {}),
-          },
-          { signal: controller.signal, onEvent },
-        );
+        await streamChat(id, body, { signal: controller.signal, onEvent });
       } else {
-        await streamChatSession(
-          id,
-          {
-            content,
-            ...(promptOverride ? { prompt_override: promptOverride } : {}),
-            ...(attachments && attachments.length
-              ? { attachment_ids: attachments.map((a) => a.id) }
-              : {}),
-            ...(noteAttachmentIds && noteAttachmentIds.length
-              ? { note_attachment_ids: noteAttachmentIds }
-              : {}),
-          },
-          { signal: controller.signal, onEvent },
-        );
+        await streamChatSession(id, body, { signal: controller.signal, onEvent });
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -388,6 +410,7 @@ class StreamStore {
         role: "system",
         content: `Error: ${payload.message as string}`,
         tool_calls: null,
+        is_error: true,
         created_at: now,
       });
     }

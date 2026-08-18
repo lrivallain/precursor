@@ -20,7 +20,10 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from fastapi import HTTPException, status
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Topic
@@ -368,6 +371,42 @@ async def _persist_system_message(
         )
         await ws.commit()
     await publish_container_changed(kind, container_id)
+
+
+async def prepare_retry_turn(
+    session: AsyncSession,
+    *,
+    kind: ContainerKind,
+    container_id: int,
+    message_id: int,
+) -> Message:
+    """Rewind a container to just after ``message_id`` so that turn can re-run.
+
+    A retry replays an existing user prompt whose turn failed, so nothing new is
+    persisted: the original message (and its attachments) is reused and every
+    row recorded after it — a partial answer, its tool rows, the `Error: …`
+    notice — is deleted. Message ids are monotonic, so "after" is simply a
+    greater id.
+
+    Raises ``HTTPException`` when the id doesn't name a user turn of this
+    container.
+    """
+    fk = Message.topic_id if kind == "topic" else Message.chat_id
+    result = await session.execute(
+        select(Message)
+        .where(Message.id == message_id, fk == container_id)
+        .options(selectinload(Message.attachments))
+    )
+    user_msg = result.scalar_one_or_none()
+    if user_msg is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if user_msg.role != MessageRole.USER:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only a user turn can be retried")
+
+    await session.execute(delete(Message).where(fk == container_id, Message.id > message_id))
+    await session.commit()
+    await publish_container_changed(kind, container_id)
+    return user_msg
 
 
 # -- The tool loop ---------------------------------------------------------

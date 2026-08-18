@@ -22,6 +22,7 @@ import {
 import { skillsStore, useSkills } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey, mergeConversation } from "../lib/streamStore";
+import { failedTurnUserMessageId } from "../lib/systemNotice";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
@@ -116,6 +117,12 @@ export function ChatSessionPanel({
   const visibleMessages = useMemo<Message[]>(
     () => messages.filter((m) => !hiddenIds.has(m.id)),
     [messages, hiddenIds],
+  );
+  // The prompt to offer a Retry on: set only while the transcript ends on an
+  // error notice and nothing is streaming.
+  const retryableId = useMemo<number | null>(
+    () => (streaming ? null : failedTurnUserMessageId(visibleMessages)),
+    [visibleMessages, streaming],
   );
 
   // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
@@ -500,6 +507,22 @@ export function ChatSessionPanel({
     void streamStore.start(streamKey, text.trim());
   }
 
+  /**
+   * Replay a prompt whose turn ended in an error. The failed tail (partial
+   * answer, tool rows, the error notice) is dropped locally right away and
+   * deleted server-side by the retry, so the prompt is answered afresh instead
+   * of piling a second copy onto the transcript.
+   */
+  function retryTurn(m: Message): void {
+    if (streaming || m.id <= 0) return;
+    pinToBottom();
+    // Ids are monotonic, so "the failed tail" is everything above the prompt.
+    // Client-side notes carry negative ids and are left alone.
+    setPersisted((prev) => prev.filter((p) => p.id < m.id));
+    streamStore.clear(streamKey);
+    void streamStore.retry(streamKey, m.id, m.content, m.attachments);
+  }
+
   function stop(): void {
     const partial = streamStore.pendingContent(streamKey).trim();
     stoppingRef.current = true;
@@ -571,6 +594,8 @@ export function ChatSessionPanel({
                   createdAt={m.created_at}
                   model={m.model}
                   elapsedMs={m.elapsed_ms}
+                  isError={m.is_error}
+                  onRetry={m.id === retryableId ? () => retryTurn(m) : undefined}
                   onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
                 />
               );

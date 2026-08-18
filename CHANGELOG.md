@@ -11,6 +11,44 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **New built-in `drawio` MCP server — diagrams as editable files.** The
+  assistant can now author native `.drawio` documents (plain mxGraph XML)
+  straight into a [workspace](https://lrivallain.github.io/precursor/features/workspaces)
+  working tree, so a diagram is reviewable in a `git diff`, commit-able from the
+  Workspace UI, and still editable in draw.io — unlike a rendered image. It
+  shares `workspace-fs`'s sandbox (`safe_join`), so nothing outside
+  `workspaces_dir/<slug>` is reachable.
+
+  The server owns **layout**: the model describes a graph — nodes, edges and
+  freely **nested `groups`** (region → VNet → subnet → resource) — and Precursor
+  places everything in layers with a barycenter pass to cut edge crossings,
+  sizing each container to fit its children and its own title. Siblings with no
+  edges between them are packed along the flow direction and wrap rather than
+  running off the page, and edges may join groups as well as nodes.
+
+  It also ships a **catalogue of ~700 verified Azure icons**, searchable with
+  `search_shapes` and generated from draw.io's own palette by
+  `scripts/build_drawio_shapes.py`. This matters more than it sounds: draw.io's
+  Azure library is made of SVG *images*, not `mxgraph.azure2.*` stencils, so a
+  guessed stencil name renders as a blank rectangle and an "Azure architecture"
+  comes out as a grid of featureless squares. `create_diagram` resolves shape
+  names through the catalogue and **reports what it matched**, so an unresolved
+  icon is reported rather than silently drawn as a box.
+
+  Ships `create_diagram`, `search_shapes`, `list_shapes`, `write_diagram_xml`
+  (raw-XML escape hatch, validated), `read_diagram` and `list_workspaces`. Any
+  preset field also accepts a raw mxGraph style so the AWS/UML/BPMN catalogue
+  stays reachable. Output is deterministic (no timestamps or random ids), so
+  regenerating an unchanged diagram leaves an empty diff.
+- **A failed turn can be retried from the prompt that failed.** When a provider
+  rejects a turn — or the tool loop hits its round cap — the prompt bubble now
+  carries a **Retry** button that replays *that* prompt, so there is no ambiguity
+  about what gets re-sent. The stream endpoints accept a `retry_message_id`:
+  instead of persisting a second copy of the prompt, the backend reuses the
+  original user message (attachments included) and deletes the failed tail — the
+  partial answer, its tool rows and the error notice — so retrying after
+  switching model or fixing credentials leaves a clean transcript. Works in both
+  topics and chats.
 - **Skills can be referenced mid-prompt, and from a chat description.** A
   `/skill-name` token is no longer only recognised at the *start* of a message:
   written anywhere in the text it is now substituted **in place** with the
@@ -25,7 +63,6 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   levels deep and cycles terminate instead of recursing. **Assistant roles**
   expand references too, resolved in `resolve_role_prompt` so a role prompt
   behaves identically on topics, chats, workspaces, agents and Live sessions.
-
 - **Agents are now definitions, and every start opens its own run.** Execution
   state — status, active prompt, transcript counters, token meter and the
   Copilot SDK session handle — moved off `AgentSession` onto a new `AgentRun`
@@ -328,6 +365,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A failed turn no longer reads as a success.** Stream errors are persisted as
+  system messages, and *every* system message rendered as a green check-marked
+  acknowledgement — so "The model provider rejected the request" looked exactly
+  like "Run now accepted". Error notices now render red with a warning icon (and
+  an `alert` role), while acknowledgements keep the green treatment.
 - **Workspace chat now honours the context-budget settings.** `POST
   /api/workspaces/{slug}/chat` trimmed its prompt using the env-level token
   limits while topic and chat turns resolved them from the database, so changing
