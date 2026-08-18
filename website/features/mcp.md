@@ -25,6 +25,7 @@ Built-in servers ship in-tree:
 | `fetch` | Fetch and read web content. |
 | `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
 | `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
+| `drawio` | Author native `.drawio` diagrams into a workspace, with server-side layout (see below). |
 | `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
 | `workiq-teams` | Microsoft Teams via [Agent 365](#agent-365-workiq-teams-and-workiq-user) — chats, channels, messages, presence. |
@@ -97,6 +98,60 @@ sign-in needs a real display. Treat it like the host-mode
 [command runner](/features/command-runner): a single-user, trusted-machine
 capability, not something to expose on a shared/headless server.
 :::
+
+### draw.io — diagrams as files, not pictures
+
+`drawio` writes native **`.drawio`** documents (plain mxGraph XML) into a
+[workspace](/features/workspaces) working tree. Because the output is a *file*
+in a git-backed tree, a diagram is reviewable in a `git diff` and commit-able
+from the Workspace UI — and it stays editable in draw.io, the desktop app or the
+VS Code extension, unlike a rendered image.
+
+It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
+nothing outside `workspaces_dir/<slug>` is reachable.
+
+The point of the server is **layout**. Models write plausible mxGraph markup but
+pick poor `x`/`y` coordinates, so shapes overlap and edges cross. Here the model
+describes a *graph* and Precursor places it — layered along the flow direction,
+with a barycenter pass to cut edge crossings:
+
+```text
+create_diagram(
+  workspace_id = 1,
+  path         = "docs/architecture",          # .drawio is appended for you
+  nodes        = [{"id": "spa",  "label": "React SPA", "shape": "rounded",  "color": "blue"},
+                  {"id": "api",  "label": "FastAPI",   "shape": "process",  "color": "blue"},
+                  {"id": "db",   "label": "SQLite",    "shape": "database", "color": "green"}],
+  edges        = [{"source": "spa", "target": "api", "label": "SSE"},
+                  {"source": "api", "target": "db"}],
+  direction    = "vertical",
+)
+```
+
+| Tool | What it does |
+| --- | --- |
+| `list_workspaces` | Find the `workspace_id` to write into. |
+| `list_shapes` | The shape / colour / edge presets, so styles aren't invented. |
+| `create_diagram` | Build a laid-out diagram from nodes + edges. |
+| `write_diagram_xml` | Escape hatch — write raw mxGraph XML (validated, wrapper added). |
+| `read_diagram` | Read a diagram back to edit and rewrite it. |
+
+Presets cover the common flowchart/architecture vocabulary, but **any field that
+takes a preset also accepts a raw mxGraph style** (anything containing `=`), so
+the full draw.io shape catalogue — AWS, Azure, UML, BPMN — stays reachable:
+
+```text
+{"id": "fn", "label": "Lambda", "shape": "shape=mxgraph.aws4.lambda;"}
+```
+
+::: tip Diagrams that diff cleanly
+Output is deterministic — no timestamps, no random ids. Regenerating an
+unchanged diagram produces an empty `git diff` instead of churning the file.
+:::
+
+Cycles are fine (state machines, retry loops): the layering cuts the loop rather
+than rejecting the graph. Existing files are never clobbered unless you pass
+`overwrite=true`.
 
 ### WorkIQ preview & OAuth
 

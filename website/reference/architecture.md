@@ -183,8 +183,8 @@ Precursor is both an MCP client and an MCP server.
 
 - **As client** (`services/mcp/client.py`) — an `MCPClientManager` holds the
   tool-server registry: built-ins (`github`, `workiq`, `playwright`, `fetch`,
-  `workspace-fs`, `cmd-runner`, `precursor`) plus user-defined servers. Servers
-  are toggled in Settings; sessions open per chat turn.
+  `workspace-fs`, `drawio`, `cmd-runner`, `precursor`) plus user-defined servers.
+  Servers are toggled in Settings; sessions open per chat turn.
 - **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server exposing
   Precursor's own data, gated per-section by `mcp_expose` (off by default), over
   **stdio** and an in-process **HTTP** transport at `/mcp` (off by default,
@@ -211,7 +211,7 @@ A `Workspace` is a git clone or local directory the assistant can browse and edi
 `services/workspace_git.py` clones/pulls/commits (token injected at op time, never
 stored); `services/workspace_fs.py` does sandboxed file ops — every path is routed
 through `safe_join`, which rejects traversal outside the workspace root and blocks
-`.git`. The same sandbox backs the `workspace-fs` MCP server.
+`.git`. The same sandbox backs the `workspace-fs` and `drawio` MCP servers.
 
 ## SPA
 

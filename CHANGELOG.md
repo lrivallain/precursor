@@ -11,6 +11,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **New built-in `drawio` MCP server — diagrams as editable files.** The
+  assistant can now author native `.drawio` documents (plain mxGraph XML)
+  straight into a [workspace](https://lrivallain.github.io/precursor/features/workspaces)
+  working tree, so a diagram is reviewable in a `git diff`, commit-able from the
+  Workspace UI, and still editable in draw.io — unlike a rendered image. It
+  shares `workspace-fs`'s sandbox (`safe_join`), so nothing outside
+  `workspaces_dir/<slug>` is reachable. The server owns **layout**: the model
+  describes a graph (`nodes` + `edges`) and Precursor lays it out in layers with
+  a barycenter pass to cut edge crossings, rather than having the model guess
+  `x`/`y` coordinates and produce overlapping shapes. Ships `create_diagram`,
+  `write_diagram_xml` (raw-XML escape hatch, validated), `read_diagram`,
+  `list_shapes` and `list_workspaces`. Shape/colour/edge presets cover the usual
+  flowchart vocabulary, and any preset field also accepts a raw mxGraph style so
+  the full AWS/Azure/UML/BPMN catalogue stays reachable. Output is deterministic
+  (no timestamps or random ids), so regenerating an unchanged diagram leaves an
+  empty diff.
 - **Agents are now definitions, and every start opens its own run.** Execution
   state — status, active prompt, transcript counters, token meter and the
   Copilot SDK session handle — moved off `AgentSession` onto a new `AgentRun`
