@@ -88,7 +88,7 @@ export default withMermaid(
             { text: "Collections", link: "/features/collections" },
             { text: "Chats", link: "/features/chats" },
             { text: "Live sessions", link: "/features/live-sessions" },
-            { text: "Agents", link: "/features/agents" },
+            { text: "Agents", link: "/features/agents-mode" },
             {
               text: "Workflows",
               link: "/features/workflows",

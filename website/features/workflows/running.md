@@ -77,6 +77,8 @@ page.
 
 ## Run history and the step trace
 
+<Screenshot src="/screenshots/workflow-run-trace.png" alt="A workflow run trace listing one row per step attempt, including a gate that failed and sent step 2 back for a second attempt before passing" caption="One row per step attempt. Here the gate failed, sent step 2 back — badged attempt 2 — then passed on the revision." />
+
 Every execution is recorded as a **run**. The detail board's **run header**
 surfaces the selected run's status, trigger, live current step, elapsed time and
 percent complete, and a **run picker** lets you scroll back through past
@@ -112,7 +114,7 @@ bookmark or share it; a pinned run stays put even as later runs execute. Scrolli
 the run picker rewrites the URL to match.
 
 When the coordinator drives a step, the agent runs its turn **without** flagging
-itself as **unread** in the [Agents](/features/agents) section. That badge is
+itself as **unread** in the [Agents](/features/agents-mode) section. That badge is
 reserved for genuinely autonomous runs — ones you start manually or that fire on a
 schedule — so a busy workflow doesn't leave a trail of unread agents behind it.
 You still see every step's output in the run trace and the step modal.
@@ -120,7 +122,7 @@ You still see every step's output in the run trace and the step modal.
 ### What a step actually did
 
 Every attempt in the run trace carries an **Activity** section: the same
-timeline the [Agents](/features/agents) cockpit renders — tool calls with their
+timeline the [Agents](/features/agents-mode) cockpit renders — tool calls with their
 arguments and output, reasoning, assistant messages, lifecycle hooks — sliced to
 that attempt's own window. It's the difference between "the step stalled" and
 "the step asked to run `workiq-do_action` and nobody approved it".

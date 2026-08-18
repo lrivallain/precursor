@@ -67,7 +67,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `roles` | Assistant [roles](/features/skills-memory) (persona presets). |
 | `schedules` | Topic/agent recurrence and **Run now**. |
 | `reminders` | One-shot [reminders](/features/scheduler) that resurface a topic or chat. |
-| `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/runs` and `/runs/{runId}` (the agent's [execution history](/features/agents#an-agent-is-a-definition-each-start-is-a-run) — trigger, status, capability snapshot, per-run token spend), `/events` (the transcript; every event carries the `agentRunId` it belongs to, and `?agentRunId=` narrows the reply to one run — a run belonging to another agent is a `404`), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL; the list accepts `?runId=` to scope to one run), `/state` (the [durable cross-run scratchpad](/features/agents#durable-state-the-private-scratchpad): `GET` to list, `PUT` to upsert by key, `DELETE /state/{key}` or `DELETE /state` to reset), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
+| `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents-mode#orchestrating-agents): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/runs` and `/runs/{runId}` (the agent's [execution history](/features/agents-mode#an-agent-is-a-definition-each-start-is-a-run) — trigger, status, capability snapshot, per-run token spend), `/events` (the transcript; every event carries the `agentRunId` it belongs to, and `?agentRunId=` narrows the reply to one run — a run belonging to another agent is a `404`), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL; the list accepts `?runId=` to scope to one run), `/state` (the [durable cross-run scratchpad](/features/agents-mode#durable-state-the-private-scratchpad): `GET` to list, `PUT` to upsert by key, `DELETE /state/{key}` or `DELETE /state` to reset), and `/triggers`, and the public `POST /hooks/{token}` webhook. |
 | `workflows` | [Workflow](/features/workflows) definitions, steps, lifecycle (`/run`, `/pause`, `/resume`, `/cancel`, `/retry`), run traces, per-step replay, approval and tool-permission decisions, pipeline state, schedules, and the public `POST /hooks/{token}` webhook. See the [workflows API reference](/features/workflows/reference#api-surface). |
 | `workspaces` | [Workspace](/features/workspaces) clones, the sandboxed file tree, file reads/writes, and workspace chat. |
 | `live` | [Live sessions](/features/live-sessions) — transcript segments, insights, notes, summary, and attendees. |
@@ -89,7 +89,7 @@ An agent's URL-safe identity is its **`public_id`** — the UUID behind
 `/agents/{uuid}` deep links, `/agent <uuid>` nudges and
 [transfer](/features/transfer) lookups. It is stable for the life of the agent
 and independent of any Copilot SDK session handle, which now belongs to an
-individual [run](/features/agents#an-agent-is-a-definition-each-start-is-a-run)
+individual [run](/features/agents-mode#an-agent-is-a-definition-each-start-is-a-run)
 rather than the agent. `AgentSessionRead` also embeds a nullable `current_run`,
 so one fetch tells you both what the agent *is* and what it's doing right now.
 
@@ -107,7 +107,7 @@ client's own events are filtered back out.
 | `stream.ended` | A chat turn completes. |
 | `read.changed` | A conversation is marked read (distinct from `message.changed`). |
 | `reminder.changed` | A [reminder](/features/scheduler) is created, fires, or is cleared. |
-| `agent.changed` | An [agent](/features/agents) session's state or event stream moves. |
+| `agent.changed` | An [agent](/features/agents-mode) session's state or event stream moves. |
 | `meeting.changed` | A [live session](/features/live-sessions) is created, renamed, ended, or deleted. |
 | `workflow.changed` | A [workflow](/features/workflows) step advances, its status flips, or its definition is edited. Carries the run status and workflow name so a client can raise a notification without re-fetching. |
 | `mcp.auth_required` | An [MCP server](/features/mcp) needs an interactive sign-in. |

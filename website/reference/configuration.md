@@ -100,20 +100,20 @@ a `PRECURSOR_SKILLS_DIR` override.
 
 ## Agents
 
-[Agents mode](/features/agents) is toggled at runtime (**Settings → Agents**),
+[Agents mode](/features/agents-mode) is toggled at runtime (**Settings → Agents**),
 which is the only on/off control — there is no env-level default, because
 installing the `agents` extra is itself the opt-in. The
-[agent orchestrator](/features/agents#orchestrating-agents) governance has two
+[agent orchestrator](/features/agents-mode#orchestrating-agents) governance has two
 process-level knobs:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
-| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
+| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
+| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
 
 Per-agent **token budget** and **max retries** aren't env vars — they're set in
 each agent's settings drawer (or baked into a
-[blueprint](/features/agents#blueprints-reusable-templates)).
+[blueprint](/features/agents-mode#blueprints-reusable-templates)).
 
 ## MCP tool servers
 

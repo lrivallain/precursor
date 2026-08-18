@@ -74,7 +74,7 @@ place: named values scoped to the workflow, shared by every step, kept **across
 runs**.
 
 It is deliberately *not* the same as an agent's
-[own state](/features/agents#durable-state-the-private-scratchpad):
+[own state](/features/agents-mode#durable-state-the-private-scratchpad):
 
 | | Scope | Survives a run? |
 | --- | --- | --- |
@@ -168,7 +168,7 @@ as its baseline (editable from the step modal); the step overrides them for the
 duration of its turn.
 
 The override is **snapshotted onto that step's
-[agent run](/features/agents#an-agent-is-a-definition-each-start-is-a-run)**, never
+[agent run](/features/agents-mode#an-agent-is-a-definition-each-start-is-a-run)**, never
 written back onto the shared agent. So a step that narrows an agent to "no tools"
 doesn't silently disarm the same agent in another pipeline, and the snapshot is
 frozen for the life of the run — editing the agent mid-flight primes the next

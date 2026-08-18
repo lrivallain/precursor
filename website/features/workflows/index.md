@@ -4,7 +4,7 @@ title: Workflows
 
 # Workflows
 
-**Workflows mode** chains independent [agents](/features/agents) into a
+**Workflows mode** chains independent [agents](/features/agents-mode) into a
 reusable, named pipeline that runs in the **background** — `research → draft →
 review` — where the *workflow* owns the sequencing, not the agents. Each step is
 just an existing agent (or one you create as you build), so agents stay reusable
@@ -16,6 +16,8 @@ Workflows are a new orchestration layer built on top of agents mode. The linear
 `step → step` pipeline is solid, but the surface is still evolving — expect the
 UI and controls to keep changing.
 :::
+
+<Screenshot src="/screenshots/workflows.png" alt="A workflow board showing a five-step pipeline: two task steps, a gate, a human approval checkpoint and an inline publish step, above a completed run header" caption="A pipeline's detail board — the run header, then the step strip carrying all four step kinds." />
 
 ## Start here
 
@@ -29,7 +31,7 @@ UI and controls to keep changing.
 ## How it differs from agent dependencies
 
 Agents can already declare `depends-on` links that render a
-[workflow strip](/features/agents). Workflows are the **coordinator-owned**
+[workflow strip](/features/agents-mode). Workflows are the **coordinator-owned**
 alternative:
 
 - **Reusable, not baked in.** A workflow references agents by id. The same agent
@@ -57,7 +59,7 @@ producer's output rather than anything of their own.
 
 | Kind | Runs | What it's for |
 | --- | --- | --- |
-| **Agent** | a reusable agent from the [Agents](/features/agents) section | the normal case — a stage you want to reuse across pipelines |
+| **Agent** | a reusable agent from the [Agents](/features/agents-mode) section | the normal case — a stage you want to reuse across pipelines |
 | **Inline** | a private, hidden vessel that dies with the step | [one-off work](/features/workflows/building#inline-steps-one-off-work-that-isn-t-an-agent) that doesn't deserve a permanent agent |
 | **Gate** | an agent that votes PASS / FAIL | an automated [quality check](/features/workflows/building#gates-and-loop-back) that can send the run back to an earlier step |
 | **Approval** | nobody — the run parks | a [human checkpoint](/features/workflows/building#human-approval-checkpoints) in front of anything irreversible |

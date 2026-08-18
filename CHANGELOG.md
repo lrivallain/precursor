@@ -219,6 +219,29 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **The agents feature page is `agents-mode.md`.** On macOS and Windows the
+  filesystem is case-insensitive, so `website/features/agents.md` *is*
+  `AGENTS.md` — the filename coding agents treat as an instruction file. Every
+  agent opening this repo was loading a 550-line product page as if it were
+  repo instructions. The page moved to `/features/agents-mode`, and every
+  internal link, the sidebar and the landing grid moved with it. There is
+  deliberately no stub left behind at the old path, since that would recreate
+  the collision.
+- **Documentation screenshots are reproducible, and six pages now have one.**
+  Workflows — the largest feature in the app — had no screenshot at all, and
+  neither did the scheduler, skills, command runner or import/export pages.
+  Retaking a shot previously meant pointing a browser at your own instance,
+  which is exactly how a real account or a real repository ends up in the docs.
+  Three scripts now do it from a clean room: `scripts/seed_demo.py` builds a
+  throwaway database of invented fixtures (and refuses to run unless the
+  database URL says `demo`), `scripts/demo_server.sh` serves it with `gh`
+  stripped from `PATH` so the persona can only resolve to "Guest / Not
+  connected", and `scripts/capture_screenshots.js` drives each scene and writes
+  the light and dark variants at `deviceScaleFactor: 2`. Added shots for the
+  workflow board, a workflow run trace (with a gate's loop-back and its
+  `attempt 2`), the recurrence editor, Settings → Skills, Settings → System's
+  command-runner jail, and the workflows gallery.
+
 - **The workflows guide is four short pages instead of one 786-line wall.** The
   page had accreted a feature at a time until it was by far the longest in the
   docs — 30 headings covering authoring, execution, cost, failure handling and

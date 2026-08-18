@@ -28,7 +28,7 @@ that work at hand.
 
 Around that core it layers the other things a follow-up assistant needs: a place
 for throwaway [chats](/features/chats), a [live meeting](/features/live-sessions)
-recorder, autonomous [agents](/features/agents) for long-running tasks,
+recorder, autonomous [agents](/features/agents-mode) for long-running tasks,
 [workflows](/features/workflows) that chain those agents into a reusable
 pipeline, a [scheduler](/features/scheduler) for recurring nudges, and
 [MCP](/features/mcp) tools in both directions.

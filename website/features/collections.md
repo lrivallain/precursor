@@ -51,7 +51,7 @@ two collections, so only same-collection parents are offered.
 
 Everything that merely *refers* to a topic spans all collections: the
 [live-session](/features/live-sessions) topic picker, an
-[agent](/features/agents)'s linked topic, unread totals, notification titles,
+[agent](/features/agents-mode)'s linked topic, unread totals, notification titles,
 global ⌘K search, and the archive. Attaching a live session to a topic in
 another collection is a perfectly ordinary thing to do, and stays available.
 

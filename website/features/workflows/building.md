@@ -81,14 +81,14 @@ reference; creating is a one-time act, not a mode the step stays in.
 ::: tip Sharing one agent across pipelines
 **Existing agent** is safe to reuse from several workflows — even ones running
 at the same time. Each step opens its own
-[agent run](/features/agents#an-agent-is-a-definition-each-start-is-a-run), so
+[agent run](/features/agents-mode#an-agent-is-a-definition-each-start-is-a-run), so
 concurrent pipelines don't share a status, a transcript, a blackboard, a set of
 tool grants or a token meter. The only thing they share is the *definition*: edit
 the agent and both pick the change up on their next run.
 
 Each board reads **its own** step's run, so two pipelines sharing an agent show
 their own status, result and question — not whichever one finished last. On the
-agent's side, the [Runs rail](/features/agents#an-agent-is-a-definition-each-start-is-a-run)
+agent's side, the [Runs rail](/features/agents-mode#an-agent-is-a-definition-each-start-is-a-run)
 filters the transcript down to a single execution.
 :::
 

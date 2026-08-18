@@ -114,7 +114,7 @@ Highlights:
   live one, and the agent's execution columns are a write-through **mirror** of
   that run so list/inbox/dashboard reads stay a single cheap lookup.
 - **`AgentTrigger`** / **`AgentArtifact`** / **`AgentBlueprint`** — the
-  [agent orchestrator](/features/agents#orchestrating-agents): webhook/manual
+  [agent orchestrator](/features/agents-mode#orchestrating-agents): webhook/manual
   triggers, the shared-artifact blackboard (scoped to the `AgentRun` that
   published each artifact), and reusable task+governance templates.
 - **`Workspace`** — a git clone or local directory.
@@ -199,7 +199,7 @@ async ticker enqueues due `TopicSchedule` and `AgentSchedule` rows, a bounded
 worker pool runs each, with DB row leasing for crash recovery. Scheduled prompts
 that start with a slash command are dispatched to that command's backend action;
 `/guard` directives gate a run behind a cheap MCP probe. The same ticker also
-drives the [agent orchestrator](/features/agents#orchestrating-agents):
+drives the [agent orchestrator](/features/agents-mode#orchestrating-agents):
 re-running failed agents whose exponential-backoff retry is due, sweeping
 orphaned `pending` agents (via `services/agents/fleet.py`), and honouring the
 concurrency governor. See the

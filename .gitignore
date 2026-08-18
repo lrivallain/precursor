@@ -58,3 +58,7 @@ precursor/backend/alembic/versions/__pycache__/
 website/node_modules/
 website/.vitepress/dist/
 website/.vitepress/cache/
+
+# Scratch dir for the documentation-screenshot demo instance (seeded database,
+# data dir, demo skills and a local Playwright install). See scripts/seed_demo.py.
+.demo/

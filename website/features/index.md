@@ -18,7 +18,7 @@ of working:
 | 🧵 **[Topics](/features/topics)** | Long-lived, tree-organized threads, each optionally linked to a GitHub issue used as live context. |
 | 💬 **[Chats](/features/chats)** | Quick, throwaway conversations for fast answers. |
 | 🎙️ **[Live sessions](/features/live-sessions)** | Record & transcribe a meeting with live insights, Q&A, and a summary. |
-| 🤖 **[Agents](/features/agents)** | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
+| 🤖 **[Agents](/features/agents-mode)** | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
 | 🔗 **[Workflows](/features/workflows)** | Chain those agents into a reusable pipeline the coordinator runs unattended, with gates and approval checkpoints (opt-in). |
 | 🗂️ **[Workspaces & files](/features/workspaces)** | Git clones / local dirs the assistant can browse and edit. Shown as **Files** in the sidebar. |
 | 📋 **[Kanban](/features/kanban)** | A board over the GitHub issues linked to your topics. |

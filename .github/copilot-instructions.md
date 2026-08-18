@@ -130,8 +130,7 @@ Capture rules (keep them consistent and privacy-safe):
 
 - Run a **seeded demo instance** with the **account hidden** — no resolvable
   GitHub token, so the persona shows "Guest / Not connected" (never a real
-  account/avatar). Reuse the demo fixtures (the `precursor-demo` repo + Project
-  board) rather than real data.
+  account/avatar). Reuse the demo fixtures rather than real data.
 - **Fake missing config** (e.g. a dummy Speech key, disabled remote MCP servers)
   so shots have **no error/warning banners** — never use real secrets.
 - Capture **both** `colorScheme: light` and `dark` at `deviceScaleFactor: 2`,
@@ -141,6 +140,36 @@ Capture rules (keep them consistent and privacy-safe):
 - Reference the new file from a page via
   `<Screenshot src="/screenshots/foo.png" alt="…" caption="…" />` (light path
   only — the component finds the dark one).
+
+#### The reproducible loop
+
+Three scripts implement the rules above; use them rather than pointing a browser
+at your own instance. Everything lands in `.demo/`, which is gitignored.
+
+```bash
+# 1. Install the capture browser once.
+mkdir -p .demo && (cd .demo && npm i -D playwright && npx playwright install chromium)
+
+# 2. Seed a throwaway database + demo skills. It refuses to run unless the
+#    database URL contains "demo", so it can't clobber a real install.
+rm -rf .demo/demo.db* .demo/data .demo/skills
+PRECURSOR_DATABASE_URL="sqlite+aiosqlite:///$PWD/.demo/demo.db" \
+PRECURSOR_DATA_DIR="$PWD/.demo/data" \
+PRECURSOR_SKILLS_DIR="$PWD/.demo/skills" \
+  uv run python scripts/seed_demo.py
+
+# 3. Serve it on :8899. The launcher strips `gh` from PATH and clears any
+#    GITHUB_TOKEN, so the persona resolves to "Guest / Not connected".
+./scripts/demo_server.sh &
+
+# 4. Capture. Omit the scene names to retake everything.
+NODE_PATH=.demo/node_modules node scripts/capture_screenshots.js workflows scheduler
+```
+
+Add a new shot by adding a **scene** to `scripts/capture_screenshots.js` (a
+viewport plus a function that drives the UI and returns a clip rect), and any
+fixture it needs to `scripts/seed_demo.py`. Confirm the persona footer reads
+"Guest / Not connected" in the result before committing.
 
 ### Verify before you finish
 

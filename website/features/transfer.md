@@ -9,6 +9,8 @@ leave the app. **Export** writes one to a plain YAML file you can read, diff,
 commit next to the project it automates, or hand to a colleague; **import**
 brings one back, asking what to do about anything that already exists here.
 
+<Screenshot src="/screenshots/transfer.png" alt="The Workflows gallery with two pipeline cards and an Import button in the header" caption="Import sits beside New workflow on the gallery; every card can be exported from its detail board." />
+
 ::: tip One object per file
 An export is always a single top-level object: one agent, or one workflow. A
 workflow file still carries the agents its steps reference — a pipeline that

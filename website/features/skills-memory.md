@@ -1,12 +1,15 @@
 ---
-title: Skills & memory
+title: Skills, roles & memory
 ---
 
-# Skills & memory
+# Skills, roles & memory
 
-Two complementary ways to give the assistant standing context: **skills** are
-reusable prompt presets you invoke on demand, and **memory** is long-term notes
-injected into every conversation automatically.
+Three complementary ways to give the assistant standing context: **skills** are
+reusable prompt presets you invoke on demand, **roles** are named personas a
+conversation adopts, and **memory** is long-term notes injected into every
+conversation automatically.
+
+<Screenshot src="/screenshots/skills-memory.png" alt="Settings → Skills listing four slash-command skills, each with a description and an enable toggle; one is switched off" caption="Settings → Skills. Each row is a SKILL.md file on disk; the toggle decides whether it is offered as a slash command." />
 
 ## Skills
 
@@ -107,7 +110,7 @@ prompt is empty — so out of the box a role injects nothing. It can be edited b
 not renamed or deleted, which guarantees every discussion always has a fallback.
 
 The same role can be adopted by a **topic**, a **chat**, a
-[workspace](/features/workspaces), an [agent](/features/agents), a
+[workspace](/features/workspaces), an [agent](/features/agents-mode), a
 [Live session](/features/live-sessions), and a
 [workflow](/features/workflows/steps#one-voice-for-the-whole-pipeline) — all
 resolved through one code path, so a role behaves identically everywhere. A
