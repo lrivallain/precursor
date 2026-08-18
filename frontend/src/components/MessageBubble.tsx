@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowUpRight,
   Bot,
   Check,
@@ -9,6 +10,7 @@ import {
   Code2,
   Copy,
   Paperclip,
+  RotateCcw,
   StopCircle,
   Timer,
   Trash2,
@@ -16,6 +18,7 @@ import {
 import { api } from "../lib/api";
 import { matchBuiltinCommand } from "../lib/commands";
 import { useSkills } from "../lib/skillsStore";
+import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
 import { Markdown } from "./Markdown";
 import { MessageMeta } from "./MessageMeta";
@@ -41,6 +44,12 @@ interface Props {
   model?: string | null;
   // For assistant turns: wall-clock generation time in milliseconds.
   elapsedMs?: number | null;
+  // For SYSTEM turns: force the failure styling even without an `Error: `
+  // prefix (client-side command failures, which are never persisted).
+  isError?: boolean;
+  // For USER turns: set when the turn this prompt started ended in an error —
+  // renders a Retry control that replays this exact prompt.
+  onRetry?: () => void;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -65,7 +74,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs }: Props) {
+export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -102,25 +111,39 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const showActions =
     !pending && !!content && (role === "assistant" || isUser || onDelete);
 
-  // Persisted SYSTEM rows are UI-only notices (e.g. the "Run now accepted"
-  // confirmation). Short notes render as a compact green, user-aligned
-  // acknowledgement; multi-line notes (e.g. the `/memory-list` table) render as
-  // a Markdown block so lists and tables stay readable.
+  // SYSTEM rows are out-of-band notices. An *acknowledgement* (e.g. "Run now
+  // accepted") reads as a compact green confirmation; a *failure* (a provider
+  // rejection, a tool-round cap) reads as red so a dead turn is never mistaken
+  // for a successful one. Multi-line notes (e.g. the `/memory-list` table)
+  // render as Markdown so lists and tables stay readable.
   if (role === "system") {
-    if (content.includes("\n")) {
+    const failed = isErrorNotice({ content, is_error: isError });
+    const body = failed ? errorNoticeBody(content) : content;
+    const tone = failed
+      ? "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300"
+      : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    if (body.includes("\n")) {
       return (
         <div className="flex flex-col items-end gap-1">
-          <div className="max-w-full overflow-x-auto rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300">
-            <Markdown className="text-sm leading-relaxed">{content}</Markdown>
+          <div className={`max-w-full overflow-x-auto rounded-lg border px-3 py-2 ${tone}`}>
+            {failed && <ErrorNoticeLabel />}
+            <Markdown className="text-sm leading-relaxed">{body}</Markdown>
           </div>
         </div>
       );
     }
     return (
       <div className="flex flex-col items-end gap-1">
-        <div className="inline-flex items-center gap-1.5 max-w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 size={14} className="shrink-0 text-emerald-500" />
-          <span>{content}</span>
+        <div
+          className={`inline-flex items-start gap-1.5 max-w-full rounded-lg border px-3 py-1.5 text-sm ${tone}`}
+          role={failed ? "alert" : undefined}
+        >
+          {failed ? (
+            <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" />
+          ) : (
+            <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-500" />
+          )}
+          <span className="min-w-0 break-words">{body}</span>
         </div>
       </div>
     );
@@ -181,6 +204,11 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
               </Markdown>
             </div>
           )}
+          {onRetry && (
+            <div className="px-3 pb-2">
+              <RetryButton onRetry={onRetry} />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -197,9 +225,9 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
         {agentSessionId != null && <AgentExchangeBadge agentSessionId={agentSessionId} />}
       </div>
       <div
-        className={`relative px-3 py-2 rounded-lg border border-border ${
-          isUser ? "bg-accent/10" : "bg-surface"
-        } max-w-full`}
+        className={`relative px-3 py-2 rounded-lg border ${
+          onRetry ? "border-red-500/40" : "border-border"
+        } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full`}
       >
         {showActions && (
           <div
@@ -348,6 +376,11 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
             )}
           </>
         )}
+        {onRetry && !pending && (
+          <div className="mt-1.5 flex justify-end">
+            <RetryButton onRetry={onRetry} />
+          </div>
+        )}
       </div>
       {!pending && (role === "user" || role === "assistant") && (
         <MessageMeta
@@ -362,11 +395,39 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
 }
 
 /**
+ * A prominent "Retry" control rendered on the prompt whose turn failed, so it
+ * is unambiguous *which* prompt gets replayed. The retry drops the failed tail
+ * (partial answer, tool rows, the error notice) and re-runs this exact turn.
+ */
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onRetry}
+      className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-red-500/40 px-2 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-500/10 dark:text-red-300"
+      data-tooltip="Replay this prompt — the failed reply is discarded"
+    >
+      <RotateCcw size={11} />
+      Retry
+    </button>
+  );
+}
+
+/** The "Error" marker on a multi-line failure notice. */
+function ErrorNoticeLabel() {
+  return (
+    <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide">
+      <AlertTriangle size={12} className="shrink-0 text-red-500" />
+      Error
+    </div>
+  );
+}
+
+/**
  * Count up wall-clock time while `active`, ticking ~10×/s. Returns the elapsed
  * milliseconds; resets to 0 when inactive. Used for the live "thinking"
  * chronometer on an in-flight assistant turn.
- */
-function useStopwatch(active: boolean): number {
+ */function useStopwatch(active: boolean): number {
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef<number | null>(null);
 

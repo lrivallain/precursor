@@ -901,6 +901,12 @@ export interface Message {
   attachments?: Attachment[];
   /** Follow-up reply chips the assistant offered on this turn. */
   suggestions?: string[];
+  /**
+   * Client-only: marks a system-role notice as a failure so it renders as an
+   * error instead of an acknowledgement. Persisted stream errors are detected
+   * from their `Error: ` prefix instead (see lib/systemNotice.ts).
+   */
+  is_error?: boolean;
 }
 
 export interface NotesDraft {

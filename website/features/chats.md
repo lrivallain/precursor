@@ -37,6 +37,9 @@ Chats share the same conversation experience as topics:
   shown inline.
 - **Long-term [memory](/features/skills-memory)** is injected into chats too, so
   your standing preferences and facts follow you here as well.
+- **Failed turns** surface as a red error notice with a **Retry** button on the
+  prompt that failed — see
+  [when a turn fails](/features/topics#when-a-turn-fails).
 
 ## Unread badges & notifications
 
