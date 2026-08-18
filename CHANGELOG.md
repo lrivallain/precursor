@@ -22,7 +22,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   *active* skills expand; a reference is recognised only at a line start or after
   whitespace and when not followed by `/`, so paths (`/usr/bin`), URLs and prose
   (`and/or`) are never mistaken for a skill call. Nested references expand two
-  levels deep and cycles terminate instead of recursing.
+  levels deep and cycles terminate instead of recursing. **Assistant roles**
+  expand references too, resolved in `resolve_role_prompt` so a role prompt
+  behaves identically on topics, chats, workspaces, agents and Live sessions.
 
 - **Agents are now definitions, and every start opens its own run.** Execution
   state — status, active prompt, transcript counters, token meter and the

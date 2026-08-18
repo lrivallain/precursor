@@ -93,12 +93,18 @@ It works in the default **context** mode too, where the expanded description
 rides along as standing discussion-level context instead of being enforced per
 turn.
 
+An **assistant role** expands references the same way. Because every surface
+that adopts a role resolves it through the same code path, a role prompt like
+"For every reply: `/role-skill`" applies on topics, chats, workspaces, agents
+and Live sessions alike — useful when you want the behaviour to follow you
+across many conversations rather than living on one chat.
+
 ::: tip Which one do I want?
 | You want… | Use |
 | --- | --- |
 | An instruction you invoke *on demand* | a **skill** (`/pr-review`) |
 | One chat that always applies the same instruction | a **chat description** referencing a skill |
-| A reusable persona across many conversations | an **assistant role** (`/role <name>`) |
+| A reusable persona across many conversations | an **assistant role** (`/role <name>`), which may itself reference a skill |
 | A fact applied to *every* conversation | **memory** |
 :::
 

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import Role
+from precursor.backend.services import skills as skills_service
 
 
 async def resolve_role_prompt(session: AsyncSession, role_id: int | None) -> str:
@@ -15,6 +16,10 @@ async def resolve_role_prompt(session: AsyncSession, role_id: int | None) -> str
     built-in ``default`` role, whose prompt is empty out of the box — so the net
     effect is "inject nothing" unless the user customised it. Returns a stripped
     string, or "" when there is nothing to inject.
+
+    A role prompt may reference skills (``/rewrite``), expanded here so every
+    surface that adopts a role — topics, chats, workspaces, agents, meetings —
+    gets the same treatment.
     """
     role: Role | None = None
     if role_id is not None:
@@ -24,4 +29,4 @@ async def resolve_role_prompt(session: AsyncSession, role_id: int | None) -> str
         role = result.scalars().first()
     if role is None:
         return ""
-    return role.system_prompt.strip()
+    return (await skills_service.expand_references(session, role.system_prompt)).strip()
