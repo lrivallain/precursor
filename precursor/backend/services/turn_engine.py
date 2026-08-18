@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.services import memories as memory_service
+from precursor.backend.services import skills as skills_service
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
     attachments_to_text_context,
@@ -146,7 +147,8 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     # duplicating it. In context mode (default) it rides along as standing
     # discussion-level context.
     if chat.description and not chat.description_as_system_prompt:
-        parts.append(f"Chat description: {chat.description}")
+        description = await skills_service.expand_references(session, chat.description)
+        parts.append(f"Chat description: {description}")
 
     # When this chat is attached to a live meeting session, fold in the current
     # meeting grounding (transcript/insights/notes/…), rebuilt every turn.
@@ -158,15 +160,25 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     return "\n\n".join(parts)
 
 
-def apply_chat_system_prompt(chat: Chat, history: list[ChatMessage]) -> list[ChatMessage]:
+def apply_chat_system_prompt(
+    chat: Chat,
+    history: list[ChatMessage],
+    *,
+    description: str | None = None,
+) -> list[ChatMessage]:
     """Enforce a chat's description as a system instruction on every user turn.
 
     When ``description_as_system_prompt`` is set and the description is non-empty,
     prepend it to each user message sent to the LLM so the instruction is
     reasserted every turn rather than injected once. Empty description is a
     no-op. Returns a new list; the persisted messages are untouched.
+
+    ``description`` overrides ``chat.description`` — callers pass the
+    skill-expanded text (resolved with their DB session) so a description may
+    trigger a skill by writing ``/skill-name``.
     """
-    description = (chat.description or "").strip()
+    raw = chat.description if description is None else description
+    description = (raw or "").strip()
     if not (chat.description_as_system_prompt and description):
         return history
 
