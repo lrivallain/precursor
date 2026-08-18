@@ -1,6 +1,6 @@
 """Sandboxed local command execution for the cmd-runner MCP server.
 
-Two modes, selected by ``settings.cmd_runner_jail``:
+Two modes, selected by the ``cmd_runner_jail`` setting:
 
 * **jail (default)** — each command runs inside a throwaway Docker container
   (``docker run --rm``) with the working directory bind-mounted at ``/work``.
@@ -28,17 +28,30 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from precursor.backend.config import Settings
-
 logger = logging.getLogger(__name__)
 
 # How long to wait when probing the docker daemon for availability.
 _DOCKER_PROBE_TIMEOUT = 5.0
 
 
+# Factory defaults for the command runner. They live here rather than on the
+# env-based ``Settings`` because every one of them is a user preference the
+# Settings UI owns (jail, image, network, limits) — an env twin would be a second,
+# undiscoverable way to set the same thing, including a second way to turn the
+# sandbox off. ``resolve_cmd_runner_config`` applies the DB overrides on top.
+DEFAULT_JAIL = True
+DEFAULT_IMAGE = "python:3.14-slim"
+DEFAULT_NETWORK = False
+DEFAULT_TIMEOUT_SECONDS = 120
+DEFAULT_MAX_OUTPUT_BYTES = 100_000
+DEFAULT_MEMORY = "512m"
+DEFAULT_PIDS_LIMIT = 256
+DEFAULT_CPUS = "1"
+
+
 @dataclass(slots=True)
 class CmdRunnerConfig:
-    """Effective command-runner settings (config defaults + DB overrides)."""
+    """Effective command-runner settings (factory defaults + DB overrides)."""
 
     jail: bool
     image: str
@@ -48,20 +61,6 @@ class CmdRunnerConfig:
     memory: str
     pids_limit: int
     cpus: str
-
-    @classmethod
-    def from_settings(cls, settings: Settings) -> CmdRunnerConfig:
-        """Build from env-based config (the factory defaults, no DB overrides)."""
-        return cls(
-            jail=settings.cmd_runner_jail,
-            image=settings.cmd_runner_image,
-            network=settings.cmd_runner_network,
-            timeout_seconds=settings.cmd_runner_timeout_seconds,
-            max_output_bytes=settings.cmd_runner_max_output_bytes,
-            memory=settings.cmd_runner_memory,
-            pids_limit=settings.cmd_runner_pids_limit,
-            cpus=settings.cmd_runner_cpus,
-        )
 
 
 @dataclass(slots=True)
@@ -108,7 +107,7 @@ def jail_preflight_error(jail_enabled: bool) -> str | None:
     return (
         "Docker is required to run the command runner in jail mode, but it is "
         f"unavailable ({detail}). Start or install Docker, or disable jail mode "
-        "(in Settings → System, or PRECURSOR_CMD_RUNNER_JAIL=false) to run "
+        "in Settings → System to run "
         "commands directly on the host — note that grants full local disk access."
     )
 

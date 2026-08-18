@@ -9,6 +9,11 @@ Most configuration happens **at runtime in the app** (see the
 **process-level** settings that live in `.env` — every one has a built-in default,
 so the file is optional.
 
+The split is deliberate and enforced by a test: anything you can change in
+**Settings** is stored in the database and has *no* environment twin, so there is
+exactly one place to set it. `.env` keeps only what has to be known before the
+database exists — bind address, database URL, data directory, ticker cadences.
+
 Copy `.env.example` to `.env` and uncomment only what you want to override.
 
 ## Server
@@ -59,10 +64,9 @@ knobs are env-level:
 
 ## Retention
 
-Two independent sweeps bound long-term database growth. Each is set **at
-runtime** — the retention window lives in an `AppSetting` (with an env-level
-factory default and poll cadence), runs on startup, and repeats daily via a
-background ticker.
+Two independent sweeps bound long-term database growth. Each retention window is
+set **at runtime** in an `AppSetting`; the sweep runs on startup and repeats daily
+via a background ticker. Only the poll cadence is env-level.
 
 | Setting | Default | Where | Description |
 | --- | --- | --- | --- |

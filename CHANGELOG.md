@@ -204,6 +204,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Settings you can change in the app no longer have a hidden env twin.**
+  `config.Settings` sets `env_prefix="PRECURSOR_"`, so every field on it silently
+  became a `PRECURSOR_*` variable — including 24 that already had a control in the
+  Settings panel. None were documented, so the only way to find one was to read
+  `config.py`, and two of them (`PRECURSOR_CMD_RUNNER_JAIL`,
+  `PRECURSOR_CMD_RUNNER_NETWORK`) were an undocumented second way to switch off
+  the command-runner sandbox. The factory default for each now lives as a constant
+  beside its `resolve_*` helper, leaving the DB row — and the panel that writes it
+  — as the single way to set the value. `.env` keeps only what must be known
+  before the database exists: bind address, database URL, data directory, ticker
+  cadences. A test pins the split so it can't creep back. Affected:
+  `LLM_MAX_INPUT_TOKENS`, `LLM_MAX_TOOL_RESULT_TOKENS`,
+  `SCHEDULED_RUN_TIMEOUT_SECONDS`, `TOOL_RESULT_RETENTION_DAYS`,
+  `LIVE_TRANSCRIPT_RETENTION_DAYS`, the eight `CMD_RUNNER_*`, the four `AGENTS_*`
+  defaults, the four `WORKFLOWS_DEFAULT_*`, and the three `BACKUP_*`.
+  `PRECURSOR_WORKIQ_TENANT_ID` and `PRECURSOR_PLAYWRIGHT_BROWSER` are kept
+  deliberately: both describe the machine or tenant rather than a preference, and
+  both are documented.
 - **Installing the `agents` extra is now the opt-in.** Agents mode took two steps
   — install a ~150 MB extra, then find a toggle in **Settings → Agents** — so the
   people who had just paid for the payload still saw nothing until they went
@@ -240,6 +258,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Workspace chat now honours the context-budget settings.** `POST
+  /api/workspaces/{slug}/chat` trimmed its prompt using the env-level token
+  limits while topic and chat turns resolved them from the database, so changing
+  **max input / tool-result tokens** in Settings silently had no effect on
+  workspace conversations — the one surface most likely to hit the ceiling, since
+  it reads files.
 - **The test suite no longer spawns the real Copilot CLI.** `make check` took
   ~9 minutes on machines that had ever run `make dev`, and ~75s on machines that
   hadn't — the same code, six times slower for exactly the people running the

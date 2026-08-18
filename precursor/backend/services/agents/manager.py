@@ -73,6 +73,7 @@ from precursor.backend.services.agents.permissions import (
 )
 from precursor.backend.services.app_settings import (
     AGENTS_APPROVAL_POLICIES,
+    DEFAULT_AGENTS_APPROVAL_POLICY,
     resolve_agents_approval_policy,
     resolve_agents_context_tier,
     resolve_agents_default_model,
@@ -2547,9 +2548,7 @@ class AgentManager:
             req_name = type(request).__name__
             try:
                 live = self._live.get(run_id)
-                policy = (
-                    live.approval_policy if live else None
-                ) or get_settings().agents_approval_policy
+                policy = (live.approval_policy if live else None) or DEFAULT_AGENTS_APPROVAL_POLICY
                 logger.info(
                     "run %s: permission handler hit — request=%s policy=%s live=%s",
                     run_id,
@@ -2578,7 +2577,7 @@ class AgentManager:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                fallback = get_settings().agents_approval_policy
+                fallback = DEFAULT_AGENTS_APPROVAL_POLICY
                 logger.exception(
                     "run %s: permission handler failed for %s; falling back to %r policy",
                     run_id,
@@ -2608,7 +2607,7 @@ class AgentManager:
             async with SessionLocal() as session:
                 return await resolve_agents_approval_policy(session)
         except Exception:
-            fallback = get_settings().agents_approval_policy
+            fallback = DEFAULT_AGENTS_APPROVAL_POLICY
             logger.warning(
                 "agent: approval-policy DB read failed; using in-memory default %r",
                 fallback,
