@@ -110,48 +110,86 @@ VS Code extension, unlike a rendered image.
 It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
 nothing outside `workspaces_dir/<slug>` is reachable.
 
-The point of the server is **layout**. Models write plausible mxGraph markup but
-pick poor `x`/`y` coordinates, so shapes overlap and edges cross. Here the model
-describes a *graph* and Precursor places it — layered along the flow direction,
-with a barycenter pass to cut edge crossings:
+| Tool | What it does |
+| --- | --- |
+| `list_workspaces` | Find the `workspace_id` to write into. |
+| `search_shapes` | Find real product icons (Azure) and their exact style strings. |
+| `list_shapes` | The generic shape / colour / edge presets. |
+| `create_diagram` | Build a laid-out diagram from nodes, edges and groups. |
+| `write_diagram_xml` | Escape hatch — write raw mxGraph XML (validated, wrapper added). |
+| `read_diagram` | Read a diagram back to edit and rewrite it. |
+
+Two things exist here because a model left to itself gets them wrong.
+
+#### Real icons, not blank boxes
+
+draw.io's Azure library is a set of **SVG images** (`image=img/lib/azure2/…`),
+*not* `shape=mxgraph.azure2.*` stencils. Models reliably invent the stencil form,
+draw.io can't resolve it, and every service silently degrades to a featureless
+rectangle — which is how an "Azure architecture" ends up as a grid of blue
+squares.
+
+So Precursor ships a **catalogue of ~700 verified Azure shapes**, generated from
+draw.io's own palette by `scripts/build_drawio_shapes.py`, and serves it through
+`search_shapes`:
+
+```text
+search_shapes("express route")
+→ networking/expressroute-circuits  (Azure ExpressRoute Circuits)
+  image;aspect=fixed;html=1;…;image=img/lib/azure2/networking/ExpressRoute_Circuits.svg;
+```
+
+Pass the `key` as a node's `shape` and the icon — and its correct aspect ratio —
+comes with it. `create_diagram` also resolves free text (`"azure firewall"`) and
+**reports what it matched** in `notes`, so an unresolved shape is something you
+get told about rather than something you discover in the rendered file.
+
+::: tip Colours are for boxes, not icons
+`color` tints plain shapes. It's ignored for catalogue icons — painting a fill
+over an SVG icon is precisely what flattens it into a coloured square.
+:::
+
+#### Layout, including nested containers
+
+Models write plausible mxGraph but pick poor `x`/`y` coordinates, so shapes
+overlap and edges cross. Describe the *graph* instead — nodes, edges and
+**groups** — and the server derives the geometry: layered along `direction`, with
+a barycenter pass to cut crossings, and every container sized to fit its children
+and its own title.
+
+`groups` nest freely via their own `group` field, which is what makes real cloud
+topologies expressible — region → VNet → subnet → resource — without dropping to
+raw XML:
 
 ```text
 create_diagram(
   workspace_id = 1,
-  path         = "docs/architecture",          # .drawio is appended for you
-  nodes        = [{"id": "spa",  "label": "React SPA", "shape": "rounded",  "color": "blue"},
-                  {"id": "api",  "label": "FastAPI",   "shape": "process",  "color": "blue"},
-                  {"id": "db",   "label": "SQLite",    "shape": "database", "color": "green"}],
-  edges        = [{"source": "spa", "target": "api", "label": "SSE"},
-                  {"source": "api", "target": "db"}],
-  direction    = "vertical",
+  path         = "docs/hub-spoke",            # .drawio is appended for you
+  direction    = "horizontal",
+  groups       = [{"id": "hub",   "label": "Hub VNet — 10.0.0.0/16", "color": "blue"},
+                  {"id": "fwsub", "label": "AzureFirewallSubnet",    "group": "hub"},
+                  {"id": "spoke", "label": "Spoke 1 — Production",   "color": "green"}],
+  nodes        = [{"id": "fw",  "label": "Azure Firewall", "shape": "networking/firewalls", "group": "fwsub"},
+                  {"id": "app", "label": "App Tier",       "shape": "compute/vm-scale-sets", "group": "spoke"}],
+  edges        = [{"source": "fw", "target": "spoke", "label": "VNet peering"}],
 )
 ```
 
-| Tool | What it does |
-| --- | --- |
-| `list_workspaces` | Find the `workspace_id` to write into. |
-| `list_shapes` | The shape / colour / edge presets, so styles aren't invented. |
-| `create_diagram` | Build a laid-out diagram from nodes + edges. |
-| `write_diagram_xml` | Escape hatch — write raw mxGraph XML (validated, wrapper added). |
-| `read_diagram` | Read a diagram back to edit and rewrite it. |
-
-Presets cover the common flowchart/architecture vocabulary, but **any field that
-takes a preset also accepts a raw mxGraph style** (anything containing `=`), so
-the full draw.io shape catalogue — AWS, Azure, UML, BPMN — stays reachable:
-
-```text
-{"id": "fn", "label": "Lambda", "shape": "shape=mxgraph.aws4.lambda;"}
-```
+Edges may join **groups** as well as nodes, and an edge between two nested nodes
+also orders the containers they sit in. `direction` sets the flow axis; siblings
+with no edges between them are packed along it and wrap instead of running off
+the page.
 
 ::: tip Diagrams that diff cleanly
 Output is deterministic — no timestamps, no random ids. Regenerating an
 unchanged diagram produces an empty `git diff` instead of churning the file.
 :::
 
-Cycles are fine (state machines, retry loops): the layering cuts the loop rather
-than rejecting the graph. Existing files are never clobbered unless you pass
-`overwrite=true`.
+Presets and catalogue keys aside, **any field that takes a preset also accepts a
+raw mxGraph style** (anything containing `=`), so the rest of the draw.io
+catalogue — AWS, UML, BPMN — stays reachable. Cycles are fine (state machines,
+retry loops): the layering cuts the loop rather than rejecting the graph.
+Existing files are never clobbered unless you pass `overwrite=true`.
 
 ### WorkIQ preview & OAuth
 

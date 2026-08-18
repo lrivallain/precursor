@@ -17,16 +17,29 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   working tree, so a diagram is reviewable in a `git diff`, commit-able from the
   Workspace UI, and still editable in draw.io — unlike a rendered image. It
   shares `workspace-fs`'s sandbox (`safe_join`), so nothing outside
-  `workspaces_dir/<slug>` is reachable. The server owns **layout**: the model
-  describes a graph (`nodes` + `edges`) and Precursor lays it out in layers with
-  a barycenter pass to cut edge crossings, rather than having the model guess
-  `x`/`y` coordinates and produce overlapping shapes. Ships `create_diagram`,
-  `write_diagram_xml` (raw-XML escape hatch, validated), `read_diagram`,
-  `list_shapes` and `list_workspaces`. Shape/colour/edge presets cover the usual
-  flowchart vocabulary, and any preset field also accepts a raw mxGraph style so
-  the full AWS/Azure/UML/BPMN catalogue stays reachable. Output is deterministic
-  (no timestamps or random ids), so regenerating an unchanged diagram leaves an
-  empty diff.
+  `workspaces_dir/<slug>` is reachable.
+
+  The server owns **layout**: the model describes a graph — nodes, edges and
+  freely **nested `groups`** (region → VNet → subnet → resource) — and Precursor
+  places everything in layers with a barycenter pass to cut edge crossings,
+  sizing each container to fit its children and its own title. Siblings with no
+  edges between them are packed along the flow direction and wrap rather than
+  running off the page, and edges may join groups as well as nodes.
+
+  It also ships a **catalogue of ~700 verified Azure icons**, searchable with
+  `search_shapes` and generated from draw.io's own palette by
+  `scripts/build_drawio_shapes.py`. This matters more than it sounds: draw.io's
+  Azure library is made of SVG *images*, not `mxgraph.azure2.*` stencils, so a
+  guessed stencil name renders as a blank rectangle and an "Azure architecture"
+  comes out as a grid of featureless squares. `create_diagram` resolves shape
+  names through the catalogue and **reports what it matched**, so an unresolved
+  icon is reported rather than silently drawn as a box.
+
+  Ships `create_diagram`, `search_shapes`, `list_shapes`, `write_diagram_xml`
+  (raw-XML escape hatch, validated), `read_diagram` and `list_workspaces`. Any
+  preset field also accepts a raw mxGraph style so the AWS/UML/BPMN catalogue
+  stays reachable. Output is deterministic (no timestamps or random ids), so
+  regenerating an unchanged diagram leaves an empty diff.
 - **Agents are now definitions, and every start opens its own run.** Execution
   state — status, active prompt, transcript counters, token meter and the
   Copilot SDK session handle — moved off `AgentSession` onto a new `AgentRun`
