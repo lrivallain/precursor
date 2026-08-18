@@ -34,6 +34,17 @@ from precursor.backend.models import Skill
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
+# A ``/skill-name`` reference anywhere in a body of text. Anchored to the start
+# of the string or to whitespace, and refusing a trailing word char or ``/``, so
+# paths (``/usr/bin``), URLs (``https://host/rewrite``) and prose (``and/or``)
+# are never mistaken for a skill call.
+_SKILL_REF_RE = re.compile(r"(?:^|(?<=\s))/([a-z][a-z0-9-]*)(?![\w/-])")
+
+# How many times a skill's own body may itself expand a reference. Keeps a
+# ``/a`` → ``/b`` → ``/c`` chain bounded; cycles are additionally blocked by
+# tracking the names on the current expansion path.
+MAX_REFERENCE_DEPTH = 2
+
 # Names colliding with built-in slash commands would be confusing in the picker.
 RESERVED_NAMES: frozenset[str] = frozenset(
     {"gh-update", "gh-sync", "gh-create", "gh-close", "notes"}
@@ -240,6 +251,56 @@ async def get_active_instructions(session: AsyncSession, name: str) -> str | Non
     if skill is None or not skill.active:
         return None
     return skill.instructions
+
+
+# ---------------------------------------------------------------------------
+# inline references
+# ---------------------------------------------------------------------------
+def expand_references_with(
+    text: str,
+    instructions_by_name: dict[str, str],
+    *,
+    max_depth: int = MAX_REFERENCE_DEPTH,
+) -> str:
+    """Substitute every ``/skill-name`` reference in ``text`` with its body.
+
+    Replacement is *in place*: the token is swapped for the skill's instructions
+    where it was written, so a sentence like "always /rewrite the input" reads as
+    the instructions embedded in that sentence. Unknown or inactive names are
+    left untouched — they're far more likely to be ordinary prose than a typo'd
+    skill call.
+    """
+
+    def _expand(chunk: str, depth: int, path: frozenset[str]) -> str:
+        def _replace(match: re.Match[str]) -> str:
+            name = match.group(1)
+            body = instructions_by_name.get(name)
+            # A name already on this expansion path would recurse forever.
+            if body is None or name in path:
+                return match.group(0)
+            body = body.strip()
+            if depth <= 0:
+                return body
+            return _expand(body, depth - 1, path | {name})
+
+        return _SKILL_REF_RE.sub(_replace, chunk)
+
+    return _expand(text, max_depth, frozenset())
+
+
+async def expand_references(
+    session: AsyncSession,
+    text: str,
+    *,
+    max_depth: int = MAX_REFERENCE_DEPTH,
+) -> str:
+    """Resolve ``/skill-name`` references in ``text`` against the active skills."""
+    if not text or "/" not in text:
+        return text
+    table = {s.name: s.instructions for s in await reconcile_and_list(session) if s.active}
+    if not table:
+        return text
+    return expand_references_with(text, table, max_depth=max_depth)
 
 
 # ---------------------------------------------------------------------------

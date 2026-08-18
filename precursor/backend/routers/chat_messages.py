@@ -38,6 +38,7 @@ from precursor.backend.schemas import (
     StoppedTurn,
 )
 from precursor.backend.services import notes as notes_service
+from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import (
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
@@ -209,8 +210,13 @@ async def stream_chat(
                 break
 
     # When the chat opts into system-prompt mode, reassert the description as a
-    # mandatory instruction on every user turn (no-op otherwise).
-    history = apply_chat_system_prompt(chat, history)
+    # mandatory instruction on every user turn (no-op otherwise). The description
+    # may reference skills (``/rewrite``), expanded here while the session is open.
+    history = apply_chat_system_prompt(
+        chat,
+        history,
+        description=await skills_service.expand_references(session, chat.description or ""),
+    )
 
     enabled_servers = await load_enabled_mcp_servers(session)
     model = payload.model or await resolve_llm_model(session)

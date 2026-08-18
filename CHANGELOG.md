@@ -40,6 +40,20 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   preset field also accepts a raw mxGraph style so the AWS/UML/BPMN catalogue
   stays reachable. Output is deterministic (no timestamps or random ids), so
   regenerating an unchanged diagram leaves an empty diff.
+- **Skills can be referenced mid-prompt, and from a chat description.** A
+  `/skill-name` token is no longer only recognised at the *start* of a message:
+  written anywhere in the text it is now substituted **in place** with the
+  skill's instructions, so "take the notes below, `/rewrite` them, then
+  summarise" reads as one instruction. The same substitution runs on the backend
+  for a **chat description** — in both *context* and *Use as system prompt*
+  modes — so a description like "For every message I send: `/rewrite`" turns a
+  chat into a dedicated, single-purpose surface with no command to type. Only
+  *active* skills expand; a reference is recognised only at a line start or after
+  whitespace and when not followed by `/`, so paths (`/usr/bin`), URLs and prose
+  (`and/or`) are never mistaken for a skill call. Nested references expand two
+  levels deep and cycles terminate instead of recursing. **Assistant roles**
+  expand references too, resolved in `resolve_role_prompt` so a role prompt
+  behaves identically on topics, chats, workspaces, agents and Live sessions.
 - **Agents are now definitions, and every start opens its own run.** Execution
   state — status, active prompt, transcript counters, token meter and the
   Copilot SDK session handle — moved off `AgentSession` onto a new `AgentRun`

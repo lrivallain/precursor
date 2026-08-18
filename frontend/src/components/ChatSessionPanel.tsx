@@ -473,7 +473,7 @@ export function ChatSessionPanel({
       const skill = skillsStore.byName(cmd.name);
       if (skill) {
         setDraft("");
-        const expanded = `${skill.instructions.trim()}\n\n---\n\n${cmd.argument}`;
+        const expanded = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
         const atts = pendingAttachments;
         setPendingAttachments([]);
         void streamStore.start(streamKey, content, expanded, atts);
@@ -483,10 +483,13 @@ export function ChatSessionPanel({
     setDraft("");
     const atts = pendingAttachments;
     setPendingAttachments([]);
+    // No leading skill command, but a `/skill-name` may appear mid-prompt: send
+    // the expanded text to the LLM while the transcript keeps what was typed.
+    const inlined = content ? skillsStore.expandReferences(content) : content;
     void streamStore.start(
       streamKey,
       content || "(attachment attached)",
-      undefined,
+      inlined && inlined !== content ? inlined : undefined,
       atts,
     );
   }

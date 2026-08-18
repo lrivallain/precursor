@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { expandSkillReferences } from "./skillRefs";
 import type { Skill } from "./types";
 
 type Listener = () => void;
@@ -30,6 +31,18 @@ class SkillsStore {
 
   byName(name: string): Skill | undefined {
     return this.skills.find((s) => s.name === name);
+  }
+
+  /**
+   * Substitute `/skill-name` references anywhere in `text` with the matching
+   * *active* skill's instructions. Returns `text` unchanged when nothing
+   * resolves, so callers can cheaply detect "no expansion happened".
+   */
+  expandReferences(text: string): string {
+    const table = new Map(
+      this.skills.filter((s) => s.active).map((s) => [s.name, s.instructions]),
+    );
+    return expandSkillReferences(text, table);
   }
 
   async load(): Promise<void> {
