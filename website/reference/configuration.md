@@ -35,7 +35,7 @@ CLI flags mirror several of these: `--port`, `--api-port`, `--host`,
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` | Async SQLAlchemy URL. Point at Postgres for production. |
-| `PRECURSOR_DATA_DIR` | `.precursor` | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), and the agents runtime's Copilot home (`agents/copilot-home/`). Relative paths resolve against the process working directory. |
+| `PRECURSOR_DATA_DIR` | `.precursor` | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), and the agents runtime's Copilot home (`agents/copilot-home/`). Relative paths resolve against the process working directory. |
 
 ```bash
 # SQLite (default — no setup)
@@ -44,6 +44,18 @@ PRECURSOR_DATABASE_URL=sqlite+aiosqlite:///./precursor.db
 # PostgreSQL (needs the `postgres` extra for asyncpg)
 PRECURSOR_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/precursor
 ```
+
+## Diagram editor
+
+`.drawio` files open in a self-hosted draw.io editor. The webapp is downloaded
+on demand into `<data_dir>/drawio/<version>/` the first time you open a diagram
+— it is deliberately not bundled in the wheel (~53 MB download, ~150 MB on
+disk). See [Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_DRAWIO_VERSION` | `v31.3.1` | draw.io release tag to install. Changing it installs the new release on next use and removes the old one. |
+| `PRECURSOR_DRAWIO_DOWNLOAD_URL` | GitHub release `draw.war` | Template for the archive URL; `{version}` is substituted. Point it at an internal mirror on an air-gapped network. |
 
 ## LLM provider
 

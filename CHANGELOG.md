@@ -11,6 +11,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **`.drawio` files are now editable in the Workspace, with a self-hosted
+  editor.** Opening a diagram in the Files section embeds the draw.io editor
+  directly, with an **XML / Diagram** toggle to drop down to the raw mxGraph
+  source. Edits flow into the same buffer as any other file, so the dirty
+  marker, **Save** and `git diff` work unchanged — closing the loop on the
+  `drawio` MCP server below: the assistant authors the diagram, you open it and
+  adjust it in place.
+
+  The editor is served from **this instance** (`/drawio/`) rather than
+  `embed.diagrams.net`, and the frame runs with `offline=1&stealth=1`, so
+  diagram content never reaches an external origin and editing works with no
+  network at all. The webapp is **not** bundled in the wheel — the release is
+  ~53 MB (~150 MB extracted) — so the first diagram you open offers a one-time
+  install into `<data_dir>/drawio/<version>/`. `PRECURSOR_DRAWIO_VERSION` pins
+  the release and `PRECURSOR_DRAWIO_DOWNLOAD_URL` points it at an internal
+  mirror; superseded versions are pruned on upgrade.
 - **New built-in `drawio` MCP server — diagrams as editable files.** The
   assistant can now author native `.drawio` documents (plain mxGraph XML)
   straight into a [workspace](https://lrivallain.github.io/precursor/features/workspaces)

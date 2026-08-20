@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ClipboardCheck,
   ClipboardCopy,
+  Code2,
   Download,
   ExternalLink,
   Eye,
@@ -16,6 +17,7 @@ import {
   Save,
   Trash2,
   Upload,
+  Workflow,
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -25,6 +27,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { WorkspaceChat } from "./WorkspaceChat";
 import { FileTree } from "./FileTree";
 import { ChangesModal } from "./GitDiffViewer";
+import { DrawioEditor } from "./DrawioEditor";
 import type {
   GitActionResult,
   GitStatus,
@@ -48,6 +51,8 @@ const TEXT_EXTS = [
   ".ts",
   ".py",
   ".sh",
+  ".drawio",
+  ".drawio.xml",
 ];
 
 function isEditable(name: string): boolean {
@@ -63,6 +68,12 @@ function isMarkdown(name: string): boolean {
 function isHtml(name: string): boolean {
   const lower = name.toLowerCase();
   return lower.endsWith(".html") || lower.endsWith(".htm");
+}
+
+// Extensions the drawio MCP server writes (services/mcp/drawio_server.py).
+function isDrawio(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".drawio") || lower.endsWith(".drawio.xml");
 }
 
 // --------------------------------------------------------------------------
@@ -164,7 +175,9 @@ export function WorkspaceView({
       onPathChange(path);
       setContent(f.content);
       setSavedContent(f.content);
-      setMode(isMarkdown(path) || isHtml(path) ? "preview" : "edit");
+      setMode(
+        isMarkdown(path) || isHtml(path) || isDrawio(path) ? "preview" : "edit",
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -377,7 +390,9 @@ export function WorkspaceView({
                   {activePath}
                   {dirty && <span className="text-accent"> •</span>}
                 </span>
-                {(isMarkdown(activePath) || isHtml(activePath)) && (
+                {(isMarkdown(activePath) ||
+                  isHtml(activePath) ||
+                  isDrawio(activePath)) && (
                   <div className="flex rounded border border-border overflow-hidden text-xs">
                     <button
                       className={`px-2 py-1 inline-flex items-center gap-1 ${
@@ -385,7 +400,15 @@ export function WorkspaceView({
                       }`}
                       onClick={() => setMode("edit")}
                     >
-                      <Pencil size={13} /> Edit
+                      {isDrawio(activePath) ? (
+                        <>
+                          <Code2 size={13} /> XML
+                        </>
+                      ) : (
+                        <>
+                          <Pencil size={13} /> Edit
+                        </>
+                      )}
                     </button>
                     <button
                       className={`px-2 py-1 inline-flex items-center gap-1 ${
@@ -393,7 +416,15 @@ export function WorkspaceView({
                       }`}
                       onClick={() => setMode("preview")}
                     >
-                      <Eye size={13} /> Preview
+                      {isDrawio(activePath) ? (
+                        <>
+                          <Workflow size={13} /> Diagram
+                        </>
+                      ) : (
+                        <>
+                          <Eye size={13} /> Preview
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
@@ -455,6 +486,12 @@ export function WorkspaceView({
                   <Markdown className="text-sm leading-relaxed p-6 max-w-3xl">
                     {content || "\u200B"}
                   </Markdown>
+                ) : mode === "preview" && isDrawio(activePath) ? (
+                  <DrawioEditor
+                    path={activePath}
+                    xml={content}
+                    onChange={setContent}
+                  />
                 ) : mode === "preview" && isHtml(activePath) ? (
                   <iframe
                     title={activePath}

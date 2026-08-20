@@ -39,6 +39,7 @@ from precursor.backend.routers import (
     chats,
     collections,
     commands,
+    drawio,
     events,
     github,
     issue,
@@ -312,6 +313,10 @@ def create_app() -> FastAPI:
         stt.router,
         live.router,
         raw.router,
+        drawio.router,
+        # Serves the self-hosted draw.io webapp; registered before the SPA
+        # catch-all below so /drawio/* resolves to the editor assets.
+        drawio.assets_router,
         version.router,
         stats.router,
         search.router,
