@@ -1,18 +1,29 @@
 /**
- * Deep links to a workspace file, surfaced from an MCP tool result.
+ * Deep links to a workspace file, surfaced from an MCP tool call.
  *
  * The file MCP servers (`drawio`, `workspace-fs`) annotate a successful read or
- * write with `workspace_slug` + `url` (see `services/mcp/workspace_links.py`).
- * `ToolCallBubble` reads that here to offer an "Open" chip, so a diagram or file
- * the assistant just touched during a conversation is one click from the Files
- * section instead of something you have to go find.
+ * write with the workspace + path (see `services/mcp/workspace_links.py`). The
+ * backend lifts that into the tool call's *metadata* — deliberately not read out
+ * of the result body, which for a read embeds the whole file (up to 2 MB for a
+ * diagram) and would otherwise have to be JSON-parsed on every render just to
+ * find a path.
+ *
+ * `ToolCallBubble` turns it into an "Open" chip, so a diagram or file the
+ * assistant just touched is one click from the Files section.
  */
+
+/** Segments a browser would resolve away, changing where the link points. */
+const UNSAFE_SEGMENTS = new Set([".", ".."]);
 
 const OPEN_WORKSPACE_FILE_EVENT = "precursor:open-workspace-file";
 
-export interface WorkspaceFileLink {
+/** The `link` carried on a tool call's metadata: `{slug, path}`. */
+export interface WorkspaceFileRef {
   slug: string;
   path: string;
+}
+
+export interface WorkspaceFileLink extends WorkspaceFileRef {
   /** Basename, for the chip label. */
   name: string;
   isDiagram: boolean;
@@ -22,43 +33,6 @@ function isDiagramPath(path: string): boolean {
   const lower = path.toLowerCase();
   return lower.endsWith(".drawio") || lower.endsWith(".drawio.xml");
 }
-
-/**
- * Pull a workspace file link out of a tool result body, or null when the result
- * isn't a successful workspace write. Tolerates non-JSON and unrelated tools:
- * every field is validated rather than assumed.
- */
-export function parseWorkspaceFileLink(
-  content: string | null | undefined,
-): WorkspaceFileLink | null {
-  if (!content) return null;
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("{")) return null;
-
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  if (typeof body !== "object" || body === null) return null;
-  // A result carrying an `error` never links anywhere, even if the server also
-  // echoed back a path.
-  if (body.error) return null;
-
-  const slug = body.workspace_slug;
-  const path = body.path;
-  if (typeof slug !== "string" || !slug) return null;
-  if (typeof path !== "string" || !path) return null;
-  // Never offer a chip we can't turn into a safe route.
-  if (workspaceFileUrl(slug, path) === null) return null;
-
-  const name = path.split("/").filter(Boolean).pop() ?? path;
-  return { slug, path, name, isDiagram: isDiagramPath(path) };
-}
-
-/** Segments a browser would resolve away, changing where the link points. */
-const UNSAFE_SEGMENTS = new Set([".", ".."]);
 
 /**
  * Build the SPA route for a workspace file, or null when the path wouldn't
@@ -71,6 +45,22 @@ export function workspaceFileUrl(slug: string, path: string): string | null {
   if (segments.some((seg) => UNSAFE_SEGMENTS.has(seg))) return null;
   const encoded = segments.map((seg) => encodeURIComponent(seg)).join("/");
   return `/ws/${encodeURIComponent(slug)}/${encoded}`;
+}
+
+/**
+ * Validate a `link` from tool metadata and derive what the chip needs. Returns
+ * null for anything that isn't a usable workspace file reference — the metadata
+ * ultimately originates from an MCP server, which may be third-party.
+ */
+export function toWorkspaceFileLink(
+  ref: WorkspaceFileRef | null | undefined,
+): WorkspaceFileLink | null {
+  if (!ref) return null;
+  const { slug, path } = ref;
+  if (typeof slug !== "string" || typeof path !== "string") return null;
+  if (workspaceFileUrl(slug, path) === null) return null;
+  const name = path.split("/").filter(Boolean).pop() ?? path;
+  return { slug, path, name, isDiagram: isDiagramPath(path) };
 }
 
 /** Switch the app to the Files section with this file open. */

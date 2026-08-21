@@ -8,7 +8,8 @@ import {
   Workflow,
   Wrench,
 } from "lucide-react";
-import { openWorkspaceFile, parseWorkspaceFileLink } from "../lib/workspaceLink";
+import { openWorkspaceFile, toWorkspaceFileLink } from "../lib/workspaceLink";
+import type { WorkspaceFileRef } from "../lib/workspaceLink";
 
 interface Props {
   name: string;
@@ -16,6 +17,8 @@ interface Props {
   content: string | null;
   isError?: boolean;
   pending?: boolean;
+  /** Workspace file this call touched, from the tool call's metadata. */
+  link?: WorkspaceFileRef | null;
 }
 
 function tryPrettyJson(s: string): string {
@@ -32,15 +35,20 @@ function splitName(qualified: string): { server: string; tool: string } {
   return { server: qualified.slice(0, idx), tool: qualified.slice(idx + 2) };
 }
 
-export function ToolCallBubble({ name, arguments: args, content, isError, pending }: Props) {
+export function ToolCallBubble({
+  name,
+  arguments: args,
+  content,
+  isError,
+  pending,
+  link: linkRef,
+}: Props) {
   const [open, setOpen] = useState(false);
   const { server, tool } = splitName(name);
   // A successful workspace read/write links straight to the file it touched.
-  // Memoised because a read result embeds the file itself (up to 2 MB for a
-  // diagram), and this runs for every tool bubble on every transcript render.
   const link = useMemo(
-    () => (pending || isError ? null : parseWorkspaceFileLink(content)),
-    [content, pending, isError],
+    () => (pending || isError ? null : toWorkspaceFileLink(linkRef)),
+    [linkRef, pending, isError],
   );
 
   return (

@@ -17,10 +17,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   Files section with that file already open (and Back returns to the
   discussion), instead of leaving you to find it in the tree. Reads link too, so
   a diagram the assistant merely inspected — or a file whose read was truncated —
-  is just as reachable. Both servers annotate the result with `workspace_slug` +
-  `url`, so the chip is driven by the tool result rather than guessed
-  client-side; a failed call, a folder, or a path that can't be turned into a
-  safe route carries no link.
+  is just as reachable. Both servers annotate the result with the workspace and
+  path, which the backend lifts into the tool call's metadata, so the chip never
+  costs a parse of the file a read returned; the route is rebuilt from the
+  workspace + path rather than from a URL string an MCP server supplied. A
+  failed call, a folder, or a path that can't be turned into a safe route
+  carries no link.
 - **`.drawio` files are now editable in the Workspace, with a self-hosted
   editor.** Opening a diagram in the Files section embeds the draw.io editor
   directly, with an **XML / Diagram** toggle to drop down to the raw mxGraph

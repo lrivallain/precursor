@@ -965,6 +965,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                     content={meta?.pending ? null : m.content}
                     isError={Boolean(meta?.is_error)}
                     pending={Boolean(meta?.pending)}
+                    link={meta?.link}
                   />
                 );
               }

@@ -195,20 +195,21 @@ async def _run(
 
             elif isinstance(ev, ToolResultTurn):
                 call = ev.call
+                tool_meta: dict[str, object] = {
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "arguments": call.arguments,
+                    "is_error": ev.is_error,
+                }
+                if ev.link:
+                    tool_meta["link"] = ev.link
                 async with SessionLocal() as ws:
                     ws.add(
                         Message(
                             topic_id=topic_id,
                             role=MessageRole.TOOL,
                             content=ev.result_text,
-                            tool_calls=json.dumps(
-                                {
-                                    "tool_call_id": call.id,
-                                    "name": call.name,
-                                    "arguments": call.arguments,
-                                    "is_error": ev.is_error,
-                                }
-                            ),
+                            tool_calls=json.dumps(tool_meta),
                         )
                     )
                     await ws.commit()

@@ -51,10 +51,14 @@ This covers reads as well as writes: `read_diagram` and `read_file` link to what
 they read, which is handy when the assistant quotes a fragment and you want the
 whole thing — or when the read was truncated.
 
-Mechanically, the tools annotate their result with `workspace_slug` and a `url`
-(`services/mcp/workspace_links.py`); the SPA renders a chip whenever a tool
-result carries one. A failed call, a folder, or a path that can't be turned into
-a safe route carries no link — so a chip never points somewhere unexpected.
+Mechanically, the tools annotate their result with the workspace and path
+(`services/mcp/workspace_links.py`), and the backend lifts that into the tool
+call's *metadata* — read off the MCP result's `structuredContent`, so the file
+body a read returns is never parsed just to find a link. The SPA rebuilds the
+route from the workspace + path rather than trusting a URL string, since the
+metadata ultimately comes from an MCP server that may be third-party. A failed
+call, a folder, or a path that can't be turned into a safe route carries no link
+— so a chip never points somewhere unexpected.
 
 ## Editing diagrams
 

@@ -48,3 +48,23 @@ def with_open_link(result: dict[str, Any], slug: str, path: str) -> dict[str, An
     if url is None:
         return result
     return {**result, "workspace_slug": slug, "url": url}
+
+
+def link_from_result(payload: Any) -> dict[str, str] | None:
+    """Pull the workspace file a tool result points at, for the UI's link.
+
+    Reads the MCP result's ``structuredContent`` — the dict the tool returned —
+    so a read result's file contents are never parsed just to find a link.
+    Returns only ``slug``/``path``: the caller rebuilds the URL itself rather
+    than trusting a ``url`` string from what may be a third-party MCP server.
+    """
+    structured = getattr(payload, "structuredContent", None)
+    if not isinstance(structured, dict) or structured.get("error"):
+        return None
+    slug = structured.get("workspace_slug")
+    path = structured.get("path")
+    if not isinstance(slug, str) or not isinstance(path, str):
+        return None
+    if workspace_file_url(slug, path) is None:
+        return None
+    return {"slug": slug, "path": path}

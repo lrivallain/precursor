@@ -123,6 +123,12 @@ tool-call events for a single turn. A turn that dies (a provider rejection, the
 tool-round cap) emits an `error` event *and* persists an `Error: …` system
 message, so the failure is still there after a reload.
 
+A `tool_result` event carries the call id, name, arguments, result text and
+error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
+[workspace](/features/workspaces) file, which the UI turns into an **Open** chip.
+The same object is stored on the tool message's `tool_calls` metadata, so the
+chip survives a reload without re-reading the result body.
+
 `POST .../messages/stream` accepts `retry_message_id` to **replay** such a turn:
 instead of persisting a new user message it reuses that one — attachments and
 all — and deletes every message recorded after it. The id must name a user turn
