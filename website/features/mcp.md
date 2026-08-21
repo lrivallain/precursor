@@ -112,8 +112,8 @@ editor — see
 
 It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
 nothing outside `workspaces_dir/<slug>` is reachable. Both servers annotate a
-successful write with a deep link, so the tool call in the transcript gets an
-**Open** chip straight to the new file — see
+file result — read or write — with a deep link, so the tool call in the
+transcript gets an **Open** chip straight to it — see
 [Workspaces → Jumping from a conversation to the file](/features/workspaces#jumping-from-a-conversation-to-the-file).
 
 | Tool | What it does |

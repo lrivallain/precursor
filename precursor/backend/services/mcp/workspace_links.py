@@ -1,10 +1,10 @@
-"""Deep links to a workspace file, shared by the file-writing MCP servers.
+"""Deep links to a workspace file, shared by the file MCP servers.
 
-When a tool writes into a workspace working tree, its result carries a
-``workspace_slug`` + ``url`` alongside the path. The SPA renders that as an
-"Open" chip on the tool bubble, so a file the assistant just created during a
-conversation is one click away in the Files section instead of something you
-have to go hunting for.
+When a tool reads or writes a file in a workspace working tree, its result
+carries a ``workspace_slug`` + ``url`` alongside the path. The SPA renders that
+as an "Open" chip on the tool bubble, so a file the assistant just created or
+inspected during a conversation is one click away in the Files section instead
+of something you have to go hunting for.
 
 Kept here rather than in a router so the stdio MCP subprocesses can build a link
 without importing the LLM/git stack.
@@ -39,7 +39,7 @@ def workspace_file_url(slug: str, path: str) -> str | None:
 
 
 def with_open_link(result: dict[str, Any], slug: str, path: str) -> dict[str, Any]:
-    """Annotate a successful write result with the deep link to the new file.
+    """Annotate a successful file result with the deep link that opens it.
 
     The result is returned unchanged when no safe link can be built, so a tool
     never advertises a link that would land somewhere else.

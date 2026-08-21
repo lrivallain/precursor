@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -35,8 +35,13 @@ function splitName(qualified: string): { server: string; tool: string } {
 export function ToolCallBubble({ name, arguments: args, content, isError, pending }: Props) {
   const [open, setOpen] = useState(false);
   const { server, tool } = splitName(name);
-  // A successful workspace write links straight to the file it produced.
-  const link = pending || isError ? null : parseWorkspaceFileLink(content);
+  // A successful workspace read/write links straight to the file it touched.
+  // Memoised because a read result embeds the file itself (up to 2 MB for a
+  // diagram), and this runs for every tool bubble on every transcript render.
+  const link = useMemo(
+    () => (pending || isError ? null : parseWorkspaceFileLink(content)),
+    [content, pending, isError],
+  );
 
   return (
     <div className="w-full">

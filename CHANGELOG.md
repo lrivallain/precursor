@@ -11,14 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
-- **A file the assistant writes into a workspace is one click away.** When a
-  turn calls `drawio` or `workspace-fs` to write a file, the tool call in the
+- **A file the assistant touches in a workspace is one click away.** When a turn
+  calls `drawio` or `workspace-fs` to read or write a file, the tool call in the
   transcript now carries an **Open** chip naming it — clicking it switches to the
   Files section with that file already open (and Back returns to the
-  discussion), instead of leaving you to find it in the tree. Both servers
-  annotate a successful write with `workspace_slug` + `url`, so the chip is
-  driven by the tool result rather than guessed client-side; a failed write, a
-  folder, or a path that can't be turned into a safe route carries no link.
+  discussion), instead of leaving you to find it in the tree. Reads link too, so
+  a diagram the assistant merely inspected — or a file whose read was truncated —
+  is just as reachable. Both servers annotate the result with `workspace_slug` +
+  `url`, so the chip is driven by the tool result rather than guessed
+  client-side; a failed call, a folder, or a path that can't be turned into a
+  safe route carries no link.
 - **`.drawio` files are now editable in the Workspace, with a self-hosted
   editor.** Opening a diagram in the Files section embeds the draw.io editor
   directly, with an **XML / Diagram** toggle to drop down to the raw mxGraph

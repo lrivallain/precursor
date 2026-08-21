@@ -1,10 +1,10 @@
 /**
  * Deep links to a workspace file, surfaced from an MCP tool result.
  *
- * The file-writing MCP servers (`drawio`, `workspace-fs`) annotate a successful
+ * The file MCP servers (`drawio`, `workspace-fs`) annotate a successful read or
  * write with `workspace_slug` + `url` (see `services/mcp/workspace_links.py`).
  * `ToolCallBubble` reads that here to offer an "Open" chip, so a diagram or file
- * the assistant just wrote during a conversation is one click from the Files
+ * the assistant just touched during a conversation is one click from the Files
  * section instead of something you have to go find.
  */
 

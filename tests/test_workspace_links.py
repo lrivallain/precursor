@@ -133,6 +133,56 @@ async def test_workspace_fs_write_result_links_to_the_file(
     assert "url" not in folder
 
 
+@pytest.mark.asyncio
+async def test_read_tools_also_link_to_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.services.mcp import drawio_server as drawio
+    from precursor.backend.services.mcp import workspace_fs_server as wsfs
+
+    class _WS:
+        slug = "notes"
+        subdir = None
+
+    root = tmp_path / "notes"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "a.md").write_text("# A", encoding="utf-8")
+    (root / "docs" / "d.drawio").write_text("<mxfile />", encoding="utf-8")
+    for srv in (drawio, wsfs):
+        monkeypatch.setattr(srv, "_load_workspace", _stub_workspace(_WS()))
+        monkeypatch.setattr(srv, "_browse_root", lambda ws: root)
+
+    read = await wsfs.read_file(workspace_id=1, path="docs/a.md")
+    diagram = await drawio.read_diagram(workspace_id=1, path="docs/d.drawio")
+
+    assert read["content"] == "# A"
+    assert read["url"] == "/ws/notes/docs/a.md"
+    assert diagram["xml"] == "<mxfile />"
+    assert diagram["url"] == "/ws/notes/docs/d.drawio"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_read_carries_no_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.services.mcp import workspace_fs_server as wsfs
+
+    class _WS:
+        slug = "notes"
+        subdir = None
+
+    root = tmp_path / "notes"
+    (root / "sub").mkdir(parents=True)
+    monkeypatch.setattr(wsfs, "_load_workspace", _stub_workspace(_WS()))
+    monkeypatch.setattr(wsfs, "_browse_root", lambda ws: root)
+
+    missing = await wsfs.read_file(workspace_id=1, path="nope.md")
+    directory = await wsfs.read_file(workspace_id=1, path="sub")
+
+    assert "url" not in missing
+    assert "url" not in directory
+
+
 def _stub_workspace(ws: object):
     async def _load(_workspace_id: int) -> object:
         return ws

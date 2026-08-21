@@ -40,17 +40,21 @@ frame, and `.drawio` files open in a full diagram editor (below).
 
 ## Jumping from a conversation to the file
 
-When the assistant writes into a workspace during a chat or topic — a diagram
-via the [`drawio` MCP server](/features/mcp), or any file via `workspace-fs` —
-the tool call in the transcript carries an **Open** chip naming the file. One
-click switches to the Files section with that file already open, so a diagram
-produced mid-conversation doesn't have to be hunted down in the tree. Browser
-**Back** returns to the discussion.
+When the assistant touches a file in a workspace during a chat or topic — a
+diagram via the [`drawio` MCP server](/features/mcp), or any file via
+`workspace-fs` — the tool call in the transcript carries an **Open** chip naming
+it. One click switches to the Files section with that file already open, so a
+diagram produced (or merely inspected) mid-conversation doesn't have to be
+hunted down in the tree. Browser **Back** returns to the discussion.
 
-Mechanically, the write tools annotate their result with `workspace_slug` and a
-`url` (`services/mcp/workspace_links.py`); the SPA renders a chip whenever a
-tool result carries one. A failed write, or a path that can't be turned into a
-safe route, carries no link — so a chip never points somewhere unexpected.
+This covers reads as well as writes: `read_diagram` and `read_file` link to what
+they read, which is handy when the assistant quotes a fragment and you want the
+whole thing — or when the read was truncated.
+
+Mechanically, the tools annotate their result with `workspace_slug` and a `url`
+(`services/mcp/workspace_links.py`); the SPA renders a chip whenever a tool
+result carries one. A failed call, a folder, or a path that can't be turned into
+a safe route carries no link — so a chip never points somewhere unexpected.
 
 ## Editing diagrams
 

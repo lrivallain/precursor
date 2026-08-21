@@ -993,8 +993,8 @@ async def write_diagram_xml(
 @mcp.tool()
 async def read_diagram(workspace_id: int, path: str) -> dict[str, Any]:
     """Read a ``.drawio`` file back as XML, so you can edit and rewrite it."""
-    root, _ws, failure = await _resolve_root(workspace_id)
-    if root is None:
+    root, ws, failure = await _resolve_root(workspace_id)
+    if root is None or ws is None:
         return failure or {"error": "Workspace unavailable"}
     try:
         content = fs.read_text(root, path)
@@ -1008,7 +1008,7 @@ async def read_diagram(workspace_id: int, path: str) -> dict[str, Any]:
         return {"error": f"File is not UTF-8 text (compressed diagram?): {path}"}
     if len(content.encode("utf-8")) > _MAX_XML_BYTES:
         return {"error": f"Diagram is too large to read: {path}"}
-    return {"path": path, "xml": content}
+    return with_open_link({"path": path, "xml": content}, ws.slug, path)
 
 
 def main() -> None:

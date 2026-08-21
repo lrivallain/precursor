@@ -135,7 +135,7 @@ async def read_file(
     truncated = len(content.encode("utf-8")) > max_bytes
     if truncated:
         content = content.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
-    return {"path": path, "content": content, "truncated": truncated}
+    return with_open_link({"path": path, "content": content, "truncated": truncated}, ws.slug, path)
 
 
 @mcp.tool()
