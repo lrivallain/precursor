@@ -17,6 +17,10 @@ export default defineConfig(({ mode }) => {
   const proxy: Record<string, string | ProxyOptions> = {
     "/api": target,
     "/raw": target,
+    // The self-hosted draw.io editor is served by the backend from the data
+    // dir; without this the SPA's catch-all would answer the editor iframe
+    // with index.html.
+    "/drawio": target,
   };
   // When `precursor --dev` runs the live VitePress docs server it injects
   // PRECURSOR_DOCS_PORT; proxy /docs to it (ws:true for HMR) so the docs are
