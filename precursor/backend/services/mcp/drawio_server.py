@@ -52,6 +52,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Workspace
 from precursor.backend.services import workspace_fs as fs
+from precursor.backend.services.mcp.workspace_links import with_open_link
 
 mcp = FastMCP("drawio")
 
@@ -790,17 +791,19 @@ async def _load_workspace(workspace_id: int) -> Workspace | None:
         return await session.get(Workspace, workspace_id)
 
 
-async def _resolve_root(workspace_id: int) -> tuple[Path | None, dict[str, Any] | None]:
+async def _resolve_root(
+    workspace_id: int,
+) -> tuple[Path | None, Workspace | None, dict[str, Any] | None]:
     ws = await _load_workspace(workspace_id)
     if ws is None:
-        return None, {"error": f"Workspace {workspace_id} not found"}
+        return None, None, {"error": f"Workspace {workspace_id} not found"}
     root = _browse_root(ws)
     if not root.exists():
-        return None, {"error": "Workspace is not ready yet"}
-    return root, None
+        return None, None, {"error": "Workspace is not ready yet"}
+    return root, ws, None
 
 
-def _persist(root: Path, path: str, content: str, *, overwrite: bool) -> dict[str, Any]:
+def _persist(root: Path, path: str, content: str, *, overwrite: bool, slug: str) -> dict[str, Any]:
     try:
         if overwrite:
             fs.write_text(root, path, content)
@@ -810,7 +813,11 @@ def _persist(root: Path, path: str, content: str, *, overwrite: bool) -> dict[st
         return {"error": str(exc)}
     except FileExistsError:
         return {"error": f"File already exists: {path} (pass overwrite=true to replace it)"}
-    return {"path": path, "written": True, "bytes": len(content.encode("utf-8"))}
+    return with_open_link(
+        {"path": path, "written": True, "bytes": len(content.encode("utf-8"))},
+        slug,
+        path,
+    )
 
 
 @mcp.tool()
@@ -929,8 +936,8 @@ async def create_diagram(
     Returns ``notes`` whenever a ``shape`` was fuzzy-matched or couldn't be
     resolved — **read them**, since an unresolved shape is drawn as a plain box.
     """
-    root, failure = await _resolve_root(workspace_id)
-    if root is None:
+    root, ws, failure = await _resolve_root(workspace_id)
+    if root is None or ws is None:
         return failure or {"error": "Workspace unavailable"}
     try:
         target = normalize_path(path)
@@ -939,7 +946,7 @@ async def create_diagram(
         )
     except DiagramError as exc:
         return {"error": str(exc)}
-    result = _persist(root, target, xml, overwrite=overwrite)
+    result = _persist(root, target, xml, overwrite=overwrite, slug=ws.slug)
     if "error" in result:
         return result
     return {
@@ -972,22 +979,22 @@ async def write_diagram_xml(
     from ``search_shapes`` — ``shape=mxgraph.azure2.*`` does not exist and
     renders as an empty box.
     """
-    root, failure = await _resolve_root(workspace_id)
-    if root is None:
+    root, ws, failure = await _resolve_root(workspace_id)
+    if root is None or ws is None:
         return failure or {"error": "Workspace unavailable"}
     try:
         target = normalize_path(path)
         document = normalize_xml(xml, title=title)
     except DiagramError as exc:
         return {"error": str(exc)}
-    return _persist(root, target, document, overwrite=overwrite)
+    return _persist(root, target, document, overwrite=overwrite, slug=ws.slug)
 
 
 @mcp.tool()
 async def read_diagram(workspace_id: int, path: str) -> dict[str, Any]:
     """Read a ``.drawio`` file back as XML, so you can edit and rewrite it."""
-    root, failure = await _resolve_root(workspace_id)
-    if root is None:
+    root, ws, failure = await _resolve_root(workspace_id)
+    if root is None or ws is None:
         return failure or {"error": "Workspace unavailable"}
     try:
         content = fs.read_text(root, path)
@@ -1001,7 +1008,7 @@ async def read_diagram(workspace_id: int, path: str) -> dict[str, Any]:
         return {"error": f"File is not UTF-8 text (compressed diagram?): {path}"}
     if len(content.encode("utf-8")) > _MAX_XML_BYTES:
         return {"error": f"Diagram is too large to read: {path}"}
-    return {"path": path, "xml": content}
+    return with_open_link({"path": path, "xml": content}, ws.slug, path)
 
 
 def main() -> None:

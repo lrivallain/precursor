@@ -1542,6 +1542,17 @@ export interface LocalPath {
   path: string;
 }
 
+/** State of the on-demand draw.io webapp install (schemas/drawio.py). */
+export interface DrawioStatus {
+  version: string;
+  installed: boolean;
+  step: "idle" | "download" | "extract";
+  downloaded_bytes: number;
+  total_bytes: number;
+  error: string | null;
+  path: string;
+}
+
 export interface UsageBucket {
   period: string;
   prompt_tokens: number;

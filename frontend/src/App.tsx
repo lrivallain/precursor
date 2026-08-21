@@ -62,6 +62,7 @@ import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { openNotes } from "./lib/notesOpen";
+import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLink";
 import type {
   AgentSession,
   Chat,
@@ -1993,6 +1994,29 @@ export default function App() {
     setActiveWorkspaceId(ws.id);
     navigateWorkspace(ws.slug, null);
   }
+
+  // A workspace-file chip on a tool call (see lib/workspaceLink.ts) jumps from
+  // the conversation straight to the file the assistant just wrote. The slug is
+  // resolved to a workspace id here because the lazy loader above only consults
+  // the URL on a cold start — by the time a chip is clicked the list is usually
+  // loaded and an active workspace already picked. pushState (not replace) so
+  // Back returns to the discussion.
+  useEffect(() => {
+    return subscribeOpenWorkspaceFile(({ slug, path }) => {
+      void (async () => {
+        const url = workspaceFileUrl(slug, path);
+        if (url === null) return;
+        const list = workspaces ?? (await loadWorkspaces());
+        const target = list.find((w) => w.slug === slug);
+        if (!target) return;
+        setActiveWorkspaceId(target.id);
+        history.pushState(null, "", url);
+        setWsRoute({ open: true, slug, path });
+        setSidebarMode("workspaces");
+      })();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaces]);
 
   // ---- Live meeting sessions --------------------------------------------
   async function loadMeetingSessions(): Promise<MeetingSession[]> {

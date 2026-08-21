@@ -57,6 +57,19 @@ class Settings(BaseSettings):
 
         return str(Path(self.data_dir).resolve() / "blobs")
 
+    # draw.io diagram editing is served from a self-hosted copy of the
+    # diagrams.net webapp so ``.drawio`` files never leave the machine. The
+    # release archive is ~53 MB (~150 MB extracted), so it is fetched on demand
+    # into the data dir instead of being bundled in the wheel.
+    drawio_version: str = "v31.3.1"
+    drawio_download_url: str = (
+        "https://github.com/jgraph/drawio/releases/download/{version}/draw.war"
+    )
+
+    @cached_property
+    def drawio_dir(self) -> str:
+        return str(Path(self.data_dir).resolve() / "drawio")
+
     # Skills live as ``<copilot_home>/skills/<name>/SKILL.md`` files shared with
     # the GitHub Copilot CLI and other tools. An explicit override (handy for
     # tests / non-standard setups) wins; otherwise we resolve the Copilot home

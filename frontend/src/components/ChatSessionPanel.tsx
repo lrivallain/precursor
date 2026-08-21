@@ -576,6 +576,7 @@ export function ChatSessionPanel({
                     content={meta?.pending ? null : m.content}
                     isError={Boolean(meta?.is_error)}
                     pending={Boolean(meta?.pending)}
+                    link={meta?.link}
                   />
                 );
               }

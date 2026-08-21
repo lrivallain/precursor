@@ -357,6 +357,7 @@ class StreamStore {
             ...meta,
             is_error: Boolean(payload.is_error),
             pending: false,
+            ...(payload.link ? { link: payload.link } : {}),
           }),
         };
       });

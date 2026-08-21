@@ -11,6 +11,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A file the assistant touches in a workspace is one click away.** When a turn
+  calls `drawio` or `workspace-fs` to read or write a file, the tool call in the
+  transcript now carries an **Open** chip naming it — clicking it switches to the
+  Files section with that file already open (and Back returns to the
+  discussion), instead of leaving you to find it in the tree. Reads link too, so
+  a diagram the assistant merely inspected — or a file whose read was truncated —
+  is just as reachable. Both servers annotate the result with the workspace and
+  path, which the backend lifts into the tool call's metadata, so the chip never
+  costs a parse of the file a read returned; the route is rebuilt from the
+  workspace + path rather than from a URL string an MCP server supplied. A
+  failed call, a folder, or a path that can't be turned into a safe route
+  carries no link.
+- **`.drawio` files are now editable in the Workspace, with a self-hosted
+  editor.** Opening a diagram in the Files section embeds the draw.io editor
+  directly, with an **XML / Diagram** toggle to drop down to the raw mxGraph
+  source. Edits flow into the same buffer as any other file, so the dirty
+  marker, **Save** and `git diff` work unchanged — closing the loop on the
+  `drawio` MCP server below: the assistant authors the diagram, you open it and
+  adjust it in place.
+
+  The editor is served from **this instance** (`/drawio/`) rather than
+  `embed.diagrams.net`, and the frame runs with `offline=1&stealth=1`, so
+  diagram content never reaches an external origin and editing works with no
+  network at all. The webapp is **not** bundled in the wheel — the release is
+  ~53 MB (~150 MB extracted) — so the first diagram you open offers a one-time
+  install into `<data_dir>/drawio/<version>/`. `PRECURSOR_DRAWIO_VERSION` pins
+  the release and `PRECURSOR_DRAWIO_DOWNLOAD_URL` points it at an internal
+  mirror; superseded versions are pruned on upgrade.
 - **New built-in `drawio` MCP server — diagrams as editable files.** The
   assistant can now author native `.drawio` documents (plain mxGraph XML)
   straight into a [workspace](https://lrivallain.github.io/precursor/features/workspaces)

@@ -30,6 +30,7 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DrawioStatus,
   GhCloseResult,
   GhCreateDraft,
   GhCreatePostResult,
@@ -1238,6 +1239,13 @@ export const api = {
       ),
     localPath: (workspaceId: number) =>
       request<LocalPath>(`/api/workspaces/${workspaceId}/local-path`),
+  },
+
+  drawio: {
+    // Self-hosted diagrams.net webapp, downloaded on demand into the data dir.
+    status: () => request<DrawioStatus>(`/api/drawio/status`),
+    install: () =>
+      request<DrawioStatus>(`/api/drawio/install`, { method: "POST" }),
   },
 
   system: {

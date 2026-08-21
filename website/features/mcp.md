@@ -105,10 +105,16 @@ capability, not something to expose on a shared/headless server.
 [workspace](/features/workspaces) working tree. Because the output is a *file*
 in a git-backed tree, a diagram is reviewable in a `git diff` and commit-able
 from the Workspace UI — and it stays editable in draw.io, the desktop app or the
-VS Code extension, unlike a rendered image.
+VS Code extension, unlike a rendered image. It is also editable **in Precursor**:
+the Files section opens `.drawio` files in an embedded, self-hosted draw.io
+editor — see
+[Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
 
 It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
-nothing outside `workspaces_dir/<slug>` is reachable.
+nothing outside `workspaces_dir/<slug>` is reachable. Both servers annotate a
+file result — read or write — with a deep link, so the tool call in the
+transcript gets an **Open** chip straight to it — see
+[Workspaces → Jumping from a conversation to the file](/features/workspaces#jumping-from-a-conversation-to-the-file).
 
 | Tool | What it does |
 | --- | --- |

@@ -60,6 +60,7 @@ from precursor.backend.services.mcp.client import (
     MCPToolDef,
     get_mcp_client_manager,
 )
+from precursor.backend.services.mcp.workspace_links import link_from_result
 from precursor.backend.services.meeting_analysis import live_chat_grounding
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
@@ -444,6 +445,10 @@ class ToolResultTurn:
     call: Any
     result_text: str
     is_error: bool
+    # ``{"slug", "path"}`` when the tool touched a workspace file, so the UI can
+    # offer a link to it without parsing ``result_text`` — which for a read
+    # embeds the whole file. None for every other tool.
+    link: dict[str, str] | None = None
 
 
 @dataclass(slots=True)
@@ -542,6 +547,7 @@ async def run_tool_loop(
         for call in tool_calls:
             server_lookup = tool_to_server.get(call.name)
             is_error = False
+            link: dict[str, str] | None = None
             if server_lookup is None:
                 result_text = f"Unknown tool '{call.name}'. No MCP server exposes it."
                 is_error = True
@@ -558,6 +564,8 @@ async def run_tool_loop(
                         result = await active.call_tool(server_name, raw_name, args)
                         result_text = format_tool_result(result)
                         is_error = bool(getattr(result, "isError", False))
+                        if not is_error:
+                            link = link_from_result(result)
                     except Exception as exc:
                         logger.warning(
                             "MCP call %s(%s) failed: %s",
@@ -568,7 +576,7 @@ async def run_tool_loop(
                         result_text = f"Tool call failed: {exc}"
                         is_error = True
 
-            yield ToolResultTurn(call, result_text, is_error)
+            yield ToolResultTurn(call, result_text, is_error, link)
 
             messages.append(
                 ChatMessage(
@@ -819,18 +827,19 @@ async def run_message_stream(
 
                 elif isinstance(ev, ToolResultTurn):
                     call = ev.call
+                    tool_meta: dict[str, Any] = {
+                        "tool_call_id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "is_error": ev.is_error,
+                    }
+                    if ev.link:
+                        tool_meta["link"] = ev.link
                     async with SessionLocal() as ws:
                         tool_msg = Message(
                             role=MessageRole.TOOL,
                             content=ev.result_text,
-                            tool_calls=json.dumps(
-                                {
-                                    "tool_call_id": call.id,
-                                    "name": call.name,
-                                    "arguments": call.arguments,
-                                    "is_error": ev.is_error,
-                                }
-                            ),
+                            tool_calls=json.dumps(tool_meta),
                             **container_message_kwargs(kind, container_id),
                         )
                         ws.add(tool_msg)
@@ -849,6 +858,7 @@ async def run_message_stream(
                                 "arguments": call.arguments,
                                 "content": ev.result_text,
                                 "is_error": ev.is_error,
+                                "link": ev.link,
                             }
                         ),
                     }

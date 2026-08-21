@@ -18,6 +18,7 @@ import { streamWorkspaceChat } from "../lib/sse";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
+import type { WorkspaceFileRef } from "../lib/workspaceLink";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { ResizeHandle } from "./ResizeHandle";
 import { Composer } from "./Composer";
@@ -37,6 +38,7 @@ type WorkspaceChatItem =
       content: string | null;
       isError: boolean;
       pending: boolean;
+      link?: WorkspaceFileRef | null;
     };
 
 const CHAT_COLLAPSE_KEY = "precursor:workspace:chat-collapsed";
@@ -251,11 +253,18 @@ export function WorkspaceChat({
                 tool_call_id: string;
                 content: string;
                 is_error: boolean;
+                link?: WorkspaceFileRef | null;
               };
               setMessages((prev) =>
                 prev.map((m) =>
                   m.kind === "tool" && m === toolItems.get(r.tool_call_id)
-                    ? { ...m, content: r.content, isError: r.is_error, pending: false }
+                    ? {
+                        ...m,
+                        content: r.content,
+                        isError: r.is_error,
+                        pending: false,
+                        link: r.link ?? null,
+                      }
                     : m,
                 ),
               );
@@ -370,6 +379,7 @@ export function WorkspaceChat({
               content={m.content}
               isError={m.isError}
               pending={m.pending}
+              link={m.link}
             />
           ) : (
             <ChatTurn key={i} role={m.kind} content={m.content} />

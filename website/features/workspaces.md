@@ -35,6 +35,52 @@ and the `workspace-fs` MCP tools, this lets the assistant make and review change
 to a repository as part of a conversation — while everything stays confined to the
 workspace root.
 
+Markdown files get a rendered **Preview**, HTML files render in a sandboxed
+frame, and `.drawio` files open in a full diagram editor (below).
+
+## Jumping from a conversation to the file
+
+When the assistant touches a file in a workspace during a chat or topic — a
+diagram via the [`drawio` MCP server](/features/mcp), or any file via
+`workspace-fs` — the tool call in the transcript carries an **Open** chip naming
+it. One click switches to the Files section with that file already open, so a
+diagram produced (or merely inspected) mid-conversation doesn't have to be
+hunted down in the tree. Browser **Back** returns to the discussion.
+
+This covers reads as well as writes: `read_diagram` and `read_file` link to what
+they read, which is handy when the assistant quotes a fragment and you want the
+whole thing — or when the read was truncated.
+
+Mechanically, the tools annotate their result with the workspace and path
+(`services/mcp/workspace_links.py`), and the backend lifts that into the tool
+call's *metadata* — read off the MCP result's `structuredContent`, so the file
+body a read returns is never parsed just to find a link. The SPA rebuilds the
+route from the workspace + path rather than trusting a URL string, since the
+metadata ultimately comes from an MCP server that may be third-party. A failed
+call, a folder, or a path that can't be turned into a safe route carries no link
+— so a chip never points somewhere unexpected.
+
+## Editing diagrams
+
+A `.drawio` file — whether you drew it yourself or the assistant authored it
+with the [`drawio` MCP server](/features/mcp) — opens in an embedded draw.io
+editor, with an **XML / Diagram** toggle to drop down to the raw mxGraph source.
+Edits stream back into the same buffer as any other file, so the usual dirty
+marker, **Save**, and `git diff` apply unchanged.
+
+The editor is **self-hosted**: Precursor serves its own copy of the draw.io
+webapp at `/drawio/`, and the frame runs with `offline=1&stealth=1`, so diagram
+content never reaches `diagrams.net` or any other external origin — and editing
+keeps working with no network at all.
+
+That copy is **not** bundled in the wheel (the release is ~53 MB, ~150 MB
+extracted). The first time you open a diagram, the Files pane offers a one-time
+install that downloads the pinned release into `<data_dir>/drawio/<version>/`.
+Set `PRECURSOR_DRAWIO_VERSION` to pin a different release, or
+`PRECURSOR_DRAWIO_DOWNLOAD_URL` to fetch it from an internal mirror — see
+[configuration](/reference/configuration). Superseded versions are removed when
+a new one installs.
+
 ## Data model
 
 Each workspace is a `Workspace` row. Git operations live in

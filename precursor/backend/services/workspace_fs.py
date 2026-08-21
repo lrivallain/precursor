@@ -37,6 +37,7 @@ TEXT_SUFFIXES = {
     ".ts",
     ".py",
     ".sh",
+    ".drawio",
     ".env",
     ".gitignore",
 }
