@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, AlertCircle, Wrench } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  AlertCircle,
+  ArrowUpRight,
+  FileText,
+  Workflow,
+  Wrench,
+} from "lucide-react";
+import { openWorkspaceFile, parseWorkspaceFileLink } from "../lib/workspaceLink";
 
 interface Props {
   name: string;
@@ -26,6 +35,8 @@ function splitName(qualified: string): { server: string; tool: string } {
 export function ToolCallBubble({ name, arguments: args, content, isError, pending }: Props) {
   const [open, setOpen] = useState(false);
   const { server, tool } = splitName(name);
+  // A successful workspace write links straight to the file it produced.
+  const link = pending || isError ? null : parseWorkspaceFileLink(content);
 
   return (
     <div className="w-full">
@@ -36,28 +47,45 @@ export function ToolCallBubble({ name, arguments: args, content, isError, pendin
             : "border-blue-500/40 bg-blue-500/5"
         }`}
       >
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg hover:bg-blue-500/10"
-        >
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          {isError ? (
-            <AlertCircle size={14} className="text-red-500" />
-          ) : (
-            <Wrench size={14} className="text-blue-500" />
+        <div className="flex items-center rounded-lg hover:bg-blue-500/10">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-left"
+          >
+            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {isError ? (
+              <AlertCircle size={14} className="text-red-500" />
+            ) : (
+              <Wrench size={14} className="text-blue-500" />
+            )}
+            <span className="text-[11px] uppercase tracking-wide text-blue-500/80">
+              tool{server && ` · ${server}`}
+            </span>
+            <span className="font-mono text-xs truncate">{tool}</span>
+            {pending && (
+              <span className="ml-auto text-[11px] text-blue-500 italic">running…</span>
+            )}
+            {!pending && isError && (
+              <span className="ml-auto text-[11px] text-red-500">error</span>
+            )}
+          </button>
+          {link && (
+            <button
+              type="button"
+              onClick={() => openWorkspaceFile(link.slug, link.path)}
+              className="group mr-3 shrink-0 inline-flex cursor-pointer items-center gap-1 rounded-full border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-500/20 dark:text-blue-300"
+              data-tooltip={`Open ${link.path} in Files`}
+            >
+              {link.isDiagram ? <Workflow size={11} /> : <FileText size={11} />}
+              <span className="max-w-[14rem] truncate">{link.name}</span>
+              <ArrowUpRight
+                size={11}
+                className="opacity-60 transition group-hover:opacity-100"
+              />
+            </button>
           )}
-          <span className="text-[11px] uppercase tracking-wide text-blue-500/80">
-            tool{server && ` · ${server}`}
-          </span>
-          <span className="font-mono text-xs">{tool}</span>
-          {pending && (
-            <span className="ml-auto text-[11px] text-blue-500 italic">running…</span>
-          )}
-          {!pending && isError && (
-            <span className="ml-auto text-[11px] text-red-500">error</span>
-          )}
-        </button>
+        </div>
         {open && (
           <div className="px-3 pb-3 space-y-2 border-t border-blue-500/30">
             <div>

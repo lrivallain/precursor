@@ -38,6 +38,20 @@ workspace root.
 Markdown files get a rendered **Preview**, HTML files render in a sandboxed
 frame, and `.drawio` files open in a full diagram editor (below).
 
+## Jumping from a conversation to the file
+
+When the assistant writes into a workspace during a chat or topic — a diagram
+via the [`drawio` MCP server](/features/mcp), or any file via `workspace-fs` —
+the tool call in the transcript carries an **Open** chip naming the file. One
+click switches to the Files section with that file already open, so a diagram
+produced mid-conversation doesn't have to be hunted down in the tree. Browser
+**Back** returns to the discussion.
+
+Mechanically, the write tools annotate their result with `workspace_slug` and a
+`url` (`services/mcp/workspace_links.py`); the SPA renders a chip whenever a
+tool result carries one. A failed write, or a path that can't be turned into a
+safe route, carries no link — so a chip never points somewhere unexpected.
+
 ## Editing diagrams
 
 A `.drawio` file — whether you drew it yourself or the assistant authored it

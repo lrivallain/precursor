@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ClipboardCheck,
   ClipboardCopy,
@@ -146,12 +146,14 @@ export function WorkspaceView({
     void refreshStatus();
   }, [refreshFiles, refreshStatus]);
 
-  // Open the file named in the URL once the tree has loaded.
-  const didInitialOpen = useRef(false);
+  // Open the file named in the URL once the tree has loaded. Keyed off the
+  // currently-open file rather than a one-shot flag, so a *new* deep link —
+  // e.g. the workspace-file chip on a tool call in a chat — still opens while
+  // this view stays mounted.
   useEffect(() => {
-    if (didInitialOpen.current || !initialPath || files.length === 0) return;
+    if (!initialPath || files.length === 0 || loadingFile) return;
+    if (initialPath === activePath) return;
     if (files.some((f) => f.path === initialPath && f.type !== "dir")) {
-      didInitialOpen.current = true;
       void openFile(initialPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

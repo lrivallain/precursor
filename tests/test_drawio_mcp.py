@@ -390,7 +390,7 @@ def test_normalize_xml_rejects_malformed_markup() -> None:
 
 
 def test_persist_refuses_to_escape_the_workspace(tmp_path: Path) -> None:
-    result = srv._persist(tmp_path, "../escape.drawio", "<mxfile />", overwrite=False)
+    result = srv._persist(tmp_path, "../escape.drawio", "<mxfile />", overwrite=False, slug="ws")
 
     assert "error" in result
     assert not (tmp_path.parent / "escape.drawio").exists()
@@ -399,12 +399,13 @@ def test_persist_refuses_to_escape_the_workspace(tmp_path: Path) -> None:
 def test_persist_will_not_clobber_without_overwrite(tmp_path: Path) -> None:
     (tmp_path / "a.drawio").write_text("original", encoding="utf-8")
 
-    blocked = srv._persist(tmp_path, "a.drawio", "<mxfile />", overwrite=False)
+    blocked = srv._persist(tmp_path, "a.drawio", "<mxfile />", overwrite=False, slug="ws")
     assert "error" in blocked
     assert (tmp_path / "a.drawio").read_text(encoding="utf-8") == "original"
 
-    allowed = srv._persist(tmp_path, "a.drawio", "<mxfile />", overwrite=True)
+    allowed = srv._persist(tmp_path, "a.drawio", "<mxfile />", overwrite=True, slug="ws")
     assert allowed["written"] is True
+    assert allowed["url"] == "/ws/ws/a.drawio"
     assert (tmp_path / "a.drawio").read_text(encoding="utf-8") == "<mxfile />"
 
 

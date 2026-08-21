@@ -30,6 +30,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Workspace
 from precursor.backend.services import workspace_fs as fs
+from precursor.backend.services.mcp.workspace_links import with_open_link
 
 # Cap how much file text we hand back to the model in one read.
 _DEFAULT_MAX_BYTES = 100_000
@@ -155,7 +156,7 @@ async def create_file(workspace_id: int, path: str, content: str = "") -> dict[s
         return {"error": str(exc)}
     except FileExistsError:
         return {"error": f"File already exists: {path}"}
-    return {"path": path, "created": True}
+    return with_open_link({"path": path, "created": True}, ws.slug, path)
 
 
 @mcp.tool()
@@ -174,7 +175,11 @@ async def write_file(workspace_id: int, path: str, content: str) -> dict[str, An
         fs.write_text(_browse_root(ws), path, content)
     except fs.UnsafePathError as exc:
         return {"error": str(exc)}
-    return {"path": path, "written": True, "bytes": len(content.encode("utf-8"))}
+    return with_open_link(
+        {"path": path, "written": True, "bytes": len(content.encode("utf-8"))},
+        ws.slug,
+        path,
+    )
 
 
 @mcp.tool()
