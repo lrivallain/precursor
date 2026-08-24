@@ -17,10 +17,12 @@ import type { Topic, TopicNode } from "../lib/types";
 export function TopicStartHero({
   tree,
   initialParentId = null,
+  collectionId = null,
   onCreated,
 }: {
   tree: TopicNode[];
   initialParentId?: number | null;
+  collectionId?: number | null;
   onCreated: (topic: Topic) => void;
 }) {
   return (
@@ -36,6 +38,7 @@ export function TopicStartHero({
       <TopicCreateForm
         tree={tree}
         initialParentId={initialParentId}
+        collectionId={collectionId}
         onCreated={onCreated}
       />
     </div>

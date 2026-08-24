@@ -7,6 +7,11 @@ import { RefineTextarea } from "./RefineTextarea";
 
 interface Props {
   chat: Chat;
+  /**
+   * Collection the promoted topic lands in — chats have none of their own, so
+   * the surface passes the one the user is looking at.
+   */
+  collectionId?: number | null;
   onClose: () => void;
   onSaved: (chat: Chat) => void;
   onDeleted: () => void;
@@ -21,6 +26,7 @@ interface Props {
 // chat-only "Promote to topic" transform.
 export function ChatSettingsPanel({
   chat,
+  collectionId = null,
   onClose,
   onSaved,
   onDeleted,
@@ -74,7 +80,7 @@ export function ChatSettingsPanel({
     setPromoting(true);
     setError(null);
     try {
-      onPromoted(await api.chats.promote(chat.id));
+      onPromoted(await api.chats.promote(chat.id, collectionId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPromoting(false);

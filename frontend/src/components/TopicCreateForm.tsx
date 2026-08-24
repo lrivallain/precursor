@@ -8,6 +8,12 @@ import type { Topic, TopicNode } from "../lib/types";
 interface Props {
   tree: TopicNode[];
   initialParentId?: number | null;
+  /**
+   * Collection a top-level topic lands in — the one the sidebar is showing.
+   * A sub-topic ignores it and inherits its parent's collection instead, so a
+   * subtree is never split across collections.
+   */
+  collectionId?: number | null;
   onCreated: (topic: Topic) => void;
   /** When provided, renders a Cancel button (e.g. inside the modal wrapper). */
   onCancel?: () => void;
@@ -23,6 +29,7 @@ interface Props {
 export function TopicCreateForm({
   tree,
   initialParentId = null,
+  collectionId = null,
   onCreated,
   onCancel,
   submitLabel = "Create topic",
@@ -63,6 +70,7 @@ export function TopicCreateForm({
         title: trimmed,
         description: description.trim() || null,
         parent_id: parentId === "" ? null : parentId,
+        collection_id: parentId === "" ? collectionId : null,
         github_repo: repo.trim() || null,
         github_issue_number: createLinkedIssue
           ? null

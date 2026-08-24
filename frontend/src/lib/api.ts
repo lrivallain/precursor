@@ -217,8 +217,13 @@ function messageWindowQuery(opts?: MessageWindow): string {
 export const api = {
   topics: {
     // Topics
-    list: (q?: string) =>
-      request<Topic[]>(`/api/topics${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+    list: (q?: string, collectionId?: number | null) => {
+      const params = new URLSearchParams();
+      if (q) params.set("q", q);
+      if (collectionId != null) params.set("collection_id", String(collectionId));
+      const qs = params.toString();
+      return request<Topic[]>(`/api/topics${qs ? `?${qs}` : ""}`);
+    },
     tree: (collectionId?: number | null) =>
       request<TopicNode[]>(
         collectionId == null
@@ -228,6 +233,9 @@ export const api = {
     get: (id: number) => request<Topic>(`/api/topics/${id}`),
     getBySlug: (slug: string) =>
       request<Topic>(`/api/topics/by-slug/${encodeURIComponent(slug)}`),
+    // Resolve the immutable `/t/<uuid>` permalink.
+    getByPublicId: (publicId: string) =>
+      request<Topic>(`/api/topics/by-public-id/${encodeURIComponent(publicId)}`),
     create: (data: Partial<Topic> & { create_linked_issue?: boolean }) =>
       request<Topic>(`/api/topics`, { method: "POST", body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Topic>) =>
@@ -237,7 +245,12 @@ export const api = {
       request<void>(`/api/topics/${id}/read`, { method: "POST" }),
     markUnread: (id: number) =>
       request<void>(`/api/topics/${id}/unread`, { method: "POST" }),
-    listArchived: () => request<Topic[]>(`/api/topics/archived`),
+    listArchived: (collectionId?: number | null) =>
+      request<Topic[]>(
+        collectionId == null
+          ? `/api/topics/archived`
+          : `/api/topics/archived?collection_id=${collectionId}`,
+      ),
     archive: (id: number) =>
       request<Topic>(`/api/topics/${id}/archive`, { method: "POST" }),
     unarchive: (id: number) =>
@@ -283,9 +296,15 @@ export const api = {
       request<Chat>(`/api/chats/${id}/archive`, { method: "POST" }),
     unarchive: (id: number) =>
       request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
-    // Promote a flat chat into a full topic (moves the transcript over).
-    promote: (id: number) =>
-      request<Topic>(`/api/chats/${id}/promote`, { method: "POST" }),
+    // Promote a flat chat into a full topic (moves the transcript over). Chats
+    // have no collection, so the caller names the one it is looking at.
+    promote: (id: number, collectionId?: number | null) =>
+      request<Topic>(
+        collectionId == null
+          ? `/api/chats/${id}/promote`
+          : `/api/chats/${id}/promote?collection_id=${collectionId}`,
+        { method: "POST" },
+      ),
 
     // Chat messages (mirror topic message endpoints)
     listMessages: (chatId: number, opts?: MessageWindow) =>

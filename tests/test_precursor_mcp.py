@@ -92,17 +92,36 @@ async def test_tool_runs_when_section_enabled() -> None:
 async def _make_topic(title: str, parent_id: int | None = None) -> int:
     """Create a topic directly and return its id (tests share one DB)."""
     from precursor.backend.models import Topic
+    from precursor.backend.services.collections import resolve_collection_id
     from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
     async with SessionLocal() as session:
+        parent = await session.get(Topic, parent_id) if parent_id is not None else None
         topic = Topic(
             title=title,
             slug=await allocate_unique_slug(session, slugify(title) or "topic", Topic),
             parent_id=parent_id,
+            # Mirror the API: a subtree lives in one collection, and a topic is
+            # never left collection-less.
+            collection_id=parent.collection_id
+            if parent is not None
+            else await resolve_collection_id(session, None),
         )
         session.add(topic)
         await session.commit()
         return topic.id
+
+
+async def _collection_slug(topic_id: int) -> str:
+    """Slug of the collection a topic belongs to — the URL's first segment."""
+    from precursor.backend.models import Collection, Topic
+
+    async with SessionLocal() as session:
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None and topic.collection_id is not None
+        collection = await session.get(Collection, topic.collection_id)
+        assert collection is not None
+        return collection.slug
 
 
 async def test_reminder_tools_gated_when_section_off() -> None:
@@ -262,17 +281,19 @@ async def test_search_includes_surface_only_when_section_exposed() -> None:
 
 
 async def test_topic_path_is_resolved_root_first() -> None:
+    """``path`` mirrors the readable URL: collection slug, then the chain."""
     await _set_expose('{"topics": true}')
     root_id = await _make_topic("Path Root CSU")
     child_id = await _make_topic("Path Child CTO", parent_id=root_id)
     grandchild_id = await _make_topic("Path Grandchild Capacity", parent_id=child_id)
 
     root = await ps.get_topic(root_id)
-    assert root["path"] == root["slug"]
+    collection = await _collection_slug(root_id)
+    assert root["path"] == f"{collection}/{root['slug']}"
 
     grandchild = await ps.get_topic(grandchild_id)
     child = await ps.get_topic(child_id)
-    assert grandchild["path"] == f"{root['slug']}/{child['slug']}/{grandchild['slug']}"
+    assert grandchild["path"] == f"{collection}/{root['slug']}/{child['slug']}/{grandchild['slug']}"
 
 
 async def test_list_topics_includes_path() -> None:
@@ -282,8 +303,12 @@ async def test_list_topics_includes_path() -> None:
 
     listed = await ps.list_topics()
     by_id = {t["id"]: t for t in listed["topics"]}
-    assert by_id[root_id]["path"] == by_id[root_id]["slug"]
-    assert by_id[child_id]["path"] == f"{by_id[root_id]['slug']}/{by_id[child_id]['slug']}"
+    collection = await _collection_slug(root_id)
+    assert by_id[root_id]["path"] == f"{collection}/{by_id[root_id]['slug']}"
+    assert (
+        by_id[child_id]["path"]
+        == f"{collection}/{by_id[root_id]['slug']}/{by_id[child_id]['slug']}"
+    )
 
 
 async def test_search_topic_hits_include_path() -> None:
@@ -295,9 +320,10 @@ async def test_search_topic_hits_include_path() -> None:
     child = await ps.get_topic(child_id)
 
     result = await ps.search("Yyplugh")
+    collection = await _collection_slug(root_id)
     hits = {r["entity_id"]: r for r in result["results"] if r["section"] == "topics"}
-    assert hits[root_id]["path"] == root["slug"]
-    assert hits[child_id]["path"] == f"{root['slug']}/{child['slug']}"
+    assert hits[root_id]["path"] == f"{collection}/{root['slug']}"
+    assert hits[child_id]["path"] == f"{collection}/{root['slug']}/{child['slug']}"
 
 
 async def test_topic_path_survives_a_cyclic_parent_link() -> None:
@@ -315,8 +341,9 @@ async def test_topic_path_survives_a_cyclic_parent_link() -> None:
 
     a_payload = await ps.get_topic(a_id)
     b_payload = await ps.get_topic(b_id)
-    assert a_payload["path"] == f"{b_payload['slug']}/{a_payload['slug']}"
-    assert b_payload["path"] == f"{a_payload['slug']}/{b_payload['slug']}"
+    collection = await _collection_slug(a_id)
+    assert a_payload["path"] == f"{collection}/{b_payload['slug']}/{a_payload['slug']}"
+    assert b_payload["path"] == f"{collection}/{a_payload['slug']}/{b_payload['slug']}"
 
     # Leave the fixture acyclic so later tests see a sane tree.
     async with SessionLocal() as session:
@@ -465,3 +492,42 @@ async def test_append_note_rejects_empty_and_missing_topic() -> None:
     assert "error" in await ps.append_note(1, "   ")
     missing = await ps.append_note(10_000_000, "text")
     assert "not found" in missing["error"]
+
+
+async def test_create_schedule_homes_its_topic_in_a_collection() -> None:
+    """A null membership matches no sidebar filter, so the topic would vanish."""
+    from precursor.backend.models import Collection, Topic
+
+    await _set_expose('{"schedules": true, "topics": true}')
+
+    created = await ps.create_schedule(
+        title="Mcp Scheduled Default", prompt="tick", interval_seconds=3600
+    )
+    assert "error" not in created
+    async with SessionLocal() as session:
+        topic = await session.get(Topic, created["topic_id"])
+        assert topic is not None and topic.collection_id is not None
+
+        session.add(Collection(name="Mcp Sched Target", slug="mcp-sched-target"))
+        await session.commit()
+
+    named = await ps.create_schedule(
+        title="Mcp Scheduled Named",
+        prompt="tick",
+        interval_seconds=3600,
+        collection="Mcp Sched Target",
+    )
+    assert "error" not in named
+    async with SessionLocal() as session:
+        topic = await session.get(Topic, named["topic_id"])
+        assert topic is not None
+        collection = await session.get(Collection, topic.collection_id)
+        assert collection is not None and collection.slug == "mcp-sched-target"
+
+    unknown = await ps.create_schedule(
+        title="Mcp Scheduled Unknown",
+        prompt="tick",
+        interval_seconds=3600,
+        collection="no-such-collection",
+    )
+    assert "error" in unknown

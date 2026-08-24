@@ -281,3 +281,137 @@ def test_deleting_a_role_clears_collection_default() -> None:
 
         after = client.get(f"/api/collections/{col['id']}").json()
         assert after["default_role_id"] is None
+
+
+def test_creating_a_topic_honours_the_requested_collection() -> None:
+    """The UI passes the collection it is showing; the topic must land there.
+
+    Regression: the create form dropped ``collection_id``, so every new
+    top-level topic silently fell back to the default collection.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        target = _make(client, "Create target")
+        topic = client.post(
+            "/api/topics", json={"title": "Lands here", "collection_id": target["id"]}
+        ).json()
+        assert topic["collection_id"] == target["id"]
+        assert _titles(client, target["id"]) == {"Lands here"}
+
+
+def test_moving_a_child_out_of_its_collection_promotes_it_to_a_root() -> None:
+    """A subtree never spans two collections, so the child detaches instead."""
+    app = create_app()
+    with TestClient(app) as client:
+        elsewhere = _make(client, "Split target")
+        parent = client.post("/api/topics", json={"title": "Split parent"}).json()
+        child = client.post(
+            "/api/topics", json={"title": "Split child", "parent_id": parent["id"]}
+        ).json()
+        grandchild = client.post(
+            "/api/topics", json={"title": "Split grandchild", "parent_id": child["id"]}
+        ).json()
+
+        moved = client.patch(
+            f"/api/topics/{child['id']}", json={"collection_id": elsewhere["id"]}
+        ).json()
+        assert moved["collection_id"] == elsewhere["id"]
+        assert moved["parent_id"] is None
+
+        # The grandchild follows the child, and the parent stays behind.
+        assert (
+            client.get(f"/api/topics/{grandchild['id']}").json()["collection_id"] == elsewhere["id"]
+        )
+        assert client.get(f"/api/topics/{parent['id']}").json()["collection_id"] != elsewhere["id"]
+
+
+def test_reparenting_wins_over_a_stale_collection_in_the_same_patch() -> None:
+    """The settings panel sends both fields; the new parent's collection wins."""
+    app = create_app()
+    with TestClient(app) as client:
+        default = _default_collection(client)
+        target = _make(client, "Both fields target")
+        host = client.post(
+            "/api/topics", json={"title": "Both fields host", "collection_id": target["id"]}
+        ).json()
+        topic = client.post("/api/topics", json={"title": "Both fields child"}).json()
+
+        moved = client.patch(
+            f"/api/topics/{topic['id']}",
+            json={"parent_id": host["id"], "collection_id": default["id"]},
+        ).json()
+        assert moved["parent_id"] == host["id"]
+        assert moved["collection_id"] == target["id"]
+
+
+def test_topic_list_and_archive_accept_a_collection_filter() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        col = _make(client, "List filter")
+        mine = client.post(
+            "/api/topics", json={"title": "List filter mine", "collection_id": col["id"]}
+        ).json()
+        client.post("/api/topics", json={"title": "List filter other"})
+
+        scoped = client.get(f"/api/topics?collection_id={col['id']}").json()
+        assert [t["title"] for t in scoped] == ["List filter mine"]
+
+        client.post(f"/api/topics/{mine['id']}/archive")
+        archived = client.get(f"/api/topics/archived?collection_id={col['id']}").json()
+        assert [t["title"] for t in archived] == ["List filter mine"]
+
+
+def test_promoting_a_chat_lands_it_in_the_named_collection() -> None:
+    """Chats have no collection; a null membership matches no sidebar filter."""
+    app = create_app()
+    with TestClient(app) as client:
+        col = _make(client, "Promote target")
+        chat = client.post("/api/chats", json={"title": "Promote me"}).json()
+
+        topic = client.post(f"/api/chats/{chat['id']}/promote?collection_id={col['id']}").json()
+        assert topic["collection_id"] == col["id"]
+
+        # And without one it still resolves rather than staying null.
+        other = client.post("/api/chats", json={"title": "Promote me too"}).json()
+        fallback = client.post(f"/api/chats/{other['id']}/promote").json()
+        assert fallback["collection_id"] == _default_collection(client)["id"]
+
+
+def test_topic_permalink_survives_renames_and_moves() -> None:
+    """`/t/<uuid>` is the address that doesn't move when the readable one does."""
+    app = create_app()
+    with TestClient(app) as client:
+        origin = _make(client, "Permalink origin")
+        destination = _make(client, "Permalink destination")
+        topic = client.post(
+            "/api/topics", json={"title": "Permalink me", "collection_id": origin["id"]}
+        ).json()
+        public_id = topic["public_id"]
+        assert public_id
+
+        r = client.get(f"/api/topics/by-public-id/{public_id}")
+        assert r.status_code == 200
+        assert r.json()["id"] == topic["id"]
+
+        # Rename (new slug) and move to another collection: same permalink.
+        client.patch(
+            f"/api/topics/{topic['id']}",
+            json={"slug": "permalink-renamed", "collection_id": destination["id"]},
+        )
+        after = client.get(f"/api/topics/by-public-id/{public_id}").json()
+        assert after["id"] == topic["id"]
+        assert after["slug"] == "permalink-renamed"
+        assert after["collection_id"] == destination["id"]
+        assert after["public_id"] == public_id
+
+        assert client.get("/api/topics/by-public-id/not-a-real-uuid").status_code == 404
+
+
+def test_topic_public_ids_are_unique_per_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        ids = {
+            client.post("/api/topics", json={"title": f"Unique permalink {i}"}).json()["public_id"]
+            for i in range(3)
+        }
+        assert len(ids) == 3

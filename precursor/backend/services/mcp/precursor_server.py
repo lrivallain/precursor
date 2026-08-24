@@ -71,6 +71,10 @@ from precursor.backend.services.app_settings import (
     resolve_mcp_expose,
     resolve_scheduled_run_timeout_seconds,
 )
+from precursor.backend.services.collections import (
+    resolve_collection_default_role_id,
+    resolve_collection_id,
+)
 from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
@@ -182,6 +186,7 @@ def _topic_dict(
     return {
         "id": t.id,
         "slug": t.slug,
+        "public_id": t.public_id,
         "title": t.title,
         "kind": t.kind,
         "description": t.description,
@@ -202,17 +207,27 @@ async def _collection_names(session: AsyncSession) -> dict[int, str]:
 
 
 async def _topic_paths(session: AsyncSession) -> dict[int, str]:
-    """Root-first slug path (``parent/child``) for every topic, keyed by id.
+    """Root-first slug path (``collection/parent/child``) for every topic.
+
+    Mirrors the readable URL the SPA uses (``/topics/<collection>/…``), so a
+    path handed to a caller can be pasted straight into the browser.
 
     Resolved from a single index load rather than a chain walk per topic, so a
     200-topic ``list_topics`` stays one query instead of 200 — the same trick as
     :func:`_collection_names`. Callers used to rebuild this by re-fetching each
     ancestor over MCP.
     """
-    rows = (await session.execute(select(Topic.id, Topic.slug, Topic.parent_id))).all()
-    index: dict[int, tuple[str, int | None]] = {
-        tid: (slug, parent_id) for tid, slug, parent_id in rows
+    rows = (
+        await session.execute(select(Topic.id, Topic.slug, Topic.parent_id, Topic.collection_id))
+    ).all()
+    collection_slugs = {
+        cid: slug
+        for cid, slug in (await session.execute(select(Collection.id, Collection.slug))).all()
     }
+    index: dict[int, tuple[str, int | None]] = {
+        tid: (slug, parent_id) for tid, slug, parent_id, _ in rows
+    }
+    collection_of: dict[int, int | None] = {tid: cid for tid, _, _, cid in rows}
     paths: dict[int, str] = {}
     for tid in index:
         chain: list[str] = []
@@ -228,7 +243,9 @@ async def _topic_paths(session: AsyncSession) -> dict[int, str]:
             chain.append(slug)
             current = parent_id
         chain.reverse()
-        paths[tid] = "/".join(chain)
+        cid = collection_of.get(tid)
+        prefix = collection_slugs.get(cid) if cid is not None else None
+        paths[tid] = "/".join([prefix, *chain]) if prefix else "/".join(chain)
     return paths
 
 
@@ -1215,6 +1232,7 @@ async def create_schedule(
     timezone: str = "UTC",
     clear_context: bool = False,
     enabled: bool = True,
+    collection: str | None = None,
 ) -> dict[str, Any]:
     """Create a recurring schedule on a new topic that runs ``prompt`` on a cadence.
 
@@ -1222,6 +1240,8 @@ async def create_schedule(
     ``days_of_week`` is a 7-bit mask (Mon=1 ... Sun=64; 127 = every day).
     ``run_at_minute`` (0-1439) pins a daily time in ``timezone``; omit for a
     pure interval. When ``clear_context`` is set each run starts fresh.
+    ``collection`` names (or slugs) the collection the new topic lands in;
+    omit it to use the default one.
     """
     if not await _section_enabled("schedules"):
         return {"error": _GATED.format(section="schedules")}
@@ -1230,9 +1250,34 @@ async def create_schedule(
     if interval_seconds < 60:
         return {"error": "interval_seconds must be >= 60"}
     async with SessionLocal() as session:
+        collection_id: int | None = None
+        if collection:
+            wanted = collection.strip().lower()
+            match = (
+                (
+                    await session.execute(
+                        select(Collection).where(
+                            or_(
+                                func.lower(Collection.name) == wanted,
+                                func.lower(Collection.slug) == wanted,
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if match is None:
+                return {"error": f"Collection '{collection}' not found"}
+            collection_id = match.id
+        # Never leave the membership null: no collection filter matches null, so
+        # the topic would be invisible in the sidebar.
+        collection_id = await resolve_collection_id(session, collection_id)
         topic = Topic(
             title=title,
             slug=await allocate_unique_slug(session, slugify(title) or "scheduled-topic", Topic),
+            collection_id=collection_id,
+            role_id=await resolve_collection_default_role_id(session, collection_id),
         )
         session.add(topic)
         await session.flush()

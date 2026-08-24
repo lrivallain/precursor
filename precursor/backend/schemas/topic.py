@@ -50,6 +50,9 @@ class TopicRead(TopicBase):
 
     id: int
     slug: str
+    # Immutable UUID permalink (`/t/<public_id>`), stable across renames,
+    # re-parenting and collection moves.
+    public_id: str
     kind: str = "standard"
     created_at: datetime
     updated_at: datetime

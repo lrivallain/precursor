@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Archive,
+  Check,
   CheckCircle2,
   Clock,
   Eraser,
   ExternalLink,
+  Link2,
   Loader2,
   Play,
   RefreshCw,
@@ -68,6 +70,7 @@ export function TopicSettingsPanel({
   const [defaultRepo, setDefaultRepo] = useState("");
   const [collections, setCollections] = useState<Collection[]>([]);
   const [collectionId, setCollectionId] = useState<number | "">(topic.collection_id ?? "");
+  const [permalinkCopied, setPermalinkCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -127,6 +130,9 @@ export function TopicSettingsPanel({
   }, []);
 
   const forbiddenIds = collectDescendantIds(tree, topic.id);
+  const collectionSlug = collections.find((c) => c.id === collectionId)?.slug ?? "";
+  // Absolute so it can be pasted into an issue or a chat, not just this tab.
+  const permalink = `${window.location.origin}/t/${topic.public_id}`;
   const collectionRepo =
     collections.find((c) => c.id === collectionId)?.github_repo ?? "";
 
@@ -307,11 +313,47 @@ export function TopicSettingsPanel({
                   onChange={(e) => setSlug(e.target.value)}
                   className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent font-mono"
                 />
-                <p className="text-[11px] text-muted mt-1">
-                  URL fragment for this topic — share or bookmark{" "}
-                  <code className="font-mono">#{slug || topic.slug}</code>{" "}
-                  to deep-link here. The server normalizes the value and
-                  appends <code>-2</code>, <code>-3</code>… on collision.
+                <p className="text-[11px] text-muted">
+                  The readable address of this topic is{" "}
+                  <code className="font-mono break-all">
+                    /topics/{collectionSlug || "collection"}/{slug || topic.slug}
+                  </code>
+                  , prefixed by its collection and any parent topics. The server
+                  normalizes the value and appends <code>-2</code>,{" "}
+                  <code>-3</code>… on collision.
+                </p>
+              </section>
+
+              <section>
+                <label className="block text-xs text-muted mb-1">Permalink</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={permalink}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none font-mono text-muted"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(permalink).then(() => {
+                        setPermalinkCopied(true);
+                        window.setTimeout(() => setPermalinkCopied(false), 1500);
+                      });
+                    }}
+                    aria-label="Copy permalink"
+                    data-tooltip="Copy permalink"
+                    className="shrink-0 inline-flex items-center gap-1 rounded border border-border px-2 py-1.5 text-[12px] text-muted hover:bg-surface hover:text-text"
+                  >
+                    {permalinkCopied ? <Check size={13} /> : <Link2 size={13} />}
+                    {permalinkCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-muted">
+                  Immutable address — unlike the readable one it survives
+                  renames, re-parenting and collection moves. Opening it
+                  redirects to the readable URL.
                 </p>
               </section>
 
@@ -358,7 +400,10 @@ export function TopicSettingsPanel({
                     }))}
                   />
                   <p className="mt-1 text-[11px] text-muted">
-                    Sub-topics move with this topic.
+                    Sub-topics move with this topic, and its readable URL picks
+                    up the new collection slug. Moving a sub-topic out of its
+                    parent's collection promotes it to a top-level topic, so a
+                    subtree is never split.
                   </p>
                 </section>
               )}

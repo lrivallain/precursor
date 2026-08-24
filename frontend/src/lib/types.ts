@@ -12,6 +12,9 @@ export type TopicKind = "standard";
 export interface Topic {
   id: number;
   slug: string;
+  // Immutable UUID permalink (`/t/<public_id>`). Unlike the readable URL it
+  // never changes when the topic is renamed, re-parented or moved collection.
+  public_id: string;
   title: string;
   description: string | null;
   parent_id: number | null;

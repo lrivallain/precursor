@@ -658,9 +658,14 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     try {
-      await api.topics.update(topic.id, { collection_id: target.id });
+      const updated = await api.topics.update(topic.id, { collection_id: target.id });
       onTopicUpdated();
-      systemNote(`Moved to "${target.name}" (sub-topics follow).`);
+      systemNote(
+        `Moved to "${target.name}" (sub-topics follow).` +
+          (topic.parent_id !== null && updated.parent_id === null
+            ? " Promoted to a top-level topic — a subtree can't span collections."
+            : ""),
+      );
     } catch (err) {
       systemNote(`Move failed: ${(err as Error).message}`);
     }

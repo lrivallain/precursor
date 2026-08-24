@@ -43,24 +43,29 @@ router = APIRouter(prefix="/api/topics", tags=["topics"])
 @router.get("", response_model=list[TopicRead])
 async def list_topics(
     q: str | None = None,
+    collection_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[Topic]:
     stmt = select(Topic).where(Topic.archived_at.is_(None)).order_by(Topic.updated_at.desc())
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(Topic.title.ilike(like))
+    if collection_id is not None:
+        stmt = stmt.where(Topic.collection_id == collection_id)
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
 @router.get("/archived", response_model=list[TopicRead])
 async def list_archived_topics(
+    collection_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[Topic]:
     """Flat list of archived topics, most recently archived first."""
-    result = await session.execute(
-        select(Topic).where(Topic.archived_at.is_not(None)).order_by(Topic.archived_at.desc())
-    )
+    stmt = select(Topic).where(Topic.archived_at.is_not(None)).order_by(Topic.archived_at.desc())
+    if collection_id is not None:
+        stmt = stmt.where(Topic.collection_id == collection_id)
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -119,6 +124,7 @@ async def topic_tree(
         return TopicNode(
             id=node.id,
             slug=node.slug,
+            public_id=node.public_id,
             title=node.title,
             kind=node.kind,
             description=node.description,
@@ -201,6 +207,23 @@ async def get_topic_by_slug(slug: str, session: AsyncSession = Depends(get_sessi
     return topic
 
 
+@router.get("/by-public-id/{public_id}", response_model=TopicRead)
+async def get_topic_by_public_id(
+    public_id: str, session: AsyncSession = Depends(get_session)
+) -> Topic:
+    """Resolve the immutable `/t/<public_id>` permalink.
+
+    The readable URL embeds the collection slug and the ancestor chain, so it
+    changes whenever the topic moves. This one doesn't — the SPA resolves it,
+    then rewrites the address bar to the readable URL.
+    """
+    result = await session.execute(select(Topic).where(Topic.public_id == public_id))
+    topic = result.scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    return topic
+
+
 @router.get("/{topic_id}", response_model=TopicRead)
 async def get_topic(topic_id: int, session: AsyncSession = Depends(get_session)) -> Topic:
     topic = await session.get(Topic, topic_id)
@@ -231,20 +254,43 @@ async def update_topic(
             )
         data["slug"] = await allocate_unique_slug(session, base, Topic, exclude_id=topic_id)
 
-    # Collection membership cascades: an explicit move takes the whole subtree
-    # with it, and re-parenting adopts the new parent's collection so a subtree
-    # is never split. Re-parenting to the root keeps the topic where it is.
-    target_collection_id: int | None = None
+    # Collection membership cascades: a subtree always lives in exactly one
+    # collection, so the two fields that can break that invariant are resolved
+    # against each other here. Callers (the settings panel) send both on every
+    # save, so *what changed* decides — not field precedence.
+    new_parent_id = data.get("parent_id", topic.parent_id)
+    new_parent: Topic | None = None
+    if new_parent_id is not None:
+        new_parent = await session.get(Topic, new_parent_id)
+        if new_parent is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_id does not exist")
+
+    requested_collection_id: int | None = None
     if "collection_id" in data:
-        target_collection_id = await resolve_collection_id(session, data["collection_id"])
-    elif "parent_id" in data and data["parent_id"] != topic.parent_id:
-        new_parent_id = data["parent_id"]
-        if new_parent_id is not None:
-            new_parent = await session.get(Topic, new_parent_id)
-            if new_parent is None:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_id does not exist")
-            target_collection_id = new_parent.collection_id
+        requested_collection_id = await resolve_collection_id(session, data["collection_id"])
     data.pop("collection_id", None)
+
+    parent_changed = "parent_id" in data and data["parent_id"] != topic.parent_id
+    collection_changed = (
+        requested_collection_id is not None and requested_collection_id != topic.collection_id
+    )
+
+    target_collection_id: int | None
+    if parent_changed and new_parent is not None:
+        # Re-parenting is the stronger intent: adopt the new parent's collection
+        # so the topic joins the subtree it was just dropped into.
+        target_collection_id = new_parent.collection_id
+    elif collection_changed:
+        # An explicit move. A child can't follow without splitting the subtree
+        # it came from, so promote it to a root instead.
+        if new_parent is not None and new_parent.collection_id != requested_collection_id:
+            data["parent_id"] = None
+        target_collection_id = requested_collection_id
+    elif new_parent is not None:
+        target_collection_id = new_parent.collection_id
+    else:
+        # A legacy row may still be collection-less; anchor it on the default.
+        target_collection_id = await resolve_collection_id(session, topic.collection_id)
 
     for key, value in data.items():
         setattr(topic, key, value)
