@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,13 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import Topic
-from precursor.backend.schemas.projects import IssueComment, IssueDetail, ProjectLabel
-from precursor.backend.services.app_settings import (
-    resolve_global_github_repo,
-    resolve_issue_associations_enabled,
-)
-from precursor.backend.services.github_auth import resolve_github_token
+from precursor.backend.schemas.issues import IssueComment, IssueDetail, IssueLabel
+from precursor.backend.services.app_settings import resolve_global_github_repo
 from precursor.backend.services.github_client import GitHubClient
+from precursor.backend.services.github_context import (
+    require_github_repo,
+    require_github_token,
+)
 
 router = APIRouter(prefix="/api/github", tags=["github"])
 
@@ -40,32 +40,6 @@ class IssueLabelsPayload(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
-async def _resolve_repo(repo: str | None, session: AsyncSession) -> str:
-    if not await resolve_issue_associations_enabled(session):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "GitHub issue associations are disabled. Enable the feature in Settings → GitHub.",
-        )
-    target = repo or await resolve_global_github_repo(session)
-    if not target:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "No GitHub repository configured. Set one in Settings or pass `repo`.",
-        )
-    return target
-
-
-async def _require_token(session: AsyncSession) -> str:
-    token = await resolve_github_token(session)
-    if not token:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "No GitHub token available. Configure one in Settings, "
-            "or sign in with `gh auth login`.",
-        )
-    return token
-
-
 @router.get("/issues")
 async def list_issues(
     repo: str | None = None,
@@ -73,8 +47,8 @@ async def list_issues(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    target = await _resolve_repo(repo, session)
-    token = await _require_token(session)
+    target = await require_github_repo(repo, session)
+    token = await require_github_token(session)
     client = GitHubClient(token=token)
     try:
         return await client.list_issues(target, query=q)
@@ -89,14 +63,15 @@ async def get_issue_detail(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> IssueDetail:
-    """Full issue/PR view + comments for the kanban card preview.
+    """Full issue/PR view + comments.
 
-    ``repo`` targets the item's source repo (ProjectsV2 can span repos); it
-    falls back to the configured global repo. Also resolves the linked
-    Precursor topic, if one points at this issue in the same repo.
+    ``repo`` targets the item's source repo — a caller such as the kanban
+    plugin can span repositories — and falls back to the configured global
+    repo. Also resolves the linked Precursor topic, if one points at this issue
+    in the same repo.
     """
-    target = await _resolve_repo(repo, session)
-    token = await _require_token(session)
+    target = await require_github_repo(repo, session)
+    token = await require_github_token(session)
     client = GitHubClient(token=token)
     try:
         issue = await client.get_issue(target, number)
@@ -111,7 +86,7 @@ async def get_issue_detail(
         state=issue["state"],
         url=issue.get("url"),
         body=issue.get("body") or "",
-        labels=[ProjectLabel.model_validate(label) for label in issue.get("labels", [])],
+        labels=[IssueLabel.model_validate(label) for label in issue.get("labels", [])],
         updated_at=issue.get("updated_at"),
         comments=[IssueComment.model_validate(c) for c in comments],
         linked_topic_id=linked_id,
@@ -150,8 +125,8 @@ async def create_issue(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    target = await _resolve_repo(payload.repo, session)
-    token = await _require_token(session)
+    target = await require_github_repo(payload.repo, session)
+    token = await require_github_token(session)
     client = GitHubClient(token=token)
     try:
         return await client.create_issue(
@@ -167,8 +142,8 @@ async def list_labels(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
-    target = await _resolve_repo(repo, session)
-    token = await _require_token(session)
+    target = await require_github_repo(repo, session)
+    token = await require_github_token(session)
     client = GitHubClient(token=token)
     try:
         return await client.list_labels(target)
@@ -183,8 +158,8 @@ async def add_issue_comment(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> IssueComment:
-    target = await _resolve_repo(payload.repo, session)
-    token = await _require_token(session)
+    target = await require_github_repo(payload.repo, session)
+    token = await require_github_token(session)
     client = GitHubClient(token=token)
     try:
         comment = await client.add_issue_comment(target, number, payload.body)
@@ -193,18 +168,18 @@ async def add_issue_comment(
     return IssueComment.model_validate(comment)
 
 
-@router.put("/issues/{number}/labels", response_model=list[ProjectLabel])
+@router.put("/issues/{number}/labels", response_model=list[IssueLabel])
 async def set_issue_labels(
     number: int,
     payload: IssueLabelsPayload,
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
-) -> list[ProjectLabel]:
-    target = await _resolve_repo(payload.repo, session)
-    token = await _require_token(session)
+) -> list[IssueLabel]:
+    target = await require_github_repo(payload.repo, session)
+    token = await require_github_token(session)
     client = GitHubClient(token=token)
     try:
         labels = await client.set_issue_labels(target, number, payload.labels)
     finally:
         await client.aclose()
-    return [ProjectLabel.model_validate(label) for label in labels]
+    return [IssueLabel.model_validate(label) for label in labels]

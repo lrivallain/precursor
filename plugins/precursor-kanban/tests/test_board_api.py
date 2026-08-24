@@ -1,8 +1,8 @@
-"""GitHub Projects v2 board API tests.
+"""GitHub Projects v2 board API tests (kanban plugin).
 
-The GraphQL calls to GitHub are fully mocked — these tests exercise the router
-wiring (repo/token gating, response shaping) and the drag-drop status update
-endpoint, not the live GitHub API.
+The GraphQL calls to GitHub are fully mocked — these exercise the plugin's
+router wiring (repo/token gating via the host's shared guards, response
+shaping) and the drag-drop status update endpoint, not the live GitHub API.
 """
 
 from __future__ import annotations
@@ -13,15 +13,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
-from precursor.backend.routers import projects as projects_router
-from precursor.backend.services.github_client import (
+from precursor.backend.services import github_context
+from precursor.plugin_api import (
     GitHubInsufficientScopeError,
     GitHubRepoNotAccessibleError,
 )
+from precursor_kanban import SECTION_ID
+from precursor_kanban import router as router_module
+from precursor_kanban.client import ProjectsClient
 
 
 class _FakeClient:
-    """Stand-in for GitHubClient capturing the last status mutation."""
+    """Stand-in for ProjectsClient capturing the last status mutation."""
 
     last_status_call: dict[str, Any] | None = None
 
@@ -96,11 +99,25 @@ def _mock_github(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _token(_session: Any) -> str:
         return "tok"
 
-    monkeypatch.setattr(projects_router, "GitHubClient", _FakeClient)
-    monkeypatch.setattr(projects_router, "resolve_global_github_repo", _repo)
-    monkeypatch.setattr(projects_router, "resolve_issue_associations_enabled", _enabled)
-    monkeypatch.setattr(projects_router, "resolve_github_token", _token)
+    monkeypatch.setattr(router_module, "ProjectsClient", _FakeClient)
+    # The repo/token guards live in the host and are shared with core, so patch
+    # them where they resolve rather than on the plugin router.
+    monkeypatch.setattr(github_context, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(github_context, "resolve_issue_associations_enabled", _enabled)
+    monkeypatch.setattr(github_context, "resolve_github_token", _token)
     _FakeClient.last_status_call = None
+
+
+def test_plugin_registers_its_section() -> None:
+    """The board is only reachable because the plugin contributed a section."""
+    app = create_app()
+    with TestClient(app) as client:
+        sections = [e for e in client.get("/api/plugins").json() if e["kind"] == "section"]
+    kanban = next(e for e in sections if e["id"] == "kanban")
+    assert kanban["slot"] == "app.section"
+    # The id doubles as the section's top-level route, so the board lives at
+    # /kanban and the SPA finds its React half under the same key.
+    assert kanban["id"] == SECTION_ID
 
 
 def test_list_projects(_mock_github: None) -> None:
@@ -145,90 +162,41 @@ def test_projects_gated_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _disabled(_session: Any) -> bool:
         return False
 
-    monkeypatch.setattr(projects_router, "resolve_issue_associations_enabled", _disabled)
+    monkeypatch.setattr(github_context, "resolve_issue_associations_enabled", _disabled)
     app = create_app()
     with TestClient(app) as client:
         r = client.get("/api/github/projects")
         assert r.status_code == 403
 
 
-def test_list_projects_inaccessible_repo_returns_404(_mock_github: None) -> None:
+def test_list_projects_inaccessible_repo_returns_404(
+    _mock_github: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class _NotFoundClient(_FakeClient):
         async def list_repo_projects(self, repo: str) -> list[dict[str, Any]]:
             raise GitHubRepoNotAccessibleError(repo)
 
-    import precursor.backend.routers.projects as pr
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(pr, "GitHubClient", _NotFoundClient)
-        app = create_app()
-        with TestClient(app) as client:
-            r = client.get("/api/github/projects")
-            assert r.status_code == 404
-            assert "not found or not accessible" in r.json()["detail"]
+    monkeypatch.setattr(router_module, "ProjectsClient", _NotFoundClient)
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/github/projects")
+        assert r.status_code == 404
+        assert "not found or not accessible" in r.json()["detail"]
 
 
-def test_list_projects_missing_scope_returns_403(_mock_github: None) -> None:
+def test_list_projects_missing_scope_returns_403(
+    _mock_github: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class _NoScopeClient(_FakeClient):
         async def list_repo_projects(self, repo: str) -> list[dict[str, Any]]:
             raise GitHubInsufficientScopeError(["read:project"])
 
-    import precursor.backend.routers.projects as pr
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(pr, "GitHubClient", _NoScopeClient)
-        app = create_app()
-        with TestClient(app) as client:
-            r = client.get("/api/github/projects")
-            assert r.status_code == 403
-            assert "read:project" in r.json()["detail"]
-
-
-def test_graphql_raises_typed_scope_error() -> None:
-    """_graphql maps an INSUFFICIENT_SCOPES payload to the typed error."""
-    from precursor.backend.services.github_client import (
-        GitHubClient,
-        GitHubInsufficientScopeError,
-    )
-
-    client = GitHubClient(token="tok")
-
-    class _Resp:
-        @staticmethod
-        def raise_for_status() -> None:
-            return None
-
-        @staticmethod
-        def json() -> dict[str, Any]:
-            return {
-                "data": {"repositoryOwner": None},
-                "errors": [
-                    {
-                        "type": "INSUFFICIENT_SCOPES",
-                        "message": (
-                            "requires one of the following scopes: "
-                            "['read:project'], but your token ..."
-                        ),
-                    }
-                ],
-            }
-
-    async def _fake_post(_path: str, **_kwargs: Any) -> _Resp:
-        return _Resp()
-
-    async def _run() -> None:
-        client._client.post = _fake_post  # type: ignore[method-assign]
-        try:
-            await client._graphql("q", {}, raise_on_error=False)
-            raise AssertionError("expected GitHubInsufficientScopeError")
-        except GitHubInsufficientScopeError as exc:
-            assert exc.required_scopes == ["read:project"]
-        finally:
-            await client.aclose()
-
-    import asyncio
-
-    asyncio.run(_run())
+    monkeypatch.setattr(router_module, "ProjectsClient", _NoScopeClient)
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/github/projects")
+        assert r.status_code == 403
+        assert "read:project" in r.json()["detail"]
 
 
 def test_board_query_captures_full_item_shape() -> None:
@@ -239,9 +207,7 @@ def test_board_query_captures_full_item_shape() -> None:
     query the method sends and assert its braces balance so the shape can't
     silently break again.
     """
-    from precursor.backend.services.github_client import GitHubClient
-
-    client = GitHubClient(token="tok")
+    client = ProjectsClient(token="tok")
     captured: dict[str, str] = {}
 
     class _Resp:
@@ -282,3 +248,10 @@ def test_board_query_captures_full_item_shape() -> None:
     asyncio.run(_run())
     q = captured["query"]
     assert q.count("{") == q.count("}"), "unbalanced braces in board query"
+
+
+def test_draft_issues_are_skipped() -> None:
+    """Draft items carry no repo content, so they never become cards."""
+    assert (
+        ProjectsClient._project_item({"id": "X", "content": {"__typename": "DraftIssue"}}) is None
+    )

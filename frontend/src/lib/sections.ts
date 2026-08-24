@@ -1,4 +1,5 @@
-import type { SidebarMode } from "../components/Sidebar";
+import type { CoreSidebarMode, SidebarMode } from "../components/Sidebar";
+import { getSection } from "./plugins";
 
 /**
  * Per-section color scheme, shared across the app so a section reads the same
@@ -22,7 +23,7 @@ export interface SectionColor {
   hoverTab: string;
 }
 
-export const SECTION_COLORS: Record<SidebarMode, SectionColor> = {
+export const SECTION_COLORS: Record<CoreSidebarMode, SectionColor> = {
   topics: {
     icon: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
     activeCard: "border-sky-500/60 bg-sky-500/10",
@@ -83,14 +84,31 @@ export const SECTION_COLORS: Record<SidebarMode, SectionColor> = {
     activeTab: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
     hoverTab: "hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400",
   },
-  kanban: {
-    icon: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
-    activeCard: "border-cyan-500/60 bg-cyan-500/10",
-    hoverCard: "hover:border-cyan-500/50 hover:bg-cyan-500/5",
-    primaryBtn:
-      "bg-cyan-500/15 text-cyan-700 hover:bg-cyan-500/25 dark:text-cyan-300 border border-cyan-500/30",
-    accentText: "text-cyan-600 dark:text-cyan-400",
-    activeTab: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
-    hoverTab: "hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400",
-  },
 };
+
+// Fallback palette for a section that neither core nor a registered plugin
+// knows about (e.g. a descriptor whose frontend half failed to load), so the
+// chrome renders in neutral tints instead of crashing on a missing key.
+const FALLBACK_COLOR: SectionColor = {
+  icon: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+  activeCard: "border-slate-500/60 bg-slate-500/10",
+  hoverCard: "hover:border-slate-500/50 hover:bg-slate-500/5",
+  primaryBtn:
+    "bg-slate-500/15 text-slate-700 hover:bg-slate-500/25 dark:text-slate-300 border border-slate-500/30",
+  accentText: "text-slate-600 dark:text-slate-400",
+  activeTab: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+  hoverTab: "hover:bg-slate-500/10 hover:text-slate-600 dark:hover:text-slate-400",
+};
+
+/**
+ * Palette for any section — core or plugin-contributed. Plugins ship their own
+ * `SectionColor` with the rest of their registration, so core never has to know
+ * their names.
+ */
+export function sectionColor(mode: SidebarMode): SectionColor {
+  return (
+    SECTION_COLORS[mode as CoreSidebarMode] ??
+    getSection(mode)?.colors ??
+    FALLBACK_COLOR
+  );
+}

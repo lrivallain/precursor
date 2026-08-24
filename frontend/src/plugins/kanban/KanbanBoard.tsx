@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
-import type { ProjectBoard, ProjectCard } from "../lib/types";
-import { api, apiErrorMessage } from "../lib/api";
-import { IssueLabelChip } from "./IssueTags";
+import type { ProjectBoard, ProjectCard } from "./types";
+import { apiErrorMessage } from "../../lib/api";
+import { kanbanApi } from "./api";
+import { IssueLabelChip } from "../../components/IssueTags";
 import { IssuePreviewModal } from "./IssuePreviewModal";
 
 interface KanbanBoardProps {
@@ -68,7 +69,7 @@ export function KanbanBoard({
     setLoading(true);
     setError(null);
     try {
-      const data = await api.github.projectBoard(projectId);
+      const data = await kanbanApi.board(projectId);
       setBoard(data);
     } catch (e) {
       setError(apiErrorMessage(e, "Failed to load project board"));
@@ -89,7 +90,7 @@ export function KanbanBoard({
     if (dragIdRef.current || mutatingRef.current) return;
     if (typeof document !== "undefined" && document.hidden) return;
     try {
-      const data = await api.github.projectBoard(projectId);
+      const data = await kanbanApi.board(projectId);
       if (dragIdRef.current || mutatingRef.current) return;
       setBoard(data);
       setError(null);
@@ -192,7 +193,7 @@ export function KanbanBoard({
       setActionError(null);
       mutatingRef.current = true;
       try {
-        await api.github.setProjectItemStatus(projectId, itemId, {
+        await kanbanApi.setItemStatus(projectId, itemId, {
           field_id: fieldId,
           option_id: option.id,
         });

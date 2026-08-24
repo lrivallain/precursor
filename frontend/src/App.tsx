@@ -15,6 +15,9 @@ import {
   X,
 } from "lucide-react";
 import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
+import { EmptyHero } from "./components/EmptyHero";
+import { getSection, resolveSections } from "./lib/plugins";
+import type { SectionHost } from "./lib/plugins";
 import { GithubIcon as Github } from "./components/icons/GithubIcon";
 import { CommandPalette } from "./components/CommandPalette";
 import { ChatPanel } from "./components/ChatPanel";
@@ -42,15 +45,13 @@ import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
 import { AgentDashboard } from "./components/AgentDashboard";
 import { WorkflowsSection } from "./components/WorkflowsSection";
-import { KanbanBoard } from "./components/KanbanBoard";
-import { ProjectList } from "./components/ProjectList";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { ReminderModal } from "./components/ReminderModal";
-import { api, apiErrorMessage } from "./lib/api";
+import { api } from "./lib/api";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
@@ -68,7 +69,7 @@ import type {
   Chat,
   Collection,
   MeetingSession,
-  ProjectSummary,
+  PluginDescriptor,
   ReminderItem,
   SearchResult,
   Topic,
@@ -126,23 +127,10 @@ interface AppRoute {
   // The run segment (`/workflows/<id>/run/<n|latest>`): a run number as a string
   // or the literal "latest" to track the live/newest run; null when absent.
   workflowRunRef: string | null;
-  // The selected ProjectV2 URL segment (a per-owner number, optionally with a
-  // title slug) when on the kanban route. Resolved to the opaque node id once
-  // the project list loads.
-  kanbanProjectRef: string | null;
-  // The issue/PR number from the URL hash (e.g. "#94") on the kanban route,
-  // selecting which card's detail preview to open. null when the hash is absent
-  // or not a positive integer.
-  kanbanItemRef: number | null;
-}
-
-// Parse a "#<number>" URL fragment into an issue/PR number. Anything that isn't
-// a positive integer is ignored so a stray hash can't select a phantom card.
-function parseHashNumber(hash: string): number | null {
-  const raw = hash.replace(/^#/, "").trim();
-  if (!/^\d+$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
+  // For a plugin-contributed section: the path segments after its root, and the
+  // raw hash. Core treats both as opaque and hands them to the section.
+  pluginSegments: string[];
+  pluginHash: string;
 }
 
 function parseAppRoute(): AppRoute {
@@ -156,8 +144,8 @@ function parseAppRoute(): AppRoute {
     agentRef: null,
     workflowRef: null,
     workflowRunRef: null,
-    kanbanProjectRef: null,
-    kanbanItemRef: null,
+    pluginSegments: [],
+    pluginHash: "",
   };
   if (segs[0] === "ws") return { ...base, mode: "workspaces" };
   if (segs[0] === "agents") {
@@ -185,12 +173,14 @@ function parseAppRoute(): AppRoute {
   if (segs[0] === "live") {
     return { ...base, mode: "live", liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
-  if (segs[0] === "kanban") {
+  // A plugin section owns its whole subtree: core only resolves the root
+  // segment to a registered section and passes the rest through.
+  if (segs[0] && getSection(segs[0])) {
     return {
       ...base,
-      mode: "kanban",
-      kanbanProjectRef: segs[1] ? decodeURIComponent(segs[1]) : null,
-      kanbanItemRef: parseHashNumber(window.location.hash),
+      mode: segs[0],
+      pluginSegments: segs.slice(1).map((seg) => decodeURIComponent(seg)),
+      pluginHash: window.location.hash.replace(/^#/, ""),
     };
   }
   if (segs[0] === "t") {
@@ -275,29 +265,11 @@ function liveUrl(session: MeetingSession | null): string {
   return "/live/" + encodeURIComponent(session.slug);
 }
 
-function kanbanUrl(project: ProjectSummary | null): string {
-  if (!project) return "/kanban";
-  return "/kanban/" + encodeURIComponent(projectSlug(project));
-}
-
-// Human-readable, stable slug for a ProjectV2: its per-owner `number` (the
-// resolvable key) plus a slugified title for readability, e.g. "4-work-ms".
-function projectSlug(project: ProjectSummary): string {
-  const base = project.title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  return base ? `${project.number}-${base}` : String(project.number);
-}
-
-// Resolve a kanban URL segment back to a project number. Only the leading
-// integer is significant, so the trailing title slug is cosmetic and can drift
-// without breaking the link (e.g. "4", "4-work-ms", "4-renamed" all resolve).
-function projectRefNumber(ref: string | null): number | null {
-  if (!ref) return null;
-  const match = /^(\d+)/.exec(ref);
-  return match ? Number(match[1]) : null;
+// Build the URL for a plugin section from the segments it asked for. A
+// section's registered id *is* its top-level segment (see lib/plugins).
+function pluginSectionUrl(mode: string, segments: string[]): string {
+  const tail = segments.filter(Boolean).map(encodeURIComponent).join("/");
+  return tail ? `/${mode}/${tail}` : `/${mode}`;
 }
 
 // Agents are addressed by their public UUID (public_id) in the URL.
@@ -452,21 +424,12 @@ export default function App() {
   // Live meeting sessions are loaded lazily when the user first enters live mode.
   const [meetingSessions, setMeetingSessions] = useState<MeetingSession[] | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
-  // GitHub Projects v2 are loaded lazily when the user first enters kanban mode.
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
-  // The opaque ProjectV2 node id of the active board (board fetches need it).
-  // The URL carries a number-based ref instead, resolved to this once the
-  // project list loads.
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  // A kanban URL ref (project number/slug) awaiting resolution against the
-  // loaded project list. Initialised from the entry URL, cleared once resolved.
-  const pendingProjectRef = useRef<string | null>(parseAppRoute().kanbanProjectRef);
-  // The issue/PR number selected via the URL hash (e.g. /kanban/4-work-ms#94).
-  // Drives the board's detail preview and is kept in sync with the hash both
-  // ways: the URL opens the preview, and opening/closing a card rewrites it.
-  const [kanbanItemNumber, setKanbanItemNumber] = useState<number | null>(
-    parseAppRoute().kanbanItemRef,
+  // Route state owned by the active plugin section (opaque to core).
+  const [pluginRoute, setPluginRoute] = useState<{ segments: string[]; hash: string }>(
+    () => {
+      const r = parseAppRoute();
+      return { segments: r.pluginSegments, hash: r.pluginHash };
+    },
   );
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
@@ -559,11 +522,39 @@ export default function App() {
   const streamingChatIds = streamStore.streamingIds("chat");
 
   const settings = useSettings();
+
+  // Sections contributed by installed backend plugins. `null` until the fetch
+  // resolves, which the gating effect below waits for so a deep link into a
+  // plugin section isn't bounced to Topics on the way in.
+  const [pluginDescriptors, setPluginDescriptors] = useState<PluginDescriptor[] | null>(
+    null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void api.plugins
+      .list()
+      .then((list) => {
+        if (!cancelled) setPluginDescriptors(list);
+      })
+      .catch(() => {
+        // A plugin surface that fails to load must never break the core app.
+        if (!cancelled) setPluginDescriptors([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const enabledSections = useMemo(
+    () => resolveSections(pluginDescriptors, { settings }),
+    [pluginDescriptors, settings],
+  );
+  const activeSection = useMemo(
+    () => enabledSections.find((sec) => sec.id === sidebarMode) ?? null,
+    [enabledSections, sidebarMode],
+  );
+
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
   const globalGithubRepo = (settings?.github_repo ?? "").trim();
-  // The kanban board needs both a configured repo and the GitHub issue surface
-  // turned on — otherwise there are no ProjectsV2 to render.
-  const kanbanEnabled = issueAssociationsEnabled && globalGithubRepo.length > 0;
   const agentsEnabled = settings?.agents_enabled ?? false;
   const liveEnabled = settings?.live_enabled ?? true;
   const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
@@ -627,18 +618,6 @@ export default function App() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
-
-  const activeProjectIdRef = useRef<string | null>(activeProjectId);
-  useEffect(() => {
-    activeProjectIdRef.current = activeProjectId;
-  }, [activeProjectId]);
-
-  // Mirror the loaded project list so changeMode / URL sync can resolve the
-  // active project's number-based slug without re-subscribing.
-  const projectsRef = useRef<ProjectSummary[] | null>(projects);
-  useEffect(() => {
-    projectsRef.current = projects;
-  }, [projects]);
 
   // Mirror the current sidebar mode into a ref. The active item refs persist
   // across mode switches (changeMode doesn't clear them), so "the user is
@@ -974,24 +953,10 @@ export default function App() {
       }
       // Left workspaces — clear its route state so a stale slug/path can't leak.
       setWsRoute({ open: false, slug: null, path: null });
-      if (r.mode === "kanban") {
-        // Keep the hash-driven preview selection in step with the URL (initial
-        // load + back/forward).
-        setKanbanItemNumber(r.kanbanItemRef);
-        if (r.kanbanProjectRef == null) {
-          pendingProjectRef.current = null;
-          setActiveProjectId(null);
-          return;
-        }
-        const num = projectRefNumber(r.kanbanProjectRef);
-        const match = projectsRef.current?.find((p) => p.number === num);
-        if (match) {
-          pendingProjectRef.current = null;
-          setActiveProjectId(match.id);
-        } else {
-          // Projects not loaded yet — stash the ref for the load effect.
-          pendingProjectRef.current = r.kanbanProjectRef;
-        }
+      // A plugin section owns everything under its root; hand it the fresh
+      // segments/hash and let it reconcile (initial load + back/forward).
+      if (getSection(r.mode)) {
+        setPluginRoute({ segments: r.pluginSegments, hash: r.pluginHash });
         return;
       }
       if (r.mode === "live") {
@@ -1157,35 +1122,6 @@ export default function App() {
     const target = liveUrl(active);
     if (window.location.pathname !== target) history.pushState(null, "", target);
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
-
-  // activeProjectId -> /kanban/<number>-<slug> (or /kanban when none selected).
-  // Depends on `projects` so a board opened before the list resolves gets its
-  // slug rewritten once the project's number/title are known.
-  useEffect(() => {
-    if (atHome) return;
-    if (sidebarMode !== "kanban") return;
-    // A deep link we haven't resolved yet — leave the URL untouched so its
-    // number ref survives until the load effect maps it to a project.
-    if (activeProjectId == null && pendingProjectRef.current) return;
-    const active = projects?.find((p) => p.id === activeProjectId) ?? null;
-    const target = kanbanUrl(active);
-    if (window.location.pathname !== target) history.pushState(null, "", target);
-  }, [activeProjectId, projects, sidebarMode, atHome]);
-
-  // kanbanItemNumber -> URL hash ("#<number>"), so an open card is bookmarkable
-  // and back/forward toggles the preview. Only the hash is touched here; the
-  // pathname effect above owns the /kanban/<project> segment. Waits for the
-  // active project to resolve so a deep-linked "#94" survives until the board
-  // is ready to open it.
-  useEffect(() => {
-    if (atHome) return;
-    if (sidebarMode !== "kanban") return;
-    if (activeProjectId == null) return;
-    const desired = kanbanItemNumber != null ? `#${kanbanItemNumber}` : "";
-    if (window.location.hash === desired) return;
-    const target = window.location.pathname + window.location.search + desired;
-    history.pushState(null, "", target);
-  }, [kanbanItemNumber, activeProjectId, sidebarMode, atHome]);
 
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
   // canonical URL uses the public UUID; depends on `agents` so the link is
@@ -1387,10 +1323,9 @@ export default function App() {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else if (next === "workflows") {
       target = activeWorkflowId != null ? `/workflows/${activeWorkflowId}` : "/workflows";
-    } else if (next === "kanban") {
-      const active =
-        projectsRef.current?.find((p) => p.id === activeProjectIdRef.current) ?? null;
-      target = kanbanUrl(active);
+    } else if (getSection(next)) {
+      // Re-entering a plugin section restores the sub-route it was left at.
+      target = pluginSectionUrl(next, pluginRouteRef.current.segments);
     } else {
       target = "/ws";
     }
@@ -1523,57 +1458,18 @@ export default function App() {
     }
   }, [liveEnabled, sidebarMode]);
 
-  // Same guard for the kanban board: if the repo/issue settings that gate it get
-  // turned off (or a deep link lands while disabled), fall back to Topics. Wait
-  // for settings to load first — otherwise a deep link to /kanban is bounced to
-  // /topics before `kanbanEnabled` resolves from the initial null settings.
+  // Same guard for plugin sections: a section whose backend package is gone —
+  // or whose own `isEnabled` turned false (kanban loses its GitHub repo, say) —
+  // can't stay open, and a deep link to it must fall back to Topics. Waits for
+  // the descriptors *and* settings so a valid deep link isn't bounced before
+  // they resolve.
   useEffect(() => {
-    if (settings == null) return;
-    if (!kanbanEnabled && sidebarMode === "kanban") {
-      history.pushState(null, "", "/topics");
-      setSidebarMode("topics");
-    }
-  }, [kanbanEnabled, sidebarMode, settings]);
-
-  // Lazily load projects the first time the user enters kanban mode. Re-runs if
-  // the configured repo changes (projects reset to null by that handler).
-  useEffect(() => {
-    if (sidebarMode !== "kanban" || !kanbanEnabled || projects !== null) return;
-    setProjectsError(null);
-    void api.github
-      .listProjects()
-      .then((list) => {
-        setProjects(list);
-        // Resolve a deep-linked project ref (a number/slug) to its node id;
-        // otherwise auto-select the first project.
-        const num = projectRefNumber(pendingProjectRef.current);
-        const fromRef = num != null ? list.find((p) => p.number === num) : undefined;
-        pendingProjectRef.current = null;
-        setActiveProjectId((id) => id ?? fromRef?.id ?? list[0]?.id ?? null);
-      })
-      .catch((e) => {
-        setProjects([]);
-        setProjectsError(apiErrorMessage(e, "Failed to load projects"));
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidebarMode, kanbanEnabled]);
-
-  // When the configured repo changes, drop the cached project list + selection
-  // so the next kanban visit reloads for the new repo. Skips the initial
-  // settings load so a deep-linked project id isn't wiped before it resolves.
-  const prevRepoRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (settings == null) return;
-    if (prevRepoRef.current === null) {
-      prevRepoRef.current = globalGithubRepo;
-      return;
-    }
-    if (prevRepoRef.current === globalGithubRepo) return;
-    prevRepoRef.current = globalGithubRepo;
-    setProjects(null);
-    setActiveProjectId(null);
-    setProjectsError(null);
-  }, [globalGithubRepo, settings]);
+    if (settings == null || pluginDescriptors == null) return;
+    if (!getSection(sidebarMode)) return;
+    if (enabledSections.some((sec) => sec.id === sidebarMode)) return;
+    history.pushState(null, "", "/topics");
+    setSidebarMode("topics");
+  }, [enabledSections, pluginDescriptors, sidebarMode, settings]);
 
   // Reflect the active workspace + open file in the URL so a reload returns to
   // the same place. replaceState keeps it as a single history entry.
@@ -2027,10 +1923,68 @@ export default function App() {
       setActiveWorkflowRunSeg(null);
       setWorkflowNewSignal((n) => n + 1);
     }
-    else if (sidebarMode === "kanban") {
-      // No "new" affordance for the kanban board (the header hides the "+").
+    // Plugin sections declare their own create flow (or none at all), so core
+    // has nothing to do for them — the header hides the "+" accordingly.
+    else if (getSection(sidebarMode)) {
+      /* handled by the section, if it offers one */
     } else setCreateWorkspaceOpen(true);
   }
+
+  // ---- Plugin sections ---------------------------------------------------
+
+  // Mirror the section sub-route so changeMode can restore it without
+  // re-subscribing to every route change.
+  const pluginRouteRef = useRef(pluginRoute);
+  useEffect(() => {
+    pluginRouteRef.current = pluginRoute;
+  }, [pluginRoute]);
+
+  // `changeMode` and `handleSelect` are plain function declarations, so every
+  // render makes new ones closing over that render's state. The host below is
+  // memoised and would pin whichever pair it was built with — and `changeMode`
+  // short-circuits on a stale `sidebarMode`, so a section's "open topic" would
+  // silently do nothing. Read them through refs instead.
+  const changeModeRef = useRef(changeMode);
+  const handleSelectRef = useRef(handleSelect);
+  useEffect(() => {
+    changeModeRef.current = changeMode;
+    handleSelectRef.current = handleSelect;
+  });
+
+  // The services a plugin section gets from core. Memoised on the values it
+  // closes over so a section's effects don't re-run on unrelated app renders.
+  const sectionHost = useMemo<SectionHost>(
+    () => ({
+      segments: pluginRoute.segments,
+      hash: pluginRoute.hash,
+      navigate: (segments, hash = "", opts) => {
+        // Idempotent: a section re-asserting the URL it already has must not
+        // spin the render loop that produced it.
+        setPluginRoute((prev) =>
+          prev.hash === hash &&
+          prev.segments.length === segments.length &&
+          prev.segments.every((seg, i) => seg === segments[i])
+            ? prev
+            : { segments, hash },
+        );
+        const path =
+          pluginSectionUrl(sidebarModeRef.current, segments) +
+          window.location.search +
+          (hash ? `#${hash}` : "");
+        if (window.location.pathname + window.location.search + window.location.hash === path) {
+          return;
+        }
+        if (opts?.push) history.pushState(null, "", path);
+        else history.replaceState(null, "", path);
+      },
+      openTopic: (topicId: number) => {
+        void changeModeRef.current("topics");
+        void handleSelectRef.current(topicId);
+      },
+      settings,
+    }),
+    [pluginRoute, settings],
+  );
 
   // ---- Workspaces -------------------------------------------------------
   const activeWorkspace =
@@ -2294,7 +2248,10 @@ export default function App() {
     await refreshTree();
   }
 
-  return (
+  // A section's sidebar and main pane sit in different subtrees, so its own
+  // context provider (when it has one) wraps the whole shell.
+  const SectionProvider = activeSection?.Provider;
+  const shell = (
     <div
       className={`flex h-full w-full bg-bg text-text${
         atHome ? "" : ` section-${sidebarMode}`
@@ -2315,7 +2272,7 @@ export default function App() {
             setPaletteOpen(false);
           }}
           liveEnabled={liveEnabled}
-          kanbanEnabled={kanbanEnabled}
+          pluginSections={enabledSections}
           initialQuery={atHome ? "" : searchHighlight.trim()}
         />
       )}
@@ -2329,7 +2286,7 @@ export default function App() {
           onNew={handleNew}
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
-          kanbanEnabled={kanbanEnabled}
+          pluginSections={enabledSections}
         />
       )}
       {!atHome && (
@@ -2389,18 +2346,8 @@ export default function App() {
             onArchiveMany={handleArchiveSessions}
           />
         }
-        kanbanSlot={
-          <ProjectList
-            projects={projects}
-            activeId={activeProjectId}
-            error={projectsError}
-            onSelect={(p) => {
-              pendingProjectRef.current = null;
-              // Switching boards drops any hash-selected card from the old one.
-              setKanbanItemNumber(null);
-              setActiveProjectId(p.id);
-            }}
-          />
+        pluginSlot={
+          activeSection ? <activeSection.Sidebar host={sectionHost} /> : null
         }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onSelect={handleSelect}
@@ -2421,7 +2368,7 @@ export default function App() {
         onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
         onOpenArchive={() => setArchiveOpen(true)}
         unreadByMode={unreadByMode}
-        kanbanEnabled={kanbanEnabled}
+        pluginSections={enabledSections}
       />
       )}
 
@@ -2599,9 +2546,13 @@ export default function App() {
             ) : (
               <span className="truncate font-medium min-w-0 flex-1">Live</span>
             )
-          ) : sidebarMode === "kanban" ? (
+          ) : activeSection ? (
             <span className="truncate font-medium min-w-0 flex-1">
-              {projects?.find((p) => p.id === activeProjectId)?.title ?? "Kanban"}
+              {activeSection.Title ? (
+                <activeSection.Title host={sectionHost} />
+              ) : (
+                activeSection.label
+              )}
             </span>
           ) : sidebarMode === "workflows" ? (
             <span className="truncate font-medium min-w-0 flex-1">Workflows</span>
@@ -2743,7 +2694,7 @@ export default function App() {
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
-              kanbanEnabled={kanbanEnabled}
+              pluginSections={enabledSections}
               onNavigate={changeMode}
               onOpenSettings={() => setGlobalSettingsOpen(true)}
               onOpenArchive={() => setArchiveOpen(true)}
@@ -2895,28 +2846,8 @@ export default function App() {
                 }}
               />
             )
-          ) : sidebarMode === "kanban" ? (
-            projects === null ? (
-              <EmptyHero label="Loading projects…" />
-            ) : projectsError ? (
-              <EmptyHero label={projectsError} />
-            ) : activeProjectId ? (
-              <KanbanBoard
-                key={activeProjectId}
-                projectId={activeProjectId}
-                fallbackRepo={globalGithubRepo}
-                selectedNumber={kanbanItemNumber}
-                onSelectedNumberChange={setKanbanItemNumber}
-                onOpenTopic={(topicId) => {
-                  changeMode("topics");
-                  void handleSelect(topicId);
-                }}
-              />
-            ) : projects.length === 0 ? (
-              <EmptyHero label="No GitHub projects found for this repository." />
-            ) : (
-              <EmptyHero label="Select a project to view its board." />
-            )
+          ) : activeSection ? (
+            <activeSection.Main host={sectionHost} />
           ) : sidebarMode === "workflows" ? (
             <WorkflowsSection
               enabled={agentsEnabled}
@@ -3130,21 +3061,10 @@ export default function App() {
       )}
     </div>
   );
-}
 
-/** Centered logo + caption shown when a mode has nothing selected. */
-function EmptyHero({ label }: { label: string }) {
-  return (
-    <div className="h-full flex flex-col items-center justify-center text-muted gap-3">
-      <img
-        src="/logo.svg"
-        alt=""
-        aria-hidden="true"
-        width={72}
-        height={72}
-        className="rounded-2xl opacity-90"
-      />
-      <span>{label}</span>
-    </div>
+  return SectionProvider ? (
+    <SectionProvider host={sectionHost}>{shell}</SectionProvider>
+  ) : (
+    shell
   );
 }

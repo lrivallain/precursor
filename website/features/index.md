@@ -21,7 +21,7 @@ of working:
 | 🤖 **[Agents](/features/agents-mode)** | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
 | 🔗 **[Workflows](/features/workflows)** | Chain those agents into a reusable pipeline the coordinator runs unattended, with gates and approval checkpoints (opt-in). |
 | 🗂️ **[Workspaces & files](/features/workspaces)** | Git clones / local dirs the assistant can browse and edit. Shown as **Files** in the sidebar. |
-| 📋 **[Kanban](/features/kanban)** | A board over the GitHub issues linked to your topics. |
+| 📋 **[Kanban](/features/kanban)** | A board over the GitHub issues linked to your topics. Ships as a [plugin](/features/plugins) (`precursor-ai[kanban]`). |
 
 **Rearrange them to taste.** Drag any section in the sidebar — whether you use
 the vertical icon rail or the horizontal tab switcher — to reorder it. The

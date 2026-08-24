@@ -54,7 +54,7 @@ wheel: build docs  ## Build the distributable wheel + sdist (uv)
 check: lockcheck  ## Run all backend + frontend quality gates
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy precursor
+	uv run mypy precursor plugins/precursor-kanban/src
 	uv run pytest -q
 	npm --prefix frontend run typecheck
 	npm --prefix frontend run build

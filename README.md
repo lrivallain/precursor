@@ -130,8 +130,8 @@ it from `frontend/dist`. The SPA is also bundled **inside the wheel**, so an
 installed build is self-contained:
 
 ```bash
-uvx precursor-ai              # run the latest published wheel, zero setup
-# or pin it:  uv tool install precursor-ai && precursor-ai
+uvx "precursor-ai[kanban]"    # run the latest published wheel, zero setup
+# or pin it:  uv tool install "precursor-ai[kanban]" && precursor-ai
 ```
 
 ### Automatic upgrades on startup

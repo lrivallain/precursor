@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import type { SidebarMode } from "../components/Sidebar";
 
@@ -24,25 +24,29 @@ export type DropSide = "before" | "after";
 // Module-level store so the rail, the tabs, the collapsed rail and the home
 // rail all share one live order — a drag-reorder in any of them is reflected
 // everywhere immediately, not just after a remount re-reads localStorage.
+//
+// The store holds the *persisted* arrangement only. Reconciliation against the
+// live section list happens per-read, because plugin-contributed sections
+// appear asynchronously (once `/api/plugins` resolves) and must slot in without
+// a reload.
 let order: SidebarMode[] | null = null;
 const listeners = new Set<() => void>();
 
-function loadInitial(all: readonly SidebarMode[]): SidebarMode[] {
-  const fallback = [...all];
-  if (typeof window === "undefined") return fallback;
+function loadPersisted(): SidebarMode[] {
+  if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallback;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return fallback;
-    return reconcile(parsed as SidebarMode[], all);
+    return Array.isArray(parsed) ? (parsed as SidebarMode[]) : [];
   } catch {
-    return fallback;
+    return [];
   }
 }
 
-function ensureInit(all: readonly SidebarMode[]): void {
-  if (order === null) order = loadInitial(all);
+function snapshot(): SidebarMode[] {
+  if (order === null) order = loadPersisted();
+  return order;
 }
 
 function subscribe(cb: () => void): () => void {
@@ -62,8 +66,15 @@ function persist(next: SidebarMode[]): void {
   listeners.forEach((cb) => cb());
 }
 
-function reorderStore(dragged: SidebarMode, target: SidebarMode, side: DropSide): void {
-  const prev = order ?? [];
+function reorderStore(
+  dragged: SidebarMode,
+  target: SidebarMode,
+  side: DropSide,
+  all: readonly SidebarMode[],
+): void {
+  // Persist the reconciled list, so sections the stored order never saw keep
+  // the slot they are currently rendered in.
+  const prev = reconcile(snapshot(), all);
   if (dragged === target) return;
   if (prev.indexOf(dragged) === -1 || prev.indexOf(target) === -1) return;
   const next = prev.filter((m) => m !== dragged);
@@ -73,24 +84,22 @@ function reorderStore(dragged: SidebarMode, target: SidebarMode, side: DropSide)
 }
 
 /**
- * Persisted, user-reorderable ordering of sidebar sections. `all` must be a
- * stable reference (a module-level constant) — it is the canonical list of
- * every section, enabled or not, so a section keeps its slot when toggled off
- * and back on. Returns the reconciled order plus a `reorder` mover that drops
- * the dragged section on either side of the target.
+ * Persisted, user-reorderable ordering of sidebar sections. `all` is the
+ * canonical list of every known section, enabled or not, so a section keeps its
+ * slot when toggled off and back on; pass a memoised reference. Sections absent
+ * from the persisted order (newly shipped, or contributed by a plugin that has
+ * just loaded) are appended rather than wiping the user's arrangement. Returns
+ * the reconciled order plus a `reorder` mover that drops the dragged section on
+ * either side of the target.
  */
 export function useSectionOrder(all: readonly SidebarMode[]) {
-  ensureInit(all);
-  const value = useSyncExternalStore(
-    subscribe,
-    () => order as SidebarMode[],
-    () => order as SidebarMode[],
-  );
+  const persisted = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const value = useMemo(() => reconcile(persisted, all), [persisted, all]);
   const reorder = useCallback(
     (dragged: SidebarMode, target: SidebarMode, side: DropSide = "before") => {
-      reorderStore(dragged, target, side);
+      reorderStore(dragged, target, side, all);
     },
-    [],
+    [all],
   );
   return { order: value, reorder };
 }

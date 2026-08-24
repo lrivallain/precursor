@@ -4,6 +4,10 @@ import App from "./App";
 import { ConfirmProvider } from "./components/ConfirmDialog";
 import "./index.css";
 import { applyInitialTheme } from "./lib/theme";
+// Side-effect import: registers every bundled plugin's frontend half before
+// the app mounts, so a section is available the moment its backend
+// descriptor arrives.
+import "./plugins";
 
 applyInitialTheme();
 

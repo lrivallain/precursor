@@ -15,13 +15,13 @@ completely self-contained. If you have `uv` installed, you can run the latest
 release without cloning anything:
 
 ```bash
-uvx precursor-ai         # run the latest published wheel, nothing to set up
+uvx "precursor-ai[kanban]"   # run the latest published wheel, nothing to set up
 ```
 
 Prefer to keep it around as a tool?
 
 ```bash
-uv tool install precursor-ai
+uv tool install "precursor-ai[kanban]"
 precursor-ai
 ```
 
@@ -32,6 +32,15 @@ The PyPI distribution is **`precursor-ai`** (the plain `precursor` name was
 already taken). It installs a matching **`precursor-ai`** command — so
 `uvx precursor-ai` needs no `--from` — plus a shorter **`precursor`** alias. The
 import package is `precursor`.
+:::
+
+::: info Optional extras
+Some features ship as separate [plugins](/features/plugins) so they aren't forced
+on every install. `[kanban]` pulls in the
+[GitHub Projects board](/features/kanban); drop it (`uvx precursor-ai`) for a
+lean core with no board. `[agents]` adds
+[Agents mode](/features/agents) — a ~90 MB payload, so it stays opt-in. Combine
+them: `uvx "precursor-ai[kanban,agents]"`.
 :::
 
 ::: info Requirements
@@ -52,6 +61,9 @@ cd precursor
 make sync                      # uv sync + npm --prefix frontend install
 cp .env.example .env
 ```
+
+`uv sync` installs the in-repo plugins under `plugins/` as workspace members, so
+a source checkout has the kanban board wired in from the start.
 
 <details>
 <summary>Without <code>make</code></summary>

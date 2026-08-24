@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Search, SquareKanban } from "lucide-react";
-import type { ProjectSummary } from "../lib/types";
-import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
+import type { ProjectSummary } from "./types";
+import { useScrollActiveIntoView } from "../../lib/useScrollActiveIntoView";
 
 interface ProjectListProps {
   projects: ProjectSummary[] | null;

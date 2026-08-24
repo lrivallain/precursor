@@ -7,13 +7,13 @@ import {
   MessageSquarePlus,
   MessagesSquare,
   Radio,
-  SquareKanban,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { SidebarMode } from "./Sidebar";
 import type { Me } from "../lib/types";
-import { SECTION_COLORS } from "../lib/sections";
+import { sectionColor } from "../lib/sections";
+import type { SectionPlugin } from "../lib/plugins";
 import { PersonaMenu } from "./PersonaMenu";
 
 type HomeKind = "topics" | "chats" | "live" | "agents";
@@ -39,8 +39,8 @@ interface Props {
   liveSurface: ReactNode;
   agentSurface: ReactNode;
   liveEnabled?: boolean;
-  /** Whether the Kanban section is available (adds its card). */
-  kanbanEnabled?: boolean;
+  /** Plugin-contributed sections, each rendered as its own card. */
+  pluginSections?: SectionPlugin[];
   /** Jump straight into a section's list/surface (leaves the home launcher). */
   onNavigate?: (mode: SidebarMode) => void;
   /** Open the global settings panel (from the persona menu). */
@@ -64,7 +64,7 @@ export function HomePage({
   liveSurface,
   agentSurface,
   liveEnabled = true,
-  kanbanEnabled = false,
+  pluginSections = [],
   onNavigate,
   onOpenSettings,
   onOpenArchive,
@@ -245,18 +245,18 @@ export function HomePage({
       openLabel: "Browse files",
       icon: <FolderGit2 size={20} />,
     },
-    ...(kanbanEnabled
-      ? [
-          {
-            mode: "kanban",
-            title: "Kanban",
-            description:
-              "Track linked issues on a board across your projects.",
-            openLabel: "Open board",
-            icon: <SquareKanban size={20} />,
-          } satisfies Section,
-        ]
-      : []),
+    // Plugin-contributed sections land after core's own cards, in the order the
+    // backend published them.
+    ...pluginSections.map(
+      (plugin) =>
+        ({
+          mode: plugin.id,
+          title: plugin.label,
+          description: plugin.description,
+          openLabel: plugin.openLabel,
+          icon: <plugin.icon size={20} />,
+        }) satisfies Section,
+    ),
   ];
 
   const surfaces: Record<HomeKind, ReactNode> = {
@@ -294,7 +294,7 @@ export function HomePage({
             {sections.map((section) => {
               const active =
                 !!section.createKind && selected === section.createKind;
-              const color = SECTION_COLORS[section.mode];
+              const color = sectionColor(section.mode);
               return (
                 <div
                   key={section.mode}

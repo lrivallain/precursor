@@ -1103,43 +1103,9 @@ export interface GitHubIssue {
   updated_at: string;
 }
 
-// --- GitHub Projects v2 (kanban board) ---
-// Mirrors precursor.backend.schemas.projects.
-
-export interface ProjectSummary {
-  id: string;
-  number: number;
-  title: string;
-  url: string | null;
-  closed: boolean;
-  short_description: string | null;
-}
-
-export interface ProjectColumn {
-  id: string;
-  name: string;
-}
-
-export interface ProjectStatusField {
-  id: string;
-  name: string;
-  options: ProjectColumn[];
-}
-
-export interface ProjectCard {
-  // ProjectV2 item id — the handle used for status mutations.
-  id: string;
-  type: "issue" | "pull_request";
-  number: number | null;
-  title: string;
-  url: string | null;
-  state: string | null;
-  // owner/name of the item's source repo (ProjectsV2 can span repos).
-  repo: string | null;
-  status_option_id: string | null;
-  status_name: string | null;
-  labels: IssueLabel[];
-}
+// The GitHub issue read models below mirror precursor.backend.schemas.issues.
+// The Projects v2 board models live with the kanban plugin
+// (frontend/src/plugins/kanban/types.ts).
 
 export interface IssueComment {
   id: number;
@@ -1161,20 +1127,6 @@ export interface IssueDetail {
   linked_topic_id: number | null;
   linked_topic_title: string | null;
 }
-
-export interface ProjectBoard {
-  id: string;
-  title: string;
-  url: string | null;
-  status_field: ProjectStatusField | null;
-  items: ProjectCard[];
-}
-
-export interface ItemStatusResult {
-  item_id: string;
-  option_id: string;
-}
-
 
 export interface MCPTool {
   name: string;
@@ -1344,11 +1296,16 @@ export interface GhCloseResult {
   message: Message;
 }
 
+/**
+ * A contribution a backend plugin published via `GET /api/plugins`.
+ * Mirrors precursor.backend.plugins.registry.FrontendExtension.
+ */
 export interface PluginDescriptor {
   id: string;
   kind: string;
   slot: string;
   title: string;
+  /** Plugin-defined payload. Sections use `order`; the `id` is the URL segment. */
   config: Record<string, unknown>;
 }
 

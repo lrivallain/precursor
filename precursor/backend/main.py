@@ -48,7 +48,6 @@ from precursor.backend.routers import (
     mcp,
     me,
     memories,
-    projects,
     raw,
     refine,
     reminders,
@@ -119,7 +118,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.client import configure_playwright_server
 
     await configure_playwright_server()
-    discover(app)
     from precursor.backend.services.scheduler import get_scheduler
 
     scheduler = get_scheduler()
@@ -293,7 +291,6 @@ def create_app() -> FastAPI:
         attachments.router,
         settings.router,
         github.router,
-        projects.router,
         mcp.router,
         llm.router,
         summary.router,
@@ -323,6 +320,11 @@ def create_app() -> FastAPI:
         refine.router,
     ):
         app.include_router(r)
+
+    # Plugin contributions are mounted here, not in the lifespan: routes are
+    # matched in registration order, so a plugin router appended after the SPA
+    # catch-all below would be shadowed by it.
+    discover(app)
 
     plugin_router = APIRouter(prefix="/api", tags=["plugins"])
 

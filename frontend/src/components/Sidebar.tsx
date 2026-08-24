@@ -26,12 +26,13 @@ import {
   Plus,
   Radio,
   Search,
-  SquareKanban,
   StickyNote,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
-import { SECTION_COLORS } from "../lib/sections";
+import { sectionColor } from "../lib/sections";
+import { getSection } from "../lib/plugins";
+import type { SectionPlugin } from "../lib/plugins";
 import { Z_INDEX } from "../lib/constants";
 import { CollectionSwitcher } from "./CollectionSwitcher";
 import { collectionColor } from "../lib/collections";
@@ -47,16 +48,24 @@ import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuItem } from "./ContextMenu";
 
-export type SidebarMode =
+/** The sections core itself ships. */
+export type CoreSidebarMode =
   | "topics"
   | "chats"
   | "live"
   | "workspaces"
   | "agents"
-  | "workflows"
-  | "kanban";
+  | "workflows";
 
-// Label for the header "New" action, which is mode-aware.
+/**
+ * A section key: one of core's own, or the id of a section contributed by a
+ * plugin. The `string & {}` arm keeps editor completion for the core names
+ * while still accepting an arbitrary plugin id.
+ */
+export type SidebarMode = CoreSidebarMode | (string & {});
+
+// Label for the header "New" action, which is mode-aware. Plugin sections opt
+// in by declaring a `newLabel`; without one they have no create affordance.
 function newActionLabel(mode: SidebarMode): string {
   switch (mode) {
     case "chats":
@@ -69,9 +78,17 @@ function newActionLabel(mode: SidebarMode): string {
       return "New agent";
     case "workflows":
       return "New workflow";
-    default:
+    case "topics":
       return "New topic";
+    default:
+      return getSection(mode)?.newLabel ?? "New topic";
   }
+}
+
+// Whether a section offers a "New …" action at all.
+function supportsNew(mode: SidebarMode): boolean {
+  const section = getSection(mode);
+  return section ? section.newLabel != null : true;
 }
 
 interface Props {
@@ -91,9 +108,8 @@ interface Props {
   liveSlot?: ReactNode;
   /** Rendered in the body when mode === "workspaces" (the workspace list). */
   workspaceSlot?: ReactNode;
-  /** Rendered in the body when mode === "agents" (the agent session list). */
-  /** Rendered in the body when mode === "kanban" (the project picker list). */
-  kanbanSlot?: ReactNode;
+  /** Rendered in the body when a plugin section is active (its own list). */
+  pluginSlot?: ReactNode;
   onToggleCollapsed: () => void;
   /** Whether the collapsed rail offers an "expand" button. Agents mode locks
       the sidebar to rail-only (the fleet dashboard is the list), so it hides
@@ -125,9 +141,8 @@ interface Props {
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   /** Whether the Live section is enabled (hides its tab when off). */
   liveEnabled?: boolean;
-  /** Whether the Kanban section is enabled (shown only when a GitHub repo +
-      issue associations are configured). */
-  kanbanEnabled?: boolean;
+  /** Plugin-contributed sections that are installed *and* currently enabled. */
+  pluginSections?: SectionPlugin[];
   /** Collections available to filter the topic tree. */
   collections?: Collection[];
   /** Currently selected collection (null while collections are loading). */
@@ -153,7 +168,7 @@ export function Sidebar({
   chatSlot,
   liveSlot,
   workspaceSlot,
-  kanbanSlot,
+  pluginSlot,
   onToggleCollapsed,
   expandable = true,
   onSelect,
@@ -174,7 +189,7 @@ export function Sidebar({
   onOpenPalette,
   unreadByMode,
   liveEnabled = true,
-  kanbanEnabled = false,
+  pluginSections = EMPTY_SECTIONS,
   collections = [],
   activeCollectionId = null,
   unreadByCollection,
@@ -207,11 +222,16 @@ export function Sidebar({
 
   // User-reorderable section arrangement, shared by the vertical rail and the
   // horizontal tabs (both drive the same persisted order via drag & drop).
-  const { order: sectionOrder, reorder: reorderSections } = useSectionOrder(ALL_MODES);
-  const orderedModes = useMemo(
-    () => sectionOrder.map((key) => MODE_BY_KEY[key]),
-    [sectionOrder],
-  );
+  const modeDefs = useModeDefs(pluginSections);
+  const allModes = useMemo(() => modeDefs.map((m) => m.mode), [modeDefs]);
+  const { order: sectionOrder, reorder: reorderSections } = useSectionOrder(allModes);
+  const orderedModes = useMemo(() => {
+    const byKey = new Map(modeDefs.map((m) => [m.mode, m]));
+    return sectionOrder.flatMap((key) => {
+      const def = byKey.get(key);
+      return def ? [def] : [];
+    });
+  }, [sectionOrder, modeDefs]);
 
   const filtered = useMemo(() => filterTree(tree, query.trim().toLowerCase()), [tree, query]);
   // Pinned topics surface as a flat list at the top of the sidebar so they
@@ -249,7 +269,6 @@ export function Sidebar({
           onNew={onNew}
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
-          kanbanEnabled={kanbanEnabled}
           orderedModes={orderedModes}
           onReorder={reorderSections}
         />
@@ -271,7 +290,7 @@ export function Sidebar({
           onNew={onNew}
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
-          kanbanEnabled={kanbanEnabled}
+          pluginSections={pluginSections}
         />
       )}
       <aside
@@ -307,9 +326,9 @@ export function Sidebar({
         >
           {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
         </button>
-        {mode !== "kanban" && (
+        {supportsNew(mode) && (
           <button
-            className={`p-1.5 rounded-full transition-opacity hover:opacity-80 ${SECTION_COLORS[mode].icon}`}
+            className={`p-1.5 rounded-full transition-opacity hover:opacity-80 ${sectionColor(mode).icon}`}
             aria-label={newActionLabel(mode)}
             data-tooltip={newActionLabel(mode)}
             onClick={onNew}
@@ -338,7 +357,6 @@ export function Sidebar({
           atHome={atHome}
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
-          kanbanEnabled={kanbanEnabled}
           onOpenPalette={onOpenPalette}
           orderedModes={orderedModes}
           onReorder={reorderSections}
@@ -375,8 +393,8 @@ export function Sidebar({
         liveSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
-      ) : mode === "kanban" ? (
-        kanbanSlot
+      ) : getSection(mode) ? (
+        pluginSlot
       ) : (
         <>
           {onCollectionChange && (
@@ -827,23 +845,32 @@ type ModeDef = {
   Icon: ComponentType<{ size?: number; className?: string }>;
 };
 
-const MODES: ModeDef[] = [
+// Core's own sections, in their default arrangement. Plugin-contributed
+// sections are appended in backend `order`, then the whole list is reordered by
+// the user's persisted arrangement.
+const CORE_MODES: ModeDef[] = [
   { mode: "topics", label: "Topics", Icon: MessagesSquare },
   { mode: "chats", label: "Chats", Icon: MessageSquare },
   { mode: "live", label: "Live", Icon: Radio },
   { mode: "workspaces", label: "Files", Icon: FolderGit2 },
   { mode: "agents", label: "Agents", Icon: Bot },
   { mode: "workflows", label: "Workflows", Icon: WorkflowIcon },
-  { mode: "kanban", label: "Kanban", Icon: SquareKanban },
 ];
 
-// Canonical, stable references for the section-order hook. ALL_MODES is the
-// default arrangement; MODE_BY_KEY resolves a persisted order back to its
-// label/icon definition.
-const ALL_MODES: readonly SidebarMode[] = MODES.map((m) => m.mode);
-const MODE_BY_KEY: Record<SidebarMode, ModeDef> = Object.fromEntries(
-  MODES.map((m) => [m.mode, m]),
-) as Record<SidebarMode, ModeDef>;
+// Stable empty default so a caller that passes no plugin sections doesn't
+// churn the memo on every render.
+const EMPTY_SECTIONS: SectionPlugin[] = [];
+
+/** Core sections plus every enabled plugin section, as switcher definitions. */
+function useModeDefs(pluginSections: SectionPlugin[]): ModeDef[] {
+  return useMemo(
+    () => [
+      ...CORE_MODES,
+      ...pluginSections.map((s) => ({ mode: s.id, label: s.label, Icon: s.icon })),
+    ],
+    [pluginSections],
+  );
+}
 
 
 // Vertical section rail contents: Home, the ⌘K search launcher, a separator,
@@ -866,7 +893,6 @@ function SectionRailButtons({
   onNew,
   unreadByMode,
   liveEnabled = true,
-  kanbanEnabled = false,
   orderedModes,
   onReorder,
   showNew = true,
@@ -880,15 +906,14 @@ function SectionRailButtons({
   onNew: () => void;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
-  kanbanEnabled?: boolean;
   orderedModes: ModeDef[];
   onReorder: (dragged: SidebarMode, target: SidebarMode, side: DropSide) => void;
   showNew?: boolean;
   labelOnHover?: boolean;
 }) {
-  const modes = orderedModes.filter(
-    (m) => (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
-  );
+  // Plugin sections arrive pre-filtered (only installed *and* enabled ones are
+  // passed in), so Live is the only conditional core section left.
+  const modes = orderedModes.filter((m) => m.mode !== "live" || liveEnabled);
   const [dragMode, setDragMode] = useState<SidebarMode | null>(null);
   const [over, setOver] = useState<{ mode: SidebarMode; side: DropSide } | null>(null);
   // Hover label rendered as a flush continuation of the icon: same section
@@ -941,7 +966,7 @@ function SectionRailButtons({
           <button
             key={m.mode}
             draggable
-            className={`group relative p-2 rounded ${labelOnHover ? "hover:rounded-r-none" : ""} ${isActive ? SECTION_COLORS[m.mode].activeTab : SECTION_COLORS[m.mode].hoverTab} ${isDragging ? "opacity-40" : ""}`}
+            className={`group relative p-2 rounded ${labelOnHover ? "hover:rounded-r-none" : ""} ${isActive ? sectionColor(m.mode).activeTab : sectionColor(m.mode).hoverTab} ${isDragging ? "opacity-40" : ""}`}
             aria-label={m.label}
             data-tooltip={labelOnHover ? undefined : m.label}
             onClick={() => onModeChange(m.mode)}
@@ -976,11 +1001,11 @@ function SectionRailButtons({
             )}
             <m.Icon size={18} />
             <ModeUnreadDot count={unreadByMode?.[m.mode] ?? 0} />
-            {flyout(m.label, SECTION_COLORS[m.mode].icon)}
+            {flyout(m.label, sectionColor(m.mode).icon)}
           </button>
         );
       })}
-      {showNew && mode !== "kanban" && (
+      {showNew && supportsNew(mode) && (
         <>
           <div className="my-1 h-px w-6 bg-border" />
           <button
@@ -1012,7 +1037,7 @@ export function SectionRail({
   onNew,
   unreadByMode,
   liveEnabled = true,
-  kanbanEnabled = false,
+  pluginSections = EMPTY_SECTIONS,
 }: {
   mode: SidebarMode;
   atHome?: boolean;
@@ -1022,10 +1047,18 @@ export function SectionRail({
   onNew: () => void;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
-  kanbanEnabled?: boolean;
+  pluginSections?: SectionPlugin[];
 }) {
-  const { order, reorder } = useSectionOrder(ALL_MODES);
-  const orderedModes = useMemo(() => order.map((key) => MODE_BY_KEY[key]), [order]);
+  const modeDefs = useModeDefs(pluginSections);
+  const allModes = useMemo(() => modeDefs.map((m) => m.mode), [modeDefs]);
+  const { order, reorder } = useSectionOrder(allModes);
+  const orderedModes = useMemo(() => {
+    const byKey = new Map(modeDefs.map((m) => [m.mode, m]));
+    return order.flatMap((key) => {
+      const def = byKey.get(key);
+      return def ? [def] : [];
+    });
+  }, [order, modeDefs]);
   return (
     <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
       <SectionRailButtons
@@ -1037,7 +1070,6 @@ export function SectionRail({
         onNew={onNew}
         unreadByMode={unreadByMode}
         liveEnabled={liveEnabled}
-        kanbanEnabled={kanbanEnabled}
         orderedModes={orderedModes}
         onReorder={reorder}
         showNew={false}
@@ -1057,7 +1089,6 @@ function ModeSwitcher({
   atHome = false,
   unreadByMode,
   liveEnabled = true,
-  kanbanEnabled = false,
   onOpenPalette,
   orderedModes,
   onReorder,
@@ -1067,18 +1098,13 @@ function ModeSwitcher({
   atHome?: boolean;
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
-  kanbanEnabled?: boolean;
   onOpenPalette?: () => void;
   orderedModes: ModeDef[];
   onReorder: (dragged: SidebarMode, target: SidebarMode, side: DropSide) => void;
 }) {
   const modes = useMemo(
-    () =>
-      orderedModes.filter(
-        (m) =>
-          (m.mode !== "live" || liveEnabled) && (m.mode !== "kanban" || kanbanEnabled),
-      ),
-    [orderedModes, liveEnabled, kanbanEnabled],
+    () => orderedModes.filter((m) => m.mode !== "live" || liveEnabled),
+    [orderedModes, liveEnabled],
   );
   const [dragMode, setDragMode] = useState<SidebarMode | null>(null);
   const [over, setOver] = useState<{ mode: SidebarMode; side: DropSide } | null>(null);
@@ -1216,8 +1242,8 @@ function ModeSwitcher({
               draggable
               className={`relative flex shrink-0 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm ${
                 isActive
-                  ? SECTION_COLORS[m.mode].activeTab
-                  : `text-muted ${SECTION_COLORS[m.mode].hoverTab}`
+                  ? sectionColor(m.mode).activeTab
+                  : `text-muted ${sectionColor(m.mode).hoverTab}`
               } ${isDragging ? "opacity-40" : ""}`}
               onClick={() => onModeChange(m.mode)}
               onDragStart={(e) => {

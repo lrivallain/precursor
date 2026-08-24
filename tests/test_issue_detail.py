@@ -1,7 +1,8 @@
-"""GitHub issue-detail endpoint tests (kanban card preview).
+"""GitHub issue-detail endpoint tests.
 
-The GitHub REST calls are mocked; these tests cover response shaping and the
-linked-topic resolution used by the kanban preview modal.
+The GitHub REST calls are mocked; these cover response shaping and the
+linked-topic resolution (consumed by, among others, the kanban plugin's card
+preview).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
 from precursor.backend.routers import github as github_router
+from precursor.backend.services import github_context
 
 
 class _FakeClient:
@@ -76,8 +78,9 @@ def _mock_github(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(github_router, "GitHubClient", _FakeClient)
     monkeypatch.setattr(github_router, "resolve_global_github_repo", _repo)
-    monkeypatch.setattr(github_router, "resolve_issue_associations_enabled", _enabled)
-    monkeypatch.setattr(github_router, "resolve_github_token", _token)
+    monkeypatch.setattr(github_context, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(github_context, "resolve_issue_associations_enabled", _enabled)
+    monkeypatch.setattr(github_context, "resolve_github_token", _token)
 
 
 def test_issue_detail_shape(_mock_github: None) -> None:

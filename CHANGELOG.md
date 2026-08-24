@@ -11,6 +11,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **The Kanban board is now a plugin, and the plugin system is real.** The
+  GitHub Projects v2 board left core and became `precursor-kanban`, a separate
+  distribution under `plugins/precursor-kanban/` with its own routes, schemas,
+  client and tests — the first thing to actually exercise the extension contract
+  rather than merely describe it. It stays in the recommended install through a
+  new `kanban` extra (`uvx "precursor-ai[kanban]"`); a plain `pip install
+  precursor-ai` now gets a core with no board, no `/api/github/projects`
+  endpoints and no sidebar entry.
+
+  Making that possible meant giving plugins something to attach to. Core gained
+  `precursor.plugin_api` — a curated, versioned import surface (registry,
+  database sessions, settings, the GitHub client and the shared repo/token
+  guards) so a plugin never reaches into `precursor.backend.*`. The registry
+  gained **sections**: `registry.add_section(...)` contributes a whole
+  application surface — a sidebar rail entry, a home card, a command-palette
+  entry and a top-level route — which the SPA resolves to a React registration
+  by id. A section owns everything under its route (core hands over the URL
+  segments and hash as opaque values) and can gate itself on app state, so
+  kanban still hides itself when no GitHub repo is configured. Nothing in core
+  names the board any more: `Sidebar`, `HomePage`, the command palette, the
+  router and the section palette all iterate whatever plugins are installed.
+
+  Two host bugs fell out of doing it for real: plugin routers were mounted in
+  the FastAPI lifespan, i.e. *after* the SPA catch-all, so every plugin endpoint
+  silently served `index.html`; and `discover()` re-ran each plugin's `register`
+  per app instance, duplicating its routers and its `/api/plugins` descriptors.
+  Discovery now happens while the app is being built, and once per process.
+
 - **A topic's collection is now part of its URL, and every topic has a
   permalink.** The readable address gained the collection slug —
   `/topics/client-a/csu/capacity-review` — so a bookmark or a shared link lands

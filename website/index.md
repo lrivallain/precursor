@@ -74,7 +74,8 @@ features:
     title: Kanban board
     details: >-
       Track the GitHub issues linked to your topics on a board that spans your
-      projects — a bird's-eye view of work in flight.
+      projects — a bird's-eye view of work in flight. Ships as the first
+      official plugin, so you can install it or leave it out.
     link: /features/kanban
     linkText: About the board
   - icon: 🔌

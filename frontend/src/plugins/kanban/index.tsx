@@ -1,0 +1,99 @@
+/**
+ * Kanban — the frontend half of the `precursor-kanban` plugin.
+ *
+ * The section only appears when the Python package is installed (it publishes
+ * the matching `section` descriptor at `/api/plugins`) *and* a GitHub repo is
+ * configured. Everything the section needs — palette, icon, routing, state,
+ * HTTP client — lives in this folder; core knows it only through the contract
+ * in `lib/plugins.ts`.
+ */
+
+import { SquareKanban } from "lucide-react";
+import { registerSection } from "../../lib/plugins";
+import type { SectionHost } from "../../lib/plugins";
+import { EmptyHero } from "../../components/EmptyHero";
+import { KanbanBoard } from "./KanbanBoard";
+import { KanbanProvider, useKanban } from "./KanbanContext";
+import { ProjectList } from "./ProjectList";
+
+/** Must match `precursor_kanban.plugin.SECTION_ID`. */
+export const KANBAN_SECTION_ID = "kanban";
+
+function KanbanSidebar() {
+  const { projects, activeProjectId, error, selectProject } = useKanban();
+  return (
+    <ProjectList
+      projects={projects}
+      activeId={activeProjectId}
+      error={error}
+      onSelect={selectProject}
+    />
+  );
+}
+
+function KanbanMain() {
+  const {
+    projects,
+    error,
+    activeProjectId,
+    selectedNumber,
+    setSelectedNumber,
+    fallbackRepo,
+    openTopic,
+  } = useKanban();
+
+  if (projects === null) return <EmptyHero label="Loading projects…" />;
+  if (error) return <EmptyHero label={error} />;
+  if (activeProjectId) {
+    return (
+      <KanbanBoard
+        key={activeProjectId}
+        projectId={activeProjectId}
+        fallbackRepo={fallbackRepo}
+        selectedNumber={selectedNumber}
+        onSelectedNumberChange={setSelectedNumber}
+        onOpenTopic={openTopic}
+      />
+    );
+  }
+  if (projects.length === 0) {
+    return <EmptyHero label="No GitHub projects found for this repository." />;
+  }
+  return <EmptyHero label="Select a project to view its board." />;
+}
+
+function KanbanTitle() {
+  const { projects, activeProjectId } = useKanban();
+  return <>{projects?.find((p) => p.id === activeProjectId)?.title ?? "Kanban"}</>;
+}
+
+registerSection({
+  id: KANBAN_SECTION_ID,
+  label: "Kanban",
+  icon: SquareKanban,
+  description: "Track linked issues on a board across your projects.",
+  openLabel: "Open board",
+  keywords: "kanban board issues tracking projects",
+  colors: {
+    icon: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
+    activeCard: "border-cyan-500/60 bg-cyan-500/10",
+    hoverCard: "hover:border-cyan-500/50 hover:bg-cyan-500/5",
+    primaryBtn:
+      "bg-cyan-500/15 text-cyan-700 hover:bg-cyan-500/25 dark:text-cyan-300 border border-cyan-500/30",
+    accentText: "text-cyan-600 dark:text-cyan-400",
+    activeTab: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
+    hoverTab: "hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400",
+  },
+  accent: { light: "#0891b2", dark: "#22d3ee" },
+  // The board reads GitHub Projects v2 through the issue surface, so it needs
+  // both a configured repo and issue associations turned on.
+  isEnabled: ({ settings }) =>
+    (settings?.issue_associations_enabled ?? true) &&
+    (settings?.github_repo ?? "").trim().length > 0,
+  Provider: ({ host, children }: { host: SectionHost; children: React.ReactNode }) => (
+    <KanbanProvider host={host}>{children}</KanbanProvider>
+  ),
+  Sidebar: KanbanSidebar,
+  Main: KanbanMain,
+  Title: KanbanTitle,
+});

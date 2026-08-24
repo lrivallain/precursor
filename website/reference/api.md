@@ -61,7 +61,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `llm` | The provider catalogue and the models the active provider offers. |
 | `me` | The connected GitHub identity for the sidebar persona, plus `GET /api/me/copilot` for Copilot AI-credit usage (both degrade to `null` when no token is configured). |
 | `github` | Issue/label/comment operations behind topic linking. |
-| `github/projects` | GitHub Projects v2 columns and cards behind the [Kanban board](/features/kanban). |
+| `github/projects` | GitHub Projects v2 columns and cards behind the [Kanban board](/features/kanban). Contributed by the `precursor-kanban` [plugin](/features/plugins) — absent when it isn't installed. |
 | `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. `GET /api/mcp/auth/diagnostics` returns the [WorkIQ sign-in trace](/features/mcp#when-a-sign-in-prompt-needs-explaining) — settings in force, a per-credential fact sheet (token/refresh-token presence, expiry, idle time, state) and the recent auth-episode records. Token values never leave the process. |
 | `skills` / `memories` | Skill enablement and long-term memory. |
 | `roles` | Assistant [roles](/features/skills-memory) (persona presets). |
