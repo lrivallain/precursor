@@ -27,8 +27,9 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   largest object in a busy install. Two independent levers now govern it —
   `agent_event_retention_days` (default 30) prunes by age, and
   `agent_event_max_per_session` (default 2000) caps how many events any one
-  agent keeps, newest first. Both are in **Settings → System → Storage /
-  retention** and either can be disabled with `0`. Agent traffic is bursty
+  agent keeps, newest first. Both are in **Settings → Agents → Timeline
+  retention** — next to the feature they govern, the same way Live owns its
+  transcript window — and either can be disabled with `0`. Agent traffic is bursty
   rather than aged, so the per-session cap is what actually bounds a single long
   autonomous run; the window alone wouldn't reach it for weeks. An agent keeps
   its result, artifacts, state and posted messages either way, and a **running**

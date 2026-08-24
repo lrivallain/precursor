@@ -102,8 +102,8 @@ env-level.
 | --- | --- | --- | --- |
 | `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder. |
 | `live_transcript_retention_days` | `7` | Settings → Live | Days after a [Live session](/features/live-sessions#transcript-retention) ends before its transcript segments are deleted. `0` keeps them forever. Insights, notes and summary are preserved. |
-| `agent_event_retention_days` | `30` | Settings → System | Days before an agent's archived timeline events are deleted. `0` keeps them forever. A *running* agent is never pruned, and every agent keeps its result, artifacts and messages. |
-| `agent_event_max_per_session` | `2000` | Settings → System | Hard ceiling on archived events per agent — only the newest are kept. `0` is unlimited. |
+| `agent_event_retention_days` | `30` | Settings → Agents | Days before an agent's archived timeline events are deleted. `0` keeps them forever. A *running* agent is never pruned, and every agent keeps its result, artifacts and messages. |
+| `agent_event_max_per_session` | `2000` | Settings → Agents | Hard ceiling on archived events per agent — only the newest are kept. `0` is unlimited. |
 
 Two levers govern agent timelines because agent traffic is **bursty rather than
 aged**: one long autonomous session can add tens of MB in a day, which a time

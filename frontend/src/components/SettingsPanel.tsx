@@ -70,8 +70,6 @@ interface SystemSettings {
   llm_max_tool_result_tokens: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
-  agent_event_retention_days: number;
-  agent_event_max_per_session: number;
   cmd_runner_jail: boolean;
   cmd_runner_image: string;
   cmd_runner_network: boolean;
@@ -88,8 +86,6 @@ function pickSystem(s: Settings): SystemSettings {
     llm_max_tool_result_tokens: s.llm_max_tool_result_tokens,
     scheduled_run_timeout_seconds: s.scheduled_run_timeout_seconds,
     tool_result_retention_days: s.tool_result_retention_days,
-    agent_event_retention_days: s.agent_event_retention_days,
-    agent_event_max_per_session: s.agent_event_max_per_session,
     cmd_runner_jail: s.cmd_runner_jail,
     cmd_runner_image: s.cmd_runner_image,
     cmd_runner_network: s.cmd_runner_network,
@@ -1553,19 +1549,11 @@ function SystemTab({
           max: 3650,
           help: "How long full tool outputs are kept before their content is replaced with a short placeholder to save space. 0 = keep forever.",
         })}
-        {numField("Agent timeline retention (days)", "agent_event_retention_days", {
-          min: 0,
-          max: 3650,
-          help: "How long the archived event trace of an agent is kept. Agents keep their result, artifacts and messages either way, and a running agent is never pruned. 0 = keep forever.",
-        })}
-        {numField("Agent timeline events per agent", "agent_event_max_per_session", {
-          min: 0,
-          max: 1000000,
-          help: "Hard ceiling on archived events per agent — only the newest are kept. Agent traffic is bursty, so this is what bounds a single long autonomous run that the retention window above wouldn't reach for weeks. 0 = unlimited.",
-        })}
         <p className="text-[11px] text-muted">
-          Settings → Usage stats shows what each sweep would free, runs one on
-          demand, and compacts the database afterwards.
+          Feature-specific retention lives with its feature: agent timelines
+          under <span className="font-medium">Agents</span>, meeting transcripts
+          under <span className="font-medium">Live</span>. Usage stats shows what
+          every sweep would free, runs one on demand, and compacts the database.
         </p>
       </section>
 

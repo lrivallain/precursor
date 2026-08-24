@@ -51,6 +51,11 @@ touch any of it for weeks. So `agent_event_retention_days` prunes by age, and
 `agent_event_max_per_session` caps how many events any one agent may keep,
 newest first. Either can be disabled with `0`; they compose.
 
+Both live under **Settings → Agents → Timeline retention**, next to the feature
+they govern — the same way Live owns its transcript window. They stay readable
+when Agents mode is off, because the archived events outlive the toggle and the
+sweep keeps running.
+
 ## The cleanup cockpit
 
 Retention on a daily cadence is the right default, but a poor answer to "my
