@@ -36,6 +36,10 @@ format the selected text in place.
 Topics form a **self-referencing tree**: nest a topic under a parent to group
 related threads.
 
+Over [MCP](/features/mcp), a topic's place in that tree comes back already
+resolved as a `path` (`csu/cto/capacity-review`), so an external agent never has
+to follow `parent_id` upward to reconstruct it.
+
 Right-click a topic in the left sidebar to rename it, mark it read or unread,
 pin or unpin it, set a reminder, open `/notes`, move it to another
 [collection](/features/collections), or archive it without first opening the

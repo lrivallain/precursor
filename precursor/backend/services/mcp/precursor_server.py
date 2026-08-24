@@ -172,14 +172,20 @@ async def _section_enabled(section: str) -> bool:
     return bool(expose.get(section))
 
 
-def _topic_dict(t: Topic, collection_names: dict[int, str] | None = None) -> dict[str, Any]:
+def _topic_dict(
+    t: Topic,
+    collection_names: dict[int, str] | None = None,
+    topic_paths: dict[int, str] | None = None,
+) -> dict[str, Any]:
     names = collection_names or {}
+    paths = topic_paths or {}
     return {
         "id": t.id,
         "slug": t.slug,
         "title": t.title,
         "kind": t.kind,
         "description": t.description,
+        "path": paths.get(t.id) or t.slug,
         "parent_id": t.parent_id,
         "collection_id": t.collection_id,
         "collection": names.get(t.collection_id) if t.collection_id is not None else None,
@@ -193,6 +199,37 @@ def _topic_dict(t: Topic, collection_names: dict[int, str] | None = None) -> dic
 async def _collection_names(session: AsyncSession) -> dict[int, str]:
     rows = await session.execute(select(Collection.id, Collection.name))
     return {cid: name for cid, name in rows.all()}
+
+
+async def _topic_paths(session: AsyncSession) -> dict[int, str]:
+    """Root-first slug path (``parent/child``) for every topic, keyed by id.
+
+    Resolved from a single index load rather than a chain walk per topic, so a
+    200-topic ``list_topics`` stays one query instead of 200 — the same trick as
+    :func:`_collection_names`. Callers used to rebuild this by re-fetching each
+    ancestor over MCP.
+    """
+    rows = (await session.execute(select(Topic.id, Topic.slug, Topic.parent_id))).all()
+    index: dict[int, tuple[str, int | None]] = {
+        tid: (slug, parent_id) for tid, slug, parent_id in rows
+    }
+    paths: dict[int, str] = {}
+    for tid in index:
+        chain: list[str] = []
+        # A self-parenting or cyclic row must terminate, not spin forever.
+        seen: set[int] = set()
+        current: int | None = tid
+        while current is not None and current not in seen:
+            seen.add(current)
+            entry = index.get(current)
+            if entry is None:
+                break
+            slug, parent_id = entry
+            chain.append(slug)
+            current = parent_id
+        chain.reverse()
+        paths[tid] = "/".join(chain)
+    return paths
 
 
 def _message_dict(m: Message) -> dict[str, Any]:
@@ -320,7 +357,9 @@ async def list_topics(
 
     ``q`` matches the title (case-insensitive). Archived topics are excluded
     unless ``include_archived`` is true. ``collection`` restricts results to a
-    single collection, matched on its name or slug (case-insensitive).
+    single collection, matched on its name or slug (case-insensitive). Each
+    topic carries its resolved ``path`` — ancestor slugs joined root-first —
+    so there's no need to walk ``parent_id`` yourself.
     """
     if not await _section_enabled("topics"):
         return {"error": _GATED.format(section="topics")}
@@ -351,12 +390,18 @@ async def list_topics(
             stmt = stmt.where(Topic.collection_id == match.id)
         rows = (await session.execute(stmt)).scalars().all()
         names = await _collection_names(session)
-    return {"topics": [_topic_dict(t, names) for t in rows], "count": len(rows)}
+        paths = await _topic_paths(session)
+    return {"topics": [_topic_dict(t, names, paths) for t in rows], "count": len(rows)}
 
 
 @mcp.tool()
 async def get_topic(topic_id: int) -> dict[str, Any]:
-    """Get a single topic's metadata by id. Use ``list_messages`` for its turns."""
+    """Get a single topic's metadata by id. Use ``list_messages`` for its turns.
+
+    ``path`` is the topic's resolved slug path (ancestor slugs joined root-first
+    with ``/``, ending in its own slug), so callers don't have to follow
+    ``parent_id`` upward to build one.
+    """
     if not await _section_enabled("topics"):
         return {"error": _GATED.format(section="topics")}
     async with SessionLocal() as session:
@@ -364,7 +409,8 @@ async def get_topic(topic_id: int) -> dict[str, Any]:
         if topic is None:
             return {"error": f"Topic {topic_id} not found"}
         names = await _collection_names(session)
-    return _topic_dict(topic, names)
+        paths = await _topic_paths(session)
+    return _topic_dict(topic, names, paths)
 
 
 # --------------------------------------------------------------------------
@@ -609,6 +655,9 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
     Topic hits are always searched. Chat, agent and live hits are only included
     when their own capability section (``chats`` / ``agents`` / ``live``) is also
     exposed, since their snippets disclose that content.
+
+    Topic hits also carry the topic's resolved slug ``path`` (ancestor slugs
+    joined root-first), so a caller never has to walk ``parent_id``.
     """
     if not await _section_enabled("search"):
         return {"error": _GATED.format(section="search")}
@@ -626,9 +675,15 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
 
     async with SessionLocal() as session:
         response = await run_search(session, query, limit)
+        topic_paths: dict[int, str] = {}
+        if any(r.section == "topics" for r in response.results):
+            topic_paths = await _topic_paths(session)
 
-    results = [
-        {
+    results = []
+    for r in response.results:
+        if r.section not in allowed:
+            continue
+        hit: dict[str, Any] = {
             "section": r.section,
             "field": r.field,
             "is_title": r.is_title,
@@ -640,9 +695,9 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
             "updated_at": _iso(r.updated_at),
             "accessor": _ACCESSOR_BY_SECTION.get(r.section),
         }
-        for r in response.results
-        if r.section in allowed
-    ]
+        if r.section == "topics":
+            hit["path"] = topic_paths.get(r.entity_id) or r.ref
+        results.append(hit)
     return {"query": query, "results": results, "count": len(results)}
 
 

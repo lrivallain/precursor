@@ -11,6 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
+  `list_topics` and the topic hits from `search` include the topic's ancestor
+  slugs joined root-first (`csu/cto/capacity-uat-interim-pierre`), so a caller
+  no longer has to re-fetch every parent to rebuild it. A workflow step that
+  matched meetings to topics was spending half its MCP calls — 7 `get_topic`s
+  against 7 real `search`es — climbing `parent_id` by hand, with a depth guard
+  and a cycle guard in its prompt. Paths resolve from a single `(id, slug,
+  parent_id)` index load, so a 200-topic response is still one extra query, not
+  200 chain walks, and a cyclic parent link terminates instead of hanging.
+
 - **`append_note` — file text into a topic without paying for a turn.** The
   built-in `precursor` MCP server gains an `append_note(topic_id, text)` tool
   under a new **Append notes** capability toggle. It persists the text verbatim

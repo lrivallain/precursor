@@ -443,6 +443,14 @@ a topic, chat, agent task or meeting by content and then follow the hit's
 matching record. Chat/agent/live hits (and their accessor tools) only appear when
 their own section is exposed, since their snippets disclose that content.
 
+**Topics come back with their tree position resolved.** Every topic payload —
+from `get_topic`, `list_topics`, and the topic hits in `search` — carries a
+`path`: the ancestor slugs joined root-first with `/`, ending in the topic's own
+slug (a root topic's path is just its slug). Callers used to rebuild that by
+re-fetching each parent, which turned a single lookup into a chain of
+`get_topic` round trips; the server resolves the whole tree in one query
+instead.
+
 Every tool is gated by a per-section **`mcp_expose`** toggle — **off by default**,
 because exposing conversation history outbound is opt-in.
 
