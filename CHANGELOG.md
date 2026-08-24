@@ -91,6 +91,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   per app instance, duplicating its routers and its `/api/plugins` descriptors.
   Discovery now happens while the app is being built, once per process.
 
+- **The agent dashboard gained a name filter.** A search box in the fleet header
+  narrows the board to agents whose title matches what you type, stacking on top
+  of the KPI tile filters (so you can search *within* "Needs you"). The
+  "filtered to…" chip names both the active lane and the search term, and clears
+  them together.
+
 - **A topic's collection is now part of its URL, and every topic has a
   permalink.** The readable address gained the collection slug —
   `/topics/client-a/csu/capacity-review` — so a bookmark or a shared link lands
@@ -124,14 +130,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   memory and served alongside the state that explains them: settings in force,
   then per credential whether a token is stored, whether it has a **refresh
   token** at all, when it expires, how long it's been idle, and whether connects
-  are being fast-failed. `window.precursorWorkiqAuthReport()` merges it with the
-  browser-side trace, so one call yields both halves ready to paste into an
-  issue. Episode records are buffered apart from the keep-alive's ambient
-  heartbeat — otherwise a credential that lapsed overnight would have been pushed
-  out by a thousand once-a-minute "nothing to do" ticks before anyone looked —
-  and the ticker now reports a verdict only when it changes. Token values never
-  leave the process; secrets and account names are reduced to
-  `<present:N chars>`.
+  are being fast-failed. `await precursorWorkiqAuthReport()` in the console
+  merges it with the browser-side trace and puts the result on your clipboard,
+  ready to paste into an issue. Episode records are buffered apart from the
+  keep-alive's ambient heartbeat — otherwise a credential that lapsed overnight
+  would have been pushed out by a thousand once-a-minute "nothing to do" ticks
+  before anyone looked — and the ticker now reports a verdict only when it
+  changes. Token values never leave the process; secrets and account names are
+  reduced to `<present:N chars>`, and Agent 365's ~37-entry scope list is
+  summarized to a count plus whether `offline_access` is in it.
 
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor
@@ -428,6 +435,39 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **An agent no longer forgets what it is halfway through a conversation.** Its
+  instructions (`task_prompt`) are delivered once, as the first message of the
+  SDK conversation, so they survive only as long as that conversation does. The
+  runtime deliberately tears the session down and rebuilds it on an expiring
+  OAuth bearer, a changed MCP catalogue or a recovered sign-in — and that rebuild
+  is meant to be invisible, resuming the same conversation via
+  `copilot_session_id`. Except the handle was read off the session object
+  (`getattr(sdk_session, "id"…)`), and `CopilotSession` exposes no such
+  attribute: it resolved to `None` every time, so no run ever stored one. The
+  rebuild therefore passed no `session_id` and opened an *empty* conversation,
+  silently discarding the task prompt and the entire history. Symptom: an agent
+  answers its first turn perfectly, then replies to the next message as though it
+  had never been briefed — the telltale being a `session.start` event appearing
+  mid-thread, right before a user message. It bit conversational agents hardest,
+  because a WorkIQ credential refreshing between turns is enough to trigger it.
+  The handle is now captured from the `SessionStartData` event, which is the only
+  place the SDK publishes it, and never overwritten once set.
+
+
+  startup but not their expiry, and its `is_token_valid()` treats an unknown
+  expiry as valid — so a credential read back from the database always looked
+  fresh, the silent-refresh branch that check guards was never entered, and the
+  401 that eventually followed escalated straight to a full browser grant, which
+  never attempts a refresh either. The refresh token was dead weight, and every
+  access-token expiry became an interactive sign-in. The trace added above is
+  what caught it: over 401 recorded events, **58 escalations to a full
+  authorization and zero refresh attempts**, against credentials that held a
+  refresh token throughout. Precursor already records when each token was issued,
+  so it now restores the real expiry (less a minute of skew) as the credential
+  loads, and the SDK's own refresh path works as designed. A legacy token with no
+  recorded issue time is still assumed valid rather than forced through a sign-in
+  that may not be needed.
+
 - **Startup migrations no longer silence the app's own logs.** `init_db` runs
   `alembic upgrade head` on every boot, and Alembic's `env.py` applied
   `alembic.ini`'s logging with `fileConfig`'s default
@@ -448,7 +488,95 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   whenever a hands-free pass doesn't complete, at a cost of at most one doomed
   refresh later. An explicit **Sign in** still clears outright.
 
+### Removed
+
+- **The GitHub Models provider, and the retirement machinery built around it.**
+  When GitHub shut the service down the provider was kept behind a generic
+  `retired` flag so anyone still pointed at it got an explanation rather than a
+  raw `410 Gone`. The provider saw little use, and keeping a whole mechanism
+  alive to describe something that no longer exists costs more than it returns.
+  Gone: `GitHubModelsProvider`, its `ProviderSpec` entry, the `retired` field on
+  the spec/schema/TS types, the picker filtering and the 502 in the catalog
+  route, and the *(retired)* labelling in Settings.
+
+  A migration repoints any install still set to `github_models` at **GitHub
+  Copilot**, which authenticates with the same GitHub token — without it, an
+  unknown provider id resolves to no spec and falls back to the **mock**
+  provider, which would answer with convincing fake replies instead of failing.
+
 ### Changed
+
+- **The reference section was audited against the code.** Every documented
+  `PRECURSOR_*` variable was diffed against `config.Settings`, every cited file
+  path and table name checked for existence, every route and SSE event name
+  compared with the live OpenAPI schema, and the plugin contract read back
+  against `plugins/registry.py`. The env surface, the twelve SSE events, the ten
+  built-in MCP servers and the dependency list all matched exactly. Four things
+  did not, and are fixed:
+
+  - the API surface listed a **`schedules`** area as though it were a top-level
+    router, when recurrence is a sub-resource of the thing being scheduled
+    (`/api/topics/{id}/schedule`, `/api/agents/{id}/schedule`);
+  - the **`drawio`** router was undocumented;
+  - **`GET /raw/{slug}/{path}`** — read-only, unauthenticated, and the one route
+    outside `/api/*` — was missing from a page that states the API lives under
+    `/api/*`;
+  - the architecture reference's database highlights omitted **`AgentState`** and
+    **`WorkflowState`**, the two durable stores that survive a re-run, even
+    though both have their own feature pages.
+
+  The configuration reference's opening also claimed a Settings-backed value has
+  *no* environment twin, full stop; there are two justified exceptions, which the
+  page already documented at its foot, so the claim now points at them.
+
+- **The agents guide is five pages instead of one long scroll.** It was the
+  longest page in the docs — enabling, the dashboard, fleet orchestration,
+  artifacts, durable state, autonomous missions, approvals and scheduling in a
+  single column. It now follows the same shape as the workflows guide: an
+  **overview** (what agents are, enabling, the dashboard) plus **Running an
+  agent**, **Orchestrating a fleet**, **Artifacts & state** and **Autonomous
+  missions**. The `/features/agents-mode` URL is unchanged, and the eight
+  in-page anchors other pages deep-link to were repointed at the section that
+  now owns each one.
+
+- **Workflows are no longer flagged as work in progress.** The overview carried a
+  warning that the surface was "still evolving — expect the UI and controls to
+  keep changing", which undersold a feature that now has gates, loop-back, human
+  approval checkpoints, pipeline state, per-step tool allowlists, run replay and
+  a stall watchdog. The notice is gone; the *Experimental* marker on autonomous
+  agent missions and the plugin system's "not yet tested" warning are unaffected.
+
+
+- **The quick start covers every section, not just topics.** It walked you from
+  install to a first topic-scoped conversation and stopped, so the five sections
+  that need a first step of their own — and in three cases a prerequisite — were
+  left to the feature guides. It now adds *Start with the other sections* with a
+  sub-section each for **Agents**, **Live sessions**, **Workflows**, **Kanban**
+  and **Files**, leading with the prerequisite that actually blocks you (the
+  `agents` extra, Azure Speech credentials, a global repo plus `read:project`).
+
+  Writing it turned up two docs bugs, now fixed: workflows were described as
+  independently "opt-in and off by default" when they're gated on the **Agents**
+  toggle with no switch of their own, and a "local" workspace was described as
+  pointing at files already on disk when it in fact **creates an empty folder**.
+
+- **The docs are a third shorter, and no longer describe a topics-only app.** The
+  guides had accreted detail that churns faster than anyone can maintain it — UI
+  chrome ("cards lift on hover", "a warm gradient wash"), implementation internals
+  (`IssueContextCache`, table names, `services/*.py` paths), and design rationale
+  that belonged in a changelog rather than a guide. `features/mcp.md` spent ~180
+  lines on WorkIQ OAuth internals — loopback port numbers, `prompt=none` iframes,
+  orphaned-flow preemption — none of which a reader can act on; it is now one
+  section that says sign-in renews itself and points at the config flags. Every
+  page keeps what it is, why you'd use it, how to do the thing, and the gotcha
+  that bites.
+
+  The narrative was also stale: the introduction opened "Precursor is an AI
+  assistant that keeps each thread of work in its own **topic**" and relegated
+  meetings, agents and workflows to what it "layers around that core" — framing
+  from when topics were the only feature. Precursor is now described as several
+  surfaces sharing one set of tools, personas and memory.
+
 
 - **The agents feature page is `agents-mode.md`.** On macOS and Windows the
   filesystem is case-insensitive, so `website/features/agents.md` *is*
@@ -597,6 +725,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the step's own server allowlist. A step scoped to, say, `workiq` was handed an
   index it had no tool to read, and spent a turn explaining it couldn't comply.
   The block now follows the same predicate the attach path uses.
+- **The workflows guide no longer documents a feature that never shipped.** Its
+  overview compared workflows to agent `depends-on` links "agents can already
+  declare" — but the per-agent dependency table (`agent_deps`) was dropped in the
+  same commit that introduced Workflows, so no such link has ever existed for
+  users. The section is now *What the workflow owns*, stating plainly that agents
+  can't trigger each other and that all chaining lives on the workflow.
 - **A failed turn no longer reads as a success.** Stream errors are persisted as
   system messages, and *every* system message rendered as a green check-marked
   acknowledgement — so "The model provider rejected the request" looked exactly

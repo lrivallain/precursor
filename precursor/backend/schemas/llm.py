@@ -29,4 +29,3 @@ class ProviderRead(BaseModel):
     uses_github_token: bool = False
     discovers_models: bool = True
     # Non-empty => upstream is gone; the text explains what to use instead.
-    retired: str = ""

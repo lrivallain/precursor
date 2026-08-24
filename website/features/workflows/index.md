@@ -9,13 +9,8 @@ reusable, named pipeline that runs in the **background** — `research → draft
 review` — where the *workflow* owns the sequencing, not the agents. Each step is
 just an existing agent (or one you create as you build), so agents stay reusable
 on their own while the workflow coordinates the hand-off, lifecycle, and schedule.
-Like agents, it's **opt-in and off by default**.
-
-::: warning Work in progress
-Workflows are a new orchestration layer built on top of agents mode. The linear
-`step → step` pipeline is solid, but the surface is still evolving — expect the
-UI and controls to keep changing.
-:::
+Workflows ride on the [Agents](/features/agents-mode) opt-in — there's no
+separate switch, so enabling agents is what turns them on.
 
 <Screenshot src="/screenshots/workflows.png" alt="A workflow board showing a five-step pipeline: two task steps, a gate, a human approval checkpoint and an inline publish step, above a completed run header" caption="A pipeline's detail board — the run header, then the step strip carrying all four step kinds." />
 
@@ -28,18 +23,16 @@ UI and controls to keep changing.
 | **[Running a pipeline](/features/workflows/running)** | Triggers, the run brief, the run trace, failures, cost, and notifications. |
 | **[Reference](/features/workflows/reference)** | The `/api/workflows` surface and sharing a workflow as YAML. |
 
-## How it differs from agent dependencies
+## What the workflow owns
 
-Agents can already declare `depends-on` links that render a
-[workflow strip](/features/agents-mode). Workflows are the **coordinator-owned**
-alternative:
+An [agent](/features/agents-mode) knows nothing about its neighbours and can't
+trigger another one. **All** the chaining lives on the workflow:
 
 - **Reusable, not baked in.** A workflow references agents by id. The same agent
   can appear in several workflows; the chaining lives on the workflow, so you
   reorder or reuse steps without touching the agents themselves.
 - **One coordinator.** The workflow drives the run — it starts the first step,
   waits for it to rest, feeds its output to the next, and advances down the line.
-  Agents don't trigger each other.
 - **Implicit hand-off.** Each step receives the immediately preceding step's
   **full answer** plus its artifacts as a kickoff preamble, mirroring a pipeline
   stage. You don't have to prompt a step to "use the previous result" — the

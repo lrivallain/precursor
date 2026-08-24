@@ -76,17 +76,8 @@ All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
 
 1. Update **both** the Pydantic schema **and** the TS `types.ts` for any API
    change — they mirror each other.
-2. When models change, generate a migration and review it:
-
-   ```bash
-   make migration m="add foo to chats"   # Alembic autogenerate
-   # review the new file under precursor/backend/alembic/versions/, then commit it
-   make migrate                          # (optional) apply it to your local DB now
-   ```
-
-   Alembic is the single source of truth — `init_db` runs `alembic upgrade head`
-   on startup, so a fresh DB is built from migrations and an existing one is
-   migrated in place. Keep **one migration per change**.
+2. When models change, generate and review a migration — see
+   [database migrations](/contributing/workflow#database-migrations).
 3. Keep the `[Unreleased]` section of `CHANGELOG.md` up to date when the change is
    user-facing.
 

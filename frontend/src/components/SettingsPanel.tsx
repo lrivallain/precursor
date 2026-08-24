@@ -337,7 +337,6 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   }
 
   const activeProviderSpec = providers.find((p) => p.id === provider);
-  const providerRetired = activeProviderSpec?.retired ?? "";
 
   useEffect(() => {
     void (async () => {
@@ -794,7 +793,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   onChange={onProviderChange}
                   options={providers.map((p) => ({
                     value: p.id,
-                    label: p.retired ? `${p.label} (retired)` : p.label,
+                    label: p.label,
                   }))}
                   ariaLabel="LLM provider"
                   fullWidth
@@ -803,13 +802,6 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                 {(() => {
                   const activeSpec = activeProviderSpec;
                   if (!activeSpec) return null;
-                  if (activeSpec.retired) {
-                    return (
-                      <p className="text-[11px] text-amber-500 mt-2">
-                        {activeSpec.retired}
-                      </p>
-                    );
-                  }
                   if (activeSpec.uses_github_token) {
                     return (
                       <p className="text-[11px] text-muted mt-2">
@@ -875,13 +867,11 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                     {modelsLoading ? "Refreshing\u2026" : "Apply & refresh models"}
                   </button>
                   <span className="text-[11px] text-muted">
-                    {providerRetired
-                      ? "No catalog \u2014 this provider is retired."
-                      : modelsError
-                        ? `Catalog unavailable: ${modelsError}.`
-                        : models.length > 0
-                          ? `${models.length} models`
-                          : "No catalog for this provider."}
+                    {modelsError
+                      ? `Catalog unavailable: ${modelsError}.`
+                      : models.length > 0
+                        ? `${models.length} models`
+                        : "No catalog for this provider."}
                   </span>
                 </div>
                 <p className="text-[11px] text-muted mt-2">

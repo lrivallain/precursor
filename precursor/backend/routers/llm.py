@@ -10,30 +10,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.schemas.llm import LLMModelRead, ProviderFieldRead, ProviderRead
-from precursor.backend.services.app_settings import resolve_llm_provider
 from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.registry import PROVIDERS, selectable_providers
+from precursor.backend.services.llm.registry import selectable_providers
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
 logger = logging.getLogger(__name__)
 
 
 @router.get("/providers", response_model=list[ProviderRead])
-async def list_providers(session: AsyncSession = Depends(get_session)) -> list[ProviderRead]:
-    """Return the selectable LLM providers and their config field metadata.
-
-    Retired providers are omitted unless one is the active selection, so a user
-    already pointed at a dead service still sees it (flagged) instead of a
-    picker whose value has vanished.
-    """
-    active = await resolve_llm_provider(session)
+async def list_providers() -> list[ProviderRead]:
+    """Return the selectable LLM providers and their config field metadata."""
     return [
         ProviderRead(
             id=spec.id,
             label=spec.label,
             uses_github_token=spec.uses_github_token,
             discovers_models=spec.discovers_models,
-            retired=spec.retired,
             fields=[
                 ProviderFieldRead(
                     name=f.name,
@@ -46,7 +38,7 @@ async def list_providers(session: AsyncSession = Depends(get_session)) -> list[P
                 for f in spec.fields
             ],
         )
-        for spec in selectable_providers(active)
+        for spec in selectable_providers()
     ]
 
 
@@ -54,14 +46,6 @@ async def list_providers(session: AsyncSession = Depends(get_session)) -> list[P
 async def list_models(
     provider: str | None = None, session: AsyncSession = Depends(get_session)
 ) -> list[LLMModelRead]:
-    # Retired upstreams can't answer; say so plainly instead of letting the
-    # transport error ("Client error '410 Gone' for url …") reach the UI.
-    requested = (
-        provider if provider and provider in PROVIDERS else await resolve_llm_provider(session)
-    )
-    spec = PROVIDERS.get(requested)
-    if spec is not None and spec.retired:
-        raise HTTPException(status_code=502, detail=spec.retired)
     llm = await get_llm_provider(session, override_provider=provider)
     lister = getattr(llm, "list_models", None)
     if lister is None:

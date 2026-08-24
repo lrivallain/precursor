@@ -168,9 +168,6 @@ back to the mock when credentials are missing. Shipped providers:
   flips between `200` and `400 model_not_available_for_integrator`; that one
   code is retried while the stream is being opened (before any token is
   yielded) rather than surfaced as a failure.
-- `GitHubModelsProvider` — **retired**; GitHub shut the service down and its
-  endpoints answer `410 Gone`. Kept so existing installs get an explanation, and
-  hidden from the picker unless it's still the active selection.
 - `AzureFoundryProvider` — Azure OpenAI / AI Foundry deployments via
   `AsyncAzureOpenAI` (endpoint + key + deployment).
 - `OpenAICompatibleProvider` — OpenAI, Mistral, Hugging Face, Ollama, and any

@@ -30,9 +30,9 @@
  * The SPA only sees half the story, though — the legs it *observes* rather than
  * the ones it drives. ``window.precursorWorkiqAuthReport()`` closes that gap: it
  * pulls the backend's own trace and credential fact sheet from
- * ``GET /api/mcp/auth/diagnostics`` and returns both halves in one object, keyed
- * by the backend's episode ids. That is the artefact worth pasting into an
- * issue, and the reason the backend stamps ``auth_episode`` onto its re-auth
+ * ``GET /api/mcp/auth/diagnostics``, merges both halves keyed by the backend's
+ * episode ids, and **puts the result on the clipboard** ready to paste into an
+ * issue. That is the reason the backend stamps ``auth_episode`` onto its re-auth
  * responses: a line here and a line there can be put on the same timeline.
  */
 
@@ -183,7 +183,38 @@ export async function collectAuthReport(): Promise<WorkiqAuthReport> {
   return { capturedAt: new Date().toISOString(), frontend: [...trace], backend };
 }
 
+/**
+ * Put the report on the clipboard, because copying it is the entire point.
+ *
+ * Left to the caller this is `copy(JSON.stringify(await …, null, 2))` — three
+ * things to remember at the exact moment someone is already annoyed enough to be
+ * opening a console. Doing it here makes the documented gesture one call.
+ *
+ * The write can legitimately fail: `navigator.clipboard` needs the *page* to
+ * have focus, and running a command in DevTools means DevTools has it. That's
+ * not an error worth throwing over, so we fall back to printing the JSON as a
+ * single string, which DevTools lets you copy from directly.
+ */
+async function copyReport(report: WorkiqAuthReport): Promise<void> {
+  const json = JSON.stringify(report, null, 2);
+  try {
+    await navigator.clipboard.writeText(json);
+    console.info(`${PREFIX} report copied to the clipboard (${json.length} chars).`);
+    return;
+  } catch {
+    console.info(
+      `${PREFIX} couldn't reach the clipboard (the page needs focus) — ` +
+        `here is the report, or run: copy(await precursorWorkiqAuthReport())`,
+    );
+    console.log(json);
+  }
+}
+
 if (typeof window !== "undefined") {
   window.precursorWorkiqAuthTrace = () => [...trace];
-  window.precursorWorkiqAuthReport = collectAuthReport;
+  window.precursorWorkiqAuthReport = async () => {
+    const report = await collectAuthReport();
+    await copyReport(report);
+    return report;
+  };
 }

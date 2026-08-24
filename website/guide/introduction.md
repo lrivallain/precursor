@@ -6,13 +6,18 @@ title: Introduction
 
 > **Opinionated approach to work follow-up, built as an AI assistant.**
 
-Precursor is an AI assistant that keeps each thread of work in its own **topic**,
-where topic may map to a GitHub issue. It's a small, opinionated tool for
-tracking work-in-progress conversations alongside the issues they belong to.
+Precursor is an AI assistant for **following up on work** — the threads, meetings
+and tasks that unfold over days or weeks rather than in a single sitting.
 
-Every chat is scoped to a **topic** that can be linked to (or create) a GitHub
-issue. The assistant uses that issue's body, comments, and labels as **live
-context** — rebuilt on every turn, so newer updates outweigh older ones.
+It's built from several distinct **surfaces**, each suited to a different mode of
+working: long-lived [topics](/features/topics) that can hydrate themselves from a
+GitHub issue, throwaway [chats](/features/chats) for a fast answer, recorded
+[live meetings](/features/live-sessions), autonomous
+[agents](/features/agents-mode) for long-running tasks, and
+[workflows](/features/workflows) that chain those agents into a reusable
+pipeline. They share one set of [tools](/features/mcp),
+[personas and memory](/features/skills-memory), so what you teach it in one place
+applies everywhere.
 
 Under the hood Precursor is deliberately compact: normal runtime is a **single
 `uvicorn` worker** that serves a JSON API and the pre-built React SPA from the
@@ -21,22 +26,23 @@ same process.
 ## Why it exists
 
 Most AI chat tools are a flat list of disconnected conversations. Work isn't
-flat — it's organized around issues, meetings, and tasks that unfold over days
-or weeks. Precursor keeps each thread of work in its own **topic**, hydrated from
-the GitHub issue it belongs to, so the assistant always has the current state of
-that work at hand.
+flat — it's organized around issues, meetings, and tasks with their own lifespan.
+So instead of one undifferentiated stream, Precursor gives each kind of work a
+surface that fits it, and keeps the context attached to the work rather than to
+the conversation you happened to have about it.
 
-Around that core it layers the other things a follow-up assistant needs: a place
-for throwaway [chats](/features/chats), a [live meeting](/features/live-sessions)
-recorder, autonomous [agents](/features/agents-mode) for long-running tasks,
-[workflows](/features/workflows) that chain those agents into a reusable
-pipeline, a [scheduler](/features/scheduler) for recurring nudges, and
-[MCP](/features/mcp) tools in both directions.
+A [topic](/features/topics) linked to a GitHub issue rebuilds its context from
+that issue on **every turn**, so newer comments outweigh older ones and the
+assistant always reasons over the current state. An
+[agent](/features/agents-mode) keeps a durable scratchpad across runs. A
+[workflow](/features/workflows) remembers what it already processed. In each case
+the work carries its own memory.
 
 ## Highlights
 
 - **Topic-scoped, tree-organized** conversations, each optionally linked to a
-  GitHub issue whose labels tag the chat.
+  GitHub issue whose labels tag the chat — alongside quick **chats** for
+  throwaway questions.
 - **Streaming chat** over Server-Sent Events (sse) with markdown, mermaid, and
   code highlighting.
 - **Bring your own model** — GitHub Copilot (default), Azure AI Foundry, or any

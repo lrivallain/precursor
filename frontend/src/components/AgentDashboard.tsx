@@ -27,6 +27,7 @@ import {
   MessagesSquare,
   Plus,
   Radar,
+  Search,
   ShieldQuestion,
   Upload,
   Workflow as WorkflowIcon,
@@ -122,6 +123,14 @@ export function AgentDashboard({
   const toggleFilter = (key: FilterKey) =>
     setFilter((cur) => (cur === key ? null : key));
 
+  // Free-text narrowing by agent name, stacked on top of the KPI tile filter.
+  const [query, setQuery] = useState("");
+  const search = query.trim().toLowerCase();
+  const clearFilters = () => {
+    setFilter(null);
+    setQuery("");
+  };
+
   // Aggregate observability + unified inbox. Polled here (not derived from the
   // agent list) so the header shows fleet-wide token spend and concurrency
   // headroom, and the inbox surfaces the live parked permission per gate.
@@ -166,7 +175,8 @@ export function AgentDashboard({
 
   // Group the already-urgency-sorted list into lanes, preserving order within
   // each. A lane filter narrows to that single lane; the "scheduled" filter
-  // keeps every lane but only its scheduled agents. Only non-empty lanes render.
+  // keeps every lane but only its scheduled agents; the search box narrows by
+  // name on top of both. Only non-empty lanes render.
   const lanes = useMemo(() => {
     const groups: Record<LaneKey, AgentSession[]> = {
       attention: [],
@@ -175,13 +185,14 @@ export function AgentDashboard({
     };
     for (const a of ordered) {
       if (filter === "scheduled" && !a.schedule?.enabled) continue;
+      if (search && !a.title.toLowerCase().includes(search)) continue;
       groups[laneOf(a)].push(a);
     }
     return (["attention", "working", "quiet"] as LaneKey[])
       .filter((key) => filter === null || filter === "scheduled" || key === filter)
       .map((key) => ({ key, ...LANE_META[key], agents: groups[key] }))
       .filter((lane) => lane.agents.length > 0);
-  }, [ordered, filter]);
+  }, [ordered, filter, search]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
@@ -198,6 +209,33 @@ export function AgentDashboard({
             </span>
           )}
           <div className="ml-auto flex items-center gap-2">
+            {agents.length > 0 && (
+              <div className="relative">
+                <Search
+                  size={14}
+                  className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
+                />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter agents…"
+                  aria-label="Filter agents by name"
+                  className="w-44 rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40 sm:w-56"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted transition hover:bg-white/5 hover:text-text"
+                    aria-label="Clear name filter"
+                    data-tooltip="Clear name filter"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            )}
             {onImported && (
               <button
                 type="button"
@@ -347,15 +385,19 @@ export function AgentDashboard({
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {filter && (
+            {(filter || search) && (
               <div className="flex items-center gap-2 text-xs text-muted">
                 <span>
                   Filtered to{" "}
-                  <span className="font-semibold text-text">{FILTER_LABEL[filter]}</span>
+                  {filter && (
+                    <span className="font-semibold text-text">{FILTER_LABEL[filter]}</span>
+                  )}
+                  {filter && search && " · "}
+                  {search && <span className="font-semibold text-text">“{query.trim()}”</span>}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setFilter(null)}
+                  onClick={clearFilters}
                   className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 font-medium transition hover:border-accent/60 hover:text-text"
                 >
                   <X size={11} />
@@ -369,19 +411,19 @@ export function AgentDashboard({
                   <Radar size={22} />
                 </span>
                 <p className="text-sm text-muted">
-                  No agents in{" "}
+                  No agents match{" "}
                   <span className="font-medium text-text">
-                    {filter ? FILTER_LABEL[filter] : "this view"}
+                    {search ? `“${query.trim()}”` : filter ? FILTER_LABEL[filter] : "this view"}
                   </span>
                   .
                 </p>
                 <button
                   type="button"
-                  onClick={() => setFilter(null)}
+                  onClick={clearFilters}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition hover:border-accent/60"
                 >
                   <X size={14} />
-                  Clear filter
+                  Clear filters
                 </button>
               </div>
             ) : (

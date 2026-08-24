@@ -8,8 +8,7 @@ The **command runner** lets the assistant execute **bash / python / node** as
 part of a conversation — either inside a throwaway **Docker jail** (the default)
 or, when you explicitly disable the jail, directly on the host.
 
-It's exposed as the **`cmd-runner`** [MCP server](/features/mcp), backed by
-`services/cmd_runner.py`.
+It's exposed as the **`cmd-runner`** [MCP server](/features/mcp).
 
 <Screenshot src="/screenshots/command-runner.png" alt="Settings → System showing the Command runner (jail) section: a Docker jail toggle, container image, network access toggle and command timeout" caption="Settings → System — the jail is on by default, and network access is off inside it." />
 

@@ -798,7 +798,7 @@ def _describe_authorization_url(url: str) -> dict[str, Any]:
         "authorize_path": split.path,
         "client_id": params.get("client_id"),
         "redirect_uri": params.get("redirect_uri"),
-        "scope": params.get("scope"),
+        **_summarize_scope(params.get("scope")),
     }
 
 
@@ -1220,6 +1220,35 @@ def _make_callback_handler(
     return _callback_handler
 
 
+def _summarize_scope(scope: str | None) -> dict[str, Any]:
+    """Reduce an Entra scope list to the parts that are actually diagnostic.
+
+    Agent 365 grants ~37 scopes, each a fully-qualified URL naming the tenant and
+    server — roughly 4 KB of near-identical text. Logging it verbatim buried
+    every other field on the line and made the whole trace unreadable, which
+    defeats the point. Only three things about a scope list matter here: how many
+    there are, which resource they address, and whether **``offline_access``** is
+    among them — that last one decides whether the credential can be renewed at
+    all, and is the first thing to check when a session keeps dying.
+    """
+    if not scope:
+        return {"scope": "<absent>"}
+    scopes = scope.split()
+    resources = {
+        s.rsplit("/", 1)[0] for s in scopes if s.startswith(("http://", "https://")) and "/" in s
+    }
+    facts: dict[str, Any] = {
+        "scope_count": len(scopes),
+        "scope_offline_access": OFFLINE_ACCESS_SCOPE in scopes,
+    }
+    # One resource is the norm; list them only when something unexpected happened.
+    if len(resources) == 1:
+        facts["scope_resource"] = next(iter(resources))
+    elif resources:
+        facts["scope_resources"] = sorted(resources)
+    return facts
+
+
 def _token_facts(token: OAuthToken | None) -> dict[str, Any]:
     """Safe, diagnostic summary of a token set — never the token values.
 
@@ -1235,7 +1264,7 @@ def _token_facts(token: OAuthToken | None) -> dict[str, Any]:
         "expires_in": token.expires_in,
         "has_refresh_token": bool(token.refresh_token),
         "token_type": token.token_type,
-        "scope": token.scope,
+        **_summarize_scope(token.scope),
     }
     claims = _claims_from_access_token(token.access_token)
     if claims:
@@ -1285,13 +1314,35 @@ async def _oauth_error_facts(response: Any) -> dict[str, Any]:
     return {field: payload[field] for field in _OAUTH_ERROR_FIELDS if field in payload}
 
 
-class _TracingOAuthClientProvider(OAuthClientProvider):
-    """The SDK provider with every credential decision reported to the trace.
+# How far ahead of the real expiry a stored token is treated as already dead.
+# The check that consumes it is a plain ``now <= expiry`` comparison, so a token
+# with two seconds left passes it and then expires in flight. Standing back a
+# minute means a renewal happens just before the cliff rather than just after,
+# which is the difference between a silent refresh and a browser prompt.
+_TOKEN_EXPIRY_SKEW_SECONDS: Final = 60.0
 
-    The SDK is where a renewal actually succeeds or fails, and it is silent about
-    all of it bar one ``Token refresh failed: 400`` line that names neither the
-    credential nor Entra's reason. These overrides are pure instrumentation —
-    each defers to ``super()`` — and hang off the SDK's own seams:
+
+class _WorkIQOAuthClientProvider(OAuthClientProvider):
+    """The SDK provider, with the stored credential's expiry restored and every
+    decision reported to the trace.
+
+    **The expiry.** ``OAuthClientProvider._initialize`` loads the stored tokens
+    but *not* their expiry, and ``is_token_valid()`` treats an unknown expiry as
+    valid. A token read back from storage is therefore always considered good, so
+    ``async_auth_flow``'s refresh branch — guarded by ``not is_token_valid()`` —
+    is never entered; the 401 that eventually follows goes straight to a full
+    browser grant, which that path never attempts a refresh before. Net effect:
+    the refresh token is dead weight and every access-token expiry costs an
+    interactive sign-in. A trace over 401 real events showed 58 escalations to a
+    full authorization and **zero** refresh attempts, against credentials that
+    had a refresh token throughout. We know the true expiry —
+    :class:`DbTokenStorage` stamps the issue time precisely so it can be
+    recovered — so we put it back and the SDK's own refresh path starts working.
+
+    **The tracing.** The SDK is otherwise silent about all of this bar one
+    ``Token refresh failed: 400`` line naming neither the credential nor Entra's
+    reason. The remaining overrides are pure instrumentation — each defers to
+    ``super()`` — and hang off the SDK's own seams:
 
     * :meth:`_initialize` — what was loaded from storage (this is where a missing
       refresh token first becomes visible);
@@ -1318,10 +1369,20 @@ class _TracingOAuthClientProvider(OAuthClientProvider):
 
     async def _initialize(self) -> None:
         await super()._initialize()
+        tokens = self.context.current_tokens
+        expiry = await _stored_token_expiry(tokens, self._profile) if tokens else None
+        if expiry is not None:
+            # Without this the SDK cannot tell a fresh token from a long-dead one
+            # and so never refreshes either. A legacy token with no recorded
+            # issue time leaves it unset, which preserves the old assume-valid
+            # behaviour rather than forcing a sign-in that may not be needed.
+            self.context.token_expiry_time = expiry.timestamp() - _TOKEN_EXPIRY_SKEW_SECONDS
         self._trace(
             "provider loaded stored credential",
             level=logging.DEBUG,
-            **_token_facts(self.context.current_tokens),
+            expiry_known=expiry is not None,
+            token_considered_valid=self.context.is_token_valid(),
+            **_token_facts(tokens),
         )
 
     async def _refresh_token(self) -> Any:
@@ -1441,7 +1502,7 @@ def build_oauth_provider(
         purpose = "auto-interactive"
     else:
         purpose = "interactive"
-    return _TracingOAuthClientProvider(
+    return _WorkIQOAuthClientProvider(
         server_url=profile.url,
         client_metadata=client_metadata,
         storage=DbTokenStorage(profile),

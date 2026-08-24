@@ -65,7 +65,18 @@ export default withMermaid(
           items: [
             { text: "Introduction", link: "/guide/introduction" },
             { text: "Installation", link: "/guide/installation" },
-            { text: "Quick start", link: "/guide/quick-start" },
+            {
+              text: "Quick start",
+              link: "/guide/quick-start",
+              collapsed: true,
+              items: [
+                { text: "Agents", link: "/guide/quick-start/agents" },
+                { text: "Live sessions", link: "/guide/quick-start/live-sessions" },
+                { text: "Workflows", link: "/guide/quick-start/workflows" },
+                { text: "Kanban", link: "/guide/quick-start/kanban" },
+                { text: "Files", link: "/guide/quick-start/files" },
+              ],
+            },
             { text: "Configuration", link: "/guide/configuration" },
           ],
         },
@@ -88,7 +99,15 @@ export default withMermaid(
             { text: "Collections", link: "/features/collections" },
             { text: "Chats", link: "/features/chats" },
             { text: "Live sessions", link: "/features/live-sessions" },
-            { text: "Agents", link: "/features/agents-mode" },
+            { text: "Agents", link: "/features/agents-mode",
+              collapsed: true,
+              items: [
+                { text: "Running an agent", link: "/features/agents-mode/running" },
+                { text: "Orchestrating a fleet", link: "/features/agents-mode/orchestration" },
+                { text: "Artifacts & state", link: "/features/agents-mode/artifacts-state" },
+                { text: "Autonomous missions", link: "/features/agents-mode/missions" },
+              ],
+            },
             {
               text: "Workflows",
               link: "/features/workflows",
