@@ -218,6 +218,23 @@ one the credential is terminal: the moment its access token expires the only way
 back is a human at a browser, which is exactly what an unattended agent or a
 scheduled workflow doesn't have.
 
+::: warning The refresh token has to actually be *used*
+Having one is not enough. The MCP SDK's `OAuthClientProvider` restores stored
+tokens on startup but **not their expiry**, and its `is_token_valid()` reads an
+unknown expiry as *valid* — so a token loaded from disk always looked fresh, the
+refresh branch that check guards was never entered, and the 401 that eventually
+followed went straight to a full browser grant (that path never attempts a
+refresh either). The refresh token was dead weight, and every access-token
+expiry cost an interactive sign-in. A trace over 401 real events showed **58
+escalations to a full authorization and zero refresh attempts**, against
+credentials that had a refresh token the whole time.
+
+Precursor records when each token was issued, so it restores the real expiry
+(less a minute of skew) as the credential is loaded. The SDK's own silent-refresh
+path then works as designed, and the browser legs below become the exception
+rather than the routine.
+:::
+
 ::: warning Existing sign-ins are upgraded once
 Tokens stored *before* this was requested have no refresh token and can't gain
 one retroactively. Rather than let the keep-alive attempt a renewal that cannot
@@ -408,11 +425,20 @@ Terminals scroll, though, and a packaged app has none. So the same records are
 kept in memory and served, with the state that explains them, by
 **`GET /api/mcp/auth/diagnostics`**: the settings in force, then per credential —
 whether a token is stored, whether it has a **refresh token** at all, when it
-expires, how long it's been idle, and whether connects are being fast-failed. In
-the SPA, `window.precursorWorkiqAuthReport()` fetches that and merges it with the
-console trace, so one call yields both halves of an episode ready to paste. Token
-values never leave the process; secrets and account names are reduced to
-`<present:N chars>`.
+expires, how long it's been idle, and whether connects are being fast-failed.
+
+In the SPA, one console call collects both halves and puts them on your
+clipboard, ready to paste into an issue:
+
+```js
+await precursorWorkiqAuthReport()
+```
+
+(If it reports it couldn't reach the clipboard, DevTools had focus rather than
+the page — the JSON is printed instead, or use `copy(await
+precursorWorkiqAuthReport())`.) Token values never leave the process; secrets and
+account names are reduced to `<present:N chars>`, and the ~37-entry Agent 365
+scope list is summarized to a count plus whether `offline_access` is in it.
 
 Episode records are buffered *apart* from the keep-alive's ambient heartbeat, so
 a credential that lapsed overnight still explains itself the next morning rather

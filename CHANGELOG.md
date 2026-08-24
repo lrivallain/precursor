@@ -44,14 +44,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   memory and served alongside the state that explains them: settings in force,
   then per credential whether a token is stored, whether it has a **refresh
   token** at all, when it expires, how long it's been idle, and whether connects
-  are being fast-failed. `window.precursorWorkiqAuthReport()` merges it with the
-  browser-side trace, so one call yields both halves ready to paste into an
-  issue. Episode records are buffered apart from the keep-alive's ambient
-  heartbeat — otherwise a credential that lapsed overnight would have been pushed
-  out by a thousand once-a-minute "nothing to do" ticks before anyone looked —
-  and the ticker now reports a verdict only when it changes. Token values never
-  leave the process; secrets and account names are reduced to
-  `<present:N chars>`.
+  are being fast-failed. `await precursorWorkiqAuthReport()` in the console
+  merges it with the browser-side trace and puts the result on your clipboard,
+  ready to paste into an issue. Episode records are buffered apart from the
+  keep-alive's ambient heartbeat — otherwise a credential that lapsed overnight
+  would have been pushed out by a thousand once-a-minute "nothing to do" ticks
+  before anyone looked — and the ticker now reports a verdict only when it
+  changes. Token values never leave the process; secrets and account names are
+  reduced to `<present:N chars>`, and Agent 365's ~37-entry scope list is
+  summarized to a count plus whether `offline_access` is in it.
 
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor
@@ -347,6 +348,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   so existing payloads are unchanged.
 
 ### Fixed
+
+- **The WorkIQ refresh token is now actually used, so an expiry stops costing a
+  sign-in.** The MCP SDK's `OAuthClientProvider` restores stored tokens on
+  startup but not their expiry, and its `is_token_valid()` treats an unknown
+  expiry as valid — so a credential read back from the database always looked
+  fresh, the silent-refresh branch that check guards was never entered, and the
+  401 that eventually followed escalated straight to a full browser grant, which
+  never attempts a refresh either. The refresh token was dead weight, and every
+  access-token expiry became an interactive sign-in. The trace added above is
+  what caught it: over 401 recorded events, **58 escalations to a full
+  authorization and zero refresh attempts**, against credentials that held a
+  refresh token throughout. Precursor already records when each token was issued,
+  so it now restores the real expiry (less a minute of skew) as the credential
+  loads, and the SDK's own refresh path works as designed. A legacy token with no
+  recorded issue time is still assumed valid rather than forced through a sign-in
+  that may not be needed.
 
 - **Startup migrations no longer silence the app's own logs.** `init_db` runs
   `alembic upgrade head` on every boot, and Alembic's `env.py` applied

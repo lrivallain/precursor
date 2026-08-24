@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from mcp.shared.auth import OAuthToken
 
+from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
+from precursor.backend.models import AppSetting
 from precursor.backend.services.mcp import auth_trace
 from precursor.backend.services.mcp import workiq_preview as wp
 
@@ -139,14 +142,121 @@ def test_token_facts_never_include_the_token() -> None:
     assert "header.payload.signature" not in json.dumps(facts)
 
 
+def test_scope_is_summarized_not_dumped() -> None:
+    """Agent 365 grants ~37 fully-qualified scope URLs — about 4 KB of near
+    identical text. Logging it verbatim buried every other field on the line and
+    made the trace unreadable, which defeats the point of having one.
+    """
+    base = (
+        "https://agent365.svc.cloud.microsoft/agents/tenants/"
+        "72f988bf-86f1-41af-91ab-2d7cd011db47/servers/mcp_TeamsServer"
+    )
+    scope = " ".join(
+        [f"{base}/McpServers.{name}.All" for name in ("Teams", "Mail", "Files")]
+        + [f"{base}/.default", "offline_access"]
+    )
+    facts = wp._summarize_scope(scope)
+
+    assert facts["scope_count"] == 5
+    # The one scope fact that decides whether a credential is renewable at all.
+    assert facts["scope_offline_access"] is True
+    assert facts["scope_resource"] == base
+    # The verbose list itself is gone.
+    rendered = json.dumps(facts)
+    assert "McpServers.Teams.All" not in rendered
+    assert len(rendered) < 200
+
+
+def test_scope_summary_flags_a_credential_that_can_never_renew() -> None:
+    facts = wp._summarize_scope("https://example.com/.default")
+    assert facts["scope_offline_access"] is False
+    assert wp._summarize_scope(None) == {"scope": "<absent>"}
+
+
 def test_provider_is_traced_and_the_sdk_hooks_still_exist() -> None:
     """Guard against an SDK upgrade silently blinding the trace."""
     from mcp.client.auth import OAuthClientProvider
 
-    assert issubclass(wp._TracingOAuthClientProvider, OAuthClientProvider)
+    assert issubclass(wp._WorkIQOAuthClientProvider, OAuthClientProvider)
     for hook in wp._TRACED_SDK_HOOKS:
         assert hasattr(OAuthClientProvider, hook), hook
-    assert isinstance(wp.build_oauth_provider(), wp._TracingOAuthClientProvider)
+    assert isinstance(wp.build_oauth_provider(), wp._WorkIQOAuthClientProvider)
+
+
+async def test_an_expired_stored_token_is_recognised_as_expired() -> None:
+    """The bug that made every expiry cost an interactive sign-in.
+
+    ``OAuthClientProvider._initialize`` restores the tokens but not their expiry,
+    and ``is_token_valid()`` reads an unknown expiry as *valid*. So a token read
+    back from storage always looked fresh, the refresh branch it guards was never
+    entered, and the eventual 401 went straight to a browser grant — which never
+    attempts a refresh either. A real trace showed 58 escalations to a full
+    authorization and zero refresh attempts, against credentials that had a
+    refresh token the whole time.
+    """
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens(reason="test setup")
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="a.b.c", refresh_token="rt", token_type="Bearer", expires_in=3600)
+    )
+    # Backdate the issue stamp so the stored token is two hours past expiry.
+    stale = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, wp.OAUTH_ISSUED_AT_KEY)
+        assert row is not None
+        row.value = json.dumps(stale)
+        await session.commit()
+
+    provider = wp.build_oauth_provider()
+    await provider._initialize()
+
+    assert provider.context.is_token_valid() is False
+    # ...and the refresh path the SDK guards behind that is now reachable.
+    assert provider.context.can_refresh_token() is True
+
+
+async def test_a_live_stored_token_is_still_used_as_is() -> None:
+    """The fix must not cause a needless refresh on every single request."""
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens(reason="test setup")
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="a.b.c", refresh_token="rt", token_type="Bearer", expires_in=3600)
+    )
+
+    provider = wp.build_oauth_provider()
+    await provider._initialize()
+
+    assert provider.context.is_token_valid() is True
+
+
+async def test_a_legacy_token_without_an_issue_stamp_is_left_alone() -> None:
+    """No recorded issue time means no way to know — assume valid, as before.
+
+    Forcing a sign-in for a token that may well still work would be a worse
+    trade than one wasted request.
+    """
+    with TestClient(create_app()):
+        pass
+
+    await wp.clear_workiq_oauth_tokens(reason="test setup")
+    await wp.DbTokenStorage().set_tokens(
+        OAuthToken(access_token="a.b.c", refresh_token="rt", token_type="Bearer", expires_in=3600)
+    )
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, wp.OAUTH_ISSUED_AT_KEY)
+        assert row is not None
+        await session.delete(row)
+        await session.commit()
+
+    provider = wp.build_oauth_provider()
+    await provider._initialize()
+
+    assert provider.context.token_expiry_time is None
+    assert provider.context.is_token_valid() is True
 
 
 async def test_a_refused_refresh_records_entras_reason() -> None:
