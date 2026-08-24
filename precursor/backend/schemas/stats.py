@@ -52,6 +52,49 @@ class DatabaseStats(BaseModel):
     tables: list[TableStat] = []
 
 
+class CleanupTargetStat(BaseModel):
+    """One cleanup action in the storage cockpit, with its reclaimable estimate.
+
+    ``rows``/``bytes`` are what a run would remove *right now* under the current
+    retention settings — so a target reads 0 when its window is disabled.
+    ``bytes`` estimates reclaimed content, not the on-disk delta: SQLite only
+    returns freed pages to the OS on compaction.
+    """
+
+    key: str
+    label: str
+    description: str
+    setting: str
+    table: str
+    rows: int = 0
+    bytes: int = 0
+
+
+class CleanupPreview(BaseModel):
+    """Everything the storage cockpit can clean, and how much it would free."""
+
+    targets: list[CleanupTargetStat] = []
+    total_bytes: int = 0
+
+
+class CleanupRunResult(BaseModel):
+    """Outcome of one executed cleanup target."""
+
+    key: str
+    rows: int = 0
+    bytes: int = 0
+
+
+class CompactResult(BaseModel):
+    """Outcome of a database compaction (``VACUUM``)."""
+
+    supported: bool
+    size_before: int | None = None
+    size_after: int | None = None
+    reclaimed_bytes: int = 0
+    error: str | None = None
+
+
 class BlobStats(BaseModel):
     """Size and count of the content-addressed attachment blob store."""
 

@@ -88,7 +88,7 @@ def test_retention_disabled_is_noop() -> None:
     async def _run() -> None:
         await _set_retention(0)
         ids = await _seed()
-        assert await prune_expired_live_transcripts() == 0
+        assert (await prune_expired_live_transcripts()).rows == 0
         assert await _segment_count(ids["old"]) == 2
 
     asyncio.run(_run())
@@ -101,7 +101,7 @@ def test_prunes_only_long_ended_sessions() -> None:
         await _set_retention(30)
         ids = await _seed()
         # Two segments belong to the old-ended session.
-        assert await prune_expired_live_transcripts() == 2
+        assert (await prune_expired_live_transcripts()).rows == 2
         assert await _segment_count(ids["old"]) == 0
         # Recent-ended and still-active sessions keep their transcript.
         assert await _segment_count(ids["recent"]) == 1
@@ -119,7 +119,7 @@ def test_idempotent_second_run() -> None:
     async def _run() -> None:
         await _set_retention(30)
         await _seed()
-        assert await prune_expired_live_transcripts() == 2
-        assert await prune_expired_live_transcripts() == 0
+        assert (await prune_expired_live_transcripts()).rows == 2
+        assert (await prune_expired_live_transcripts()).rows == 0
 
     asyncio.run(_run())

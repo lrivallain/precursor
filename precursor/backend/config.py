@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     # ``scheduler_enabled``; the retention *window* is a Settings → System value.
     live_transcript_retention_poll_seconds: int = 86_400
 
+    # Agent-event retention (services/agent_event_retention.py) — how often the
+    # sweep that prunes the archived agent timeline runs. Gated by
+    # ``scheduler_enabled``; the retention *levers* are Settings → System values.
+    agent_event_retention_poll_seconds: int = 86_400
+
     # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
     # ticker that silently refreshes the WorkIQ preview OAuth token before it
     # expires, so the hosted session survives without frequent interactive

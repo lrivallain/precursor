@@ -48,3 +48,7 @@ past the configured age, a tool message's content is replaced **in place** with 
 short placeholder, while the row and its `tool_calls` metadata are preserved so
 conversation history still pairs each tool-call turn with its results. The sweep
 is idempotent and runs best-effort on startup and periodically.
+
+This is one of several sweeps that bound database growth — see
+[Storage & retention](/features/storage) for the rest, and for the cockpit that
+runs any of them on demand.

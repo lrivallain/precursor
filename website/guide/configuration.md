@@ -76,11 +76,11 @@ feature it configures:
 | **GitHub** | Token, default repository, issue-context behaviour. |
 | **MCP** | Enable [tool servers](/features/mcp), and choose which of your own sections the built-in server exposes (off by default). |
 | **Collections** | Create and edit [collections](/features/collections). |
-| **Agents** | Turn [Agents mode](/features/agents-mode) on/off, set the global [approval policy](/features/agents-mode/running#approval-policy-per-agent), and manage [blueprints](/features/agents-mode/orchestration#blueprints-reusable-templates). |
+| **Agents** | Turn [Agents mode](/features/agents-mode) on/off, set the global [approval policy](/features/agents-mode/running#approval-policy-per-agent), manage [blueprints](/features/agents-mode/orchestration#blueprints-reusable-templates), and bound [timeline retention](/features/storage#why-agent-timelines-have-two-levers). |
 | **Workflows** | The [defaults a new pipeline starts from](/features/workflows/building). |
 | **Live / Speech-to-text** | Enable the section, pick the fast insights model, set [transcript retention](/features/live-sessions#transcript-retention) and Azure Speech credentials. |
 | **Backup** | Periodic copy of the database + attachment blobs into a plain folder. |
-| **System** | Theme, storage retention, and the [command-runner jail](/features/command-runner). |
+| **System** | Theme, [storage retention](/features/storage), and the [command-runner jail](/features/command-runner). |
 
 Fleet-wide knobs that aren't per-object — the agent concurrency cap, retry
 backoff — are [`.env` settings](#process-level-configuration-env).

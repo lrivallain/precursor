@@ -91,6 +91,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   per app instance, duplicating its routers and its `/api/plugins` descriptors.
   Discovery now happens while the app is being built, once per process.
 
+- **Settings → Usage stats gained a storage cleanup cockpit.** It lists every
+  retention sweep with what it would remove **right now** under your current
+  settings — a dry run, nothing is deleted to produce the figures — and lets you
+  run any of them on demand instead of waiting for the daily ticker. A
+  **Compact database** action then returns the freed pages to the filesystem:
+  Precursor runs SQLite with `auto_vacuum` off, so deleting rows alone only
+  marks space reusable and never shrinks the file, which is why a cleanup could
+  previously look like it had done nothing. New endpoints back it:
+  `GET /api/stats/cleanup`, `POST /api/stats/cleanup/{key}` and
+  `POST /api/stats/compact`. See [Storage & retention](https://lrivallain.github.io/precursor/features/storage).
+
+- **Agent timelines are now bounded.** The archived event trace behind the
+  Agents timeline (`agent_events`) had no retention at all and became the
+  largest object in a busy install. Two independent levers now govern it —
+  `agent_event_retention_days` (default 30) prunes by age, and
+  `agent_event_max_per_session` (default 2000) caps how many events any one
+  agent keeps, newest first. Both are in **Settings → Agents → Timeline
+  retention** — next to the feature they govern, the same way Live owns its
+  transcript window — and either can be disabled with `0`. Agent traffic is bursty
+  rather than aged, so the per-session cap is what actually bounds a single long
+  autonomous run; the window alone wouldn't reach it for weeks. An agent keeps
+  its result, artifacts, state and posted messages either way, and a **running**
+  agent is never pruned — its live timeline is rebuilt from those rows after a
+  restart.
+
 - **The agent dashboard gained a name filter.** A search box in the fleet header
   narrows the board to agents whose title matches what you type, stacking on top
   of the KPI tile filters (so you can search *within* "Needs you"). The
@@ -434,6 +459,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   so existing payloads are unchanged.
 
 ### Fixed
+
+- **Archived agent events could grow without bound.** The event normaliser
+  capped captured tool I/O only when the value was already a string; anything
+  rendered through `jsonify` — notably a hook's `input`, which re-embeds the
+  entire tool result the completion event *already* stored — went to the
+  database uncapped and pretty-printed. An event's free-text body wasn't capped
+  at all, so every session start archived the full system prompt, hundreds of
+  times over. On one production database these two paths held **45 MB of a
+  126 MB file**. All captured values are now capped uniformly and marked when
+  trimmed, with a much tighter limit for system prompts (boilerplate) than for
+  conversational text (which the timeline renders in full). A matching
+  **Oversized agent events** cleanup target re-applies the caps to rows already
+  written, since retention can't reach them — an oversized payload isn't
+  necessarily old, and counts as a single row against a per-session ceiling
+  however many KB it holds. It preserves every timeline node, tool name and
+  status, and is idempotent.
 
 - **An agent no longer forgets what it is halfway through a conversation.** Its
   instructions (`task_prompt`) are delivered once, as the first message of the

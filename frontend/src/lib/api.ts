@@ -94,6 +94,9 @@ import type {
   SkillCreate,
   SkillUpdate,
   SystemStats,
+  CleanupPreview,
+  CleanupRunResult,
+  CompactResult,
   Topic,
   TopicNode,
   TransferImportResult,
@@ -1298,6 +1301,16 @@ export const api = {
     // Usage statistics
     getUsageStats: () => request<UsageStats>(`/api/stats/usage`),
     getSystemStats: () => request<SystemStats>(`/api/stats/system`),
+
+    // Storage cockpit: what each retention sweep would free, running one on
+    // demand, and returning freed pages to the filesystem.
+    getCleanupPreview: () => request<CleanupPreview>(`/api/stats/cleanup`),
+    runCleanup: (key: string) =>
+      request<CleanupRunResult>(`/api/stats/cleanup/${encodeURIComponent(key)}`, {
+        method: "POST",
+      }),
+    compactDatabase: () =>
+      request<CompactResult>(`/api/stats/compact`, { method: "POST" }),
   },
 
   search: {

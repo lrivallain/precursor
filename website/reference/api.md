@@ -74,7 +74,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `stt` | Short-lived Azure Speech token minting for live sessions. |
 | `search` | The cross-entity lookup behind the ⌘K command palette. |
 | `refine` | One-shot text rephrasing for the notes panel and composer. |
-| `stats` | Token-usage rollups for **Settings → Usage stats**. |
+| `stats` | Token-usage rollups and the system footprint for **Settings → Usage stats**, plus the [storage cleanup](/features/storage) cockpit: `GET /api/stats/cleanup` previews what each retention sweep would free (a dry run — nothing is deleted), `POST /api/stats/cleanup/{key}` runs one on demand, and `POST /api/stats/compact` `VACUUM`s the database so freed pages return to the filesystem. |
 | `transfer` | [YAML export/import](/features/transfer) of agents and workflows: `GET /workflows/{id}` and `GET /agents/{id}` download a definition; `POST /preview` reports name conflicts without writing; `POST /import` applies them with a per-agent `replace` / `create` / `link` resolution. |
 | `plugins` | Descriptors for frontend extensions contributed by plugins. |
 | `drawio` | Status and on-demand install of the self-hosted [draw.io editor](/features/workspaces#editing-diagrams) (`GET /api/drawio/status`, `POST /api/drawio/install`). |

@@ -982,6 +982,8 @@ export interface Settings {
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
   live_transcript_retention_days: number;
+  agent_event_retention_days: number;
+  agent_event_max_per_session: number;
   cmd_runner_jail: boolean;
   cmd_runner_image: string;
   cmd_runner_network: boolean;
@@ -1053,6 +1055,8 @@ export interface SettingsUpdate {
   scheduled_run_timeout_seconds?: number;
   tool_result_retention_days?: number;
   live_transcript_retention_days?: number;
+  agent_event_retention_days?: number;
+  agent_event_max_per_session?: number;
   cmd_runner_jail?: boolean;
   cmd_runner_image?: string;
   cmd_runner_network?: boolean;
@@ -1625,6 +1629,35 @@ export interface SystemStats {
   blobs: BlobStats;
   issues: IssueStats;
   entities: EntityCounts;
+}
+
+export interface CleanupTargetStat {
+  key: string;
+  label: string;
+  description: string;
+  setting: string;
+  table: string;
+  rows: number;
+  bytes: number;
+}
+
+export interface CleanupPreview {
+  targets: CleanupTargetStat[];
+  total_bytes: number;
+}
+
+export interface CleanupRunResult {
+  key: string;
+  rows: number;
+  bytes: number;
+}
+
+export interface CompactResult {
+  supported: boolean;
+  size_before: number | null;
+  size_after: number | null;
+  reclaimed_bytes: number;
+  error: string | null;
 }
 
 export interface WorkspaceChatMessage {
