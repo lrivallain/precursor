@@ -89,7 +89,7 @@ async def test_tool_runs_when_section_enabled() -> None:
     assert "topics" in result
 
 
-async def _make_topic(title: str) -> int:
+async def _make_topic(title: str, parent_id: int | None = None) -> int:
     """Create a topic directly and return its id (tests share one DB)."""
     from precursor.backend.models import Topic
     from precursor.backend.services.slugs import allocate_unique_slug, slugify
@@ -98,6 +98,7 @@ async def _make_topic(title: str) -> int:
         topic = Topic(
             title=title,
             slug=await allocate_unique_slug(session, slugify(title) or "topic", Topic),
+            parent_id=parent_id,
         )
         session.add(topic)
         await session.commit()
@@ -258,6 +259,71 @@ async def test_search_includes_surface_only_when_section_exposed() -> None:
     chat_hits = [r for r in result["results"] if r["section"] == "chats"]
     assert chat_hits
     assert chat_hits[0]["accessor"] == "get_chat / list_chat_messages"
+
+
+async def test_topic_path_is_resolved_root_first() -> None:
+    await _set_expose('{"topics": true}')
+    root_id = await _make_topic("Path Root CSU")
+    child_id = await _make_topic("Path Child CTO", parent_id=root_id)
+    grandchild_id = await _make_topic("Path Grandchild Capacity", parent_id=child_id)
+
+    root = await ps.get_topic(root_id)
+    assert root["path"] == root["slug"]
+
+    grandchild = await ps.get_topic(grandchild_id)
+    child = await ps.get_topic(child_id)
+    assert grandchild["path"] == f"{root['slug']}/{child['slug']}/{grandchild['slug']}"
+
+
+async def test_list_topics_includes_path() -> None:
+    await _set_expose('{"topics": true}')
+    root_id = await _make_topic("Listed Root")
+    child_id = await _make_topic("Listed Child", parent_id=root_id)
+
+    listed = await ps.list_topics()
+    by_id = {t["id"]: t for t in listed["topics"]}
+    assert by_id[root_id]["path"] == by_id[root_id]["slug"]
+    assert by_id[child_id]["path"] == f"{by_id[root_id]['slug']}/{by_id[child_id]['slug']}"
+
+
+async def test_search_topic_hits_include_path() -> None:
+    await _set_expose('{"search": true, "topics": true}')
+    root_id = await _make_topic("Yyplugh Root")
+    child_id = await _make_topic("Yyplugh Child", parent_id=root_id)
+
+    root = await ps.get_topic(root_id)
+    child = await ps.get_topic(child_id)
+
+    result = await ps.search("Yyplugh")
+    hits = {r["entity_id"]: r for r in result["results"] if r["section"] == "topics"}
+    assert hits[root_id]["path"] == root["slug"]
+    assert hits[child_id]["path"] == f"{root['slug']}/{child['slug']}"
+
+
+async def test_topic_path_survives_a_cyclic_parent_link() -> None:
+    """A cycle must terminate the walk, not hang the server."""
+    from precursor.backend.models import Topic
+
+    await _set_expose('{"topics": true}')
+    a_id = await _make_topic("Cycle A")
+    b_id = await _make_topic("Cycle B", parent_id=a_id)
+    async with SessionLocal() as session:
+        a = await session.get(Topic, a_id)
+        assert a is not None
+        a.parent_id = b_id
+        await session.commit()
+
+    a_payload = await ps.get_topic(a_id)
+    b_payload = await ps.get_topic(b_id)
+    assert a_payload["path"] == f"{b_payload['slug']}/{a_payload['slug']}"
+    assert b_payload["path"] == f"{a_payload['slug']}/{b_payload['slug']}"
+
+    # Leave the fixture acyclic so later tests see a sane tree.
+    async with SessionLocal() as session:
+        a = await session.get(Topic, a_id)
+        assert a is not None
+        a.parent_id = None
+        await session.commit()
 
 
 def _mcp_post(client: TestClient, body: dict, session_id: str | None = None) -> object:
