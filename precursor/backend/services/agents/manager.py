@@ -1514,11 +1514,13 @@ class AgentManager:
         # async work (DB + bus) onto the loop.
         sdk_session.on(lambda event: self._spawn(self._handle_event(run.id, event)))
 
-        # Persist the resume handle the first time round.
-        sid = getattr(sdk_session, "id", None) or getattr(sdk_session, "session_id", None)
-        if sid and not run.copilot_session_id:
-            run.copilot_session_id = str(sid)
-            await self._patch_run(run.id, copilot_session_id=str(sid))
+        # The resume handle is *not* readable off ``CopilotSession`` — it exposes
+        # no ``id``/``session_id`` attribute — so it is captured from the
+        # ``SessionStartData`` event instead (see ``_handle_event_locked``), which
+        # carries it and fires moments after this create. Probing the object here
+        # silently yielded ``None`` forever, leaving every run unresumable: a
+        # rebuild below then started an *empty* conversation and the agent lost
+        # its task prompt and history mid-thread.
 
         # Any OAuth server we couldn't attach for lack of credentials is surfaced
         # as an in-app sign-in prompt (drives the global McpAuthBanner) instead of
@@ -2771,7 +2773,16 @@ class AgentManager:
         now = datetime.now(UTC)
         patch: dict[str, Any] = {"last_activity_at": now}
 
-        if name == "AssistantMessageData":
+        if name == "SessionStartData":
+            # The only place the SDK hands us the conversation's resume handle.
+            # Persisting it is what lets a later session rebuild (an OAuth
+            # refresh, a changed MCP catalogue, a recovered sign-in) resume this
+            # same conversation instead of silently starting an empty one and
+            # dropping the agent's task prompt and history.
+            sid = getattr(data, "session_id", None)
+            if sid and not run.copilot_session_id:
+                await self._patch_run(run_id, copilot_session_id=str(sid))
+        elif name == "AssistantMessageData":
             content = getattr(data, "content", None)
             if content:
                 # Scrub control directives from the *displayed* summary; keep the
