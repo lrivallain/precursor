@@ -176,6 +176,19 @@ class Settings(BaseSettings):
     # only when its own server is next used.
     workiq_chain_reauth_enabled: bool = True
 
+    # WorkIQ auth tracing (services/mcp/auth_trace.py). Every decision taken
+    # about a WorkIQ credential — keep-alive verdicts, silent refreshes and the
+    # Entra error that refused them, each leg of a re-auth — reports to the
+    # dedicated ``precursor.mcp.auth`` logger, whose level this sets
+    # *independently* of the app-wide ``log_level``. It defaults to DEBUG because
+    # a sign-in lapse is rare, only reproducible in the wild, and useless to
+    # diagnose after the fact: the trace has to already be running when it
+    # happens. The channel is quiet outside an auth episode, so this costs
+    # nothing in normal use. Raise it to ``info`` for transitions only, or
+    # ``warning`` to silence it; the in-memory ring buffer behind
+    # ``GET /api/mcp/auth/diagnostics`` is unaffected either way.
+    workiq_auth_log_level: str = "debug"
+
     # Microsoft Agent 365 tenant (services/mcp/agent365.py). The hosted
     # ``workiq-teams`` / ``workiq-user`` MCP endpoints embed a tenant GUID in
     # their URL — Entra rejects the ``common``/``organizations`` aliases there.

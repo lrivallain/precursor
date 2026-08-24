@@ -511,14 +511,19 @@ class MCPClientManager:
         slow way. Also flips the entry to ``needs_auth`` so the Settings UI and
         ``auth_blocked_servers`` reflect the lapse even before any connect.
         """
-        from precursor.backend.services.mcp.oauth_registry import credential_key
+        from precursor.backend.services.mcp import auth_trace
+        from precursor.backend.services.mcp.oauth_registry import credential_key, is_oauth_server
 
-        self._auth_short_circuit.add(credential_key(name))
+        key = credential_key(name)
+        newly = key not in self._auth_short_circuit
+        self._auth_short_circuit.add(key)
         entry = self._servers.get(name)
         if entry is not None:
             entry.state = "needs_auth"
             if message:
                 entry.error = message
+        if newly and is_oauth_server(name):
+            auth_trace.record(name, "credential flagged as needing a sign-in", message=message)
 
     def clear_auth_required(self, name: str) -> None:
         """Forget a prior ``mark_auth_required`` for ``name``'s credential.
@@ -526,14 +531,30 @@ class MCPClientManager:
         Called when a fresh provider is installed or a silent refresh succeeds,
         so a subsequent connect is allowed to proceed for real.
         """
-        from precursor.backend.services.mcp.oauth_registry import credential_key
+        from precursor.backend.services.mcp import auth_trace
+        from precursor.backend.services.mcp.oauth_registry import credential_key, is_oauth_server
 
-        self._auth_short_circuit.discard(credential_key(name))
+        key = credential_key(name)
+        if key in self._auth_short_circuit and is_oauth_server(name):
+            auth_trace.record(
+                name, "credential no longer flagged as needing a sign-in", level=logging.DEBUG
+            )
+        self._auth_short_circuit.discard(key)
 
     def _auth_short_circuited(self, name: str) -> bool:
         from precursor.backend.services.mcp.oauth_registry import credential_key
 
         return credential_key(name) in self._auth_short_circuit
+
+    def is_auth_short_circuited(self, name: str) -> bool:
+        """Whether connects for ``name``'s credential are being fast-failed.
+
+        Public read of the same verdict ``_open_transport`` acts on, for the auth
+        diagnostics endpoint: "the server says ``needs_auth``" and "the manager
+        will refuse to even try" are different facts, and a disagreement between
+        them is itself a bug worth seeing.
+        """
+        return self._auth_short_circuited(name)
 
     async def wait_for_auth(self, timeout: float) -> None:
         """Block until :meth:`signal_auth_resolved` fires or ``timeout`` elapses.
@@ -720,6 +741,7 @@ class MCPClientManager:
         # once instead. Gated on an OAuth server with a provider so plain servers
         # are never affected.
         if entry.auth_provider is not None and self._auth_short_circuited(name):
+            from precursor.backend.services.mcp import auth_trace
             from precursor.backend.services.mcp.oauth_registry import is_oauth_server
             from precursor.backend.services.mcp.workiq_preview import WorkIQAuthRequiredError
 
@@ -727,6 +749,11 @@ class MCPClientManager:
                 entry.state = "needs_auth"
                 message = entry.error or "Sign-in required to use this server."
                 entry.error = message
+                auth_trace.record(
+                    name,
+                    "connect fast-failed on the known-dead credential",
+                    level=logging.DEBUG,
+                )
                 raise WorkIQAuthRequiredError(message)
 
         entry.state = "connecting"
@@ -796,6 +823,9 @@ class MCPClientManager:
                 # short-circuits instantly instead of stalling on the same doomed
                 # handshake — this is what makes the second request after a lapse
                 # fast even when the keep-alive is disabled.
+                from precursor.backend.services.mcp import auth_trace
+
+                auth_trace.begin_episode(name, "a live connect found the credential dead")
                 self.mark_auth_required(name)
             else:
                 entry.state = "error"

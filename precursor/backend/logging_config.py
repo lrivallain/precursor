@@ -12,7 +12,9 @@ Two design points:
   (so ``precursor.*`` loggers honour ``debug``), but noisy third-party loggers
   (aiosqlite, SQLAlchemy, sse-starlette, …) are pinned to fixed floors that
   *ignore* the app level — turning on app DEBUG never unleashes library DEBUG
-  spam.
+  spam. One logger is pinned the other way: the WorkIQ auth trace
+  (``precursor.mcp.auth``) follows ``workiq_auth_log_level`` so it can stay
+  verbose on an app running at INFO.
 * **Colour when it helps.** When stderr is a TTY the level is ANSI-coloured and
   the timestamp/name are dimmed; when output is piped or redirected the colour
   is dropped so logs stay grep-clean. No third-party dependency is used.
@@ -52,6 +54,11 @@ _THIRD_PARTY_LEVELS: dict[str, str] = {
     "openai._base_client": "WARNING",
     "asyncio": "WARNING",
 }
+
+# The WorkIQ auth trace (services/mcp/auth_trace.py). Pinned like the loggers
+# above, but to stay *louder* than the app level rather than quieter — see
+# ``build_log_config``.
+_AUTH_LOGGER = "precursor.mcp.auth"
 
 # ANSI styling (only emitted when stderr is a TTY).
 _RESET = "\033[0m"
@@ -96,16 +103,26 @@ class UTCFormatter(logging.Formatter):
         return line
 
 
-def build_log_config(log_level: str, *, color: bool | None = None) -> dict[str, Any]:
+def build_log_config(
+    log_level: str, *, color: bool | None = None, auth_log_level: str | None = None
+) -> dict[str, Any]:
     """Return a ``dictConfig`` mapping that unifies app, uvicorn, and library logs.
 
     ``color`` defaults to auto-detection (stderr is a TTY). uvicorn and the
     pinned third-party loggers are given no handlers and ``propagate=True`` so
     the single root handler formats them uniformly; their *levels* come from
     ``_THIRD_PARTY_LEVELS`` so they ignore the app ``log_level``.
+
+    ``auth_log_level`` pins :data:`_AUTH_LOGGER` the same way but in the opposite
+    direction: the WorkIQ auth trace stays verbose (DEBUG by default) on an app
+    running at INFO, because a sign-in lapse is rare and can't be reproduced on
+    demand — the trace has to already be on when it happens.
     """
     level = log_level.upper()
     use_color = sys.stderr.isatty() if color is None else color
+    pinned = dict(_THIRD_PARTY_LEVELS)
+    if auth_log_level:
+        pinned[_AUTH_LOGGER] = auth_log_level.upper()
     return {
         "version": 1,
         # Our module-level loggers are created at import time, before this runs;
@@ -127,22 +144,45 @@ def build_log_config(log_level: str, *, color: bool | None = None) -> dict[str, 
         # Root level drives the app's own precursor.* loggers (honours `debug`).
         "root": {"handlers": ["default"], "level": level},
         "loggers": {
-            name: {"handlers": [], "level": lvl, "propagate": True}
-            for name, lvl in _THIRD_PARTY_LEVELS.items()
+            name: {"handlers": [], "level": lvl, "propagate": True} for name, lvl in pinned.items()
         },
     }
 
 
-def configure_logging(log_level: str) -> dict[str, Any]:
+def configure_logging(log_level: str, *, auth_log_level: str | None = None) -> dict[str, Any]:
     """Apply the shared config now and return it for uvicorn's ``log_config``.
 
     Applying it immediately means early startup logs (before uvicorn boots) are
     already formatted; passing the same dict to ``uvicorn.run`` keeps the format
-    in the reload subprocess too.
+    in the reload subprocess too. ``auth_log_level`` defaults to
+    :attr:`Settings.workiq_auth_log_level`.
     """
-    cfg = build_log_config(log_level)
+    global _configured
+    if auth_log_level is None:
+        # Lazy so this module stays import-cheap and free of a config dependency
+        # at top level (and so a broken .env can't break log formatting).
+        try:
+            from precursor.backend.config import get_settings
+
+            auth_log_level = get_settings().workiq_auth_log_level
+        except Exception:  # pragma: no cover - defensive
+            auth_log_level = None
+    cfg = build_log_config(log_level, auth_log_level=auth_log_level)
     logging.config.dictConfig(cfg)
+    _configured = True
     return cfg
+
+
+# Whether this process's logging is owned by :func:`configure_logging`. Alembic's
+# ``env.py`` consults it: run from the CLI it should apply its own ``alembic.ini``
+# logging, but run *inside the app* (``init_db`` upgrades to head on every
+# startup) that same call would tear down the config above — see there.
+_configured = False
+
+
+def logging_is_configured() -> bool:
+    """Whether :func:`configure_logging` has run in this process."""
+    return _configured
 
 
 def configure_subprocess_logging() -> None:

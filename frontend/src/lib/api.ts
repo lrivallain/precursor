@@ -50,6 +50,7 @@ import type {
   MCPServerCreate,
   MCPServerStatus,
   MCPServerUpdate,
+  McpAuthDiagnostics,
   Me,
   Memory,
   MemoryCreate,
@@ -887,10 +888,9 @@ export const api = {
       if (opts?.silentOnly) params.set("silent_only", "true");
       if (opts?.auto) params.set("auto", "true");
       const qs = params.toString();
-      return request<MCPServerStatus & { interaction_required?: boolean }>(
-        `/api/mcp/servers/${name}/reauthenticate${qs ? `?${qs}` : ""}`,
-        { method: "POST" },
-      );
+      return request<
+        MCPServerStatus & { interaction_required?: boolean; auth_episode?: string | null }
+      >(`/api/mcp/servers/${name}/reauthenticate${qs ? `?${qs}` : ""}`, { method: "POST" });
     },
     // Abort an in-flight interactive sign-in so the backend releases that
     // server's fixed OAuth loopback port at once (see workiqSignIn.ts).
@@ -898,6 +898,11 @@ export const api = {
       request<{ cancelled: boolean }>(`/api/mcp/servers/${name}/reauthenticate/cancel`, {
         method: "POST",
       }),
+    // Everything the backend knows about the WorkIQ credentials — settings in
+    // force, per-credential token/idle/state facts, and its own auth trace.
+    // Read on demand by ``window.precursorWorkiqAuthReport()``.
+    authDiagnostics: (limit = 300) =>
+      request<McpAuthDiagnostics>(`/api/mcp/auth/diagnostics?limit=${limit}`),
     create: (data: MCPServerCreate) =>
       request<MCPServerStatus>(`/api/mcp/servers/user`, {
         method: "POST",

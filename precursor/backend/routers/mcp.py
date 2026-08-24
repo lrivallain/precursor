@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -335,6 +336,13 @@ async def _renew_stale_sibling_credentials(
         logger.info(
             "chaining %s sign-in onto the fresh %s session", sibling.server, signed_in.server
         )
+        from precursor.backend.services.mcp import auth_trace
+
+        auth_trace.record(
+            sibling.server,
+            "chaining onto a sibling's fresh Entra session",
+            renewed_sibling=signed_in.server,
+        )
         await publish_mcp_auth_required(
             sibling.server, f"{sibling.label} needs you to sign in to use its tools."
         )
@@ -420,6 +428,9 @@ async def reauthenticate_workiq_server(
     # Hands-free auto re-auth turned off → don't self-trigger anything; report
     # interaction required so the SPA shows the manual banner straight away.
     if (silent_only or auto) and not get_settings().workiq_auto_reauth_enabled:
+        from precursor.backend.services.mcp import auth_trace
+
+        auth_trace.record(name, "hands-free re-auth is disabled by settings")
         entry = manager.get(name)
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
@@ -472,10 +483,21 @@ async def reauthenticate_workiq_server(
     # A silent pass that needs a human: leave the warm worker parked in
     # ``needs_auth`` and tell the SPA to surface the manual sign-in banner.
     if not authenticated:
+        from precursor.backend.services.mcp import auth_trace
+
+        auth_trace.record(
+            name,
+            "returning interaction_required — the SPA will show the manual banner",
+            mode="silent-only" if silent_only else "auto" if auto else "interactive",
+        )
         entry = manager.get(name)
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
-        return {**_enrich_with_user_meta(base, None), "interaction_required": True}
+        return {
+            **_enrich_with_user_meta(base, None),
+            "interaction_required": True,
+            "auth_episode": auth_trace.current_episode(name),
+        }
 
     # Swap in a fresh background (non-interactive) provider so it reads the newly
     # persisted tokens, drop the stale warm worker, then refresh the catalog.
@@ -541,6 +563,87 @@ async def cancel_reauthenticate_workiq_server(name: str) -> dict[str, bool]:
     if profile is None:
         return {"cancelled": False}
     return {"cancelled": cancel_reauthenticate_workiq(profile=profile)}
+
+
+@router.get("/auth/diagnostics")
+async def workiq_auth_diagnostics(
+    limit: int = 300,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Everything known about the WorkIQ credentials, as one extractable blob.
+
+    A sign-in prompt is only ever *reproduced in the wild*: by the time anyone
+    looks, the terminal has scrolled (or belongs to a packaged app nobody sees)
+    and the interesting state — how long the token had left, whether it even had
+    a refresh token, which Entra code refused the renewal — is gone. This returns
+    the settings in force, a fact sheet per credential, and the recent
+    :mod:`~precursor.backend.services.mcp.auth_trace` records, so a whole episode
+    is one copy away.
+
+    Read-only and safe to expose: token *values* never leave the process, only
+    their shape and lifetime.
+    """
+    from precursor.backend.services.mcp import auth_trace
+    from precursor.backend.services.mcp.oauth_registry import active_profiles
+    from precursor.backend.services.mcp.usage import seconds_since_use
+    from precursor.backend.services.mcp.workiq_preview import (
+        DbTokenStorage,
+        _stored_token_expiry,
+        get_workiq_login_hint,
+    )
+
+    settings = get_settings()
+    manager = get_mcp_client_manager()
+    enabled = await _load_enabled(session)
+    now = datetime.now(UTC)
+
+    credentials: list[dict[str, Any]] = []
+    for profile in await active_profiles():
+        entry = manager.get(profile.server)
+        tokens = await DbTokenStorage(profile).get_tokens()
+        expiry = await _stored_token_expiry(tokens, profile) if tokens else None
+        credentials.append(
+            {
+                "server": profile.server,
+                "label": profile.label,
+                "credential": profile.auth_family,
+                "enabled": enabled.get(profile.server, False),
+                "state": entry.state if entry else None,
+                "error": entry.error if entry else None,
+                "auth_short_circuited": manager.is_auth_short_circuited(profile.server),
+                "has_tokens": tokens is not None,
+                "has_refresh_token": bool(tokens and tokens.refresh_token),
+                "scope": tokens.scope if tokens else None,
+                "expires_at": expiry.isoformat() if expiry else None,
+                "expires_in_seconds": (
+                    None if expiry is None else round((expiry - now).total_seconds())
+                ),
+                "has_login_hint": bool(await get_workiq_login_hint(profile)),
+                "idle_seconds": round(seconds_since_use(profile.auth_family)),
+                "open_episode": auth_trace.current_episode(profile.server),
+                "redirect_uri": profile.redirect_uri,
+            }
+        )
+
+    return {
+        "generated_at": now.isoformat(),
+        "settings": {
+            "workiq_keepalive_enabled": settings.workiq_keepalive_enabled,
+            "workiq_keepalive_poll_seconds": settings.workiq_keepalive_poll_seconds,
+            "workiq_keepalive_refresh_margin_seconds": (
+                settings.workiq_keepalive_refresh_margin_seconds
+            ),
+            "workiq_keepalive_idle_after_seconds": settings.workiq_keepalive_idle_after_seconds,
+            "workiq_keepalive_surface_idle_lapse": settings.workiq_keepalive_surface_idle_lapse,
+            "workiq_silent_reauth_enabled": settings.workiq_silent_reauth_enabled,
+            "workiq_auto_reauth_enabled": settings.workiq_auto_reauth_enabled,
+            "workiq_loopback_port_fallback": settings.workiq_loopback_port_fallback,
+            "workiq_chain_reauth_enabled": settings.workiq_chain_reauth_enabled,
+            "workiq_auth_log_level": settings.workiq_auth_log_level,
+        },
+        "credentials": credentials,
+        "events": auth_trace.snapshot(limit),
+    }
 
 
 # --------- user-defined CRUD ---------

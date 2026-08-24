@@ -54,6 +54,7 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
         "expiry": None,
         "refresh_result": ("tok", None),
         "refresh_calls": 0,
+        "refresh_callers": [],
         "auth_banner_calls": [],
         "manager": _FakeManager(),
     }
@@ -66,8 +67,11 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     async def _stored_expiry(_token: object, _profile: object = None) -> datetime | None:
         return state["expiry"]
 
-    async def _resolve_bearer(_profile: object = None) -> tuple[str, datetime | None] | None:
+    async def _resolve_bearer(
+        _profile: object = None, *, caller: str = ""
+    ) -> tuple[str, datetime | None] | None:
         state["refresh_calls"] += 1
+        state["refresh_callers"].append(caller)
         return state["refresh_result"]
 
     async def _publish(server: str, message: str, *, topic_id: int | None = None) -> None:

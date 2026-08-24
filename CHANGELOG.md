@@ -24,6 +24,35 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the trailing slug is unique on its own. Topics over MCP report the same
   collection-prefixed `path`, and a new `public_id` field.
 
+- **A WorkIQ sign-in prompt can now be explained after the fact.** Every decision
+  taken about a WorkIQ / Agent 365 credential — the keep-alive's verdict, the
+  Entra `AADSTS…` code that refused a silent refresh, each leg of a re-auth,
+  whether a token was even renewable — reports to a dedicated `precursor.mcp.auth`
+  channel prefixed `[workiq-auth]`, tagged with an **episode** id that stitches a
+  keep-alive failure, a hands-free pass and a manual click into one story. The
+  reason a renewal was refused was previously *nowhere*: the MCP SDK logs a bare
+  `Token refresh failed: 400`, naming neither the credential nor Entra's answer,
+  so the single most useful datum for choosing a renewal strategy was discarded
+  before anyone could see it. The channel has its own level
+  (`PRECURSOR_WORKIQ_AUTH_LOG_LEVEL`, default `debug`) independent of the app
+  log level, because a lapse is rare, only reproducible in the wild, and useless
+  to diagnose after the fact — the trace has to already be running when it
+  happens. It is silent outside an auth episode.
+
+- **`GET /api/mcp/auth/diagnostics` — the whole episode in one request.**
+  Terminals scroll and a packaged app has none, so the same records are kept in
+  memory and served alongside the state that explains them: settings in force,
+  then per credential whether a token is stored, whether it has a **refresh
+  token** at all, when it expires, how long it's been idle, and whether connects
+  are being fast-failed. `window.precursorWorkiqAuthReport()` merges it with the
+  browser-side trace, so one call yields both halves ready to paste into an
+  issue. Episode records are buffered apart from the keep-alive's ambient
+  heartbeat — otherwise a credential that lapsed overnight would have been pushed
+  out by a thousand once-a-minute "nothing to do" ticks before anyone looked —
+  and the ticker now reports a verdict only when it changes. Token values never
+  leave the process; secrets and account names are reduced to
+  `<present:N chars>`.
+
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor
   slugs joined root-first, prefixed by its collection slug
@@ -316,6 +345,28 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `WorkflowStepInput.reusable`, which decides whether a step-authored prompt
   mints a real agent or the step's private vessel — omitting it keeps the vessel,
   so existing payloads are unchanged.
+
+### Fixed
+
+- **Startup migrations no longer silence the app's own logs.** `init_db` runs
+  `alembic upgrade head` on every boot, and Alembic's `env.py` applied
+  `alembic.ini`'s logging with `fileConfig`'s default
+  `disable_existing_loggers=True` — which switched off every `precursor.*` logger
+  created at import time, replaced the unified handler and formatter, and pulled
+  the root level down to `WARN`. From the first migration onwards the backend was
+  substantially quieter than configured, which is why raising `--log-level` often
+  changed so little. Alembic's own logging config is now applied only when it's
+  driven from its CLI, and never disables existing loggers.
+
+- **A failed automatic re-auth no longer costs you the credential.** The
+  hands-free passes clear the stored token before running, so the SDK is forced
+  through a fresh grant instead of short-circuiting on one it still considers
+  valid — but if the pass then failed, that credential was simply gone. Since the
+  verdict that triggers a pass can come from a transient 401, a refresh token
+  that would have worked on the next try was being thrown away, turning a blip
+  into a mandatory interactive sign-in. The old credential is now restored
+  whenever a hands-free pass doesn't complete, at a cost of at most one doomed
+  refresh later. An explicit **Sign in** still clears outright.
 
 ### Changed
 

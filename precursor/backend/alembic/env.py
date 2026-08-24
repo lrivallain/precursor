@@ -11,12 +11,20 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from precursor.backend.config import get_settings
+from precursor.backend.logging_config import logging_is_configured
 from precursor.backend.models import Base
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Alembic's own ``alembic.ini`` logging is for the *CLI*. Inside the app this
+# same file runs on every startup (``init_db`` upgrades to head), and applying it
+# there is destructive: ``fileConfig`` defaults to ``disable_existing_loggers``,
+# which silences every ``precursor.*`` logger created at import time, replaces
+# the unified handler/formatter and drops the root level to ``WARN``. That turned
+# the app quiet from the first migration onwards. So: skip it entirely when the
+# app owns logging, and never disable existing loggers even from the CLI.
+if config.config_file_name is not None and not logging_is_configured():
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Inject runtime DB URL.
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
