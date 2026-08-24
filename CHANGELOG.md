@@ -11,15 +11,30 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A topic's collection is now part of its URL, and every topic has a
+  permalink.** The readable address gained the collection slug —
+  `/topics/client-a/csu/capacity-review` — so a bookmark or a shared link lands
+  in the right collection instead of whichever one the browser last remembered,
+  and `/topics/<collection-slug>` on its own opens that collection's start
+  surface. Because that address moves whenever a topic is renamed, re-parented
+  or moved between collections, every topic also gained an immutable
+  `/t/<uuid>` **permalink**: opening it resolves the topic and rewrites the
+  address bar to the readable form. Copy it from **topic settings →
+  Permalink**. Links minted before collections joined the URL still resolve —
+  the trailing slug is unique on its own. Topics over MCP report the same
+  collection-prefixed `path`, and a new `public_id` field.
+
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor
-  slugs joined root-first (`csu/cto/capacity-uat-interim-pierre`), so a caller
-  no longer has to re-fetch every parent to rebuild it. A workflow step that
-  matched meetings to topics was spending half its MCP calls — 7 `get_topic`s
-  against 7 real `search`es — climbing `parent_id` by hand, with a depth guard
-  and a cycle guard in its prompt. Paths resolve from a single `(id, slug,
-  parent_id)` index load, so a 200-topic response is still one extra query, not
-  200 chain walks, and a cyclic parent link terminates instead of hanging.
+  slugs joined root-first, prefixed by its collection slug
+  (`client-a/csu/cto/capacity-uat-interim-pierre`) so the value mirrors the URL,
+  and a caller no longer has to re-fetch every parent to rebuild it. A workflow
+  step that matched meetings to topics was spending half its MCP calls — 7
+  `get_topic`s against 7 real `search`es — climbing `parent_id` by hand, with a
+  depth guard and a cycle guard in its prompt. Paths resolve from a single
+  `(id, slug, parent_id)` index load, so a 200-topic response is still one extra
+  query, not 200 chain walks, and a cyclic parent link terminates instead of
+  hanging.
 
 - **`append_note` — file text into a topic without paying for a turn.** The
   built-in `precursor` MCP server gains an `append_note(topic_id, text)` tool
@@ -413,7 +428,28 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **A JSON object body no longer fails the `fetch` server's `http_request`.** The
+- **A new topic lands in the collection you're looking at.** The create form
+  never sent the active collection, so every new top-level topic silently fell
+  back to the default one — leaving you to move it by hand each time, or to
+  wonder why it hadn't appeared in the tree at all. Two other paths were worse
+  and left the membership *null*, which no collection filter matches, so the
+  topic was invisible in the sidebar until you found it through search:
+  promoting a chat to a topic, and the MCP `create_schedule` tool. Both now
+  resolve a collection (`?collection_id=` and a `collection` argument
+  respectively, defaulting to the protected default), and a migration re-homes
+  any topic already stranded that way. `GET /api/topics` and
+  `GET /api/topics/archived` gained the `?collection_id=` filter the tree
+  endpoint already had.
+
+- **A subtree can no longer end up split across two collections.** Saving topic
+  settings sends the parent and the collection together, so a re-parent could be
+  overruled by the collection dropdown's stale value and drop the topic into the
+  wrong collection. The two are now reconciled by *what changed*: re-parenting
+  adopts the new parent's collection, and moving a sub-topic to another
+  collection promotes it to a top-level topic (taking its own children) rather
+  than leaving a branch straddling both.
+
+
   `body` parameter was string-only, so a model reaching for the object the target
   endpoint documents — the natural move — hit a validation error whose shape it
   couldn't see, and retried its way through progressively stranger encodings. It

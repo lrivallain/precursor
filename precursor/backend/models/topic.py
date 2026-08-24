@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,19 @@ class Topic(Base, TimestampMixin):
     # URL-friendly identifier. Stable across title edits unless the user
     # explicitly changes it via the settings panel.
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+
+    # Immutable permalink id (a UUID), minted at row creation. The readable URL
+    # (`/topics/<collection>/<ancestors…>/<slug>`) moves whenever the topic is
+    # renamed, re-parented or moved between collections; `/t/<public_id>` never
+    # does, so it is the address to paste into an issue or a bookmark. Resolving
+    # it redirects to the readable URL — see routers/topics.py.
+    public_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: str(uuid.uuid4()),
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Tree layout — self-referential parent/child relationship. We do NOT
