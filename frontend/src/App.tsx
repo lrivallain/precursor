@@ -2749,7 +2749,7 @@ export default function App() {
               onOpenArchive={() => setArchiveOpen(true)}
               topicSurface={
                 <TopicStartHero
-                  tree={collectionTree}
+                  tree={tree}
                   collectionId={activeCollectionId}
                   onCreated={handleTopicCreated}
                 />
@@ -2815,7 +2815,7 @@ export default function App() {
             ) : (
               <TopicStartHero
                 key={`topic-create-${topicDraftParentId ?? "root"}-${topicDraftNonce}`}
-                tree={collectionTree}
+                tree={tree}
                 initialParentId={topicDraftParentId}
                 collectionId={activeCollectionId}
                 onCreated={handleTopicCreated}

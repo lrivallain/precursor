@@ -479,18 +479,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **A new topic lands in the collection you're looking at.** The create form
-  never sent the active collection, so every new top-level topic silently fell
-  back to the default one — leaving you to move it by hand each time, or to
-  wonder why it hadn't appeared in the tree at all. Two other paths were worse
-  and left the membership *null*, which no collection filter matches, so the
-  topic was invisible in the sidebar until you found it through search:
-  promoting a chat to a topic, and the MCP `create_schedule` tool. Both now
-  resolve a collection (`?collection_id=` and a `collection` argument
-  respectively, defaulting to the protected default), and a migration re-homes
-  any topic already stranded that way. `GET /api/topics` and
-  `GET /api/topics/archived` gained the `?collection_id=` filter the tree
-  endpoint already had.
+- **A new topic lands in the collection you're looking at, and the form says
+  which.** The create form never sent the active collection, so every new
+  top-level topic silently fell back to the default one — leaving you to move it
+  by hand each time, or to wonder why it hadn't appeared in the tree at all. It
+  now carries a **Collection** field, preselected to the collection you're
+  viewing, so the destination is visible and changeable *before* the topic
+  exists rather than being an invisible consequence of the sidebar. Picking a
+  parent scopes that field to the parent's collection instead, since a subtree
+  lives in exactly one. Two other paths were worse and left the membership
+  *null*, which no collection filter matches, so the topic was invisible in the
+  sidebar until you found it through search: promoting a chat to a topic, and
+  the MCP `create_schedule` tool. Both now resolve a collection
+  (`?collection_id=` and a `collection` argument respectively, defaulting to the
+  protected default), and a migration re-homes any topic already stranded that
+  way. `GET /api/topics` and `GET /api/topics/archived` gained the
+  `?collection_id=` filter the tree endpoint already had.
 
 - **A subtree can no longer end up split across two collections.** Saving topic
   settings sends the parent and the collection together, so a re-parent could be
