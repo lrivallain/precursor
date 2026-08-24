@@ -589,6 +589,7 @@ async def workiq_auth_diagnostics(
     from precursor.backend.services.mcp.workiq_preview import (
         DbTokenStorage,
         _stored_token_expiry,
+        _summarize_scope,
         get_workiq_login_hint,
     )
 
@@ -613,7 +614,7 @@ async def workiq_auth_diagnostics(
                 "auth_short_circuited": manager.is_auth_short_circuited(profile.server),
                 "has_tokens": tokens is not None,
                 "has_refresh_token": bool(tokens and tokens.refresh_token),
-                "scope": tokens.scope if tokens else None,
+                **_summarize_scope(tokens.scope if tokens else None),
                 "expires_at": expiry.isoformat() if expiry else None,
                 "expires_in_seconds": (
                     None if expiry is None else round((expiry - now).total_seconds())
