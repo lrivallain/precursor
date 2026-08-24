@@ -54,8 +54,13 @@ single run; it lands on a **control-tower dashboard** for the whole fleet.
 - A row of **KPI stat tiles** across the top counts agents in each lane — **Need
   you**, **Working**, **Idle / done**, and **Scheduled** — each a big tabular
   number that dims when empty; the **Need you** tile glows amber when it's
-  non-zero and the **Working** tile spins while agents are live. A **New agent**
-  button sits on the right.
+  non-zero and the **Working** tile spins while agents are live. Each tile also
+  **doubles as a filter**: click one to narrow the board to that lane, click it
+  again to clear. A **New agent** button sits on the right.
+- A **search box** in the header filters the board by **agent name** as you
+  type. It stacks on top of the tile filter, so you can look for a name *within*
+  "Needs you"; a chip above the lanes says what's active and clears both in one
+  click.
 - Below the tiles, the monitor cards are grouped into **urgency swimlanes** —
   **Needs you**, **Working**, and **Idle · done** — so the agents that want you
   float to the top and quiet ones settle underneath. Empty lanes are hidden, and
