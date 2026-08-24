@@ -4,9 +4,9 @@ title: Quick start
 
 # Quick start
 
-This walkthrough gets you from a fresh install to your first topic-scoped
-conversation in a couple of minutes. If you haven't installed Precursor yet, see
-the [installation guide](/guide/installation).
+This walkthrough gets you from a fresh install to your first conversation in a
+couple of minutes. If you haven't installed Precursor yet, see the
+[installation guide](/guide/installation).
 
 ## 1. Start the app
 
@@ -36,10 +36,9 @@ assistant always reasons over the current state.
 
 ## 3. Chat
 
-Type a prompt in the composer and send it. The reply **streams in** over
-Server-Sent Events with live markdown rendering — including fenced code blocks
-and `mermaid` diagrams. Tool calls (if any MCP servers are enabled for the turn)
-are shown inline so you can see what the assistant did.
+Type a prompt in the composer and send it. The reply **streams in** with live
+markdown rendering — including fenced code blocks and `mermaid` diagrams. Tool
+calls are shown inline so you can see what the assistant did.
 
 Useful things to try in the composer:
 
@@ -48,20 +47,29 @@ Useful things to try in the composer:
 - **Attach a file** — drop in an image (used as vision input) or a PDF / DOCX /
   PPTX (text-extracted). See [attachments](/features/attachments).
 - **⌘K / Ctrl-K** — open the command palette to jump between sections and
-  conversations. Outside a text field, a bare **`/`** does the same — inside the
-  composer `/` still opens the slash-command picker.
+  conversations.
 
-## 4. Organize as you go
+That's the core loop. From here, each of Precursor's other sections has its own
+short quick start.
 
-- **Nest topics** into a tree to group related threads.
-- **Put a topic on a schedule** so a prompt runs on a cadence — see the
-  [scheduler](/features/scheduler).
-- **Set a reminder** to resurface a topic at a specific time with `/reminder`.
-- Spin up a quick **[chat](/features/chats)** when you just need a fast answer
-  without the ceremony of a topic.
+## Start with the other sections
+
+Topics and chats work out of the box. The rest each need a first step of their
+own — and in three cases a prerequisite:
+
+| Section | Quick start | Needs first |
+| --- | --- | --- |
+| 🤖 **Agents** | [Run a task in the background](/guide/quick-start/agents) | the `agents` extra |
+| 🎙️ **Live sessions** | [Record and summarise a meeting](/guide/quick-start/live-sessions) | Azure Speech credentials |
+| 🔗 **Workflows** | [Chain agents into a pipeline](/guide/quick-start/workflows) | agents enabled |
+| 📋 **Kanban** | [Put your issues on a board](/guide/quick-start/kanban) | a global repo + `read:project` |
+| 🗂️ **Files** | [Let the assistant edit files](/guide/quick-start/files) | — |
 
 ## Where to go next
 
 - [Configuration](/guide/configuration) — connect GitHub and a real model.
-- [Feature guides](/features/) — the full tour: live meetings, agents,
-  workspaces, MCP, and more.
+- [Topics](/features/topics) — nest them into a tree, put one on a
+  [schedule](/features/scheduler), or set a `/reminder`.
+- [Chats](/features/chats) — for when you just need a fast answer without the
+  ceremony of a topic.
+- [Feature guides](/features/) — the full detail behind every section.

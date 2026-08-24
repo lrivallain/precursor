@@ -48,11 +48,5 @@ while you're looking elsewhere, the chat's row shows an unread count, the sideba
 tab highlights, and (when notifications are enabled and the window is unfocused) a
 browser notification fires. Opening the chat clears its badge.
 
-Right-click a chat in the left sidebar to rename it, mark it read or unread,
-pin or unpin it, set a reminder, open `/notes`, or archive it.
-
-## Lazy-loaded history
-
-A chat doesn't load its entire transcript up front — it fetches the most recent
-page (50 messages) and pulls older ones in as you scroll toward the top,
-preserving your scroll position.
+Right-click a chat in the left sidebar to rename, pin, set a reminder, open
+`/notes`, or archive it.

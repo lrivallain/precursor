@@ -5,7 +5,7 @@ hero:
   name: Precursor
   text: Opinionated approach to work follow-up, built as an AI assistant
   tagline: >-
-    A single, local-first app that keeps track of your work and/or personal topics with AI conversations enhancement, links them to GitHub issues — with live meetings, autonomous agents, MCP tools, and a scheduler, and more.
+    A single, local-first app that keeps track of your work and/or personal topics with AI conversations enhancement, live meetings transcript, autonomous agents, a workflow engine, MCP integration and more.
   actions:
     - theme: brand
       text: Get started
@@ -26,27 +26,18 @@ features:
       and labels become live context — newer updates outweigh older ones.
     link: /features/topics
     linkText: About topics
-  - icon: 🗃️
-    title: Collections
-    details: >-
-      Split topics into separate workspaces of work and filter the sidebar to
-      one at a time. Each collection can point at its own GitHub repo, so issues
-      land in the right place without touching the global setting.
-    link: /features/collections
-    linkText: About collections
   - icon: 💬
     title: Quick chats
     details: >-
-      Throwaway conversations for when you just need an answer fast. Streaming
-      replies, markdown, mermaid diagrams, and code highlighting out of the box.
+      Simple conversations for when you just need an answer fast. Streaming
+      replies, markdown, diagrams generation, and code highlighting out of the box.
     link: /features/chats
     linkText: About chats
   - icon: 🎙️
     title: Live meeting assistant
     details: >-
-      Record a meeting, transcribe it with speaker labels via Azure Speech, and
-      get live insights, Q&A, and an editable summary you can post to a topic.
-      Audio is never stored.
+      Transcribe a meeting with speaker labels via Azure Speech, and
+      get live insights, Q&A, notes and an editable summary you can post to a topic.
     link: /features/live-sessions
     linkText: About live sessions
   - icon: 🤖
@@ -89,22 +80,15 @@ features:
     title: Skills & memory
     details: >-
       Reusable /slash prompt presets stored as SKILL.md files (interoperable with
-      the Copilot CLI) plus long-term memory injected into every conversation.
+      the Copilot CLI) plus long-term memory injected into conversation.
     link: /features/skills-memory
     linkText: About skills & memory
   - icon: ⏰
     title: Scheduler & reminders
     details: >-
-      Put any topic or agent on a cadence or set a one-shot reminder that resurfaces the thread on a specified date/time.
+      Put any topic, agent or workflow on a cadence or set one-shot reminders that resurface the thread on a specified date/time.
     link: /features/scheduler
     linkText: About the scheduler
-  - icon: 🧩
-    title: Extensible by design
-    details: >-
-      (WIP) A backend entry-point plugin contract plus a frontend extension registry
-      let third parties add routers, panels, and MCP tools without forking core.
-    link: /features/plugins
-    linkText: About plugins
   - icon: 🧰
     title: Bring your own model
     details: >-
@@ -125,7 +109,7 @@ features:
 
 ## Let's go!
 
-Precursor is a small AI assistant, built with an opinionated approach to
+Precursor is an AI assistant, built with an opinionated approach to
 tracking work-in-progress conversations alongside the GitHub issues they may
 belong to.
 

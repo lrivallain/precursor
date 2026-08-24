@@ -114,10 +114,17 @@ Highlights:
   live one, and the agent's execution columns are a write-through **mirror** of
   that run so list/inbox/dashboard reads stay a single cheap lookup.
 - **`AgentTrigger`** / **`AgentArtifact`** / **`AgentBlueprint`** — the
-  [agent orchestrator](/features/agents-mode#orchestrating-agents): webhook/manual
+  [agent orchestrator](/features/agents-mode/orchestration): webhook/manual
   triggers, the shared-artifact blackboard (scoped to the `AgentRun` that
   published each artifact), and reusable task+governance templates.
-- **`Workspace`** — a git clone or local directory.
+- **`AgentState`** / **`WorkflowState`** — the two durable key/value stores that
+  survive a re-run, unlike artifacts: an
+  [agent's private scratchpad](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad)
+  and a
+  [pipeline's shared memory](/features/workflows/steps#pipeline-state-what-a-workflow-remembers).
+  Only the **key index** enters a prompt; bodies are fetched on demand through
+  MCP tools.
+- **`Workspace`** — a git clone or plain folder.
 - **`Skill`** — an enablement record for a file-backed `SKILL.md` prompt preset.
 - **`Memory`** — long-term notes injected into the system prompt.
 - **`Attachment`** — file metadata + a `sha256` pointer; **bytes live on disk** as
@@ -153,9 +160,7 @@ in `services/llm/registry.py`; `get_llm_provider(session)` reads the active
 provider + config from the DB per request and constructs it, falling back to the
 mock when credentials are missing. Shipped providers: **GitHub Copilot**
 (default), **Azure AI Foundry**, **OpenAI-compatible**, and **Mock**. Adding a
-provider is one `ProviderSpec` plus an implementation class; retiring one is a
-`retired` reason on its spec, which hides it from the picker unless it's the
-active selection.
+provider is one `ProviderSpec` plus an implementation class.
 
 **Two endpoints, one provider.** Copilot splits its catalogue across
 `/chat/completions` and the newer Responses API, and a model served by one is
@@ -199,7 +204,7 @@ async ticker enqueues due `TopicSchedule` and `AgentSchedule` rows, a bounded
 worker pool runs each, with DB row leasing for crash recovery. Scheduled prompts
 that start with a slash command are dispatched to that command's backend action;
 `/guard` directives gate a run behind a cheap MCP probe. The same ticker also
-drives the [agent orchestrator](/features/agents-mode#orchestrating-agents):
+drives the [agent orchestrator](/features/agents-mode/orchestration):
 re-running failed agents whose exponential-backoff retry is due, sweeping
 orphaned `pending` agents (via `services/agents/fleet.py`), and honouring the
 concurrency governor. See the
