@@ -798,7 +798,7 @@ def _describe_authorization_url(url: str) -> dict[str, Any]:
         "authorize_path": split.path,
         "client_id": params.get("client_id"),
         "redirect_uri": params.get("redirect_uri"),
-        "scope": params.get("scope"),
+        **_summarize_scope(params.get("scope")),
     }
 
 
@@ -1220,6 +1220,35 @@ def _make_callback_handler(
     return _callback_handler
 
 
+def _summarize_scope(scope: str | None) -> dict[str, Any]:
+    """Reduce an Entra scope list to the parts that are actually diagnostic.
+
+    Agent 365 grants ~37 scopes, each a fully-qualified URL naming the tenant and
+    server — roughly 4 KB of near-identical text. Logging it verbatim buried
+    every other field on the line and made the whole trace unreadable, which
+    defeats the point. Only three things about a scope list matter here: how many
+    there are, which resource they address, and whether **``offline_access``** is
+    among them — that last one decides whether the credential can be renewed at
+    all, and is the first thing to check when a session keeps dying.
+    """
+    if not scope:
+        return {"scope": "<absent>"}
+    scopes = scope.split()
+    resources = {
+        s.rsplit("/", 1)[0] for s in scopes if s.startswith(("http://", "https://")) and "/" in s
+    }
+    facts: dict[str, Any] = {
+        "scope_count": len(scopes),
+        "scope_offline_access": OFFLINE_ACCESS_SCOPE in scopes,
+    }
+    # One resource is the norm; list them only when something unexpected happened.
+    if len(resources) == 1:
+        facts["scope_resource"] = next(iter(resources))
+    elif resources:
+        facts["scope_resources"] = sorted(resources)
+    return facts
+
+
 def _token_facts(token: OAuthToken | None) -> dict[str, Any]:
     """Safe, diagnostic summary of a token set — never the token values.
 
@@ -1235,7 +1264,7 @@ def _token_facts(token: OAuthToken | None) -> dict[str, Any]:
         "expires_in": token.expires_in,
         "has_refresh_token": bool(token.refresh_token),
         "token_type": token.token_type,
-        "scope": token.scope,
+        **_summarize_scope(token.scope),
     }
     claims = _claims_from_access_token(token.access_token)
     if claims:

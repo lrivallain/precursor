@@ -139,6 +139,37 @@ def test_token_facts_never_include_the_token() -> None:
     assert "header.payload.signature" not in json.dumps(facts)
 
 
+def test_scope_is_summarized_not_dumped() -> None:
+    """Agent 365 grants ~37 fully-qualified scope URLs — about 4 KB of near
+    identical text. Logging it verbatim buried every other field on the line and
+    made the trace unreadable, which defeats the point of having one.
+    """
+    base = (
+        "https://agent365.svc.cloud.microsoft/agents/tenants/"
+        "72f988bf-86f1-41af-91ab-2d7cd011db47/servers/mcp_TeamsServer"
+    )
+    scope = " ".join(
+        [f"{base}/McpServers.{name}.All" for name in ("Teams", "Mail", "Files")]
+        + [f"{base}/.default", "offline_access"]
+    )
+    facts = wp._summarize_scope(scope)
+
+    assert facts["scope_count"] == 5
+    # The one scope fact that decides whether a credential is renewable at all.
+    assert facts["scope_offline_access"] is True
+    assert facts["scope_resource"] == base
+    # The verbose list itself is gone.
+    rendered = json.dumps(facts)
+    assert "McpServers.Teams.All" not in rendered
+    assert len(rendered) < 200
+
+
+def test_scope_summary_flags_a_credential_that_can_never_renew() -> None:
+    facts = wp._summarize_scope("https://example.com/.default")
+    assert facts["scope_offline_access"] is False
+    assert wp._summarize_scope(None) == {"scope": "<absent>"}
+
+
 def test_provider_is_traced_and_the_sdk_hooks_still_exist() -> None:
     """Guard against an SDK upgrade silently blinding the trace."""
     from mcp.client.auth import OAuthClientProvider
