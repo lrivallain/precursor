@@ -349,6 +349,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The WorkIQ refresh token is now actually used, so an expiry stops costing a
+  sign-in.** The MCP SDK's `OAuthClientProvider` restores stored tokens on
+  startup but not their expiry, and its `is_token_valid()` treats an unknown
+  expiry as valid — so a credential read back from the database always looked
+  fresh, the silent-refresh branch that check guards was never entered, and the
+  401 that eventually followed escalated straight to a full browser grant, which
+  never attempts a refresh either. The refresh token was dead weight, and every
+  access-token expiry became an interactive sign-in. The trace added above is
+  what caught it: over 401 recorded events, **58 escalations to a full
+  authorization and zero refresh attempts**, against credentials that held a
+  refresh token throughout. Precursor already records when each token was issued,
+  so it now restores the real expiry (less a minute of skew) as the credential
+  loads, and the SDK's own refresh path works as designed. A legacy token with no
+  recorded issue time is still assumed valid rather than forced through a sign-in
+  that may not be needed.
+
 - **Startup migrations no longer silence the app's own logs.** `init_db` runs
   `alembic upgrade head` on every boot, and Alembic's `env.py` applied
   `alembic.ini`'s logging with `fileConfig`'s default
