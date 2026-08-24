@@ -11,6 +11,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **The agent dashboard gained a name filter.** A search box in the fleet header
+  narrows the board to agents whose title matches what you type, stacking on top
+  of the KPI tile filters (so you can search *within* "Needs you"). The
+  "filtered to…" chip names both the active lane and the search term, and clears
+  them together.
+
 - **A topic's collection is now part of its URL, and every topic has a
   permalink.** The readable address gained the collection slug —
   `/topics/client-a/csu/capacity-review` — so a bookmark or a shared link lands

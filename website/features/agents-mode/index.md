@@ -49,6 +49,12 @@ So opening Agents mode doesn't drop you into a single run; it lands on a
 (**Need you**, **Working**, **Idle / done**, **Scheduled**) above monitor cards
 grouped into the same urgency swimlanes.
 
+Each KPI tile doubles as a **filter** — click one to narrow the board to that
+lane, click it again to clear — and a **search box** in the header filters by
+**agent name** as you type. The two stack, so you can look for a name *within*
+"Needs you"; a chip above the lanes names whatever is active and clears both in
+one click.
+
 Cards are **urgency-sorted, not chronological**: an agent waiting on you — a
 parked approval or a raised **Needs input** question — floats to the top, then
 interrupted/failed runs, then live work, then idle. The same ordering is used by
