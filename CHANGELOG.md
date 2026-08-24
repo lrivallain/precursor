@@ -44,14 +44,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   memory and served alongside the state that explains them: settings in force,
   then per credential whether a token is stored, whether it has a **refresh
   token** at all, when it expires, how long it's been idle, and whether connects
-  are being fast-failed. `window.precursorWorkiqAuthReport()` merges it with the
-  browser-side trace, so one call yields both halves ready to paste into an
-  issue. Episode records are buffered apart from the keep-alive's ambient
-  heartbeat — otherwise a credential that lapsed overnight would have been pushed
-  out by a thousand once-a-minute "nothing to do" ticks before anyone looked —
-  and the ticker now reports a verdict only when it changes. Token values never
-  leave the process; secrets and account names are reduced to
-  `<present:N chars>`.
+  are being fast-failed. `await precursorWorkiqAuthReport()` in the console
+  merges it with the browser-side trace and puts the result on your clipboard,
+  ready to paste into an issue. Episode records are buffered apart from the
+  keep-alive's ambient heartbeat — otherwise a credential that lapsed overnight
+  would have been pushed out by a thousand once-a-minute "nothing to do" ticks
+  before anyone looked — and the ticker now reports a verdict only when it
+  changes. Token values never leave the process; secrets and account names are
+  reduced to `<present:N chars>`, and Agent 365's ~37-entry scope list is
+  summarized to a count plus whether `offline_access` is in it.
 
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor

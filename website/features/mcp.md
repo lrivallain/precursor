@@ -408,11 +408,20 @@ Terminals scroll, though, and a packaged app has none. So the same records are
 kept in memory and served, with the state that explains them, by
 **`GET /api/mcp/auth/diagnostics`**: the settings in force, then per credential —
 whether a token is stored, whether it has a **refresh token** at all, when it
-expires, how long it's been idle, and whether connects are being fast-failed. In
-the SPA, `window.precursorWorkiqAuthReport()` fetches that and merges it with the
-console trace, so one call yields both halves of an episode ready to paste. Token
-values never leave the process; secrets and account names are reduced to
-`<present:N chars>`.
+expires, how long it's been idle, and whether connects are being fast-failed.
+
+In the SPA, one console call collects both halves and puts them on your
+clipboard, ready to paste into an issue:
+
+```js
+await precursorWorkiqAuthReport()
+```
+
+(If it reports it couldn't reach the clipboard, DevTools had focus rather than
+the page — the JSON is printed instead, or use `copy(await
+precursorWorkiqAuthReport())`.) Token values never leave the process; secrets and
+account names are reduced to `<present:N chars>`, and the ~37-entry Agent 365
+scope list is summarized to a count plus whether `offline_access` is in it.
 
 Episode records are buffered *apart* from the keep-alive's ambient heartbeat, so
 a credential that lapsed overnight still explains itself the next morning rather
