@@ -365,3 +365,37 @@ def test_settings_expose_http_fields() -> None:
         assert s["mcp_http_enabled"] is False
         assert s["mcp_http_loopback_ok"] is True
         assert s["mcp_http_url"] == f"{_base_url()}/mcp"
+
+
+# --------------------------------------------------------------------------
+# append_note — filing text into a topic without running an assistant turn
+# --------------------------------------------------------------------------
+
+
+async def test_append_note_gated_when_section_off() -> None:
+    await _set_expose("{}")
+    result = await ps.append_note(1, "anything")
+    assert "error" in result
+    assert "not exposed" in result["error"]
+
+
+async def test_append_note_persists_text_verbatim() -> None:
+    await _set_expose('{"notes": true, "messages": true}')
+    topic_id = await _make_topic("MCP append note surface")
+
+    result = await ps.append_note(topic_id, "Line one\nLine two")
+    assert result["posted"] is True
+    assert result["topic_id"] == topic_id
+
+    messages = await ps.list_messages(topic_id)
+    bodies = [m["content"] for m in messages["messages"]]
+    # The newline is what a briefing is made of, so it must survive the round
+    # trip — this is the exact payload the HTTP path used to mangle.
+    assert any("Line one\nLine two" in b for b in bodies)
+
+
+async def test_append_note_rejects_empty_and_missing_topic() -> None:
+    await _set_expose('{"notes": true}')
+    assert "error" in await ps.append_note(1, "   ")
+    missing = await ps.append_note(10_000_000, "text")
+    assert "not found" in missing["error"]

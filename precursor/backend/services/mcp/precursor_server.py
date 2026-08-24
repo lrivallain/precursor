@@ -28,6 +28,7 @@ Sections → tools:
 - ``workflow_state`` → workflow_state_list, workflow_state_get, workflow_state_set,
                      workflow_state_delete (read/write — a pipeline's shared
                      memory, readable by every step and across runs)
+- ``notes``       → append_note (write — persists text verbatim, no LLM turn)
 - ``post_message`` → post_message (write — runs a full assistant turn)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
@@ -1031,6 +1032,42 @@ async def workflow_state_delete(key: str, workflow_id: int | None = None) -> dic
     async with SessionLocal() as session:
         removed = await state_service.delete_state(session, resolved, key.strip().lower())  # type: ignore[arg-type]
     return {"workflow_id": resolved, "key": key, "deleted": removed}
+
+
+# --------------------------------------------------------------------------
+# notes (write)
+# --------------------------------------------------------------------------
+@mcp.tool()
+async def append_note(topic_id: int, text: str) -> dict[str, Any]:
+    """Append a note to a topic verbatim, without running an assistant turn.
+
+    The counterpart to ``post_message``: this persists ``text`` as-is and
+    returns immediately, so it is the right tool for filing an already-written
+    briefing, digest or summary into a topic. ``post_message`` would instead
+    spend a full generation replying to it.
+
+    Identical in effect to the app's "append notes" command, so the note lands
+    in the topic exactly as the UI would write it.
+    """
+    if not await _section_enabled("notes"):
+        return {"error": _GATED.format(section="notes")}
+    if not text.strip():
+        return {"error": "text must not be empty"}
+    # Imported lazily: drags in the FastAPI/attachment stack the read tools
+    # have no use for.
+    from precursor.backend.services import notes as notes_service
+
+    async with SessionLocal() as session:
+        if await session.get(Topic, topic_id) is None:
+            return {"error": f"Topic {topic_id} not found"}
+
+    result = await notes_service.append_notes(
+        kind="topic",
+        container_id=topic_id,
+        text=text,
+        attachment_ids=[],
+    )
+    return {"topic_id": topic_id, "message_id": result.message.id, "posted": True}
 
 
 # --------------------------------------------------------------------------

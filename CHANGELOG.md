@@ -11,6 +11,16 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **`append_note` — file text into a topic without paying for a turn.** The
+  built-in `precursor` MCP server gains an `append_note(topic_id, text)` tool
+  under a new **Append notes** capability toggle. It persists the text verbatim
+  and returns, which is what a caller filing an already-written briefing, digest
+  or summary actually wants; `post_message`, the only prior option, spends a
+  full generation replying to it. Previously the only way to append a note over
+  MCP was to POST to the app's own HTTP API through the generic `fetch` server —
+  a round trip that made a workflow step hand-encode JSON, and in practice cost
+  a multi-minute retry loop before the note landed.
+
 - **A file the assistant touches in a workspace is one click away.** When a turn
   calls `drawio` or `workspace-fs` to read or write a file, the tool call in the
   transcript now carries an **Open** chip naming it — clicking it switches to the
@@ -393,6 +403,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A JSON object body no longer fails the `fetch` server's `http_request`.** The
+  `body` parameter was string-only, so a model reaching for the object the target
+  endpoint documents — the natural move — hit a validation error whose shape it
+  couldn't see, and retried its way through progressively stranger encodings. It
+  now accepts an object or array and serialises it, setting
+  `Content-Type: application/json` unless the caller supplies one, so a raw
+  string still behaves exactly as before.
+- **A workflow step is no longer told about state tools it doesn't have.** The
+  "this workflow's saved state" block — which instructs the agent to call
+  `workflow_state_get` — was attached whenever a step had MCP on at all, ignoring
+  the step's own server allowlist. A step scoped to, say, `workiq` was handed an
+  index it had no tool to read, and spent a turn explaining it couldn't comply.
+  The block now follows the same predicate the attach path uses.
 - **A failed turn no longer reads as a success.** Stream errors are persisted as
   system messages, and *every* system message rendered as a green check-marked
   acknowledgement — so "The model provider rejected the request" looked exactly

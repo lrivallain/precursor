@@ -3,7 +3,8 @@
 Runs as a stdio subprocess. Exposes two tools:
 - ``http_get(url, headers=None)`` — convenience GET.
 - ``http_request(url, method="GET", headers=None, body=None, params=None,
-  max_bytes=200_000)`` — full GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS.
+  max_bytes=200_000)`` — full GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS. ``body``
+  takes a raw string or a JSON object/array (serialised for the caller).
 
 Each tool returns a dict with ``status``, ``headers``, ``body``,
 ``truncated``, ``content_type``, and ``url`` (final URL after redirects).
@@ -14,6 +15,7 @@ and flagged via ``encoding="base64"``.
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any
 
 import httpx
@@ -24,6 +26,25 @@ _DEFAULT_MAX_BYTES = 200_000
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
 mcp = FastMCP("fetch")
+
+
+def _encode_body(body: Any) -> tuple[bytes | None, bool]:
+    """Return ``(payload, was_json)`` for a caller-supplied request body.
+
+    A model posting JSON overwhelmingly reaches for the *object* — that is what
+    the endpoint's schema describes, after all — and a ``str``-only parameter
+    turns that instinct into a validation error it cannot see the shape of. It
+    then retries with progressively stranger encodings instead of the one thing
+    that would work. Accepting a mapping/sequence and serialising it here costs
+    nothing and removes a failure mode that is invisible from the caller's side.
+    """
+    if body is None:
+        return None, False
+    if isinstance(body, str):
+        return body.encode("utf-8"), False
+    if isinstance(body, dict | list):
+        return json.dumps(body, ensure_ascii=False).encode("utf-8"), True
+    return str(body).encode("utf-8"), False
 
 
 def _decode_body(content: bytes, content_type: str | None) -> tuple[str, str]:
@@ -64,7 +85,7 @@ async def _do_request(
     url: str,
     *,
     headers: dict[str, str] | None,
-    body: str | None,
+    body: Any,
     params: dict[str, str] | None,
     max_bytes: int,
 ) -> dict[str, Any]:
@@ -74,12 +95,21 @@ async def _do_request(
     if max_bytes <= 0 or max_bytes > 5_000_000:
         max_bytes = _DEFAULT_MAX_BYTES
 
+    payload, was_json = _encode_body(body)
+    # Serialising an object and then omitting the header it implies would just
+    # move the failure downstream, so name the type we actually sent — unless
+    # the caller already set one.
+    if was_json:
+        headers = dict(headers or {})
+        if not any(k.lower() == "content-type" for k in headers):
+            headers["Content-Type"] = "application/json"
+
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
         resp = await client.request(
             method,
             url,
             headers=headers,
-            content=body.encode("utf-8") if body is not None else None,
+            content=payload,
             params=params,
         )
         raw = resp.content
@@ -128,16 +158,17 @@ async def http_request(
     url: str,
     method: str = "GET",
     headers: dict[str, str] | None = None,
-    body: str | None = None,
+    body: str | dict[str, Any] | list[Any] | None = None,
     params: dict[str, str] | None = None,
     max_bytes: int = _DEFAULT_MAX_BYTES,
 ) -> dict[str, Any]:
     """Perform an arbitrary HTTP request.
 
     ``method`` is one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS.
-    ``body`` is sent as the raw request body (UTF-8 encoded); set the
-    matching ``Content-Type`` header yourself (e.g. ``application/json``).
-    Follows redirects. Body is truncated past ``max_bytes`` (default
+    ``body`` may be a raw string (sent as-is, UTF-8 encoded) **or** a JSON
+    object/array, which is serialised for you — in that case
+    ``Content-Type: application/json`` is set automatically unless you supply
+    your own. Follows redirects. Body is truncated past ``max_bytes`` (default
     200 000, hard cap 5 000 000).
     """
     return await _do_request(

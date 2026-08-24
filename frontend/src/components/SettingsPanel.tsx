@@ -1750,6 +1750,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "notes",
+    label: "Append notes",
+    hint: "Let callers file text into a topic verbatim, without running a turn.",
+    danger: true,
+  },
+  {
     key: "post_message",
     label: "Post message",
     hint: "Let callers post to a topic and run a full assistant turn.",
@@ -1934,6 +1940,7 @@ function McpExposeCard({
     expose.memory_write ||
     expose.agent_state ||
     expose.workflow_state ||
+    expose.notes ||
     expose.post_message ||
     expose.schedules ||
     expose.reminders;

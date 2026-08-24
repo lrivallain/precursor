@@ -267,3 +267,33 @@ async def test_mcp_workflow_state_is_gated_for_external_clients(monkeypatch) -> 
 
     result = await ps.workflow_state_list(workflow_id=workflow_id)
     assert "not exposed" in result["error"]
+
+
+# --------------------------------------------------------------------------
+# The state index is only advertised to steps that can act on it
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("use_mcp", "mcp_servers", "expected"),
+    [
+        # Tools off entirely — nothing to call.
+        (False, "precursor", False),
+        # Scoped to someone else's servers: the index would name a
+        # ``workflow_state_get`` this step has never been given.
+        (True, "workiq,workiq-user", False),
+        # Explicitly scoped to no servers at all.
+        (True, "", False),
+        (True, "fetch,precursor", True),
+        # No scope means "attach every enabled server", the pre-scoping default.
+        (True, None, True),
+    ],
+)
+def test_state_index_follows_the_step_mcp_scope(
+    use_mcp: bool | None, mcp_servers: str | None, expected: bool
+) -> None:
+    from precursor.backend.models import WorkflowStep
+    from precursor.backend.services.agents.workflow import _has_precursor_tools
+
+    step = WorkflowStep(use_mcp=use_mcp, mcp_servers=mcp_servers)
+    assert _has_precursor_tools(step) is expected

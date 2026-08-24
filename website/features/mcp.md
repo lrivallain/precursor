@@ -22,7 +22,7 @@ Built-in servers ship in-tree:
 | Server | What it does |
 | --- | --- |
 | `github` | GitHub issue/PR/repo operations. |
-| `fetch` | Fetch and read web content. |
+| `fetch` | Fetch and read web content, and make arbitrary HTTP requests (a JSON object body is serialised for you). |
 | `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
 | `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
 | `drawio` | Author native `.drawio` diagrams into a workspace, with server-side layout (see below). |
@@ -428,8 +428,14 @@ data to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 [agent state](/features/agents-mode#durable-state-the-private-scratchpad) (an agent's
 durable cross-run scratchpad, read + write),
 [workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) (a
-pipeline's shared memory, read + write), `post_message` (runs a full turn),
-schedules, and reminders.
+pipeline's shared memory, read + write), `append_note` (files text into a topic
+verbatim), `post_message` (runs a full turn), schedules, and reminders.
+
+`append_note` and `post_message` are deliberately different tools. `append_note`
+persists the text you hand it and returns — the right call for filing an
+already-written briefing or digest into a topic. `post_message` spends a whole
+generation replying to it, which is what you want for a question and pure
+overhead for a note.
 
 **Search spans every surface** — the same ⌘K palette engine — so a host can find
 a topic, chat, agent task or meeting by content and then follow the hit's
