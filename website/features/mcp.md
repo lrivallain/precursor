@@ -377,6 +377,60 @@ want to paste it into an issue; `login_hint`, `state` and `nonce` are never
 logged. Set `localStorage['precursor.debug.workiqAuth'] = '0'` to silence the
 output (the trace buffer keeps working).
 
+#### When a sign-in prompt needs explaining
+
+The console trace above is only the SPA's half of the story — the legs it
+*observes*. It can tell you the silent frame never completed; it cannot tell you
+that Entra answered `AADSTS700082: The refresh token has expired due to
+inactivity`. That answer arrives at the **backend**, and until now nothing
+recorded it: the MCP SDK logs a bare `Token refresh failed: 400` naming neither
+the credential nor the reason.
+
+So the backend keeps its own trace, on a dedicated logger. Every decision taken
+about a WorkIQ credential reports to **`precursor.mcp.auth`**, prefixed
+`[workiq-auth]` and stamped with an *episode* id that stitches a keep-alive
+verdict, a hands-free pass and a manual click into one story:
+
+```text
+2026-08-24T09:11:02Z INFO precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +0ms — episode opened reason='keep-alive could not renew silently'
+2026-08-24T09:11:02Z WARN precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +38ms — silent refresh REFUSED by Entra error='invalid_grant' error_description='AADSTS700082: …'
+2026-08-24T09:11:03Z INFO precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +1204ms — leg ① starting: silent prompt=none authorization
+2026-08-24T09:11:23Z INFO precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +21208ms — loopback timed out — no redirect ever arrived
+```
+
+That channel has **its own level**, `workiq_auth_log_level`, independent of the
+app-wide `log_level`. It defaults to `debug` on purpose: a lapse is rare and only
+happens in the wild, so the trace has to already be running when it does. The
+channel is silent outside an auth episode, so it costs nothing the rest of the
+time — raise it to `info` for transitions only, or `warning` to quieten it.
+
+Terminals scroll, though, and a packaged app has none. So the same records are
+kept in memory and served, with the state that explains them, by
+**`GET /api/mcp/auth/diagnostics`**: the settings in force, then per credential —
+whether a token is stored, whether it has a **refresh token** at all, when it
+expires, how long it's been idle, and whether connects are being fast-failed. In
+the SPA, `window.precursorWorkiqAuthReport()` fetches that and merges it with the
+console trace, so one call yields both halves of an episode ready to paste. Token
+values never leave the process; secrets and account names are reduced to
+`<present:N chars>`.
+
+Episode records are buffered *apart* from the keep-alive's ambient heartbeat, so
+a credential that lapsed overnight still explains itself the next morning rather
+than having been pushed out by a thousand once-a-minute "nothing to do" ticks —
+and the ticker itself only reports a verdict when it **changes**.
+
+::: tip A failed automatic attempt no longer costs you the credential
+The hands-free passes clear the stored token before they run, so the SDK is
+forced through a fresh grant instead of short-circuiting on a token it still
+considers valid. If the pass then failed, that credential was simply *gone* — and
+since the verdict that triggers a pass can come from a transient 401, a
+refresh token that would have worked perfectly well on the next try was being
+thrown away, turning a blip into a mandatory sign-in. The old credential is now
+put back whenever a hands-free pass doesn't complete, at a cost of at most one
+doomed refresh later. An explicit **Sign in** still clears outright — you're
+right there, and a stale token must not shadow the new grant.
+:::
+
 ### Agent 365: `workiq-teams` and `workiq-user`
 
 Microsoft's **Agent 365** platform exposes two more hosted MCP endpoints, and

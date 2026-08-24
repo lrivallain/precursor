@@ -430,7 +430,7 @@ async def test_oauth_bearer_header_workiq_injects_token(monkeypatch) -> None:
 
     expires = datetime.now(UTC) + timedelta(hours=1)
 
-    async def _tok(_profile: object = None) -> tuple[str, datetime]:
+    async def _tok(_profile: object = None, **_kwargs) -> tuple[str, datetime]:
         return "wq-access-token", expires
 
     await _enable_preview(monkeypatch)
@@ -456,7 +456,7 @@ async def test_oauth_bearer_header_resolves_agent365_servers(monkeypatch) -> Non
     async def _profile(server: str):
         return agent365.build_profile(server, "11111111-2222-3333-4444-555555555555")
 
-    async def _tok(profile: object = None) -> tuple[str, None]:
+    async def _tok(profile: object = None, **_kwargs) -> tuple[str, None]:
         seen.append(getattr(profile, "server", ""))
         return "a365-token", None
 
@@ -477,7 +477,7 @@ async def test_oauth_bearer_header_passes_through_unknown_expiry(monkeypatch) ->
     from precursor.backend.services.agents.manager import AgentManager
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _tok(_profile: object = None) -> tuple[str, None]:
+    async def _tok(_profile: object = None, **_kwargs) -> tuple[str, None]:
         return "wq-access-token", None
 
     await _enable_preview(monkeypatch)
@@ -491,7 +491,7 @@ async def test_oauth_bearer_header_workiq_without_token_is_none(monkeypatch) -> 
     from precursor.backend.services.agents.manager import AgentManager
     from precursor.backend.services.mcp import workiq_preview as wp
 
-    async def _none(_profile: object = None) -> None:
+    async def _none(_profile: object = None, **_kwargs) -> None:
         return None
 
     await _enable_preview(monkeypatch)
@@ -596,7 +596,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
 
         expires = datetime.now(UTC) + timedelta(hours=1)
 
-        async def _tok(_profile: object = None) -> tuple[str, datetime]:
+        async def _tok(_profile: object = None, **_kwargs) -> tuple[str, datetime]:
             return "wq-token", expires
 
         await _enable_preview(monkeypatch)
@@ -609,7 +609,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
         assert oauth_expiry == expires
 
         # Unknown lifetime → a conservative fallback TTL, not None.
-        async def _tok_no_exp(_profile: object = None) -> tuple[str, None]:
+        async def _tok_no_exp(_profile: object = None, **_kwargs) -> tuple[str, None]:
             return "wq-token", None
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _tok_no_exp)
@@ -618,7 +618,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
         assert fallback_expiry is not None
         assert before < fallback_expiry <= datetime.now(UTC) + _OAUTH_FALLBACK_TTL
 
-        async def _none(_profile: object = None) -> None:
+        async def _none(_profile: object = None, **_kwargs) -> None:
             return None
 
         monkeypatch.setattr(wp, "resolve_workiq_bearer_token", _none)

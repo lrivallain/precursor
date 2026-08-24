@@ -1208,6 +1208,22 @@ export interface MCPServerStatus {
   header_keys: string[];
 }
 
+/**
+ * ``GET /api/mcp/auth/diagnostics`` — everything the backend knows about the
+ * WorkIQ OAuth credentials, in one extractable blob.
+ *
+ * Deliberately loose about ``credentials``/``events`` payloads: this is a
+ * diagnostic surface read by humans (via ``window.precursorWorkiqAuthReport()``)
+ * rather than a contract the UI renders, so it should keep working when the
+ * backend adds a field rather than needing a mirrored edit here.
+ */
+export interface McpAuthDiagnostics {
+  generated_at: string;
+  settings: Record<string, unknown>;
+  credentials: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+}
+
 export interface MCPServerCreate {
   name: string;
   transport: "streamable_http" | "stdio";

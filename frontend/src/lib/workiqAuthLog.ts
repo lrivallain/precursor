@@ -26,9 +26,19 @@
  * Every line is also kept in a small ring buffer that
  * ``window.precursorWorkiqAuthTrace()`` returns, so a whole episode can be
  * copied out of the console in one go.
+ *
+ * The SPA only sees half the story, though — the legs it *observes* rather than
+ * the ones it drives. ``window.precursorWorkiqAuthReport()`` closes that gap: it
+ * pulls the backend's own trace and credential fact sheet from
+ * ``GET /api/mcp/auth/diagnostics`` and returns both halves in one object, keyed
+ * by the backend's episode ids. That is the artefact worth pasting into an
+ * issue, and the reason the backend stamps ``auth_episode`` onto its re-auth
+ * responses: a line here and a line there can be put on the same timeline.
  */
 
+import { api } from "./api";
 import { mcpAuthFamily } from "./mcpServers";
+import type { McpAuthDiagnostics } from "./types";
 
 const STORAGE_KEY = "precursor.debug.workiqAuth";
 const PREFIX = "[workiq-auth]";
@@ -139,9 +149,41 @@ export function probeFrame(frame: HTMLIFrameElement): Record<string, unknown> {
 declare global {
   interface Window {
     precursorWorkiqAuthTrace?: () => AuthTraceEntry[];
+    precursorWorkiqAuthReport?: () => Promise<WorkiqAuthReport>;
   }
+}
+
+/** Both halves of an auth investigation: what the SPA saw and what the backend did. */
+export interface WorkiqAuthReport {
+  capturedAt: string;
+  /** The SPA's own ring buffer (this window only). */
+  frontend: AuthTraceEntry[];
+  /** ``GET /api/mcp/auth/diagnostics`` — settings, credential facts, backend trace. */
+  backend: McpAuthDiagnostics | { error: string };
+}
+
+/**
+ * Collect one pasteable report covering an entire auth episode.
+ *
+ * The SPA and the backend each hold half of it, and neither half is conclusive
+ * alone: the SPA knows the iframe never loaded, the backend knows Entra answered
+ * ``AADSTS700082``. Fetching the backend side on demand (rather than streaming
+ * it continuously) keeps this free until someone actually investigates.
+ *
+ * Never rejects — a backend that can't answer is itself a finding, so the error
+ * is recorded in place of the diagnostics.
+ */
+export async function collectAuthReport(): Promise<WorkiqAuthReport> {
+  let backend: McpAuthDiagnostics | { error: string };
+  try {
+    backend = await api.mcp.authDiagnostics();
+  } catch (err) {
+    backend = { error: (err as Error).message };
+  }
+  return { capturedAt: new Date().toISOString(), frontend: [...trace], backend };
 }
 
 if (typeof window !== "undefined") {
   window.precursorWorkiqAuthTrace = () => [...trace];
+  window.precursorWorkiqAuthReport = collectAuthReport;
 }
