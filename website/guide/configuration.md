@@ -23,13 +23,6 @@ are stored in the local database and **never echoed back** by the API — only a
 | **OpenAI-compatible** | OpenAI, Mistral, Hugging Face, Ollama, or any compatible gateway | base URL + key |
 | **Mock** | A deterministic streamed reply for offline development | *(none — automatic fallback)* |
 
-::: warning GitHub Models has been retired
-GitHub shut the **GitHub Models** service down and its endpoints now answer
-`410 Gone`, so the provider is no longer offered in the picker. If your install
-still points at it, Settings → Model shows it flagged as *(retired)* — switch to
-**GitHub Copilot**, which authenticates with the same GitHub token.
-:::
-
 ::: tip Offline by default
 When no credentials resolve, Precursor automatically uses the **mock provider**,
 so the chat flow stays usable with zero setup. Configure a real provider whenever
@@ -49,15 +42,9 @@ So if you already use `gh`, you don't need to set anything. A token needs the
 responses. With **no** token at all, Precursor falls back to the mock provider so
 the chat flow stays usable offline.
 
-The resolved source is surfaced to the UI as `settings | gh-cli | none`; the
-token value itself is never returned.
-
-When a token resolves to a real GitHub account, the sidebar **persona menu**
-also shows your Copilot **AI credits** — a progress bar with the percentage
-used and the next reset date, read from your account's `premium_interactions`
-quota via `GET /api/me/copilot`. It's fetched only when you open the menu;
-accounts on an unlimited plan show an **Unlimited** badge and those without a
-Copilot seat omit the bar entirely.
+The token value itself is never returned by the API. When a token resolves to a
+real GitHub account, the sidebar persona menu also shows your Copilot **AI
+credits** and the next reset date.
 
 ### Which repository issues go to
 
@@ -80,37 +67,23 @@ browser, and raw audio is never stored.
 
 ## Other settings areas
 
-Precursor's **Settings** panel is organized into tabs:
+Precursor's **Settings** panel is organized into tabs, each covered by the
+feature it configures:
 
-- **Model** — active provider + credentials, default chat model.
-- **GitHub** — token, and issue-context TTL behavior.
-- **MCP** — enable/disable [tool servers](/features/mcp), pick the browser the
-  `playwright` server drives (**Playwright browser** — `msedge` by default, or
-  `Default` to omit `--browser` for older `@playwright/mcp` builds), set the
-  Microsoft tenant GUID the Agent 365 servers (`workiq-teams`, `workiq-user`)
-  address, and toggle which of your own conversation sections are exposed by the
-  built-in MCP server (`mcp_expose`, off by default).
-- **Collections** — create, edit, and delete
-  [collections](/features/collections) (name, description, colour accent, and an
-  optional repository override).
-- **Agents** — turn [Agents mode](/features/agents-mode) on/off; it defaults on once
-  the native runtime resolves on your platform, and the panel reports whether it
-  did. Sets the **global approval policy**
-  (`manual` / `balanced` / `autonomous`) that gates agent actions — each agent
-  can [override it per session](/features/agents-mode#approval-policy-per-agent).
-  Per-agent **orchestration governance** (token budget, max retries) lives in
-  each agent's settings drawer, and reusable
-  [blueprints](/features/agents-mode#blueprints-reusable-templates) are managed here
-  too; the fleet-wide concurrency cap and retry backoff are
-  [`.env` knobs](#process-level-configuration-env).
-- **Live / Speech-to-text** — enable the section, pick the fast model + reasoning
-  effort for live insights, set how many days to keep a session's transcript
-  (`live_transcript_retention_days`, `7` by default; `0` keeps forever), and set
-  Azure Speech credentials.
-- **Backup** — periodic copy of the SQLite DB + attachment blobs into a plain
-  (e.g. cloud-synced) folder, with snapshot retention.
-- **System** — theme (light / dark / system), storage & retention
-  (`tool_result_retention_days`), and the command-runner jail.
+| Tab | Covers |
+| --- | --- |
+| **Model** | Active provider + credentials, default chat model. |
+| **GitHub** | Token, default repository, issue-context behaviour. |
+| **MCP** | Enable [tool servers](/features/mcp), and choose which of your own sections the built-in server exposes (off by default). |
+| **Collections** | Create and edit [collections](/features/collections). |
+| **Agents** | Turn [Agents mode](/features/agents-mode) on/off, set the global [approval policy](/features/agents-mode/running#approval-policy-per-agent), and manage [blueprints](/features/agents-mode/orchestration#blueprints-reusable-templates). |
+| **Workflows** | The [defaults a new pipeline starts from](/features/workflows/building). |
+| **Live / Speech-to-text** | Enable the section, pick the fast insights model, set [transcript retention](/features/live-sessions#transcript-retention) and Azure Speech credentials. |
+| **Backup** | Periodic copy of the database + attachment blobs into a plain folder. |
+| **System** | Theme, storage retention, and the [command-runner jail](/features/command-runner). |
+
+Fleet-wide knobs that aren't per-object — the agent concurrency cap, retry
+backoff — are [`.env` settings](#process-level-configuration-env).
 
 ## Process-level configuration (`.env`)
 

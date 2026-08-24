@@ -56,7 +56,8 @@ def register(registry: PluginRegistry) -> None:
 ```
 
 Plugins are discovered once on startup; a failing plugin is **logged and never
-crashes the host**.
+crashes the host**. Slots and dynamic renderer mounting are being wired in
+progressively — the [plugin reference](/reference/plugins) tracks what's live.
 
 ## Frontend extensions
 
@@ -79,9 +80,3 @@ registerRenderer("panel", MyPanel);
 | `message-renderer` | `chat.message.body` | Mermaid / drawio / chart blocks. |
 | `settings-tab` | `settings.tabs` | Per-plugin configuration UI. |
 | `topic-action` | `topic.header.actions` | Buttons that operate on the topic. |
-
-::: info Stability
-The contract is stable, but slots and dynamic renderer mounting are being wired
-in progressively — see the [plugin reference](/reference/plugins) for what's live
-today and the roadmap.
-:::

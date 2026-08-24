@@ -19,9 +19,6 @@ edited from its settings panel. Recurrence supports:
 - a **weekday mask**, and
 - a daily **time-of-day** in a timezone.
 
-A single async ticker enqueues due `TopicSchedule` and `AgentSchedule` rows, and
-a bounded worker pool runs each — with DB row **leasing** for crash recovery.
-
 ### Commands vs generation
 
 A scheduled prompt that begins with a **slash command** (e.g.
@@ -38,12 +35,12 @@ transcript first while keeping the same uuid so the schedule keeps resolving:
 
 - `/agent <uuid> /clear <follow-up>` — reset, then send the follow-up.
 - `/agent <uuid> /run [extra]` — reset, then replay the agent's own task prompt
-  (plus an optional one-off extra). This keeps the instructions in **one** place
-  (the agent), so the recurring prompt shrinks to a tiny nudge.
+  plus an optional one-off extra. This keeps the instructions in **one** place,
+  so the recurring prompt shrinks to a tiny nudge.
 
 When a scheduled agent pauses mid-run for an approval, you don't have to be
 watching: it raises the [out-of-band "agent needs you"
-signal](/features/agents-mode#the-agent-needs-you-signal) — a focus-independent
+signal](/features/agents-mode/running#the-agent-needs-you-signal) — a focus-independent
 notification, a 🔔 in the tab title, and top billing in the ⌘K palette.
 
 ## `/guard` — gate a run behind a cheap probe
@@ -85,8 +82,7 @@ full recurring schedule.
 ### The `/reminder` command
 
 Type **`/reminder`** in the composer (on a **topic** or **chat**) to open a
-date-and-time picker and schedule the reminder. You can add an optional note that
-rides along with it:
+date-and-time picker. You can add an optional note that rides along with it:
 
 ```
 /reminder ping the vendor about the SLA

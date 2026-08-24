@@ -11,12 +11,21 @@ conversation automatically.
 
 <Screenshot src="/screenshots/skills-memory.png" alt="Settings → Skills listing four slash-command skills, each with a description and an enable toggle; one is switched off" caption="Settings → Skills. Each row is a SKILL.md file on disk; the toggle decides whether it is offered as a slash command." />
 
+::: tip Which one do I want?
+| You want… | Use |
+| --- | --- |
+| An instruction you invoke *on demand* | a **skill** (`/pr-review`) |
+| One chat that always applies the same instruction | a **chat description** referencing a skill |
+| A reusable persona across many conversations | an **assistant role** (`/role <name>`) |
+| A fact applied to *every* conversation | **memory** |
+:::
+
 ## Skills
 
-A **skill** is a reusable prompt preset invoked as **`/name`** in chat — the SPA
-expands it inline. Skills are stored as **`SKILL.md` files** using the GitHub
-Copilot CLI's format (YAML frontmatter with `name` / `description`, plus a
-markdown body of instructions), so they're **interoperable** across tools.
+A **skill** is a reusable prompt preset invoked as **`/name`** in chat. Skills are
+stored as **`SKILL.md` files** using the GitHub Copilot CLI's format (YAML
+frontmatter with `name` / `description`, plus a markdown body of instructions),
+so they're **interoperable** across tools.
 
 ```markdown
 ---
@@ -31,30 +40,28 @@ adherence to the project's conventions. Be concise and cite line numbers.
 ### Invoking a skill
 
 A skill at the **start** of a message is the classic invocation: everything after
-it is the argument, and the transcript keeps showing the literal command while the
-model receives the instructions followed by your text.
+it is the argument, and the transcript keeps showing the literal command while
+the model receives the instructions followed by your text.
 
 ```
 /pr-review here is the diff …
 ```
 
-You can also reference a skill **anywhere inside** a message. There, the
-`/name` token is substituted **in place** — the instructions land exactly where
-you wrote them, so the sentence still reads as one instruction:
+You can also reference a skill **anywhere inside** a message. There the `/name`
+token is substituted **in place**, so the sentence still reads as one
+instruction:
 
 ```
 Take the notes below, /rewrite them, then summarise in three bullets.
 ```
 
-Only **active** skills expand. An unknown or disabled name is left untouched, and
-a reference is recognised only at the start of a line or after whitespace and when
-not followed by `/` — so paths (`/usr/bin`), URLs (`https://host/rewrite`) and
-prose (`and/or`) are never mistaken for a skill call.
+Only **active** skills expand, and a reference is recognised only at the start of
+a line or after whitespace — so paths (`/usr/bin`), URLs and prose (`and/or`) are
+never mistaken for a skill call.
 
 ::: tip Skills that call skills
 A skill's own body may reference another skill. Expansion is capped at two levels
-and a cycle (`/a` → `/b` → `/a`) stops rather than recursing — the repeated name
-is left literal.
+and a cycle (`/a` → `/b` → `/a`) stops rather than recursing.
 :::
 
 ### Where they live
@@ -64,50 +71,37 @@ The skills folder is resolved the way the CLI resolves its home:
 `PRECURSOR_SKILLS_DIR` override. Files live at
 `<copilot_home>/skills/<name>/SKILL.md`.
 
-### Discovery & enablement
-
-The `skills` table is reduced to an **enablement record**: a discovered skill is
-**disabled until you opt in**, and if its file is renamed or deleted the
-enablement row is dropped. Skills authored by other tools show up in the **Skills**
-tab and can be enabled per skill. You can enable/disable, edit, export, and delete
-— all operating on the file.
-
-Pre-existing Precursor skills created before this model keep working as **legacy**
-entries and gain a **Migrate** button that writes the `SKILL.md` and keeps the row
-as an enablement record.
+A discovered skill is **disabled until you opt in**, so skills authored by other
+tools show up in the **Skills** tab without silently becoming active. Enable,
+edit, export, and delete all operate on the file itself.
 
 ### Standing skills: triggering one from a chat description
 
-A [chat description](/features/chats) can reference a skill too. Because the same
-`/name` substitution runs on the backend, a description turns a chat into a
-**dedicated, single-purpose surface** — no slash command to type, ever.
-
-Set the description to something like:
+A [chat description](/features/chats) can reference a skill too, which turns a
+chat into a **dedicated, single-purpose surface** — no slash command to type,
+ever. Set the description to something like:
 
 ```
 For every message I send: /rewrite
 ```
 
 …and tick **Use as system prompt** in the chat's settings. The skill's body is
-resolved and re-asserted as a mandatory instruction on **every** user turn, so
-each message you paste is rewritten without any command.
-
-It works in the default **context** mode too, where the expanded description
-rides along as standing discussion-level context instead of being enforced per
-turn.
+re-asserted as a mandatory instruction on **every** user turn, so each message
+you paste is rewritten without any command. It works in the default **context**
+mode too, where the expanded description rides along as standing context instead
+of being enforced per turn.
 
 ## Assistant roles
 
-A **role** is a named, reusable **persona** — a system prompt injected into
-every turn of whatever adopts it. Where a skill is a one-shot instruction you
-invoke, a role is *persistent*: assign it once and it re-applies until you
-change it.
+A **role** is a named, reusable **persona** — a system prompt injected into every
+turn of whatever adopts it. Where a skill is a one-shot instruction you invoke, a
+role is *persistent*: assign it once and it re-applies until you change it.
 
 Roles are managed in **Settings → Roles**, and assigned either from a
-conversation's settings panel or with the `/role <name>` command (matched
-case-insensitively). Every install seeds one built-in **`default`** role whose
-prompt is empty — so out of the box a role injects nothing. It can be edited but
-not renamed or deleted, which guarantees every discussion always has a fallback.
+conversation's settings panel or with the `/role <name>` command. Every install
+seeds one built-in **`default`** role whose prompt is empty — so out of the box a
+role injects nothing. It can be edited but not renamed or deleted, which
+guarantees every discussion always has a fallback.
 
 The same role can be adopted by a **topic**, a **chat**, a
 [workspace](/features/workspaces), an [agent](/features/agents-mode), a
@@ -117,26 +111,15 @@ resolved through one code path, so a role behaves identically everywhere. A
 [collection](/features/collections) can nominate a default role that new topics
 inside it start from.
 
-An assistant role expands skill references the same way a chat description does.
-Because every surface resolves a role through that same path, a role prompt like
-"For every reply: `/role-skill`" applies on topics, chats, workspaces, agents
-and Live sessions alike — useful when you want the behaviour to follow you
-across many conversations rather than living on one chat.
-
-::: tip Which one do I want?
-| You want… | Use |
-| --- | --- |
-| An instruction you invoke *on demand* | a **skill** (`/pr-review`) |
-| One chat that always applies the same instruction | a **chat description** referencing a skill |
-| A reusable persona across many conversations | an **assistant role** (`/role <name>`), which may itself reference a skill |
-| A fact applied to *every* conversation | **memory** |
-:::
+A role expands skill references the same way a chat description does, so a role
+prompt like "For every reply: `/role-skill`" follows you across every surface.
 
 ## Memory
 
 **Memory** is long-term notes injected into the system prompt of topic chats,
 flat chats, **and** agent sessions — so standing preferences and facts follow you
-everywhere.
+everywhere. Use it for something you want applied automatically ("Always answer
+in French", "Our default branch is `main`").
 
 Manage memory three ways:
 
@@ -145,15 +128,6 @@ Manage memory three ways:
    - `/memory-store [kind] <content>` — record a note.
    - `/memory-list` — list notes with their ids (needed for updates).
    - `/memory-update <id> [kind] <content>` — refine an existing note.
-
-   Store/update work on the topic, chat, and agent surfaces (and headless
-   scheduled topic runs); `/memory-list` is available on topic and chat.
 3. **By the model itself** — via the built-in `precursor`
    [MCP server](/features/mcp) tools `store_memory`, `update_memory` (gated by a
    `memory_write` toggle), and the read-only `list_memories`.
-
-::: tip Skills vs memory
-Use a **skill** for an instruction you invoke *on demand* (`/pr-review`). Use
-**memory** for a fact or preference you want applied to *every* conversation
-automatically ("Always answer in French", "Our default branch is `main`").
-:::

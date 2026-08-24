@@ -1273,7 +1273,6 @@ export interface LLMProviderSpec {
   uses_github_token: boolean;
   discovers_models: boolean;
   /** Non-empty => upstream is gone; the text explains what to use instead. */
-  retired: string;
 }
 
 export interface IssueSummary {

@@ -6,10 +6,6 @@ render the right inputs and redact secrets), and how to construct the provider.
 
 Adding a provider = add one ``ProviderSpec`` here plus its implementation class;
 the factory, the settings schema, and the UI all pick it up from this registry.
-
-Retiring one = set ``retired`` to a short reason. The entry stays (so anyone
-still pointed at it keeps a working config object and an explanation) but it
-disappears from the picker for everyone else.
 """
 
 from __future__ import annotations
@@ -20,7 +16,6 @@ from dataclasses import dataclass, field
 from precursor.backend.services.llm.azure_foundry import AzureFoundryProvider
 from precursor.backend.services.llm.base import LLMProvider
 from precursor.backend.services.llm.github_copilot import GitHubCopilotProvider
-from precursor.backend.services.llm.github_models import GitHubModelsProvider
 from precursor.backend.services.llm.mock import MockProvider
 from precursor.backend.services.llm.openai_compatible import OpenAICompatibleProvider
 
@@ -52,10 +47,6 @@ class ProviderSpec:
     )
     # Hint for the UI: whether ``list_models`` is expected to return a catalog.
     discovers_models: bool = True
-    # Non-empty => the upstream service is gone. The provider is hidden from the
-    # picker (unless it's the one currently selected) and this text is shown
-    # verbatim as the reason, in Settings and in place of a catalog error.
-    retired: str = ""
 
 
 def _build_azure(cfg: dict[str, str], _token: str) -> LLMProvider:
@@ -96,17 +87,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         label="GitHub Copilot",
         uses_github_token=True,
         build=lambda _cfg, token: GitHubCopilotProvider(token=token),
-    ),
-    "github_models": ProviderSpec(
-        id="github_models",
-        label="GitHub Models",
-        uses_github_token=True,
-        build=lambda _cfg, token: GitHubModelsProvider(token=token),
-        retired=(
-            "GitHub Models has been retired by GitHub and its API no longer "
-            "responds. Switch to GitHub Copilot, which authenticates with the "
-            "same GitHub token."
-        ),
     ),
     "azure_foundry": ProviderSpec(
         id="azure_foundry",
@@ -182,14 +162,9 @@ PROVIDERS: dict[str, ProviderSpec] = {
 DEFAULT_PROVIDER = "github_copilot"
 
 
-def selectable_providers(active_provider: str | None = None) -> list[ProviderSpec]:
-    """Providers offered in the picker: everything live, plus ``active_provider``.
-
-    A retired provider stays visible while it's the one selected so the user can
-    see what they're on (and why it stopped working) rather than facing a picker
-    whose value silently doesn't exist.
-    """
-    return [spec for spec in PROVIDERS.values() if not spec.retired or spec.id == active_provider]
+def selectable_providers() -> list[ProviderSpec]:
+    """Providers offered in the picker."""
+    return list(PROVIDERS.values())
 
 
 def provider_secret_fields(provider_id: str) -> set[str]:

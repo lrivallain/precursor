@@ -11,8 +11,9 @@ so the file is optional.
 
 The split is deliberate and enforced by a test: anything you can change in
 **Settings** is stored in the database and has *no* environment twin, so there is
-exactly one place to set it. `.env` keeps only what has to be known before the
-database exists — bind address, database URL, data directory, ticker cadences.
+exactly one place to set it — bar two deliberate exceptions, noted at the foot of
+this page. `.env` keeps only what has to be known before the database exists — bind address, database URL, data
+directory, ticker cadences.
 
 Copy `.env.example` to `.env` and uncomment only what you want to override.
 
@@ -115,17 +116,17 @@ a `PRECURSOR_SKILLS_DIR` override.
 [Agents mode](/features/agents-mode) is toggled at runtime (**Settings → Agents**),
 which is the only on/off control — there is no env-level default, because
 installing the `agents` extra is itself the opt-in. The
-[agent orchestrator](/features/agents-mode#orchestrating-agents) governance has two
+[agent orchestrator](/features/agents-mode/orchestration) governance has two
 process-level knobs:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
-| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
+| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode/orchestration#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
+| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
 
 Per-agent **token budget** and **max retries** aren't env vars — they're set in
 each agent's settings drawer (or baked into a
-[blueprint](/features/agents-mode#blueprints-reusable-templates)).
+[blueprint](/features/agents-mode/orchestration#blueprints-reusable-templates)).
 
 ## MCP tool servers
 
@@ -154,10 +155,10 @@ nobody at a browser.
 | `PRECURSOR_WORKIQ_KEEPALIVE_REFRESH_MARGIN_SECONDS` | `300` | Refresh once the access token is within this many seconds of expiring. |
 | `PRECURSOR_WORKIQ_SILENT_REAUTH_ENABLED` | `true` | Try the hands-free (no-browser) re-authentication path before falling back to an interactive prompt. |
 | `PRECURSOR_WORKIQ_AUTO_REAUTH_ENABLED` | `true` | Automatically start a re-authentication when a credential is found to have lapsed, rather than waiting for you to click the banner. |
-| `PRECURSOR_WORKIQ_CHAIN_REAUTH_ENABLED` | `true` | After a WorkIQ / Agent 365 sign-in succeeds, immediately retry the **other** Entra credential on the hands-free silent path while the SSO session is hot, so you get [one prompt instead of one per credential](/features/mcp#one-prompt-not-one-per-credential). Set `false` to renew each credential only when it's independently needed. |
+| `PRECURSOR_WORKIQ_CHAIN_REAUTH_ENABLED` | `true` | After a WorkIQ / Agent 365 sign-in succeeds, immediately retry the **other** Entra credential on the hands-free silent path while the SSO session is hot, so you get [one prompt instead of one per credential](/features/mcp#signing-in-to-workiq-and-agent-365). Set `false` to renew each credential only when it's independently needed. |
 | `PRECURSOR_WORKIQ_LOOPBACK_PORT_FALLBACK` | `true` | When an OAuth sign-in's preferred loopback callback port (`12798` / `12799` / `12800`) is already in use, bind a free **ephemeral** port instead of failing. Entra ignores the port of a loopback redirect for public clients, so this is transparent and lets several windows sign in at once. Set `false` for the strict "port is busy — finish that other sign-in first" behaviour. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_IDLE_AFTER_SECONDS` | `21600` (6 h) | Stop keeping a WorkIQ / Agent 365 credential warm once no server using it has been called for this long, so a server you never use doesn't [nag you to sign in](/features/mcp#quiet-when-you-re-not-using-it). Usage is tracked per credential and the clock is seeded at startup, so a restart doesn't leave everything cold. `0` disables the back-off and refreshes every signed-in credential indefinitely. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_SURFACE_IDLE_LAPSE` | `true` | Let the keep-alive [surface an idle credential's lapse proactively](/features/mcp#surfaced-the-moment-it-lapses-not-on-your-next-request): once an idle token has genuinely expired it probes once, and if the refresh token is dead it raises the sign-in banner instead of waiting for your next request to stall on the doomed handshake. A still-refreshable idle session recovers silently. Set `false` to keep idle credentials completely quiet until you touch them yourself. |
+| `PRECURSOR_WORKIQ_KEEPALIVE_IDLE_AFTER_SECONDS` | `21600` (6 h) | Stop keeping a WorkIQ / Agent 365 credential warm once no server using it has been called for this long, so a server you never use doesn't [nag you to sign in](/features/mcp#signing-in-to-workiq-and-agent-365). Usage is tracked per credential and the clock is seeded at startup, so a restart doesn't leave everything cold. `0` disables the back-off and refreshes every signed-in credential indefinitely. |
+| `PRECURSOR_WORKIQ_KEEPALIVE_SURFACE_IDLE_LAPSE` | `true` | Let the keep-alive [surface an idle credential's lapse proactively](/features/mcp#signing-in-to-workiq-and-agent-365): once an idle token has genuinely expired it probes once, and if the refresh token is dead it raises the sign-in banner instead of waiting for your next request to stall on the doomed handshake. A still-refreshable idle session recovers silently. Set `false` to keep idle credentials completely quiet until you touch them yourself. |
 | `PRECURSOR_WORKIQ_AUTH_LOG_LEVEL` | `debug` | Level of the dedicated **`precursor.mcp.auth`** channel that traces [every decision taken about a WorkIQ credential](/features/mcp#when-a-sign-in-prompt-needs-explaining) — keep-alive verdicts, the Entra `AADSTS…` code that refused a silent refresh, each leg of a re-auth. Independent of `PRECURSOR_LOG_LEVEL`, and verbose by default because a sign-in lapse only happens in the wild and can't be reproduced on demand. The channel is quiet outside an auth episode. Use `info` for transitions only, or `warning` to silence it — `GET /api/mcp/auth/diagnostics` keeps the full in-memory trace either way. |
 
 ::: tip Where a value comes from
