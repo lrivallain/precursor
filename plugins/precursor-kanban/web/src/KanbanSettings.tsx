@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, SquareKanban, Trash2 } from "lucide-react";
 import { usePluginSettings } from "@precursor/host";
 
@@ -49,6 +49,21 @@ export function KanbanSettings() {
     DEFAULTS,
   );
   const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const focused = useRef(false);
+  const loaded = value !== null;
+
+  // Land the caret in the one field this panel is for. It matters most when the
+  // board's header "+" brought you here — that click *is* "I want to add a
+  // project", so making the user click again would be a pointless step — and it
+  // is harmless when the panel is opened from the settings nav. Guarded by a ref
+  // so a later re-render can't yank focus back mid-typing, and deferred until
+  // the settings resolve, because the input doesn't exist before then.
+  useEffect(() => {
+    if (!loaded || focused.current) return;
+    focused.current = true;
+    inputRef.current?.focus();
+  }, [loaded]);
 
   if (value === null) return <div className="text-sm text-muted">Loading…</div>;
 
@@ -97,6 +112,7 @@ export function KanbanSettings() {
         <div className="flex gap-2">
           <input
             id="kanban-source"
+            ref={inputRef}
             type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
