@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Download,
   ExternalLink,
+  Info,
   LayoutGrid,
   Plug,
   Puzzle,
@@ -11,7 +12,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, apiErrorMessage } from "../lib/api";
-import type { InstalledPlugin, PluginEnvironment } from "../lib/types";
+import { getSection, sectionUnavailableReason } from "../lib/plugins";
+import { pluginStore } from "../lib/pluginStore";
+import { useSettings } from "../lib/settingsStore";
+import type { InstalledPlugin, PluginEnvironment, Settings } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 
 /**
@@ -23,6 +27,7 @@ import { useConfirm } from "./ConfirmDialog";
  */
 export function PluginsSettings() {
   const confirmAction = useConfirm();
+  const settings = useSettings();
   const [plugins, setPlugins] = useState<InstalledPlugin[] | null>(null);
   const [env, setEnv] = useState<PluginEnvironment | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,13 +146,14 @@ export function PluginsSettings() {
     setBusy(plugin.id);
     try {
       await api.plugins.setEnabled(plugin.id, enabled);
+      // Republish the descriptors so the sidebar, home launcher, palette and
+      // router pick the change up immediately — no reload, and the panel the
+      // user is standing in stays open.
+      await pluginStore.refresh();
       await load();
-      // Sections are resolved from /api/plugins at boot, so a toggle only takes
-      // full effect on the next load. Say so rather than leaving a half-applied
-      // sidebar behind.
-      window.location.reload();
     } catch (e) {
       setError(apiErrorMessage(e, "Failed to update the plugin"));
+    } finally {
       setBusy(null);
     }
   }
@@ -277,7 +283,10 @@ export function PluginsSettings() {
                   </span>
                 </div>
               ) : (
-                <Contributions plugin={plugin} />
+                <>
+                  <Contributions plugin={plugin} />
+                  {plugin.enabled && <Unavailable plugin={plugin} settings={settings} />}
+                </>
               )}
             </li>
           ))}
@@ -400,6 +409,44 @@ function InstallBox({
           </span>
         </label>
       )}
+    </div>
+  );
+}
+
+/**
+ * Why an installed, enabled plugin's sections still aren't showing.
+ *
+ * A section can gate itself on app state — the kanban board needs a configured
+ * GitHub repository — so "Enabled" and "visible" are not the same thing. Without
+ * this the toggle looks broken: it flips, and nothing appears anywhere.
+ */
+function Unavailable({
+  plugin,
+  settings,
+}: {
+  plugin: InstalledPlugin;
+  settings: Settings | null;
+}) {
+  const blocked = plugin.sections
+    .map((s) => {
+      const section = getSection(s.id);
+      const reason = section ? sectionUnavailableReason(section, { settings }) : null;
+      return reason ? { title: s.title, reason } : null;
+    })
+    .filter((x): x is { title: string; reason: string } => x !== null);
+
+  if (blocked.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-2">
+      {blocked.map((b) => (
+        <div key={b.title} className="flex items-start gap-2 text-xs">
+          <Info size={13} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="min-w-0">
+            <strong className="font-medium">{b.title}</strong> is hidden: {b.reason}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -87,6 +87,7 @@ export {
   registerRenderer,
   getSection,
   resolveSections,
+  sectionUnavailableReason,
   pluginsForSlot,
   SECTION_KIND,
   SECTION_SLOT,

@@ -39,9 +39,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   to the registering plugin automatically; a plugin that fails to load is
   recorded rather than silently missing. **Settings → Plugins** lists what's
   installed with its version, homepage and exactly what it contributes, and can
-  install, enable, disable, uninstall and restart. Disabling is total and
-  immediate — descriptors vanish, routes answer 404, MCP servers leave the
-  catalogue. Installing needs a restart (entry points resolve once at startup,
+  install, enable, disable, uninstall and restart. Toggling applies live: the
+  sidebar, home launcher, palette and router all re-derive while the panel stays
+  open, and disabling is total — descriptors vanish, routes answer 404, MCP
+  servers leave the catalogue. A section can also gate itself on app state (the
+  board needs a GitHub repo), and the panel says so — "Kanban is hidden: no
+  GitHub repository is configured" — because an enabled plugin that appears
+  nowhere is otherwise indistinguishable from a broken one. Installing needs a restart (entry points resolve once at startup,
   so a live import would leave a half-installed plugin), and the panel offers
   the button; the installer runs out-of-process.
 

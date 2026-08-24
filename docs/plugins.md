@@ -128,7 +128,8 @@ registerSection({
   openLabel: "Open it",
   colors: { /* Tailwind class tokens */ },
   accent: { light: "#0891b2", dark: "#22d3ee" },
-  isEnabled: ({ settings }) => settings?.some_feature_enabled ?? false,
+  unavailable: ({ settings }) =>
+    settings?.some_feature_enabled ? null : "Turn the feature on in Settings.",
   Provider: ({ host, children }) => <MyProvider host={host}>{children}</MyProvider>,
   Sidebar: MySidebar,
   Main: MyMain,
@@ -140,12 +141,17 @@ The `id` is also the section's top-level URL segment, so keep it URL-safe. The
 section owns everything under that route: core hands it the remaining segments
 and the hash and stays out of the way.
 
-`isEnabled` is a *second* gate — the backend decides whether a section is
+`unavailable` is a *second* gate — the backend decides whether a section is
 installed, this decides whether it currently applies (kanban needs a configured
-GitHub repo). `Provider` wraps the app shell while the section is active, which
-is where shared state goes: `Sidebar` and `Main` render into different subtrees.
-Declaring `newLabel` adds a "New …" button to the sidebar header; omit it and
-core hides the `+`.
+GitHub repo). Return `null` when it applies, or a short sentence saying what is
+missing: **Settings → Plugins** shows that reason, because an enabled plugin
+whose section is nowhere to be seen is otherwise indistinguishable from a broken
+one.
+
+`Provider` wraps the app shell while the section is active, which is where shared
+state goes: `Sidebar` and `Main` render into different subtrees. Declaring
+`newLabel` adds a "New …" button to the sidebar header; omit it and core hides
+the `+`.
 
 ### `SectionHost`
 
@@ -219,8 +225,8 @@ its load error if it has one. From there you can install a package, toggle a
 plugin, uninstall it, and restart.
 
 Disabling is total, not cosmetic: the descriptors disappear (so the UI goes), the
-routes answer 404, and the MCP servers leave the catalogue — applied immediately,
-no restart.
+routes answer 404, and the MCP servers leave the catalogue. It applies live — the
+sidebar, home launcher and command palette update while the panel stays open.
 
 Installing does need a restart, and the app offers a button for it. That is not
 laziness: entry points are resolved once at startup and routers are mounted while

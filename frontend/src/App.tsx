@@ -17,7 +17,7 @@ import {
 import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
 import { EmptyHero } from "./components/EmptyHero";
 import { resolveSections } from "./lib/plugins";
-import { loadPluginEntries } from "./lib/pluginLoader";
+import { usePluginDescriptors } from "./lib/pluginStore";
 import type { SectionHost } from "./lib/plugins";
 import { GithubIcon as Github } from "./components/icons/GithubIcon";
 import { CommandPalette } from "./components/CommandPalette";
@@ -70,7 +70,6 @@ import type {
   Chat,
   Collection,
   MeetingSession,
-  PluginDescriptor,
   ReminderItem,
   SearchResult,
   Topic,
@@ -543,31 +542,12 @@ export default function App() {
 
   const settings = useSettings();
 
-  // Sections contributed by installed backend plugins. `null` until the fetch
-  // resolves, which the gating effect below waits for so a deep link into a
-  // plugin section isn't bounced to Topics on the way in.
-  const [pluginDescriptors, setPluginDescriptors] = useState<PluginDescriptor[] | null>(
-    null,
-  );
-  useEffect(() => {
-    let cancelled = false;
-    void api.plugins
-      .list()
-      .then(async (list) => {
-        // Import the bundles of plugins that ship their own frontend before
-        // publishing the descriptors: importing one is what runs its
-        // `registerSection`, so resolving first would find nothing.
-        await loadPluginEntries(list);
-        if (!cancelled) setPluginDescriptors(list);
-      })
-      .catch(() => {
-        // A plugin surface that fails to load must never break the core app.
-        if (!cancelled) setPluginDescriptors([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Sections contributed by installed backend plugins. `null` until the first
+  // fetch resolves, which the gating effect below waits for so a deep link into
+  // a plugin section isn't bounced to Topics on the way in. Held in a store so
+  // toggling a plugin in Settings updates the sidebar, home launcher, palette
+  // and router at once, without reloading the page.
+  const pluginDescriptors = usePluginDescriptors();
   const enabledSections = useMemo(
     () => resolveSections(pluginDescriptors, { settings }),
     [pluginDescriptors, settings],

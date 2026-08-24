@@ -113,11 +113,16 @@ export interface SectionPlugin {
   /** `--section-accent` in light / dark, injected as a stylesheet on register. */
   accent: { light: string; dark: string };
   /**
-   * Gate the section on app state. A section whose backend package is installed
-   * can still be unavailable — kanban, for one, needs a configured GitHub repo.
-   * Defaults to always enabled.
+   * Gate the section on app state, and say *why* when it's closed.
+   *
+   * Return `null` when the section applies, or a short sentence explaining what
+   * is missing — kanban, for one, needs a configured GitHub repo. The reason is
+   * shown in Settings → Plugins, because a plugin that is installed and enabled
+   * yet nowhere to be seen is otherwise indistinguishable from a broken one.
+   *
+   * Omit it for a section that always applies.
    */
-  isEnabled?: (ctx: SectionEnabledContext) => boolean;
+  unavailable?: (ctx: SectionEnabledContext) => string | null;
   /**
    * Optional wrapper mounted around the whole app shell while the section is
    * active. Sections whose sidebar and main panes share state put their context
@@ -150,7 +155,7 @@ export function getSection(id: string): SectionPlugin | undefined {
 /**
  * Resolve the descriptors the backend published into registered sections,
  * ordered by the backend's `config.order`. A descriptor with no registration
- * (or whose registration's `isEnabled` says no) is dropped.
+ * (or whose registration reports itself unavailable) is dropped.
  */
 export function resolveSections(
   descriptors: PluginDescriptor[] | null,
@@ -162,10 +167,23 @@ export function resolveSections(
     .map((d) => ({ descriptor: d, section: sections.get(d.id) }))
     .filter(
       (x): x is { descriptor: PluginDescriptor; section: SectionPlugin } =>
-        x.section != null && (x.section.isEnabled?.(ctx) ?? true),
+        x.section != null && sectionUnavailableReason(x.section, ctx) === null,
     )
     .sort((a, b) => sectionOrder(a.descriptor) - sectionOrder(b.descriptor))
     .map((x) => x.section);
+}
+
+/**
+ * Why `section` isn't currently showing, or `null` when it is.
+ *
+ * Settings → Plugins uses this to explain an enabled plugin whose section is
+ * nowhere to be seen, which otherwise looks exactly like a broken toggle.
+ */
+export function sectionUnavailableReason(
+  section: SectionPlugin,
+  ctx: SectionEnabledContext,
+): string | null {
+  return section.unavailable?.(ctx) ?? null;
 }
 
 function sectionOrder(descriptor: PluginDescriptor): number {

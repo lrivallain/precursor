@@ -85,10 +85,19 @@ registerSection({
   },
   accent: { light: "#0891b2", dark: "#22d3ee" },
   // The board reads GitHub Projects v2 through the issue surface, so it needs
-  // both a configured repo and issue associations turned on.
-  isEnabled: ({ settings }) =>
-    (settings?.issue_associations_enabled ?? true) &&
-    (settings?.github_repo ?? "").trim().length > 0,
+  // both a configured repo and issue associations turned on. Saying which one is
+  // missing matters: without it, installing and enabling the plugin appears to
+  // do nothing at all.
+  unavailable: ({ settings }) => {
+    if (settings == null) return "Loading settings…";
+    if (!(settings.issue_associations_enabled ?? true)) {
+      return "GitHub issue associations are turned off (Settings → GitHub).";
+    }
+    if ((settings.github_repo ?? "").trim().length === 0) {
+      return "No GitHub repository is configured (Settings → GitHub).";
+    }
+    return null;
+  },
   Provider: ({ host, children }: { host: SectionHost; children: React.ReactNode }) => (
     <KanbanProvider host={host}>{children}</KanbanProvider>
   ),
