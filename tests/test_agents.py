@@ -1067,6 +1067,61 @@ def test_normalise_tool_completion_success_captures_result() -> None:
     assert event.tool_name == "fetch-http_get"
 
 
+def test_normalise_caps_non_string_attributes() -> None:
+    """A dict-valued attribute is JSON-rendered *and* capped.
+
+    Regression: only ``str`` values were capped, so anything rendered through
+    ``jsonify`` (notably a hook's ``input``, which re-embeds the whole tool
+    result) archived at full size. One prod DB held 41 MB of hook events from
+    this single uncapped branch.
+    """
+    from precursor.backend.services.agents.event_normalizer import (
+        TOOL_RESULT_CAP,
+        normalize_event,
+    )
+
+    class HookStartData:
+        def __init__(self) -> None:
+            self.input = {"toolResult": "y" * 50_000}
+
+    event = normalize_event(HookStartData())
+
+    assert event.data is not None
+    assert len(event.data["input"]) <= TOOL_RESULT_CAP
+    assert event.data["input"].endswith("[truncated]")
+
+
+def test_normalise_caps_system_prompt_text() -> None:
+    """System prompts get a tighter cap than conversational text.
+
+    They are boilerplate re-emitted on every session start, so archiving them in
+    full stored the same ~35 KB hundreds of times.
+    """
+    from precursor.backend.services.agents.event_normalizer import (
+        SYSTEM_TEXT_CAP,
+        TEXT_CAP,
+        normalize_event,
+    )
+
+    class SystemMessageData:
+        def __init__(self) -> None:
+            self.content = "s" * 50_000
+
+    class AssistantMessageData:
+        def __init__(self) -> None:
+            self.content = "a" * 5_000
+
+    system = normalize_event(SystemMessageData())
+    assistant = normalize_event(AssistantMessageData())
+
+    assert system.text is not None
+    assert len(system.text) <= SYSTEM_TEXT_CAP
+    # Ordinary assistant output is well under the generous text cap and must
+    # pass through untouched — the timeline renders it in full.
+    assert assistant.text == "a" * 5_000
+    assert len(assistant.text) < TEXT_CAP
+
+
 async def test_update_agent_title_only_needs_no_runtime() -> None:
     """A title-only PATCH never touches the runtime (no task replay)."""
     await _ensure_schema()

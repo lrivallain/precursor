@@ -393,6 +393,13 @@ DEFAULT_TOOL_RESULT_RETENTION_DAYS = 0
 # when the session ended. 0 disables cleanup (keep forever); 7 by default.
 DEFAULT_LIVE_TRANSCRIPT_RETENTION_DAYS = 7
 
+# Retention for the archived agent timeline. Agent traffic is bursty, so a time
+# window alone leaves a long autonomous session's trace untouched for weeks —
+# the per-session cap is what bounds a single runaway agent. 0 disables either
+# lever independently.
+DEFAULT_AGENT_EVENT_RETENTION_DAYS = 30
+DEFAULT_AGENT_EVENT_MAX_PER_SESSION = 2000
+
 # Clamp bounds.
 _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
 _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
@@ -401,6 +408,7 @@ _MIN_CMD_TIMEOUT, _MAX_CMD_TIMEOUT = 1, 3600
 _MIN_CMD_OUTPUT, _MAX_CMD_OUTPUT = 1_000, 50_000_000
 _MIN_PIDS, _MAX_PIDS = 1, 100_000
 _MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS = 0, 3650
+_MIN_EVENTS_PER_SESSION, _MAX_EVENTS_PER_SESSION = 0, 1_000_000
 
 
 def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
@@ -462,6 +470,30 @@ async def resolve_live_transcript_retention_days(session: AsyncSession) -> int:
             "live_transcript_retention_days",
             _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
             default=DEFAULT_LIVE_TRANSCRIPT_RETENTION_DAYS,
+        ),
+    )
+
+
+async def resolve_agent_event_retention_days(session: AsyncSession) -> int:
+    """Return the archived-agent-event retention window in days (0 = disabled)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "agent_event_retention_days",
+            _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
+            default=DEFAULT_AGENT_EVENT_RETENTION_DAYS,
+        ),
+    )
+
+
+async def resolve_agent_event_max_per_session(session: AsyncSession) -> int:
+    """Return the per-agent archived event ceiling (0 = unlimited)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "agent_event_max_per_session",
+            _clamped_int(_MIN_EVENTS_PER_SESSION, _MAX_EVENTS_PER_SESSION),
+            default=DEFAULT_AGENT_EVENT_MAX_PER_SESSION,
         ),
     )
 
@@ -537,6 +569,8 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
         "scheduled_run_timeout_seconds": await resolve_scheduled_run_timeout_seconds(session),
         "tool_result_retention_days": await resolve_tool_result_retention_days(session),
         "live_transcript_retention_days": await resolve_live_transcript_retention_days(session),
+        "agent_event_retention_days": await resolve_agent_event_retention_days(session),
+        "agent_event_max_per_session": await resolve_agent_event_max_per_session(session),
         "cmd_runner_jail": cfg.jail,
         "cmd_runner_image": cfg.image,
         "cmd_runner_network": cfg.network,

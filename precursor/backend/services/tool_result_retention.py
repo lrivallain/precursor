@@ -17,13 +17,14 @@ from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import func, update
+from sqlalchemy import func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole
 from precursor.backend.services.app_settings import resolve_tool_result_retention_days
+from precursor.backend.services.sweep_result import SweepResult
 
 logger = logging.getLogger(__name__)
 
@@ -38,27 +39,43 @@ _MIN_CONTENT_LEN = 200
 
 async def prune_expired_tool_results(
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = SessionLocal,
-) -> int:
-    """Replace content of expired TOOL rows with a placeholder; return the count.
+    *,
+    dry_run: bool = False,
+) -> SweepResult:
+    """Replace content of expired TOOL rows with a placeholder; report the effect.
 
-    A no-op (returns 0) when retention is disabled (0 days). Otherwise truncates
-    role=TOOL rows older than ``now - retention`` whose content exceeds a small
-    floor and isn't already the placeholder.
+    A no-op when retention is disabled (0 days). Otherwise truncates role=TOOL
+    rows older than ``now - retention`` whose content exceeds a small floor and
+    isn't already the placeholder. With ``dry_run`` the rows are only measured,
+    so the settings UI can preview a sweep before committing to it.
     """
     async with session_factory() as session:
         retention_days = await resolve_tool_result_retention_days(session)
         if retention_days <= 0:
-            return 0
+            return SweepResult()
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        result = await session.execute(
-            update(Message)
-            .where(
-                Message.role == MessageRole.TOOL,
-                Message.created_at < cutoff,
-                func.length(Message.content) > _MIN_CONTENT_LEN,
-                Message.content != PRUNED_PLACEHOLDER,
+        criteria = (
+            Message.role == MessageRole.TOOL,
+            Message.created_at < cutoff,
+            func.length(Message.content) > _MIN_CONTENT_LEN,
+            Message.content != PRUNED_PLACEHOLDER,
+        )
+        measured = (
+            await session.execute(
+                select(
+                    func.count(Message.id),
+                    func.coalesce(func.sum(func.length(Message.content)), 0),
+                ).where(*criteria)
             )
-            .values(content=PRUNED_PLACEHOLDER)
+        ).one()
+        rows = int(measured[0] or 0)
+        # Each row keeps the placeholder, so only the excess is reclaimed.
+        freed = max(int(measured[1] or 0) - rows * len(PRUNED_PLACEHOLDER), 0)
+        if dry_run or not rows:
+            return SweepResult(rows=rows, bytes=freed)
+
+        result = await session.execute(
+            update(Message).where(*criteria).values(content=PRUNED_PLACEHOLDER)
         )
         await session.commit()
         count = int(cast("CursorResult[Any]", result).rowcount or 0)
@@ -68,4 +85,4 @@ async def prune_expired_tool_results(
                 count,
                 retention_days,
             )
-        return count
+        return SweepResult(rows=count, bytes=freed)

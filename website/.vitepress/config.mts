@@ -127,6 +127,7 @@ export default withMermaid(
             { text: "MCP (tools both ways)", link: "/features/mcp" },
             { text: "Command runner", link: "/features/command-runner" },
             { text: "Attachments", link: "/features/attachments" },
+            { text: "Storage & retention", link: "/features/storage" },
             { text: "Plugins", link: "/features/plugins" },
           ],
         },

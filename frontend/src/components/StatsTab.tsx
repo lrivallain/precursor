@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../lib/api";
 import type {
+  CleanupPreview,
+  CleanupTargetStat,
   DatabaseStats,
   IssueStats,
   SystemStats,
@@ -202,7 +204,146 @@ function DatabaseSection({ database }: { database: DatabaseStats }) {
   );
 }
 
-function SystemStatsView({ system }: { system: SystemStats }) {
+function CleanupSection({ onChanged }: { onChanged: () => void }) {
+  const [preview, setPreview] = useState<CleanupPreview | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setPreview(await api.system.getCleanupPreview());
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const run = async (target: CleanupTargetStat) => {
+    setBusy(target.key);
+    setError(null);
+    setNote(null);
+    try {
+      const result = await api.system.runCleanup(target.key);
+      setNote(
+        result.rows > 0
+          ? `${target.label}: cleaned ${formatNumber(result.rows)} row${result.rows === 1 ? "" : "s"} (~${formatBytes(result.bytes)}). Compact to reclaim the space on disk.`
+          : `${target.label}: nothing to clean.`,
+      );
+      await refresh();
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const compactNow = async () => {
+    setBusy("__compact__");
+    setError(null);
+    setNote(null);
+    try {
+      const result = await api.system.compactDatabase();
+      if (!result.supported || result.error) {
+        setError(result.error ?? "Compaction is not supported for this database.");
+      } else {
+        setNote(`Compacted: reclaimed ${formatBytes(result.reclaimed_bytes)} on disk.`);
+      }
+      await refresh();
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const targets = preview?.targets ?? [];
+  const working = busy !== null;
+
+  return (
+    <section className="space-y-2">
+      <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
+        Storage cleanup
+      </h4>
+      <p className="text-[11px] text-muted">
+        Each sweep runs automatically once a day. The figures below are what a
+        run would remove right now under your current retention settings — a
+        target reads zero when its window is turned off.
+      </p>
+
+      <div className="rounded border border-border bg-surface overflow-hidden">
+        {targets.length === 0 && (
+          <p className="px-3 py-2 text-[11px] text-muted">
+            Nothing to clean up.
+          </p>
+        )}
+        {targets.map((t) => (
+          <div
+            key={t.key}
+            className="flex items-center gap-3 px-3 py-2 border-b border-border/50 last:border-b-0"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium">{t.label}</div>
+              <div className="text-[11px] text-muted">{t.description}</div>
+            </div>
+            <div className="w-28 text-right">
+              <div className="text-xs tabular-nums">{formatBytes(t.bytes)}</div>
+              <div className="text-[11px] text-muted tabular-nums">
+                {formatNumber(t.rows)} rows
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void run(t)}
+              disabled={working || t.rows === 0}
+              data-tooltip={
+                t.rows === 0
+                  ? `Nothing expired under the current ${t.setting} setting`
+                  : `Run this sweep now (${t.table})`
+              }
+              className="shrink-0 rounded border border-border px-2 py-1 text-[11px] hover:bg-hover disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {busy === t.key ? "Cleaning…" : "Clean now"}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void compactNow()}
+          disabled={working}
+          data-tooltip={
+            "Rebuilds the database file so freed pages return to the filesystem.\nDeleting rows alone never shrinks it."
+          }
+          className="rounded border border-border px-2 py-1 text-[11px] hover:bg-hover disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {busy === "__compact__" ? "Compacting…" : "Compact database"}
+        </button>
+        <span className="text-[11px] text-muted">
+          Cleaning marks space reusable; compacting gives it back to the disk.
+        </span>
+      </div>
+
+      {note && <p className="text-[11px] text-muted">{note}</p>}
+      {error && <p className="text-[11px] text-red-500">{error}</p>}
+    </section>
+  );
+}
+
+function SystemStatsView({
+  system,
+  onChanged,
+}: {
+  system: SystemStats;
+  onChanged: () => void;
+}) {
   const { entities, blobs, database, issues } = system;
   return (
     <div className="space-y-6">
@@ -219,6 +360,8 @@ function SystemStatsView({ system }: { system: SystemStats }) {
       </section>
 
       <DatabaseSection database={database} />
+
+      <CleanupSection onChanged={onChanged} />
 
       <section className="space-y-2">
         <h4 className="text-xs font-semibold text-muted uppercase tracking-wide">
@@ -334,6 +477,19 @@ export function StatsTab() {
   const [error, setError] = useState<string | null>(null);
   const [granularity, setGranularity] = useState<Granularity>("monthly");
 
+  // Re-read the footprint after a cleanup or compaction so the size cards and
+  // per-table breakdown reflect what just happened.
+  const refreshSystem = useCallback(() => {
+    void (async () => {
+      try {
+        setSystem(await api.system.getSystemStats());
+      } catch {
+        // The cockpit already surfaces the action's own error; a stale
+        // footprint is not worth blanking the tab for.
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -382,7 +538,7 @@ export function StatsTab() {
 
   return (
     <div className="space-y-8">
-      {system && <SystemStatsView system={system} />}
+      {system && <SystemStatsView system={system} onChanged={refreshSystem} />}
 
       <div className="space-y-6">
         <div className="space-y-1">

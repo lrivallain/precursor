@@ -92,18 +92,27 @@ recurrence is stored in the database.
 
 ## Retention
 
-Two independent sweeps bound long-term database growth. Each retention window is
-set **at runtime** in an `AppSetting`; the sweep runs on startup and repeats daily
-via a background ticker. Only the poll cadence is env-level.
+Independent sweeps bound long-term database growth — see
+[Storage & retention](/features/storage) for the full picture and the on-demand
+cockpit. Each window is set **at runtime** in an `AppSetting`; every sweep runs on
+startup and repeats daily via a background ticker. Only the poll cadence is
+env-level.
 
 | Setting | Default | Where | Description |
 | --- | --- | --- | --- |
 | `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder. |
 | `live_transcript_retention_days` | `7` | Settings → Live | Days after a [Live session](/features/live-sessions#transcript-retention) ends before its transcript segments are deleted. `0` keeps them forever. Insights, notes and summary are preserved. |
+| `agent_event_retention_days` | `30` | Settings → System | Days before an agent's archived timeline events are deleted. `0` keeps them forever. A *running* agent is never pruned, and every agent keeps its result, artifacts and messages. |
+| `agent_event_max_per_session` | `2000` | Settings → System | Hard ceiling on archived events per agent — only the newest are kept. `0` is unlimited. |
+
+Two levers govern agent timelines because agent traffic is **bursty rather than
+aged**: one long autonomous session can add tens of MB in a day, which a time
+window alone wouldn't touch for weeks.
 
 Poll cadences (`PRECURSOR_TOOL_RESULT_RETENTION_POLL_SECONDS`,
-`PRECURSOR_LIVE_TRANSCRIPT_RETENTION_POLL_SECONDS`) default to `86400` (daily).
-Both sweeps are gated by `PRECURSOR_SCHEDULER_ENABLED`.
+`PRECURSOR_LIVE_TRANSCRIPT_RETENTION_POLL_SECONDS`,
+`PRECURSOR_AGENT_EVENT_RETENTION_POLL_SECONDS`) default to `86400` (daily).
+Every sweep is gated by `PRECURSOR_SCHEDULER_ENABLED`.
 
 ## Skills directory
 
