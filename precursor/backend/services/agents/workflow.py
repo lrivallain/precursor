@@ -573,6 +573,21 @@ def _step_label(step: WorkflowStep) -> str:
     return f"Step {step.position + 1}"
 
 
+def _has_precursor_tools(step: WorkflowStep) -> bool:
+    """Whether ``step`` can call the built-in ``precursor`` MCP tools.
+
+    Defers to the same predicate the attach path uses, so the context we
+    assemble cannot promise a tool the step will not be given.
+    """
+    if step.use_mcp is False:
+        return False
+    # Imported here rather than at module scope: ``manager`` reaches back into
+    # this module, so a top-level import would close the cycle.
+    from precursor.backend.services.agents.manager import parse_mcp_scope, scope_includes_precursor
+
+    return scope_includes_precursor(parse_mcp_scope(step.mcp_servers))
+
+
 async def _build_context(
     session: AsyncSession,
     workflow: Workflow,
@@ -624,7 +639,12 @@ async def _build_context(
     # specific value names it in a ``{{state.<key>}}`` placeholder (already
     # substituted below) or fetches it with ``workflow_state_get``; inlining
     # every body here would put the whole store in every step's context.
-    if step.use_mcp is not False:
+    #
+    # Gated on the step actually being able to *reach* those tools: the index
+    # tells the agent to call ``workflow_state_get``, and a step scoped to, say,
+    # ``workiq`` has no such tool. Advertising it there costs a wasted turn and
+    # an agent explaining it cannot comply.
+    if _has_precursor_tools(step):
         state_index = await build_state_index_prompt(session, workflow.id)
         if state_index:
             parts.append(state_index)

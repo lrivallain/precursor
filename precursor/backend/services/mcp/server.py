@@ -34,6 +34,7 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "workflow_state_set",
         "workflow_state_delete",
     ],
+    "notes": ["append_note"],
     "post_message": ["post_message"],
     "schedules": [
         "list_schedules",
