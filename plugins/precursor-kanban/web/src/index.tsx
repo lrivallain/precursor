@@ -9,10 +9,11 @@
  */
 
 import { SquareKanban } from "lucide-react";
-import { EmptyHero, registerSection } from "@precursor/host";
+import { EmptyHero, registerSection, registerSettingsPage } from "@precursor/host";
 import type { SectionHost } from "@precursor/host";
 import { KanbanBoard } from "./KanbanBoard";
 import { KanbanProvider, useKanban } from "./KanbanContext";
+import { KanbanSettings } from "./KanbanSettings";
 import { ProjectList } from "./ProjectList";
 
 /** Must match `precursor_kanban.plugin.SECTION_ID`. */
@@ -104,4 +105,12 @@ registerSection({
   Sidebar: KanbanSidebar,
   Main: KanbanMain,
   Title: KanbanTitle,
+});
+
+// Settings → Plugins → Kanban: extra project sources beyond the configured repo.
+registerSettingsPage({
+  id: KANBAN_SECTION_ID,
+  label: "Kanban",
+  icon: SquareKanban,
+  Component: KanbanSettings,
 });

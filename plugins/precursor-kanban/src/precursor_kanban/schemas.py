@@ -10,7 +10,12 @@ from precursor.plugin_api import IssueLabel
 
 
 class ProjectSummary(BaseModel):
-    """A ProjectV2 owned by the configured repository's owner."""
+    """A ProjectV2 available to the board.
+
+    Either owned by the configured repository's owner, or added explicitly as an
+    extra source in the plugin's settings — hence ``owner``, which is what tells
+    two identically titled boards apart.
+    """
 
     id: str
     number: int
@@ -18,6 +23,7 @@ class ProjectSummary(BaseModel):
     url: str | None = None
     closed: bool = False
     short_description: str | None = None
+    owner: str | None = None
 
 
 class ProjectColumn(BaseModel):

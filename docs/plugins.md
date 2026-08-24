@@ -9,6 +9,7 @@ A plugin is **one Python package** that can bring three things:
 | --- | --- | --- |
 | **Backend** | `registry.add_router(...)` | FastAPI routes under `/api/<plugin>` |
 | **UI** | `registry.add_section(...)` + a built ES module in the wheel | A whole section: sidebar rail, home card, ⌘K entry, route at `/<id>` |
+| **Settings** | `registry.add_settings_page(...)` | Its own page in the Settings modal, with a namespaced store |
 | **Tools** | `registry.add_mcp_server(...)` | The MCP catalogue, with the same toggles as core's built-ins |
 
 Install the package, restart, and all three appear. Uninstall it and they all
@@ -56,6 +57,7 @@ async def ping():
 def register(registry: PluginRegistry) -> None:
     registry.add_router(router)
     registry.add_section(id="my-plugin", title="My section")
+    registry.add_settings_page(title="My plugin")
     registry.add_mcp_server(name="tools", module="my_pkg.mcp_server")
 ```
 
@@ -152,6 +154,53 @@ one.
 state goes: `Sidebar` and `Main` render into different subtrees. Declaring
 `newLabel` adds a "New …" button to the sidebar header; omit it and core hides
 the `+`.
+
+### Settings pages
+
+A plugin with configuration declares a page and gets its own entry in the
+Settings modal, under a **Plugins** group:
+
+```python
+registry.add_settings_page(title="My plugin")   # id defaults to the plugin's
+```
+
+```tsx
+import { registerSettingsPage, usePluginSettings } from "@precursor/host";
+
+function MyPanel() {
+  const { value, setValue, save, saving, dirty } = usePluginSettings("my-plugin", {
+    some_option: "",
+  });
+  if (value === null) return null;
+  return /* … your form … */;
+}
+
+registerSettingsPage({ id: "my-plugin", label: "My plugin", icon: Cog, Component: MyPanel });
+```
+
+Values are stored as **one opaque JSON object per plugin**, at
+`/api/plugins/installed/<id>/settings` (and `plugin.<id>` in the settings table).
+Core never looks inside it, which is the point: a plugin can add, rename and drop
+its own keys without touching core's settings schema, and two plugins can't
+collide. `PUT` replaces the whole document, so a plugin can remove a key it no
+longer uses.
+
+The plugin's **backend** reads the same blob:
+
+```python
+from precursor.plugin_api import get_plugin_settings, read_plugin_settings
+
+values = await get_plugin_settings("my-plugin")          # opens its own session
+values = await read_plugin_settings(session, "my-plugin")  # inside a request
+```
+
+`get_plugin_settings` works from anywhere — including the plugin's MCP
+subprocess — so a tool server can read what the panel wrote.
+> **Don't put secrets in there.** Unlike core's own settings, a plugin's blob is
+> returned to the client verbatim — there is no redaction, because core has no
+> schema telling it which key is a credential. A plugin needing a token should
+> keep it out of this store.
+
 
 ### `SectionHost`
 

@@ -29,13 +29,18 @@ export function SidebarTabs<Id extends string, Group extends string>({
 }: SidebarTabsProps<Id, Group>) {
   return (
     <nav className={className}>
-      {groups.map((group) => (
+      {groups.map((group) => {
+        const inGroup = tabs.filter((t) => t.group === group);
+        // Skip a group with nothing in it — a caller may declare a group whose
+        // members are contributed dynamically (e.g. plugin settings pages), and
+        // a lone heading over empty space reads as something failing to load.
+        if (inGroup.length === 0) return null;
+        return (
         <div key={group} className="mb-2">
           <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted">
             {group}
           </div>
-          {tabs
-            .filter((t) => t.group === group)
+          {inGroup
             .map(({ id, label, icon: Icon }) => {
               const isActive = active === id;
               return (
@@ -55,7 +60,8 @@ export function SidebarTabs<Id extends string, Group extends string>({
               );
             })}
         </div>
-      ))}
+        );
+      })}
     </nav>
   );
 }

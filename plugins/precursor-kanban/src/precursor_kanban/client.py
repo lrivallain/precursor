@@ -17,15 +17,19 @@ class ProjectsClient(GitHubClient):
     """GitHub client extended with the Projects v2 board operations."""
 
     async def list_repo_projects(self, repo: str) -> list[dict[str, Any]]:
-        """List the repo owner's open ProjectsV2 (newest first).
+        """List the configured repo owner's open ProjectsV2 (newest first)."""
+        owner, _name = self.split_repo(repo)
+        return await self.list_owner_projects(owner)
+
+    async def list_owner_projects(self, owner: str) -> list[dict[str, Any]]:
+        """List one account's open ProjectsV2 (newest first).
 
         ProjectsV2 are owned by a user/org and are only *optionally* linked to a
         repository, so scoping to the owner (rather than
         ``repository.projectsV2``) surfaces every board the account has —
-        including ones not linked to any repo. ``repo`` is still the input
-        because the kanban section is gated on a configured ``owner/name``.
+        including ones not linked to any repo, and boards belonging to an
+        account other than the configured repo's.
         """
-        owner, _name = self.split_repo(repo)
         query = (
             "query($o:String!){"
             "repositoryOwner(login:$o){"
@@ -37,20 +41,49 @@ class ProjectsClient(GitHubClient):
         data = await self.graphql(query, {"o": owner}, raise_on_error=False)
         owner_node = data.get("repositoryOwner")
         if owner_node is None:
-            raise GitHubRepoNotAccessibleError(repo)
+            raise GitHubRepoNotAccessibleError(owner)
         nodes = (owner_node.get("projectsV2") or {}).get("nodes") or []
-        return [
-            {
-                "id": p["id"],
-                "number": p["number"],
-                "title": p["title"],
-                "url": p.get("url"),
-                "closed": bool(p.get("closed")),
-                "short_description": p.get("shortDescription"),
-            }
-            for p in nodes
-            if not p.get("closed")
-        ]
+        return [self._project(p, owner) for p in nodes if not p.get("closed")]
+
+    async def get_owner_project(self, owner: str, number: int) -> dict[str, Any] | None:
+        """One specific board by owner + per-owner number, or ``None``.
+
+        Lets a user pin a single project from an account whose *other* boards
+        they have no interest in (a customer's roadmap, say) without listing
+        everything that account owns.
+        """
+        query = (
+            "query($o:String!,$n:Int!){"
+            "repositoryOwner(login:$o){"
+            "... on ProjectV2Owner{"
+            "projectV2(number:$n){id number title url closed shortDescription}"
+            "}}}"
+        )
+        data = await self.graphql(query, {"o": owner, "n": number}, raise_on_error=False)
+        owner_node = data.get("repositoryOwner")
+        if owner_node is None:
+            raise GitHubRepoNotAccessibleError(owner)
+        node = owner_node.get("projectV2")
+        if not node or node.get("closed"):
+            return None
+        return self._project(node, owner)
+
+    @staticmethod
+    def _project(node: dict[str, Any], owner: str) -> dict[str, Any]:
+        """Normalise a ProjectV2 node, tagging it with the account that owns it.
+
+        The owner matters once boards can come from several accounts: two of them
+        called "Roadmap" are otherwise indistinguishable in the picker.
+        """
+        return {
+            "id": node["id"],
+            "number": node["number"],
+            "title": node["title"],
+            "url": node.get("url"),
+            "closed": bool(node.get("closed")),
+            "short_description": node.get("shortDescription"),
+            "owner": owner,
+        }
 
     async def get_project_board(
         self, project_id: str, *, status_field_name: str = "Status"

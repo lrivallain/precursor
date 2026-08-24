@@ -84,8 +84,11 @@ export { createPortal, flushSync } from "react-dom";
 // The plugin contract itself.
 export {
   registerSection,
+  registerSettingsPage,
   registerRenderer,
   getSection,
+  getSettingsPage,
+  resolveSettingsPages,
   resolveSections,
   sectionUnavailableReason,
   pluginsForSlot,
@@ -98,7 +101,12 @@ export type {
   SectionHost,
   SectionIconProps,
   SectionPlugin,
+  SettingsPagePlugin,
 } from "../lib/plugins";
+
+// Per-plugin settings: one opaque JSON blob core stores but never reads.
+export { usePluginSettings } from "../lib/pluginSettings";
+export type { PluginSettingsState } from "../lib/pluginSettings";
 
 // HTTP: `request` carries the client id and error unwrapping, so a plugin's own
 // endpoints behave like core's; `api` is the whole core surface, since a plugin

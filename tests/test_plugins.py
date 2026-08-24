@@ -16,10 +16,13 @@ from fastapi.testclient import TestClient
 from precursor.backend.main import create_app
 from precursor.backend.plugins import (
     KIND_SECTION,
+    KIND_SETTINGS_PAGE,
     SLOT_APP_SECTION,
+    SLOT_SETTINGS,
     LoadedPlugin,
     PluginRegistry,
     section_extension,
+    settings_page_extension,
 )
 
 
@@ -55,8 +58,11 @@ def test_plugins_endpoint_never_duplicates_descriptors() -> None:
     with TestClient(create_app()) as client:
         second = client.get("/api/plugins").json()
     assert first == second
-    ids = [e["id"] for e in second]
-    assert len(ids) == len(set(ids))
+    # An id is unique *per kind*, not globally: a plugin's section and its
+    # settings page share the plugin's id by design, and each is looked up in
+    # its own frontend registry.
+    keys = [(e["id"], e["kind"]) for e in second]
+    assert len(keys) == len(set(keys))
 
 
 def test_plugin_routers_are_reachable_past_the_spa_fallback() -> None:
@@ -275,3 +281,86 @@ def test_uv_tool_environments_are_detected_via_xdg_data_home(
     # A uv tool env is rebuilt from its requested packages, so a single one
     # cannot be removed — that has to surface rather than silently "work".
     assert install_mod.uninstall_command("anything") is None
+
+
+# --- per-plugin settings ----------------------------------------------------
+
+
+def test_settings_page_extension_shape() -> None:
+    ext = settings_page_extension(id="board", title="Board")
+    assert ext.kind == KIND_SETTINGS_PAGE
+    assert ext.slot == SLOT_SETTINGS
+    assert ext.config == {"order": 100}
+
+
+def test_add_settings_page_defaults_to_the_plugin_id() -> None:
+    registry = PluginRegistry()
+    registry.plugins["my-plugin"] = LoadedPlugin(id="my-plugin")
+    registry._current = "my-plugin"
+    registry.add_settings_page(title="My plugin")
+    registry._current = None
+    (ext,) = registry.frontend_extensions
+    assert ext.id == "my-plugin"
+
+
+def test_plugin_settings_round_trip_and_are_namespaced() -> None:
+    """Each plugin owns one opaque blob; core never interprets it."""
+    from precursor.backend.plugins.settings import settings_key
+
+    assert settings_key("kanban") == "plugin.kanban"
+
+    app = create_app()
+    with TestClient(app) as client:
+        # Start from a known state rather than assuming nothing else has written
+        # here — the test database is shared across the whole session.
+        assert client.put("/api/plugins/installed/kanban/settings", json={}).json() == {}
+        assert client.get("/api/plugins/installed/kanban/settings").json() == {}
+        stored = {"project_sources": ["acme"], "anything": {"nested": True}}
+        assert client.put("/api/plugins/installed/kanban/settings", json=stored).json() == stored
+        assert client.get("/api/plugins/installed/kanban/settings").json() == stored
+        # Whole-document, so a plugin can remove its own keys.
+        assert client.put("/api/plugins/installed/kanban/settings", json={}).json() == {}
+        assert client.get("/api/plugins/installed/kanban/settings").json() == {}
+
+
+def test_settings_are_refused_for_an_unknown_plugin() -> None:
+    """Otherwise this is an open key/value store on the app's settings table."""
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/plugins/installed/nope/settings").status_code == 404
+        assert client.put("/api/plugins/installed/nope/settings", json={}).status_code == 404
+
+
+async def test_unreadable_stored_settings_degrade_to_empty() -> None:
+    """A bad blob should cost that plugin its config, not 500 every request."""
+    import json
+
+    from precursor.backend.db import SessionLocal, init_db
+    from precursor.backend.models import AppSetting
+    from precursor.backend.plugins.settings import read_settings, settings_key
+
+    # This test touches the database directly rather than through the app, so it
+    # has to run the migrations the lifespan would normally have run.
+    await init_db()
+    key = settings_key("kanban")
+    try:
+        async with SessionLocal() as session:
+            # merge, not add: an earlier test in this module may have left a row
+            # under the same key, and a blind insert would collide.
+            await session.merge(AppSetting(key=key, value="{not json"))
+            await session.commit()
+        async with SessionLocal() as session:
+            assert await read_settings(session, "kanban") == {}
+            # A valid JSON *scalar* is just as unusable as broken JSON.
+            row = await session.get(AppSetting, key)
+            assert row is not None
+            row.value = json.dumps(["a", "list"])
+            await session.commit()
+        async with SessionLocal() as session:
+            assert await read_settings(session, "kanban") == {}
+    finally:
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, key)
+            if row is not None:
+                await session.delete(row)
+                await session.commit()

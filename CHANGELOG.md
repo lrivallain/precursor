@@ -11,6 +11,26 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Plugins can bring their own settings page, and the Kanban board can track
+  projects that aren't yours.** A plugin declares
+  `registry.add_settings_page(...)` and registers a React panel; it appears in
+  the Settings modal under a new **Plugins** group. Its values are one opaque
+  JSON document per plugin, stored under `plugin.<id>` and served at
+  `/api/plugins/installed/<id>/settings` — core never looks inside, so a plugin
+  can add, rename and drop its own keys without touching core's settings schema,
+  and two plugins can't collide. The plugin's backend reads the same document
+  (including from its MCP subprocess), so the panel and the tools agree.
+
+  The board is the first thing to use it. It has always listed the projects owned
+  by whoever owns the repo in Settings → GitHub, which is a fine default and a
+  poor ceiling: the board you care about is often somebody else's. **Settings →
+  Plugins → Kanban** now takes extra sources — an account (`acme-corp`, every
+  open project it owns) or a single project (`acme-corp#4`, or its GitHub URL).
+  Extras are additive and de-duplicated by project, and once boards come from
+  more than one account the picker labels each with its owner, which is what
+  tells two projects called "Roadmap" apart. A source you have lost access to is
+  skipped rather than taking the whole picker down.
+
 - **Plugins are now a real extension system, and the Kanban board is the first
   one.** A plugin is one Python package that can bring three things at once — a
   whole **UI section**, its own **MCP tools**, and **API routes** — and

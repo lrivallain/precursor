@@ -20,6 +20,12 @@ from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.models import Topic
 from precursor.backend.plugins import FrontendExtension, PluginRegistry
+from precursor.backend.plugins.settings import (
+    get_settings as get_plugin_settings,
+)
+from precursor.backend.plugins.settings import (
+    read_settings as read_plugin_settings,
+)
 from precursor.backend.schemas.issues import IssueComment, IssueDetail, IssueLabel
 from precursor.backend.services.app_settings import (
     resolve_global_github_repo,
@@ -53,8 +59,10 @@ __all__ = [
     "SessionLocal",
     "Settings",
     "Topic",
+    "get_plugin_settings",
     "get_session",
     "get_settings",
+    "read_plugin_settings",
     "require_github_repo",
     "require_github_token",
     "resolve_github_token",

@@ -20,7 +20,9 @@ this package directly; that module is the surface we keep stable.
 
 from precursor.backend.plugins.registry import (
     KIND_SECTION,
+    KIND_SETTINGS_PAGE,
     SLOT_APP_SECTION,
+    SLOT_SETTINGS,
     FrontendExtension,
     LoadedPlugin,
     PluginMCPServer,
@@ -28,11 +30,14 @@ from precursor.backend.plugins.registry import (
     discover,
     get_registry,
     section_extension,
+    settings_page_extension,
 )
 
 __all__ = [
     "KIND_SECTION",
+    "KIND_SETTINGS_PAGE",
     "SLOT_APP_SECTION",
+    "SLOT_SETTINGS",
     "FrontendExtension",
     "LoadedPlugin",
     "PluginMCPServer",
@@ -40,4 +45,5 @@ __all__ = [
     "discover",
     "get_registry",
     "section_extension",
+    "settings_page_extension",
 ]

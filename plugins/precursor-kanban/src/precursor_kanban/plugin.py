@@ -14,6 +14,9 @@ SECTION_ID = "kanban"
 def register(registry: PluginRegistry) -> None:
     registry.add_router(router)
     registry.add_section(id=SECTION_ID, title="Kanban", order=100)
+    # Extra project sources live in the plugin's own settings blob, so the board
+    # isn't limited to the account behind the configured repo.
+    registry.add_settings_page(title="Kanban")
     # Read-only board access for the assistant. Registered as "kanban.board" and
     # launched as a stdio subprocess of the running interpreter, so it shares the
     # app's database and credentials.

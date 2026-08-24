@@ -56,6 +56,10 @@ export function pluginsForSlot(
 export const SECTION_KIND = "section";
 export const SECTION_SLOT = "app.section";
 
+/** Descriptor `kind` + `slot` for a plugin's page in the Settings modal. */
+export const SETTINGS_PAGE_KIND = "settings-page";
+export const SETTINGS_PAGE_SLOT = "settings.tabs";
+
 /** What a section can inspect to decide whether it should be available. */
 export interface SectionEnabledContext {
   /** App settings, or `null` while they load. */
@@ -208,4 +212,57 @@ function injectSectionAccent(section: SectionPlugin): void {
     `.section-${section.id} { --section-accent: ${section.accent.light}; }\n` +
     `.dark .section-${section.id} { --section-accent: ${section.accent.dark}; }`;
   document.head.append(style);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings pages                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A plugin's own page in the Settings modal, listed under a "Plugins" group.
+ *
+ * Its values are stored as one opaque JSON blob per plugin
+ * (`/api/plugins/installed/<id>/settings`), so a plugin never has to add fields
+ * to core's settings schema — and two plugins can't collide.
+ */
+export interface SettingsPagePlugin {
+  /** Must match the backend descriptor's id; also the storage namespace. */
+  id: string;
+  label: string;
+  icon: ComponentType<SectionIconProps>;
+  /** The panel body. Owns its own loading, saving and validation. */
+  Component: ComponentType<Record<string, never>>;
+}
+
+const settingsPages = new Map<string, SettingsPagePlugin>();
+
+/** Register a settings panel. Call at module scope from the plugin's entry. */
+export function registerSettingsPage(page: SettingsPagePlugin): void {
+  settingsPages.set(page.id, page);
+}
+
+export function getSettingsPage(id: string): SettingsPagePlugin | undefined {
+  return settingsPages.get(id);
+}
+
+/**
+ * Settings pages the backend published *and* the frontend registered, ordered
+ * by the backend's `config.order`.
+ *
+ * Unlike sections these aren't gated on app state: a plugin whose configuration
+ * is incomplete is exactly the plugin whose settings you need to reach.
+ */
+export function resolveSettingsPages(
+  descriptors: PluginDescriptor[] | null,
+): SettingsPagePlugin[] {
+  if (!descriptors) return [];
+  return descriptors
+    .filter((d) => d.kind === SETTINGS_PAGE_KIND && d.slot === SETTINGS_PAGE_SLOT)
+    .map((d) => ({ descriptor: d, page: settingsPages.get(d.id) }))
+    .filter(
+      (x): x is { descriptor: PluginDescriptor; page: SettingsPagePlugin } =>
+        x.page != null,
+    )
+    .sort((a, b) => sectionOrder(a.descriptor) - sectionOrder(b.descriptor))
+    .map((x) => x.page);
 }

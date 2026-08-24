@@ -27,6 +27,14 @@ KIND_SECTION = "section"
 #: Slot a ``section`` extension is rendered into.
 SLOT_APP_SECTION = "app.section"
 
+#: Extension kind for a plugin's own page in the Settings modal, listed under a
+#: "Plugins" group. As with sections, the descriptor only says the page exists;
+#: the SPA looks its ``id`` up in the frontend registry for the component.
+KIND_SETTINGS_PAGE = "settings-page"
+
+#: Slot a ``settings-page`` extension is rendered into.
+SLOT_SETTINGS = "settings.tabs"
+
 MCPTransport = Literal["streamable_http", "stdio"]
 
 
@@ -121,6 +129,27 @@ def section_extension(
     )
 
 
+def settings_page_extension(
+    *,
+    id: str,
+    title: str,
+    order: int = 100,
+    config: dict[str, Any] | None = None,
+) -> FrontendExtension:
+    """Build a ``settings-page`` descriptor for a plugin that has configuration.
+
+    ``id`` is the key the SPA looks up to find the React panel, and the key its
+    values are stored under (see ``plugins/settings.py``).
+    """
+    return FrontendExtension(
+        id=id,
+        kind=KIND_SETTINGS_PAGE,
+        slot=SLOT_SETTINGS,
+        title=title,
+        config={"order": order, **(config or {})},
+    )
+
+
 @dataclass
 class PluginRegistry:
     """What every installed plugin contributed, keyed by plugin id.
@@ -152,6 +181,34 @@ class PluginRegistry:
         """Contribute a top-level application section (sidebar entry + route)."""
         self.add_frontend_extension(
             section_extension(id=id, title=title, order=order, config=config)
+        )
+
+    def add_settings_page(
+        self,
+        *,
+        id: str | None = None,
+        title: str | None = None,
+        order: int = 100,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        """Declare that this plugin has settings, and give them a page.
+
+        The page appears in the Settings modal under a **Plugins** group, and the
+        values it edits are persisted per plugin at
+        ``/api/plugins/installed/{id}/settings`` — a namespaced JSON blob, so a
+        plugin never has to touch core's settings schema.
+
+        ``id`` defaults to the plugin's own id, which is the right answer unless
+        a plugin wants more than one page.
+        """
+        plugin = self._plugin()
+        self.add_frontend_extension(
+            settings_page_extension(
+                id=id or plugin.id,
+                title=title or plugin.id,
+                order=order,
+                config=config,
+            )
         )
 
     def add_mcp_server(

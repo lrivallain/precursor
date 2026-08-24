@@ -974,6 +974,18 @@ export const api = {
     /** Restart the server so plugin discovery runs again. */
     restart: () =>
       request<{ status: string }>(`/api/plugins/restart`, { method: "POST" }),
+    /** A plugin's own settings blob — opaque to core. */
+    settings: {
+      get: (id: string) =>
+        request<Record<string, unknown>>(
+          `/api/plugins/installed/${encodeURIComponent(id)}/settings`,
+        ),
+      put: (id: string, values: Record<string, unknown>) =>
+        request<Record<string, unknown>>(
+          `/api/plugins/installed/${encodeURIComponent(id)}/settings`,
+          { method: "PUT", body: JSON.stringify(values) },
+        ),
+    },
   },
 
   skills: {

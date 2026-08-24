@@ -19,8 +19,20 @@ export function ProjectList({ projects, activeId, error, onSelect }: ProjectList
     const list = projects ?? [];
     const q = query.trim().toLowerCase();
     if (!q) return list;
-    return list.filter((p) => p.title.toLowerCase().includes(q));
+    // Search the owner too: with boards from several accounts, "acme" is the
+    // natural way to narrow to a customer's.
+    return list.filter(
+      (p) =>
+        p.title.toLowerCase().includes(q) ||
+        (p.owner ?? "").toLowerCase().includes(q),
+    );
   }, [projects, query]);
+
+  // Only worth labelling boards by account when more than one is in play.
+  const multipleOwners = useMemo(
+    () => new Set((projects ?? []).map((p) => p.owner).filter(Boolean)).size > 1,
+    [projects],
+  );
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -56,13 +68,18 @@ export function ProjectList({ projects, activeId, error, onSelect }: ProjectList
                     type="button"
                     ref={isActive ? activeItemRef : undefined}
                     onClick={() => onSelect(p)}
-                    title={p.short_description ?? p.title}
+                    title={p.short_description ?? (p.owner ? `${p.owner} / ${p.title}` : p.title)}
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
                       isActive ? "section-selected" : "hover:bg-surface"
                     }`}
                   >
                     <SquareKanban size={14} className="shrink-0 opacity-70" />
-                    <span className="flex-1 truncate">{p.title}</span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{p.title}</span>
+                      {multipleOwners && p.owner && (
+                        <span className="truncate text-[11px] text-muted">{p.owner}</span>
+                      )}
+                    </span>
                     <span className="shrink-0 text-xs text-muted">#{p.number}</span>
                   </button>
                 </li>

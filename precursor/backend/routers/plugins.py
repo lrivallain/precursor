@@ -27,6 +27,7 @@ from precursor.backend.plugins.install import (
     run_install,
     uninstall_command,
 )
+from precursor.backend.plugins.settings import read_settings, write_settings
 from precursor.backend.plugins.state import disabled_ids, is_enabled, set_enabled
 from precursor.backend.services.app_settings import resolve_plugin_install_enabled
 from precursor.backend.services.mcp.precursor_server import LOOPBACK_HOSTS, is_loopback_host
@@ -42,6 +43,16 @@ class PluginInstall(BaseModel):
     """A package to install. Any PEP 508 requirement the installer accepts."""
 
     package: str = Field(min_length=1, max_length=200)
+
+
+def _require_known_plugin(plugin_id: str) -> None:
+    """Refuse settings for a plugin that isn't installed.
+
+    Without this the endpoint is an arbitrary key/value store on the app's
+    settings table, writable by anything that can reach the API.
+    """
+    if plugin_id not in get_registry().plugins:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No plugin named '{plugin_id}'")
 
 
 def _host_is_local(request: Request) -> bool:
@@ -168,6 +179,11 @@ async def list_installed() -> list[dict[str, Any]]:
                 {"id": e.id, "kind": e.kind, "slot": e.slot, "title": e.title}
                 for e in plugin.frontend_extensions
             ],
+            "settings_pages": [
+                {"id": e.id, "title": e.title}
+                for e in plugin.frontend_extensions
+                if e.kind == "settings-page"
+            ],
             "routes": plugin.route_prefixes,
             "mcp_servers": [{"name": s.name, "title": s.title} for s in plugin.mcp_servers],
         }
@@ -218,6 +234,31 @@ async def get_plugin_asset(plugin_id: str, path: str) -> FileResponse:
     if resolved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Asset not found")
     return FileResponse(resolved, media_type=media_type(resolved))
+
+
+@router.get("/installed/{plugin_id}/settings")
+async def get_plugin_settings(
+    plugin_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """A plugin's own settings blob. Opaque to core."""
+    _require_known_plugin(plugin_id)
+    return await read_settings(session, plugin_id)
+
+
+@router.put("/installed/{plugin_id}/settings")
+async def put_plugin_settings(
+    plugin_id: str,
+    values: dict[str, Any],
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Replace a plugin's settings wholesale.
+
+    Whole-document rather than a merge: core has no schema to merge *against*,
+    and a plugin removing one of its own keys must be able to say so.
+    """
+    _require_known_plugin(plugin_id)
+    return await write_settings(session, plugin_id, values)
 
 
 @router.get("/environment")

@@ -28,6 +28,28 @@ Pick one of your GitHub **Projects v2** and Precursor draws it as a board:
   **open/closed** state, the **title**, and its **labels**.
 - **Filter issues** narrows the board as you type.
 
+## Boards beyond your own account
+
+By default the picker lists every open project owned by the account behind your
+configured repository. That is a sensible default and a poor ceiling — the board
+you care about often belongs to somebody else.
+
+**Settings → Plugins → Kanban** takes extra sources:
+
+| You type | You get |
+| --- | --- |
+| `acme-corp` | Every open project that account owns |
+| `acme-corp#4` | Just that one project |
+| `https://github.com/orgs/acme-corp/projects/4` | Just that one project |
+
+Extras are additive and de-duplicated, so re-listing an account you already see
+changes nothing. Once boards come from more than one account the picker labels
+each with its owner, which is what tells two projects called "Roadmap" apart. A
+source you have lost access to is skipped rather than breaking the picker — fix
+or remove it in the same panel.
+
+You still need read access to the project, and a token with the `project` scope.
+
 ## Moving cards
 
 Change an issue's column straight from the board and Precursor writes the new

@@ -13,6 +13,8 @@ export interface ProjectSummary {
   url: string | null;
   closed: boolean;
   short_description: string | null;
+  /** Account that owns the board — boards can come from several. */
+  owner: string | null;
 }
 
 export interface ProjectColumn {

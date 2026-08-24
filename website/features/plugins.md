@@ -19,6 +19,7 @@ release cadence.
 | --- | --- |
 | 🧩 **A whole section** | Its own entry in the sidebar rail, a card on the home launcher, a ⌘K entry and a top-level route — with UI it ships itself. |
 | 🔌 **MCP tools** | Its own tool server, joining the same catalogue and toggles as the built-ins, so the assistant can use it. |
+| ⚙️ **Its own settings page** | An entry in the Settings modal under a **Plugins** group, backed by a namespaced store core never reads. |
 | 🛠 **API routes** | FastAPI endpoints mounted under `/api/<plugin>`. |
 
 Install the package, restart, and all three appear. Uninstall it and they all go
@@ -80,6 +81,7 @@ from precursor.plugin_api import PluginRegistry
 def register(registry: PluginRegistry) -> None:
     registry.add_router(router)
     registry.add_section(id="my-plugin", title="My section")
+    registry.add_settings_page(title="My plugin")
     registry.add_mcp_server(name="tools", module="my_pkg.mcp_server")
 ```
 

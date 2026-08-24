@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   X,
   ChevronDown,
@@ -56,6 +56,8 @@ import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
 import { AgentsSettings } from "./AgentsSettings";
 import { PluginsSettings } from "./PluginsSettings";
+import { resolveSettingsPages } from "../lib/plugins";
+import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
 
 interface Props {
@@ -99,7 +101,14 @@ function pickSystem(s: Settings): SystemSettings {
   };
 }
 
-type Category =
+/**
+ * A settings tab. Core's own are enumerated; a plugin contributes its page id,
+ * which is why this stays open. `(string & {})` keeps completion for the core
+ * names while accepting any plugin id.
+ */
+type Category = CoreCategory | (string & {});
+
+type CoreCategory =
   | "appearance"
   | "chat"
   | "model"
@@ -118,12 +127,32 @@ type Category =
   | "backup"
   | "system";
 
-const CATEGORIES: ReadonlyArray<{
+type SettingsGroup = "App" | "Integrations" | "Extensions" | "Plugins" | "Advanced";
+
+interface CategoryDef {
   id: Category;
   label: string;
   icon: typeof Palette;
-  group: "App" | "Integrations" | "Extensions" | "Advanced";
-}> = [
+  group: SettingsGroup;
+}
+
+// Plugin pages are addressed with a prefix so a plugin id can never collide
+// with a core category. Without it, a plugin called "github" would produce two
+// tabs sharing an id — both rendering as active, and both panels stacked in the
+// content area — and the widened `Category` type would not catch it.
+const PLUGIN_TAB_PREFIX = "plugin:";
+
+// Groups in nav order. "Plugins" is declared here but populated at runtime from
+// whatever plugins publish a settings page; `SidebarTabs` hides it when empty.
+const SETTINGS_GROUPS: readonly SettingsGroup[] = [
+  "App",
+  "Integrations",
+  "Extensions",
+  "Plugins",
+  "Advanced",
+];
+
+const CATEGORIES: ReadonlyArray<CategoryDef> = [
   { id: "appearance", label: "Appearance", icon: Palette, group: "App" },
   { id: "chat", label: "Chat", icon: MessageSquare, group: "App" },
   { id: "model", label: "Model", icon: Cpu, group: "App" },
@@ -163,6 +192,29 @@ const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
 export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }: Props) {
   const confirmAction = useConfirm();
   const [category, setCategory] = useState<Category>(initialCategory ?? "appearance");
+  // Settings pages contributed by installed plugins, appended as their own group.
+  const pluginDescriptors = usePluginDescriptors();
+  const pluginPages = useMemo(
+    () => resolveSettingsPages(pluginDescriptors),
+    [pluginDescriptors],
+  );
+  const allCategories = useMemo<ReadonlyArray<CategoryDef>>(
+    () => [
+      ...CATEGORIES,
+      ...pluginPages.map((page) => ({
+        id: `${PLUGIN_TAB_PREFIX}${page.id}`,
+        label: page.label,
+        icon: page.icon as typeof Palette,
+        group: "Plugins" as const,
+      })),
+    ],
+    [pluginPages],
+  );
+  const activePluginPage = useMemo(
+    () =>
+      pluginPages.find((p) => `${PLUGIN_TAB_PREFIX}${p.id}` === category) ?? null,
+    [pluginPages, category],
+  );
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mcp, setMcp] = useState<MCPServerStatus[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
@@ -619,8 +671,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
         <div className="flex flex-1 min-h-0">
           <SidebarTabs
-            groups={["App", "Integrations", "Extensions", "Advanced"] as const}
-            tabs={CATEGORIES}
+            groups={SETTINGS_GROUPS}
+            tabs={allCategories}
             active={category}
             onSelect={setCategory}
           />
@@ -1259,6 +1311,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
             {category === "memory" && <MemoriesTab />}
             {category === "agents" && <AgentsSettings />}
             {category === "plugins" && <PluginsSettings />}
+            {activePluginPage && <activePluginPage.Component />}
             {category === "workflows" && <WorkflowsSettings />}
 
             {category === "stats" && <StatsTab />}
