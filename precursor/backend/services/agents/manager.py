@@ -1120,7 +1120,7 @@ class AgentManager:
         profile = await profile_for_server(name)
         if profile is None:
             return None
-        resolved = await resolve_workiq_bearer_token(profile)
+        resolved = await resolve_workiq_bearer_token(profile, caller="agent attach")
         if resolved is None:
             return None
         token, expires_at = resolved
@@ -1558,7 +1558,7 @@ class AgentManager:
         profile = await profile_for_server(server)
         if profile is None:
             return None
-        if await resolve_workiq_bearer_token(profile) is not None:
+        if await resolve_workiq_bearer_token(profile, caller="agent tool failure") is not None:
             return None
         return server
 

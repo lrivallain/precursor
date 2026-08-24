@@ -6,6 +6,7 @@ import io
 import re
 import zipfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
@@ -952,6 +953,65 @@ def test_log_config_unifies_format() -> None:
     # Plain mode emits no ANSI escapes; colour mode wraps the level.
     assert "\033[" not in line
     assert "\033[" in UTCFormatter(color=True).format(record)
+
+
+def test_auth_trace_logger_level_is_independent_of_the_app_level() -> None:
+    """A sign-in lapse can't be reproduced on demand, so its trace stays on.
+
+    ``precursor.mcp.auth`` is pinned like the noisy third-party loggers, but in
+    the opposite direction — verbose while the app runs at INFO.
+    """
+    from precursor.backend.logging_config import build_log_config
+
+    cfg = build_log_config("info", color=False, auth_log_level="debug")
+    assert cfg["root"]["level"] == "INFO"
+    assert cfg["loggers"]["precursor.mcp.auth"]["level"] == "DEBUG"
+    assert cfg["loggers"]["precursor.mcp.auth"]["propagate"] is True
+    # Omitted → not pinned at all, so it simply follows the root level.
+    assert "precursor.mcp.auth" not in build_log_config("info", color=False)["loggers"]
+
+
+def test_startup_migrations_do_not_silence_app_loggers() -> None:
+    """Alembic's ``fileConfig`` used to disable every ``precursor.*`` logger.
+
+    ``init_db`` upgrades to head on every startup, and ``env.py``'s
+    ``fileConfig`` defaults to ``disable_existing_loggers=True`` — so from the
+    first migration onwards the app went quiet: module loggers created at import
+    time were switched off wholesale.
+    """
+    import logging
+
+    logger = logging.getLogger("precursor.backend.services.mcp.workiq_preview")
+    with TestClient(create_app()):
+        pass
+
+    assert logger.disabled is False
+    assert logging.getLogger("precursor.mcp.auth").disabled is False
+
+
+def test_startup_migrations_leave_configured_logging_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the app owns logging, the migration must not re-apply alembic.ini.
+
+    Doing so also swapped the unified handler/formatter for alembic's and pulled
+    the root level down to ``WARN``, which is why a ``--log-level debug`` run
+    still printed almost nothing past startup.
+    """
+    import logging
+
+    from precursor.backend import logging_config
+
+    monkeypatch.setattr(logging_config, "logging_is_configured", lambda: True)
+    root = logging.getLogger()
+    before_handlers = list(root.handlers)
+    before_level = root.level
+
+    with TestClient(create_app()):
+        pass
+
+    assert root.handlers == before_handlers
+    assert root.level == before_level
 
 
 def test_chat_messages_cursor_pagination() -> None:

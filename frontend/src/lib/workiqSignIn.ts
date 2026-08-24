@@ -339,7 +339,7 @@ export async function autoReauthWorkiq(name = "workiq"): Promise<boolean> {
       authenticated
         ? "hands-free succeeded — no banner"
         : "hands-free gave up (interaction_required) — banner will show",
-      { frame_loads: loads, state: status.state },
+      { frame_loads: loads, state: status.state, backend_episode: status.auth_episode },
     );
     return authenticated;
   } catch (err) {

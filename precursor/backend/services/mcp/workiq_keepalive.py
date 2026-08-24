@@ -34,13 +34,15 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from mcp.shared.auth import OAuthToken
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.services.events import publish_mcp_auth_required
+from precursor.backend.services.mcp import auth_trace
 from precursor.backend.services.mcp.client import get_mcp_client_manager
-from precursor.backend.services.mcp.usage import is_idle
+from precursor.backend.services.mcp.usage import is_idle, seconds_since_use
 from precursor.backend.services.mcp.workiq_preview import (
     DbTokenStorage,
     WorkIQOAuthProfile,
@@ -65,6 +67,9 @@ class WorkIQKeepAlive:
         # succeeds. Keyed by credential rather than server so servers sharing a
         # token raise one prompt, not one each.
         self._auth_required_notified: set[str] = set()
+        # Last conclusion each credential's tick reached, so an unchanged verdict
+        # isn't re-reported every minute forever (see ``_verdict_changed``).
+        self._last_verdict: dict[str, str] = {}
 
     async def start(self) -> None:
         if self._running or not self._settings.workiq_keepalive_enabled:
@@ -73,6 +78,7 @@ class WorkIQKeepAlive:
             return
         self._running = True
         self._auth_required_notified.clear()
+        self._last_verdict.clear()
         self._task = asyncio.create_task(self._ticker(), name="workiq-keepalive")
         logger.info(
             "WorkIQ keep-alive started (poll=%ss, margin=%ss).",
@@ -125,22 +131,69 @@ class WorkIQKeepAlive:
         # tick must never start an interactive flow), whether idle or active.
         tokens = await DbTokenStorage(profile).get_tokens()
         if tokens is None:
+            if self._verdict_changed(profile, "no-token"):
+                auth_trace.record(
+                    profile.server,
+                    "keep-alive: nothing stored, nothing to keep warm",
+                    level=logging.DEBUG,
+                )
             return
 
         idle_after = self._settings.workiq_keepalive_idle_after_seconds
+        idle_seconds = round(seconds_since_use(profile.auth_family))
+        expiry = await _stored_token_expiry(tokens, profile)
+        ttl = None if expiry is None else round((expiry - datetime.now(UTC)).total_seconds())
+        # One line per credential per tick, at DEBUG: the whole reason a session
+        # was (or wasn't) kept warm, so a lapse can be read backwards from the
+        # moment it happened rather than inferred from its absence.
+        facts: dict[str, Any] = {
+            "expires_at": expiry.isoformat() if expiry else None,
+            "ttl_seconds": ttl,
+            "idle_seconds": idle_seconds,
+            "idle_after_seconds": idle_after,
+            "has_refresh_token": bool(tokens.refresh_token),
+        }
+
         if is_idle(profile.auth_family, idle_after):
+            if self._verdict_changed(profile, "idle"):
+                auth_trace.record(
+                    profile.server, "keep-alive: credential is idle", level=logging.DEBUG, **facts
+                )
             await self._tick_idle(profile, tokens)
             return
 
-        expiry = await _stored_token_expiry(tokens, profile)
         if expiry is not None and not self._due_for_refresh(expiry):
+            if self._verdict_changed(profile, "fresh"):
+                auth_trace.record(
+                    profile.server,
+                    "keep-alive: token still fresh, no action",
+                    level=logging.DEBUG,
+                    **facts,
+                )
             return
 
         # Near expiry (or expiry unknown for a legacy token) → silently refresh.
         # ``tokens`` is only forwarded when the expiry is known, so the
         # no-refresh-token short-circuit can't misfire on a legacy token that may
         # well still be valid.
+        self._verdict_changed(profile, "refreshing")
+        auth_trace.record(profile.server, "keep-alive: refreshing before expiry", **facts)
         await self._silent_refresh(profile, tokens if expiry is not None else None)
+
+    def _verdict_changed(self, profile: WorkIQOAuthProfile, verdict: str) -> bool:
+        """Whether this tick reached a *different* conclusion than the last one.
+
+        The ticker runs once a minute forever, and in the steady state every tick
+        reaches the same harmless verdict. Recording each one would bury the
+        handful of lines that explain a sign-in prompt under thousands of
+        heartbeats — in the log *and* in the diagnostics buffer. Only transitions
+        are worth keeping; a genuine action (an actual refresh) records
+        regardless, because it isn't a verdict, it's an event.
+        """
+        if self._last_verdict.get(profile.auth_family) == verdict:
+            return False
+        self._last_verdict[profile.auth_family] = verdict
+        return True
 
     async def _tick_idle(self, profile: WorkIQOAuthProfile, tokens: OAuthToken) -> None:
         """Handle a credential nobody has used within the idle window.
@@ -166,6 +219,9 @@ class WorkIQKeepAlive:
             return
         # Access token has demonstrably expired → probe once to learn whether it
         # now needs an interactive sign-in.
+        auth_trace.record(
+            profile.server, "keep-alive: idle credential has expired, probing it once"
+        )
         await self._silent_refresh(profile, tokens)
 
     async def _silent_refresh(
@@ -187,9 +243,14 @@ class WorkIQKeepAlive:
                 "requesting an interactive sign-in.",
                 profile.server,
             )
+            auth_trace.record(
+                profile.server,
+                "keep-alive: credential has no refresh token — renewal is impossible",
+                level=logging.WARNING,
+            )
             await self._on_refresh_failed(profile)
             return
-        result = await resolve_workiq_bearer_token(profile)
+        result = await resolve_workiq_bearer_token(profile, caller="keep-alive")
         if result is None:
             await self._on_refresh_failed(profile)
         else:
@@ -207,15 +268,24 @@ class WorkIQKeepAlive:
             profile.server, message=_auth_required_message(profile)
         )
         if profile.auth_family in self._auth_required_notified:
+            auth_trace.record(
+                profile.server,
+                "keep-alive: still unrenewable, banner already raised",
+                level=logging.DEBUG,
+            )
             return
         self._auth_required_notified.add(profile.auth_family)
         logger.info(
             "WorkIQ keep-alive: silent refresh for %s needs interactive sign-in.",
             profile.server,
         )
+        # The moment a background tick turns into a user-visible interruption.
+        auth_trace.begin_episode(profile.server, "keep-alive could not renew silently")
+        auth_trace.record(profile.server, "publishing mcp.auth_required to the SPA")
         await publish_mcp_auth_required(profile.server, _auth_required_message(profile))
 
     async def _on_refresh_ok(self, profile: WorkIQOAuthProfile, expiry: datetime | None) -> None:
+        recovered = profile.auth_family in self._auth_required_notified
         self._auth_required_notified.discard(profile.auth_family)
         # The credential is signable again — let connects proceed for real.
         get_mcp_client_manager().clear_auth_required(profile.server)
@@ -224,6 +294,15 @@ class WorkIQKeepAlive:
             profile.server,
             expiry.isoformat() if expiry else "unknown",
         )
+        auth_trace.record(
+            profile.server,
+            "keep-alive: token renewed",
+            level=logging.INFO if recovered else logging.DEBUG,
+            expires_at=expiry.isoformat() if expiry else None,
+            recovered_from_lapse=recovered,
+        )
+        if recovered:
+            auth_trace.end_episode(profile.server, "recovered without prompting")
 
 
 _keepalive: WorkIQKeepAlive | None = None
