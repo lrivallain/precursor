@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
 import { EmptyHero } from "./components/EmptyHero";
-import { getSection, resolveSections } from "./lib/plugins";
+import { resolveSections } from "./lib/plugins";
+import { loadPluginEntries } from "./lib/pluginLoader";
 import type { SectionHost } from "./lib/plugins";
 import { GithubIcon as Github } from "./components/icons/GithubIcon";
 import { CommandPalette } from "./components/CommandPalette";
@@ -173,16 +174,6 @@ function parseAppRoute(): AppRoute {
   if (segs[0] === "live") {
     return { ...base, mode: "live", liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
-  // A plugin section owns its whole subtree: core only resolves the root
-  // segment to a registered section and passes the rest through.
-  if (segs[0] && getSection(segs[0])) {
-    return {
-      ...base,
-      mode: segs[0],
-      pluginSegments: segs.slice(1).map((seg) => decodeURIComponent(seg)),
-      pluginHash: window.location.hash.replace(/^#/, ""),
-    };
-  }
   if (segs[0] === "t") {
     return {
       ...base,
@@ -193,7 +184,36 @@ function parseAppRoute(): AppRoute {
   if (segs[0] === "topics") {
     return { ...base, mode: "topics", topicPath: segs.slice(1).map(decodeURIComponent) };
   }
+  // Anything left is a candidate plugin section, which owns its whole subtree:
+  // core keeps the root segment as the mode and passes the rest through
+  // untouched. It deliberately does *not* check the section registry — a
+  // plugin's bundle is fetched asynchronously, so at first parse nothing is
+  // registered yet and a deep link would be thrown away. The gating effect
+  // bounces the mode to Topics once the descriptors say it isn't real.
+  if (segs[0]) {
+    return {
+      ...base,
+      mode: segs[0],
+      pluginSegments: segs.slice(1).map((seg) => decodeURIComponent(seg)),
+      pluginHash: window.location.hash.replace(/^#/, ""),
+    };
+  }
   return base;
+}
+
+/** Section keys core ships itself; everything else can only be a plugin. */
+const CORE_MODES: ReadonlySet<string> = new Set([
+  "topics",
+  "chats",
+  "live",
+  "workspaces",
+  "agents",
+  "workflows",
+]);
+
+/** Whether `mode` is a plugin section rather than one of core's own. */
+function isPluginMode(mode: SidebarMode): boolean {
+  return !CORE_MODES.has(mode);
 }
 
 /** The home launcher lives at the root path `/` (no path segments). */
@@ -533,7 +553,11 @@ export default function App() {
     let cancelled = false;
     void api.plugins
       .list()
-      .then((list) => {
+      .then(async (list) => {
+        // Import the bundles of plugins that ship their own frontend before
+        // publishing the descriptors: importing one is what runs its
+        // `registerSection`, so resolving first would find nothing.
+        await loadPluginEntries(list);
         if (!cancelled) setPluginDescriptors(list);
       })
       .catch(() => {
@@ -955,7 +979,7 @@ export default function App() {
       setWsRoute({ open: false, slug: null, path: null });
       // A plugin section owns everything under its root; hand it the fresh
       // segments/hash and let it reconcile (initial load + back/forward).
-      if (getSection(r.mode)) {
+      if (isPluginMode(r.mode)) {
         setPluginRoute({ segments: r.pluginSegments, hash: r.pluginHash });
         return;
       }
@@ -1323,7 +1347,7 @@ export default function App() {
       target = agentUrl(activeAgentIdRef.current, agentsRef.current);
     } else if (next === "workflows") {
       target = activeWorkflowId != null ? `/workflows/${activeWorkflowId}` : "/workflows";
-    } else if (getSection(next)) {
+    } else if (isPluginMode(next)) {
       // Re-entering a plugin section restores the sub-route it was left at.
       target = pluginSectionUrl(next, pluginRouteRef.current.segments);
     } else {
@@ -1453,7 +1477,10 @@ export default function App() {
   // it while disabled), fall back to Topics.
   useEffect(() => {
     if (!liveEnabled && sidebarMode === "live") {
-      history.pushState(null, "", "/topics");
+      // replaceState, not push: this bounce must *consume* the unreachable URL.
+      // Pushing would leave it in the history, and going Back would land on it
+      // and bounce again — trapping the user one entry from where they were.
+      history.replaceState(null, "", "/topics");
       setSidebarMode("topics");
     }
   }, [liveEnabled, sidebarMode]);
@@ -1465,9 +1492,12 @@ export default function App() {
   // they resolve.
   useEffect(() => {
     if (settings == null || pluginDescriptors == null) return;
-    if (!getSection(sidebarMode)) return;
+    if (!isPluginMode(sidebarMode)) return;
     if (enabledSections.some((sec) => sec.id === sidebarMode)) return;
-    history.pushState(null, "", "/topics");
+    // Any unrecognised root segment parses as a candidate plugin section, so
+    // this also catches plain typos — all the more reason to replace rather
+    // than push, or Back would bounce off the bad URL forever.
+    history.replaceState(null, "", "/topics");
     setSidebarMode("topics");
   }, [enabledSections, pluginDescriptors, sidebarMode, settings]);
 
@@ -1925,7 +1955,7 @@ export default function App() {
     }
     // Plugin sections declare their own create flow (or none at all), so core
     // has nothing to do for them — the header hides the "+" accordingly.
-    else if (getSection(sidebarMode)) {
+    else if (isPluginMode(sidebarMode)) {
       /* handled by the section, if it offers one */
     } else setCreateWorkspaceOpen(true);
   }

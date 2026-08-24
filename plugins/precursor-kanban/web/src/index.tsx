@@ -9,9 +9,8 @@
  */
 
 import { SquareKanban } from "lucide-react";
-import { registerSection } from "../../lib/plugins";
-import type { SectionHost } from "../../lib/plugins";
-import { EmptyHero } from "../../components/EmptyHero";
+import { EmptyHero, registerSection } from "@precursor/host";
+import type { SectionHost } from "@precursor/host";
 import { KanbanBoard } from "./KanbanBoard";
 import { KanbanProvider, useKanban } from "./KanbanContext";
 import { ProjectList } from "./ProjectList";

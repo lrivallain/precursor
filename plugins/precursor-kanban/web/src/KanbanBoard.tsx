@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
 import type { ProjectBoard, ProjectCard } from "./types";
-import { apiErrorMessage } from "../../lib/api";
+import { apiErrorMessage, IssueLabelChip } from "@precursor/host";
 import { kanbanApi } from "./api";
-import { IssueLabelChip } from "../../components/IssueTags";
 import { IssuePreviewModal } from "./IssuePreviewModal";
 
 interface KanbanBoardProps {

@@ -4,7 +4,7 @@
  * Projects v2 endpoints — they only exist when the plugin is installed.
  */
 
-import { request } from "../../lib/api";
+import { request } from "@precursor/host";
 import type { ItemStatusResult, ProjectBoard, ProjectSummary } from "./types";
 
 export const kanbanApi = {

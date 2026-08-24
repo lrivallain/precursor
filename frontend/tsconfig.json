@@ -15,9 +15,25 @@
     "isolatedModules": true,
     "useDefineForClassFields": true,
     "allowSyntheticDefaultImports": true,
+    // Plugin sources live outside this directory, so Node-style resolution
+    // would never find `frontend/node_modules`. Map the specifiers they share
+    // with the host — the same packages, resolved to the same files — plus the
+    // SDK, which an import map resolves at runtime. Paths are relative to this
+    // file (TypeScript 7 removed `baseUrl`).
+    "paths": {
+      "@precursor/host": ["./src/host/runtime.ts"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      "lucide-react": ["./node_modules/lucide-react"]
+    },
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src"],
+  // In-repo plugin frontends are type-checked here too: they compile against
+  // the host's React and its published SDK, so checking them anywhere else
+  // would mean duplicating both.
+  "include": ["src", "../plugins/*/web/src"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

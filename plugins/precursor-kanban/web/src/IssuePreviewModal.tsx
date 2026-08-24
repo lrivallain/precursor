@@ -9,14 +9,18 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import type { IssueDetail, IssueLabel } from "../../lib/types";
+import {
+  api,
+  apiErrorMessage,
+  IssueLabelChip,
+  IssueStateBadge,
+  Markdown,
+  Modal,
+  RefineTextarea,
+  useResizableBox,
+} from "@precursor/host";
+import type { IssueDetail, IssueLabel } from "@precursor/host";
 import type { ProjectCard } from "./types";
-import { api, apiErrorMessage } from "../../lib/api";
-import { useResizableBox } from "../../lib/useResizableBox";
-import { Modal } from "../../components/Modal";
-import { Markdown } from "../../components/Markdown";
-import { RefineTextarea } from "../../components/RefineTextarea";
-import { IssueLabelChip, IssueStateBadge } from "../../components/IssueTags";
 
 /** Format a comment timestamp as a localized medium date + short time. */
 function formatCommentTimestamp(iso: string): string {

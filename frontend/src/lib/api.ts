@@ -67,7 +67,9 @@ import type {
   Message,
   NotesDraft,
   NoteDraftAttachment,
+  InstalledPlugin,
   PluginDescriptor,
+  PluginEnvironment,
   IssueDetail,
   Reminder,
   ReminderContainer,
@@ -948,8 +950,30 @@ export const api = {
   },
 
   plugins: {
-    // Plugins
+    /** Frontend extension descriptors from every enabled plugin. */
     list: () => request<PluginDescriptor[]>(`/api/plugins`),
+    /** Every installed plugin, enabled or not, for the Settings panel. */
+    installed: () => request<InstalledPlugin[]>(`/api/plugins/installed`),
+    setEnabled: (id: string, enabled: boolean) =>
+      request<{ id: string; enabled: boolean }>(
+        `/api/plugins/installed/${encodeURIComponent(id)}`,
+        { method: "PUT", body: JSON.stringify({ enabled }) },
+      ),
+    /** How to install into this instance (and whether the app may do it). */
+    environment: () => request<PluginEnvironment>(`/api/plugins/environment`),
+    install: (pkg: string) =>
+      request<{ package: string; output: string; restart_required: boolean }>(
+        `/api/plugins/install`,
+        { method: "POST", body: JSON.stringify({ package: pkg }) },
+      ),
+    uninstall: (id: string) =>
+      request<{ package: string; output: string; restart_required: boolean }>(
+        `/api/plugins/installed/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ),
+    /** Restart the server so plugin discovery runs again. */
+    restart: () =>
+      request<{ status: string }>(`/api/plugins/restart`, { method: "POST" }),
   },
 
   skills: {

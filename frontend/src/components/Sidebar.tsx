@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
 import { sectionColor } from "../lib/sections";
-import { getSection } from "../lib/plugins";
 import type { SectionPlugin } from "../lib/plugins";
 import { Z_INDEX } from "../lib/constants";
 import { CollectionSwitcher } from "./CollectionSwitcher";
@@ -66,7 +65,7 @@ export type SidebarMode = CoreSidebarMode | (string & {});
 
 // Label for the header "New" action, which is mode-aware. Plugin sections opt
 // in by declaring a `newLabel`; without one they have no create affordance.
-function newActionLabel(mode: SidebarMode): string {
+function newActionLabel(mode: SidebarMode, section: SectionPlugin | null): string {
   switch (mode) {
     case "chats":
       return "New chat";
@@ -81,14 +80,15 @@ function newActionLabel(mode: SidebarMode): string {
     case "topics":
       return "New topic";
     default:
-      return getSection(mode)?.newLabel ?? "New topic";
+      return section?.newLabel ?? "New topic";
   }
 }
 
-// Whether a section offers a "New …" action at all.
-function supportsNew(mode: SidebarMode): boolean {
-  const section = getSection(mode);
-  return section ? section.newLabel != null : true;
+// Whether a section offers a "New …" action at all. Plugin sections opt in by
+// declaring a `newLabel`; core's own always do.
+function supportsNew(mode: SidebarMode, section: SectionPlugin | null): boolean {
+  if (section) return section.newLabel != null;
+  return CORE_MODE_KEYS.has(mode);
 }
 
 interface Props {
@@ -222,6 +222,10 @@ export function Sidebar({
 
   // User-reorderable section arrangement, shared by the vertical rail and the
   // horizontal tabs (both drive the same persisted order via drag & drop).
+  const activeSection = useMemo(
+    () => pluginSections.find((s) => s.id === mode) ?? null,
+    [pluginSections, mode],
+  );
   const modeDefs = useModeDefs(pluginSections);
   const allModes = useMemo(() => modeDefs.map((m) => m.mode), [modeDefs]);
   const { order: sectionOrder, reorder: reorderSections } = useSectionOrder(allModes);
@@ -271,6 +275,7 @@ export function Sidebar({
           liveEnabled={liveEnabled}
           orderedModes={orderedModes}
           onReorder={reorderSections}
+          activeSection={activeSection}
         />
         <div className="flex-1" />
         <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
@@ -326,11 +331,11 @@ export function Sidebar({
         >
           {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
         </button>
-        {supportsNew(mode) && (
+        {supportsNew(mode, activeSection) && (
           <button
             className={`p-1.5 rounded-full transition-opacity hover:opacity-80 ${sectionColor(mode).icon}`}
-            aria-label={newActionLabel(mode)}
-            data-tooltip={newActionLabel(mode)}
+            aria-label={newActionLabel(mode, activeSection)}
+            data-tooltip={newActionLabel(mode, activeSection)}
             onClick={onNew}
           >
             <Plus size={16} />
@@ -393,8 +398,12 @@ export function Sidebar({
         liveSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
-      ) : getSection(mode) ? (
+      ) : activeSection ? (
         pluginSlot
+      ) : !CORE_MODE_KEYS.has(mode) ? (
+        // A plugin section whose bundle hasn't arrived yet. Render nothing
+        // rather than flashing the topic tree under someone else's route.
+        null
       ) : (
         <>
           {onCollectionChange && (
@@ -861,6 +870,11 @@ const CORE_MODES: ModeDef[] = [
 // churn the memo on every render.
 const EMPTY_SECTIONS: SectionPlugin[] = [];
 
+// Which section keys belong to core. Anything else is a plugin's, which may not
+// have finished loading yet — the guards above use this to tell "not a section"
+// apart from "a section whose bundle is still in flight".
+const CORE_MODE_KEYS: ReadonlySet<string> = new Set(CORE_MODES.map((m) => m.mode));
+
 /** Core sections plus every enabled plugin section, as switcher definitions. */
 function useModeDefs(pluginSections: SectionPlugin[]): ModeDef[] {
   return useMemo(
@@ -897,6 +911,7 @@ function SectionRailButtons({
   onReorder,
   showNew = true,
   labelOnHover = false,
+  activeSection = null,
 }: {
   mode: SidebarMode;
   atHome?: boolean;
@@ -910,6 +925,8 @@ function SectionRailButtons({
   onReorder: (dragged: SidebarMode, target: SidebarMode, side: DropSide) => void;
   showNew?: boolean;
   labelOnHover?: boolean;
+  /** The plugin section currently open, when one is. */
+  activeSection?: SectionPlugin | null;
 }) {
   // Plugin sections arrive pre-filtered (only installed *and* enabled ones are
   // passed in), so Live is the only conditional core section left.
@@ -1005,17 +1022,17 @@ function SectionRailButtons({
           </button>
         );
       })}
-      {showNew && supportsNew(mode) && (
+      {showNew && supportsNew(mode, activeSection) && (
         <>
           <div className="my-1 h-px w-6 bg-border" />
           <button
             className="group relative p-2 rounded hover:bg-surface"
-            aria-label={newActionLabel(mode)}
-            data-tooltip={labelOnHover ? undefined : newActionLabel(mode)}
+            aria-label={newActionLabel(mode, activeSection)}
+            data-tooltip={labelOnHover ? undefined : newActionLabel(mode, activeSection)}
             onClick={onNew}
           >
             <Plus size={18} />
-            {flyout(newActionLabel(mode), "bg-surface text-text")}
+            {flyout(newActionLabel(mode, activeSection), "bg-surface text-text")}
           </button>
         </>
       )}

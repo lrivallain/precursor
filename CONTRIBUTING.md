@@ -86,9 +86,20 @@ core — see [docs/plugins.md](docs/plugins.md) for the contract, and
 
 An in-repo plugin is a separate distribution and a `uv` workspace member
 (`[tool.uv.workspace] members = ["plugins/*"]`), so `uv sync` installs it
-editable and `make check` lints, type-checks and tests it alongside core. Its
-frontend half lives in `frontend/src/plugins/<name>/` and is imported for its
-side effects from `frontend/src/plugins/index.ts`.
+editable and `make check` lints, type-checks and tests it alongside core.
+
+Its **frontend** lives in `plugins/<dist>/web/src` and builds into the Python
+package (`plugins/<dist>/src/<module>/web`), so it ships in the wheel and
+Precursor serves it at runtime:
+
+```bash
+make plugins-build      # add the distribution name to PLUGINS in the Makefile
+```
+
+It builds with the *host's* Vite/React toolchain rather than its own npm
+project. That avoids a second lockfile and — the real reason — guarantees the
+plugin compiles against exactly the React it will share at runtime. Its sources
+are type-checked by `npm --prefix frontend run typecheck`.
 
 Ship a plugin to users as an optional extra on `precursor-ai` and add its test
 directory to `testpaths`. Adding or removing a workspace member changes

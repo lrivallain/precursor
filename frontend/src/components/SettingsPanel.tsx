@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Cpu,
   Plug,
+  Puzzle,
   Radio,
   Plus,
   Pencil,
@@ -54,6 +55,7 @@ import { CollectionsTab } from "./CollectionsTab";
 import { MemoriesTab } from "./MemoriesTab";
 import { StatsTab } from "./StatsTab";
 import { AgentsSettings } from "./AgentsSettings";
+import { PluginsSettings } from "./PluginsSettings";
 import { WorkflowsSettings } from "./WorkflowsSettings";
 
 interface Props {
@@ -111,6 +113,7 @@ type Category =
   | "memory"
   | "agents"
   | "workflows"
+  | "plugins"
   | "stats"
   | "backup"
   | "system";
@@ -134,6 +137,7 @@ const CATEGORIES: ReadonlyArray<{
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
   { id: "workflows", label: "Workflows", icon: WorkflowIcon, group: "Extensions" },
+  { id: "plugins", label: "Plugins", icon: Puzzle, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "backup", label: "Backup", icon: HardDriveDownload, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
@@ -1254,6 +1258,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
             {category === "memory" && <MemoriesTab />}
             {category === "agents" && <AgentsSettings />}
+            {category === "plugins" && <PluginsSettings />}
             {category === "workflows" && <WorkflowsSettings />}
 
             {category === "stats" && <StatsTab />}

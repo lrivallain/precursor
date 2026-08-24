@@ -21,7 +21,7 @@ classifiers = [
 # The host is a peer, not a vendored dependency: the plugin is only ever loaded
 # *by* Precursor, and pinning it here would make `precursor-ai[kanban]` a
 # circular requirement. `precursor.plugin_api` is the surface it targets.
-dependencies = ["fastapi>=0.138", "pydantic>=2.13"]
+dependencies = ["fastapi>=0.138", "pydantic>=2.13", "mcp>=1.28"]
 
 [project.entry-points."precursor.plugins"]
 kanban = "precursor_kanban.plugin:register"
@@ -33,3 +33,15 @@ Issues = "https://github.com/lrivallain/precursor/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/precursor_kanban"]
+
+# The built frontend (web/vite.config.ts -> src/precursor_kanban/web) is a build
+# product and gitignored, so it must be declared as an artifact to ride along in
+# the sdist; `uv build` builds the wheel *from* the sdist. Precursor serves it at
+# /api/plugins/kanban/assets/*.
+[tool.hatch.build]
+artifacts = ["src/precursor_kanban/web/**"]
+
+# Keep the frontend *sources* out of the distribution — only the built bundle
+# ships.
+[tool.hatch.build.targets.sdist]
+exclude = ["web/node_modules", "web/dist"]

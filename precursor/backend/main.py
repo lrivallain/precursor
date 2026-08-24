@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 from precursor import __version__
 from precursor.backend.config import get_settings
 from precursor.backend.db import init_db
-from precursor.backend.plugins import discover, get_registry
+from precursor.backend.plugins import discover
 from precursor.backend.routers import (
     agents,
     attachments,
@@ -48,6 +48,7 @@ from precursor.backend.routers import (
     mcp,
     me,
     memories,
+    plugins,
     raw,
     refine,
     reminders,
@@ -102,6 +103,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()
+    # Plugins were discovered while the app was built (before the SPA
+    # catch-all); their *runtime* state needs the database, so it resolves here:
+    # which plugins the user switched off, and the MCP servers the enabled ones
+    # contribute.
+    from precursor.backend.plugins.mcp import hydrate_plugin_servers
+    from precursor.backend.plugins.state import refresh as refresh_plugin_state
+
+    await refresh_plugin_state()
+    hydrate_plugin_servers()
     from precursor.backend.services.mcp.client import get_mcp_client_manager
     from precursor.backend.services.mcp.workiq_preview import (
         build_oauth_provider,
@@ -326,20 +336,12 @@ def create_app() -> FastAPI:
     # catch-all below would be shadowed by it.
     discover(app)
 
-    plugin_router = APIRouter(prefix="/api", tags=["plugins"])
+    # The plugin-facing API (descriptors, the installed list, toggles and asset
+    # serving) is itself a core router, registered after `discover` so a plugin
+    # can't shadow it.
+    app.include_router(plugins.router)
 
-    @plugin_router.get("/plugins")
-    async def list_plugins() -> list[dict[str, object]]:
-        return [
-            {
-                "id": ext.id,
-                "kind": ext.kind,
-                "slot": ext.slot,
-                "title": ext.title,
-                "config": ext.config,
-            }
-            for ext in get_registry().frontend_extensions
-        ]
+    plugin_router = APIRouter(prefix="/api", tags=["health"])
 
     @plugin_router.get("/health")
     async def health() -> dict[str, str]:
@@ -414,6 +416,25 @@ def create_app() -> FastAPI:
     if dist is not None:
         assets_dir = dist / "assets"
         if assets_dir.is_dir():
+            # `host-runtime.js` is the one asset with a *stable* name: the import
+            # map that points plugin bundles at it has to be static, so it can't
+            # be content-hashed like everything else under /assets. That makes it
+            # the one asset a browser can serve stale — and since it re-exports
+            # from hashed sibling chunks, a stale copy asks for a filename that
+            # no longer exists after an upgrade, breaking every plugin's UI. Force
+            # revalidation on it (cheap 304s), and register it before the mount so
+            # the exact path wins.
+            runtime_file = assets_dir / "host-runtime.js"
+            if runtime_file.is_file():
+
+                @app.get("/assets/host-runtime.js", include_in_schema=False)
+                async def host_runtime() -> FileResponse:
+                    return FileResponse(
+                        runtime_file,
+                        media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"},
+                    )
+
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
         index_file = dist / "index.html"
         dist_root = dist.resolve()

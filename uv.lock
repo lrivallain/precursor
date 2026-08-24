@@ -955,12 +955,14 @@ version = "0.1.0"
 source = { editable = "plugins/precursor-kanban" }
 dependencies = [
     { name = "fastapi" },
+    { name = "mcp" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.138" },
+    { name = "mcp", specifier = ">=1.28" },
     { name = "pydantic", specifier = ">=2.13" },
 ]
 

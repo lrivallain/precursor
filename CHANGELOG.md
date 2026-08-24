@@ -11,33 +11,57 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
-- **The Kanban board is now a plugin, and the plugin system is real.** The
-  GitHub Projects v2 board left core and became `precursor-kanban`, a separate
-  distribution under `plugins/precursor-kanban/` with its own routes, schemas,
-  client and tests — the first thing to actually exercise the extension contract
-  rather than merely describe it. It stays in the recommended install through a
-  new `kanban` extra (`uvx "precursor-ai[kanban]"`); a plain `pip install
-  precursor-ai` now gets a core with no board, no `/api/github/projects`
-  endpoints and no sidebar entry.
+- **Plugins are now a real extension system, and the Kanban board is the first
+  one.** A plugin is one Python package that can bring three things at once — a
+  whole **UI section**, its own **MCP tools**, and **API routes** — and
+  installing it turns all three on. The GitHub Projects v2 board left core to
+  become `precursor-kanban`, which now carries its own routes, schemas, tests,
+  a `kanban.board` MCP server and its own compiled frontend.
 
-  Making that possible meant giving plugins something to attach to. Core gained
-  `precursor.plugin_api` — a curated, versioned import surface (registry,
-  database sessions, settings, the GitHub client and the shared repo/token
-  guards) so a plugin never reaches into `precursor.backend.*`. The registry
-  gained **sections**: `registry.add_section(...)` contributes a whole
-  application surface — a sidebar rail entry, a home card, a command-palette
-  entry and a top-level route — which the SPA resolves to a React registration
-  by id. A section owns everything under its route (core hands over the URL
-  segments and hash as opaque values) and can gate itself on app state, so
-  kanban still hides itself when no GitHub repo is configured. Nothing in core
-  names the board any more: `Sidebar`, `HomePage`, the command palette, the
-  router and the section palette all iterate whatever plugins are installed.
+  The hard part was UI. The SPA is pre-built and served by FastAPI, so a plugin
+  previously had to be inside that build to render anything. Now a plugin ships
+  a built ES module **inside its wheel**; Precursor serves it from the installed
+  package and the SPA imports it at boot. The load-bearing detail is that there
+  must be exactly one React on the page — a second copy makes every hook a
+  plugin calls throw — so plugin bundles leave `react`, `react-dom`,
+  `react/jsx-runtime` and `@precursor/host` external, and an injected **import
+  map** points all of them at the host's own runtime module. That module is also
+  the plugin SDK: the section registry, the HTTP client, shared components. A
+  plugin installed from PyPI now contributes a section with no build step on the
+  user's side at all.
 
-  Two host bugs fell out of doing it for real: plugin routers were mounted in
-  the FastAPI lifespan, i.e. *after* the SPA catch-all, so every plugin endpoint
+  Tools were the cheap half: `registry.add_mcp_server(module=…)` launches a
+  plugin's server the same way core launches its in-tree ones, and it joins the
+  same catalogue, toggles and probing.
+
+  Around that: `precursor.plugin_api` is a curated, versioned import surface so
+  plugins never reach into `precursor.backend.*`; contributions are attributed
+  to the registering plugin automatically; a plugin that fails to load is
+  recorded rather than silently missing. **Settings → Plugins** lists what's
+  installed with its version, homepage and exactly what it contributes, and can
+  install, enable, disable, uninstall and restart. Disabling is total and
+  immediate — descriptors vanish, routes answer 404, MCP servers leave the
+  catalogue. Installing needs a restart (entry points resolve once at startup,
+  so a live import would leave a half-installed plugin), and the panel offers
+  the button; the installer runs out-of-process.
+
+  Installing runs a package's own code as whoever runs Precursor, and Precursor
+  has no authentication, so the mutating endpoints are gated three ways: the app
+  must be loopback-bound, the request must *address* that bind (the `Host` header
+  is checked and a cross-site `Origin` refused — a bind address is no defence
+  against DNS rebinding, which is same-origin to the browser and triggers no
+  preflight), and the user must switch the installer on. It is off by default;
+  listing and toggling plugins are not gated, and the exact command to run by
+  hand is always shown.
+
+  Nothing in core names the board any more: the sidebar, home launcher, command
+  palette, router and section palette all iterate whatever is installed.
+
+  Two host bugs surfaced while doing it for real: plugin routers were mounted in
+  the FastAPI lifespan — *after* the SPA catch-all — so every plugin endpoint
   silently served `index.html`; and `discover()` re-ran each plugin's `register`
   per app instance, duplicating its routers and its `/api/plugins` descriptors.
-  Discovery now happens while the app is being built, and once per process.
+  Discovery now happens while the app is being built, once per process.
 
 - **A topic's collection is now part of its URL, and every topic has a
   permalink.** The readable address gained the collection slug —

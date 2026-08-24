@@ -4,7 +4,7 @@
  * `lib/types.ts` so removing the plugin removes them too.
  */
 
-import type { IssueLabel } from "../../lib/types";
+import type { IssueLabel } from "@precursor/host";
 
 export interface ProjectSummary {
   id: string;

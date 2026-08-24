@@ -11,9 +11,9 @@ scan at a glance.
 ::: tip It's a plugin
 Kanban is Precursor's **first official plugin**, and the reference
 implementation of the [plugin contract](/features/plugins). It ships as its own
-distribution — `precursor-kanban` — with its own routes, schemas, tests and
-release cadence, rather than living in core. Install or remove it and the
-section appears or disappears wholesale.
+distribution — `precursor-kanban` — carrying its own API routes, schemas, tests,
+**MCP tools** and even its **compiled frontend**, none of which live in core.
+Install or remove the package and the whole section appears or disappears.
 :::
 
 <Screenshot src="/screenshots/kanban.png" alt="A Kanban board with Todo, In Progress and Done columns of issue cards" caption="A GitHub Project board — columns come from the project's Status field; cards are its issues, with number, open/closed state, and labels." />
@@ -33,6 +33,22 @@ Pick one of your GitHub **Projects v2** and Precursor draws it as a board:
 Change an issue's column straight from the board and Precursor writes the new
 **Status** back to the GitHub Project (`POST /api/github/projects/{id}/items/{item}/status`),
 so the board stays in sync with GitHub both ways.
+
+## Asking about your boards
+
+The plugin also brings its own **[MCP](/features/mcp) server**, `kanban.board`,
+so the assistant can read your boards in a conversation — "what's still in
+Todo?" — without you leaving the topic. Three read-only tools:
+
+| Tool | What it answers |
+| --- | --- |
+| `list_boards` | Which Projects v2 boards exist on the account. |
+| `get_board` | Every column and card on one board. |
+| `board_summary` | Counts per column, for "where does the work stand?". |
+
+Enable it in **Settings → MCP servers**, where it appears attributed to the
+plugin. The tools are deliberately read-only: moving a card is a decision, and
+the board already makes it a drag.
 
 ## Previewing a card
 

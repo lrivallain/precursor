@@ -72,6 +72,10 @@ DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
 # (streamable-http at /mcp), in addition to stdio. Default off; the endpoint is
 # unauthenticated and only answers on the app's loopback bind.
 DEFAULT_MCP_HTTP_ENABLED = False
+# Installing a package runs its build and import code with the app's privileges,
+# so the in-app installer is opt-in even on a loopback bind. Reading which
+# plugins exist is always allowed; only the mutating paths are gated.
+DEFAULT_PLUGIN_INSTALL_ENABLED = False
 
 # Browser channels the built-in ``playwright`` server can drive (``--browser``).
 # ``default`` is a deliberate sentinel: it omits ``--browser`` entirely so the
@@ -568,6 +572,19 @@ async def resolve_mcp_http_enabled(session: AsyncSession) -> bool:
     """Whether the built-in 'precursor' MCP server is served over HTTP too."""
     return await resolve(
         session, SettingSpec("mcp_http_enabled", _boolean, default=DEFAULT_MCP_HTTP_ENABLED)
+    )
+
+
+async def resolve_plugin_install_enabled(session: AsyncSession) -> bool:
+    """Whether Precursor may install/uninstall plugin packages itself.
+
+    Off by default: a package's build and import execute arbitrary code as the
+    user running Precursor, and the app has no authentication of its own. With
+    it off the UI still shows the exact command to run by hand.
+    """
+    return await resolve(
+        session,
+        SettingSpec("plugin_install_enabled", _boolean, default=DEFAULT_PLUGIN_INSTALL_ENABLED),
     )
 
 

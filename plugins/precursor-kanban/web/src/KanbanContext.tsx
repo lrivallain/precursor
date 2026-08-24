@@ -18,8 +18,8 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import type { SectionHost } from "../../lib/plugins";
-import { apiErrorMessage } from "../../lib/api";
+import { apiErrorMessage } from "@precursor/host";
+import type { SectionHost } from "@precursor/host";
 import { kanbanApi } from "./api";
 import type { ProjectSummary } from "./types";
 
