@@ -113,6 +113,10 @@ sessions are eligible — an active or paused recording is never touched. The
 window maps to the `live_transcript_retention_days` setting (see the
 [configuration reference](/reference/configuration#retention)).
 
+Need the space back before the next daily sweep? The
+[storage cleanup cockpit](/features/storage#the-cleanup-cockpit) runs this sweep
+on demand and compacts the database afterwards.
+
 ## Privacy
 
 Audio is streamed directly from the browser to Azure Speech using a short-lived

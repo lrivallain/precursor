@@ -1549,6 +1549,12 @@ function SystemTab({
           max: 3650,
           help: "How long full tool outputs are kept before their content is replaced with a short placeholder to save space. 0 = keep forever.",
         })}
+        <p className="text-[11px] text-muted">
+          Feature-specific retention lives with its feature: agent timelines
+          under <span className="font-medium">Agents</span>, meeting transcripts
+          under <span className="font-medium">Live</span>. Usage stats shows what
+          every sweep would free, runs one on demand, and compacts the database.
+        </p>
       </section>
 
       <section className="space-y-3">

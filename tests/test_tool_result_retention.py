@@ -110,7 +110,7 @@ def test_retention_disabled_is_noop() -> None:
     async def _run() -> None:
         await _set_retention(0)
         tid = await _seed("disabled")
-        assert await prune_expired_tool_results() == 0
+        assert (await prune_expired_tool_results()).rows == 0
         by_role = await _content_by_role(tid)
         assert all(c != PRUNED_PLACEHOLDER for c in by_role["tool"])
 
@@ -123,7 +123,7 @@ def test_prunes_old_tool_rows_only() -> None:
     async def _run() -> None:
         await _set_retention(30)
         tid = await _seed("prune")
-        assert await prune_expired_tool_results() == 1
+        assert (await prune_expired_tool_results()).rows == 1
         by_role = await _content_by_role(tid)
         # Old TOOL row got the placeholder; recent TOOL row untouched.
         assert PRUNED_PLACEHOLDER in by_role["tool"]
@@ -141,8 +141,8 @@ def test_idempotent_second_run() -> None:
     async def _run() -> None:
         await _set_retention(30)
         await _seed("idempotent")
-        assert await prune_expired_tool_results() == 1
-        assert await prune_expired_tool_results() == 0
+        assert (await prune_expired_tool_results()).rows == 1
+        assert (await prune_expired_tool_results()).rows == 0
 
     asyncio.run(_run())
 

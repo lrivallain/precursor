@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Loader2, ShieldCheck, Trash2 } from "lucide-react";
+import { Bot, HardDrive, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { Select } from "./Select";
 import { RefineTextarea } from "./RefineTextarea";
@@ -33,6 +33,14 @@ export const APPROVAL_POLICIES: {
   },
 ];
 
+// Clamp a number input's raw value to the range the backend enforces, so an
+// out-of-range or empty entry commits the nearest legal value rather than NaN.
+function clampInt(raw: string, min: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
 // Settings-only controls for Agents mode. The actual agent UI (session list and
 // workflow) lives in the top-level "Agents" sidebar mode, not here.
 export function AgentsSettings() {
@@ -51,6 +59,10 @@ export function AgentsSettings() {
   const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
   const systemPrompt = settings?.agents_system_prompt ?? "";
   const watchdogTimeout = settings?.agents_watchdog_timeout_seconds ?? 600;
+  // Archived-timeline retention. Deliberately readable even when Agents mode is
+  // off: the events outlive the feature toggle, and the sweep keeps running.
+  const eventRetentionDays = settings?.agent_event_retention_days ?? 30;
+  const eventMaxPerSession = settings?.agent_event_max_per_session ?? 2000;
 
   const loadGrants = useCallback(() => {
     if (!enabled) {
@@ -105,6 +117,8 @@ export function AgentsSettings() {
     agents_approval_policy?: AgentApprovalPolicy;
     agents_system_prompt?: string;
     agents_watchdog_timeout_seconds?: number;
+    agent_event_retention_days?: number;
+    agent_event_max_per_session?: number;
   }): Promise<void> {
     setBusy(true);
     setError(null);
@@ -325,6 +339,86 @@ export function AgentsSettings() {
           )}
         </div>
       )}
+
+      <div className="space-y-2 rounded border border-border bg-surface/50 p-3">
+        <span className="flex items-center gap-1.5 text-sm font-medium">
+          <HardDrive size={14} /> Timeline retention
+        </span>
+        <p className="text-[11px] text-muted">
+          Every event an agent emits is archived so its timeline survives a
+          restart, which makes it the fastest-growing table in a busy install.
+          These two levers bound it. An agent keeps its result, artifacts, state
+          and posted messages either way, and a <em>running</em> agent is never
+          pruned.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <label className="block space-y-1">
+            <span className="block text-[12px]">Keep events for</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={3650}
+                step={1}
+                disabled={busy}
+                value={eventRetentionDays}
+                onChange={(e) =>
+                  settingsStore.set({
+                    ...settings!,
+                    agent_event_retention_days: clampInt(e.target.value, 0, 3650),
+                  })
+                }
+                onBlur={(e) =>
+                  void patch({
+                    agent_event_retention_days: clampInt(e.target.value, 0, 3650),
+                  })
+                }
+                className="w-20 rounded border border-border bg-surface px-2 py-1 text-[12px]"
+              />
+              <span className="text-[12px] text-muted">days</span>
+            </div>
+            <span className="block text-[11px] text-muted">
+              0 keeps them forever.
+            </span>
+          </label>
+
+          <label className="block space-y-1">
+            <span className="block text-[12px]">Max events per agent</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={1000000}
+                step={100}
+                disabled={busy}
+                value={eventMaxPerSession}
+                onChange={(e) =>
+                  settingsStore.set({
+                    ...settings!,
+                    agent_event_max_per_session: clampInt(e.target.value, 0, 1000000),
+                  })
+                }
+                onBlur={(e) =>
+                  void patch({
+                    agent_event_max_per_session: clampInt(e.target.value, 0, 1000000),
+                  })
+                }
+                className="w-24 rounded border border-border bg-surface px-2 py-1 text-[12px]"
+              />
+              <span className="text-[12px] text-muted">events</span>
+            </div>
+            <span className="block text-[11px] text-muted">
+              Newest kept first; 0 is unlimited.
+            </span>
+          </label>
+        </div>
+        <p className="text-[11px] text-muted">
+          Agent traffic is bursty rather than aged, so the per-agent cap is what
+          bounds a single long autonomous run — the window alone wouldn&apos;t
+          reach it for weeks. Settings → Usage stats shows what a sweep would
+          free and runs it on demand.
+        </p>
+      </div>
 
       <div className="border-t border-border pt-4">
         <AgentBlueprintsSection />
