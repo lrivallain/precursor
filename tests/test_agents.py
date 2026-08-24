@@ -6044,6 +6044,51 @@ async def test_a_status_change_made_mid_event_still_advances_workflows() -> None
     assert advanced == [run_id]
 
 
+async def test_session_start_persists_the_resume_handle() -> None:
+    """``SessionStartData`` is the only place the SDK hands us the resume handle.
+
+    ``CopilotSession`` exposes no ``id``/``session_id`` attribute, so reading it
+    off the object left ``copilot_session_id`` NULL on every run. A rebuild
+    (expiring OAuth, changed MCP catalogue, recovered sign-in) then passed no
+    ``session_id`` and started an *empty* conversation, silently dropping the
+    agent's task prompt mid-thread — the agent stopped knowing what it was.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    agent_id = await _make_agent(title="Resumable", status="running")
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+
+    mgr = AgentManager()
+    mgr._advance_workflows = lambda rid: None  # type: ignore[method-assign]
+    mgr.enqueue = lambda coro: None  # type: ignore[method-assign]
+
+    # Named exactly as the SDK does — the handler dispatches on the class name.
+    class SessionStartData:
+        def __init__(self, session_id: str) -> None:
+            self.session_id = session_id
+
+    await mgr._handle_event_locked(run_id, SessionStartData("sdk-session-abc"))
+
+    async with SessionLocal() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        assert run.copilot_session_id == "sdk-session-abc"
+
+    # A resumed session re-announces itself with the same id; a *rebuilt* one
+    # reports a new id. Neither may overwrite the handle we already resume by,
+    # or the conversation is orphaned exactly as before.
+    await mgr._handle_event_locked(run_id, SessionStartData("sdk-session-xyz"))
+
+    async with SessionLocal() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        assert run.copilot_session_id == "sdk-session-abc"
+
+
 # ---------------------------------------------------------------------------
 # Shared-agent concurrency (issue #242)
 #

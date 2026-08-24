@@ -349,8 +349,25 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **The WorkIQ refresh token is now actually used, so an expiry stops costing a
-  sign-in.** The MCP SDK's `OAuthClientProvider` restores stored tokens on
+- **An agent no longer forgets what it is halfway through a conversation.** Its
+  instructions (`task_prompt`) are delivered once, as the first message of the
+  SDK conversation, so they survive only as long as that conversation does. The
+  runtime deliberately tears the session down and rebuilds it on an expiring
+  OAuth bearer, a changed MCP catalogue or a recovered sign-in — and that rebuild
+  is meant to be invisible, resuming the same conversation via
+  `copilot_session_id`. Except the handle was read off the session object
+  (`getattr(sdk_session, "id"…)`), and `CopilotSession` exposes no such
+  attribute: it resolved to `None` every time, so no run ever stored one. The
+  rebuild therefore passed no `session_id` and opened an *empty* conversation,
+  silently discarding the task prompt and the entire history. Symptom: an agent
+  answers its first turn perfectly, then replies to the next message as though it
+  had never been briefed — the telltale being a `session.start` event appearing
+  mid-thread, right before a user message. It bit conversational agents hardest,
+  because a WorkIQ credential refreshing between turns is enough to trigger it.
+  The handle is now captured from the `SessionStartData` event, which is the only
+  place the SDK publishes it, and never overwritten once set.
+
+
   startup but not their expiry, and its `is_token_valid()` treats an unknown
   expiry as valid — so a credential read back from the database always looked
   fresh, the silent-refresh branch that check guards was never entered, and the
