@@ -59,7 +59,8 @@ Re-resolving there doesn't just relabel URLs, it *weakens* the lockfile: npm
 integrity comes back as `sha1` instead of `sha512`, and uv drops the
 `size`/`upload-time` provenance — which in a diff looks like a harmless URL
 change. Rewriting the URLs back by hand is worse, since it pairs a public
-artifact with the weakened metadata.
+artifact with the weakened metadata. If you find `uv.lock` modified after a
+local command, revert it rather than committing it.
 
 ::: tip Enable the guard once
 ```bash
@@ -129,12 +130,9 @@ npm run docs:dev        # live-reload dev server
 npm run docs:build      # production build → website/.vitepress/dist
 ```
 
-The site is also served **in-app** at `/docs/`. `precursor --dev` starts a live
-VitePress server automatically (the SPA proxies `/docs` to it, so edits
-hot-reload); for the one-port build, `make docs` builds it with base `/docs/` and
-`make wheel` bundles it into the wheel. The base is set via the `DOCS_BASE` env
-var (`/docs/` in-app; default `/` for GitHub Pages), so the public site is
-unaffected. See [Serving the docs in-app](/reference/api#serving-the-docs-in-app).
+The site is also served **in-app** at `/docs/`, and `precursor --dev` starts a
+live VitePress server automatically. See
+[Serving the docs in-app](/reference/api#serving-the-docs-in-app).
 
 ### Screenshots
 

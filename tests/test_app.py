@@ -993,26 +993,17 @@ def test_chat_messages_cursor_pagination() -> None:
         )
 
 
-def test_retired_provider_hidden_unless_selected() -> None:
-    """A retired provider drops out of the picker but stays visible when active.
+def test_unknown_provider_degrades_gracefully() -> None:
+    """A stored provider id that no longer exists must not break the app.
 
-    Hiding it unconditionally would leave anyone still pointed at it staring at
-    a picker whose value doesn't exist, with no hint why the catalog is empty.
+    ``github_models`` was removed when GitHub shut the service down. A migration
+    repoints existing installs at GitHub Copilot, but a value that predates it
+    still has to degrade to the mock rather than erroring the catalog.
     """
     app = create_app()
     with TestClient(app) as client:
         listed = client.get("/api/llm/providers").json()
         assert "github_models" not in {p["id"] for p in listed}
-        assert all(p["retired"] == "" for p in listed)
 
-        # Selecting it keeps it listed, flagged with the reason.
         client.put("/api/settings", json={"llm_provider": "github_models"})
-        listed = client.get("/api/llm/providers").json()
-        retired = next(p for p in listed if p["id"] == "github_models")
-        assert "retired" in retired["retired"].lower()
-
-        # And its catalog fails with that reason, not a raw transport error.
-        r = client.get("/api/llm/models")
-        assert r.status_code == 502
-        assert r.json()["detail"] == retired["retired"]
-        assert "410" not in r.json()["detail"]
+        assert client.get("/api/llm/models").status_code == 200

@@ -22,10 +22,8 @@ image) is included alongside your prompt for that turn.
 
 Text and code files cover the common plain-text and source formats — Markdown,
 CSV/TSV, JSON/YAML/TOML, XML/HTML, shell scripts, and most programming languages.
-Because browsers report inconsistent MIME types for source files, acceptance
-falls back to the file **extension**, and the stored type is normalized to a
-`text/*` MIME. Any `text/*` file is accepted even if its extension isn't in the
-list. Extracted text is capped at ~4,000 characters per attachment.
+Any `text/*` file is accepted even if its extension isn't in the list. Extracted
+text is capped at ~4,000 characters per attachment.
 
 ## How they're stored
 
@@ -39,8 +37,7 @@ uploads cheap:
 - **Garbage collection** — a startup sweep (`gc_orphan_blobs`) reclaims any blob
   no longer referenced by a row.
 
-See `services/blob_store.py` and the
-[architecture reference](/reference/architecture#database) for details.
+See the [architecture reference](/reference/architecture#database) for details.
 
 ## Tool-result retention
 

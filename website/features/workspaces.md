@@ -4,17 +4,22 @@ title: Workspaces & files
 
 # Workspaces & files
 
-A **workspace** is a git clone or a local directory that the assistant can browse
+A **workspace** is a git clone or a plain folder that the assistant can browse
 and edit. The **Files** section lets you explore the workspaces backing your
 sessions, and the assistant operates on them through a **sandboxed** file layer.
 
 <Screenshot src="/screenshots/workspaces.png" alt="A file tree on the left and a file's contents with a git diff on the right" caption="Browsing a workspace — a file tree alongside file contents and git diffs." />
 
-## Git clones and local directories
+## Git repositories and local folders
 
-- **Clone a repo** — Precursor clones and can pull / commit. The token is
-  injected at operation time and **never stored** on the workspace row.
-- **Point at a local directory** — work against files already on disk.
+**New workspace** offers two kinds:
+
+- **Git repository** — Precursor clones it into a local working copy and can
+  pull / commit, so changes are reviewable as a `git diff`. Needs `git` on the
+  server; the token is injected at operation time and **never stored** on the
+  workspace row.
+- **Local folder** — creates an empty folder for authoring files, with no git
+  behind it. The same file tools apply.
 
 ## The sandbox
 
@@ -51,14 +56,8 @@ This covers reads as well as writes: `read_diagram` and `read_file` link to what
 they read, which is handy when the assistant quotes a fragment and you want the
 whole thing — or when the read was truncated.
 
-Mechanically, the tools annotate their result with the workspace and path
-(`services/mcp/workspace_links.py`), and the backend lifts that into the tool
-call's *metadata* — read off the MCP result's `structuredContent`, so the file
-body a read returns is never parsed just to find a link. The SPA rebuilds the
-route from the workspace + path rather than trusting a URL string, since the
-metadata ultimately comes from an MCP server that may be third-party. A failed
-call, a folder, or a path that can't be turned into a safe route carries no link
-— so a chip never points somewhere unexpected.
+A failed call, a folder, or a path that can't be turned into a safe route
+carries no link — so a chip never points somewhere unexpected.
 
 ## Editing diagrams
 
@@ -81,9 +80,5 @@ Set `PRECURSOR_DRAWIO_VERSION` to pin a different release, or
 [configuration](/reference/configuration). Superseded versions are removed when
 a new one installs.
 
-## Data model
-
-Each workspace is a `Workspace` row. Git operations live in
-`services/workspace_git.py`; sandboxed file operations in
-`services/workspace_fs.py`. See the
-[architecture reference](/reference/architecture#workspaces).
+See the [architecture reference](/reference/architecture#workspaces) for the
+data model.

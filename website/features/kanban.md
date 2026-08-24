@@ -29,9 +29,8 @@ so the board stays in sync with GitHub both ways.
 ## Previewing a card
 
 Open a card to preview the full issue/PR without leaving Precursor: its title,
-state, body, labels, and **comments**. Each comment shows its author and the
-**date and time it was posted** (with an *(edited)* hint when it was changed
-afterwards). You can edit labels and post a new comment right from the preview.
+state, body, labels, and **comments**. You can edit labels and post a new comment
+right from the preview.
 
 ## Enabling the board
 

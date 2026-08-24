@@ -37,90 +37,67 @@ alongside the virtual device — both streams are mixed and transcribed together
 
 ## Starting and protecting a recording
 
-The **record controls** — the **Record** button, capture-device picker, **+ mic**
-mix-in, and the meeting **language** — live pinned at the top of the
-**Transcript** tab, so they stay in reach even as the transcript grows and
-scrolls. (Session-level controls — topic, features, **End session**, archive and
-delete — stay in the toolbar above the tabs.)
+The **record controls** — **Record**, the capture-device picker, **+ mic**, and
+the meeting **language** — are pinned at the top of the **Transcript** tab, so
+they stay in reach as the transcript grows.
 
-Connecting to Azure takes a moment — minting a token, loading the Speech SDK, and
-opening the capture device — so the **Record** button first shows a transient
-**Starting…** state, then flips to a red **Stop** button with a **Recording**
-indicator once capture is live. That way a click is never ambiguous.
-
-While a recording is live, Precursor guards against losing it by accident:
-
-- Leaving the screen in-app — switching cockpit, going Home, opening another live
-  session, or jumping via search — asks you to confirm first (**Keep recording**
-  or **Leave & stop recording**).
-- Reloading, closing the tab, or quitting the app triggers the browser's native
-  "leave site?" prompt.
+While a recording is live, Precursor guards against losing it by accident.
+Leaving the screen in-app asks you to confirm first (**Keep recording** or
+**Leave & stop recording**), and reloading or closing the tab triggers the
+browser's native "leave site?" prompt.
 
 ## Language
 
-Pick the meeting language when creating the session or from the record controls
-at the top of the **Transcript** tab. Changing it mid-session briefly restarts
-the recognizer (Azure can't switch a running recognizer's language in place).
-Live insights and Q&A answers are produced in the session's language.
+Pick the meeting language when creating the session or from the record controls.
+Changing it mid-session briefly restarts the recognizer, since Azure can't switch
+a running recognizer's language in place. Live insights and Q&A answers are
+produced in the session's language.
 
 ## Insights, Q&A, and summary
 
 The Live view is a **tabbed, splittable panel** — Transcript · Live Insights ·
-Summary · Context. Use the **Split** toggle to view two sections side by side,
-each with its own tab-strip and a draggable divider.
+Summary · Context. Use the **Split** toggle to view two sections side by side.
 
 - **Live Insights** — while recording, the assistant re-derives a snapshot of
   **action items, decisions, open questions, suggestions, and risks** from the
-  rolling transcript on a short pause / interval cadence.
+  rolling transcript.
 - **Ask assistant** — ask free-form questions; answers stream from the transcript
   plus the attached topic.
 - **Speaker labels** — click a label in the transcript to rename it
   (`Guest-2` → `Thomas`); the name applies to every past and future phrase from
   that voice.
-- **Fix mistaken words** — **double-click any phrase** in the transcript to edit
-  its text in place, then press <kbd>Enter</kbd> (or click away) to save —
-  <kbd>Esc</kbd> cancels. Handy for correcting the odd misheard word before it
-  feeds the insights and summary.
+- **Fix mistaken words** — **double-click any phrase** to edit its text in place,
+  handy for correcting a misheard word before it feeds the insights and summary.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
-  **post into the linked topic** as a message. The summary and notes editors
-  carry a **Markdown formatting toolbar** (bold, italic, link, headings, lists, …)
-  and the usual shortcuts — <kbd>⌘/Ctrl</kbd> + <kbd>B</kbd> / <kbd>I</kbd> /
-  <kbd>K</kbd> — that format the current selection in place. When a Teams meeting
-  is linked and the [WorkIQ MCP](/features/mcp) is enabled, a **Generate from
-  Teams transcript** button builds the recap from the meeting's own published
-  transcript — a **"no local record"** path that needs no local recording at all
-  (see below).
+  **post into the linked topic** as a message.
 - **Context** — an AI summary of the attached topic, and — via the
   [WorkIQ MCP](/features/mcp) (Microsoft 365) — the ability to **link a meeting
   from your agenda** so its invitees flow into the summary's attendees. The
-  agenda spans the **last few days through today**, split with a color-coded
-  **Past** (amber) vs **Current & upcoming** (emerald) marker that the list
-  **auto-scrolls to** (past meetings are capped to the 10 most recent), so you
-  can attach — or record from — a meeting that already happened. The same picker
-  appears on the **Start a live session** screen.
+  agenda spans the last few days through today, so you can attach — or record
+  from — a meeting that already happened.
 
 ### Summarize from the Teams transcript (no local record)
 
 If you'd rather not capture audio locally, link the Teams meeting from your
-agenda in the **Context** tab (past meetings are listed under the **Past**
-marker), then open **Summary → Generate from Teams transcript**. Precursor scrapes the
-meeting's published transcript through WorkIQ (Microsoft Graph) and summarizes it
-with **your** model — so you get Precursor's structured recap (decisions, action
-items, open questions, risks) instead of Teams' own summary.
+agenda in the **Context** tab, then open **Summary → Generate from Teams
+transcript**. Precursor reads the meeting's published transcript through WorkIQ
+(Microsoft Graph) and summarizes it with **your** model — so you get Precursor's
+structured recap (decisions, action items, open questions, risks) instead of
+Teams' own summary.
 
 The button appears **only** when the WorkIQ MCP server is enabled **and** a Teams
 meeting is linked. It's best-effort and fail-closed: the transcript is only
 available to the meeting **organizer**, requires the delegated
 `OnlineMeetingTranscript.Read.All` permission, and is published by Teams a few
-minutes **after** the meeting ends (transcription must have been on). When any of
-those isn't met, the button reports why and leaves your summary untouched.
+minutes **after** the meeting ends. When any of those isn't met, the button
+reports why and leaves your summary untouched.
 
 ## Settings
 
-Configure the section under **Settings → Live**: enable/disable it, choose
-the **fast model + reasoning effort** used for live insights and Q&A (summaries
-use your default chat model for quality), and set the **transcript retention**
+Configure the section under **Settings → Live**: enable/disable it, choose the
+**fast model + reasoning effort** used for live insights and Q&A (summaries use
+your default chat model for quality), and set the **transcript retention**
 window. Speech credentials live under **Settings → Speech-to-text**.
 
 ## Transcript retention
@@ -130,11 +107,10 @@ deleted a configurable number of days after the session ends** — **7 days by
 default**. Set **Delete transcript after (days)** to `0` under **Settings →
 Live** to keep transcripts forever.
 
-Only the transcript is removed: the session and its **insights, notes and
-summary are preserved**, so a cleaned-up session still shows its recap. Only
-*ended* sessions are eligible — an active or paused recording is never touched.
-The sweep runs on startup and daily in the background. The window maps to the
-`live_transcript_retention_days` setting (see the
+Only the transcript is removed: the session and its **insights, notes and summary
+are preserved**, so a cleaned-up session still shows its recap. Only *ended*
+sessions are eligible — an active or paused recording is never touched. The
+window maps to the `live_transcript_retention_days` setting (see the
 [configuration reference](/reference/configuration#retention)).
 
 ## Privacy
