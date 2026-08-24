@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { Select } from "./Select";
 import { RefineTextarea } from "./RefineTextarea";
 import { useSettings } from "../lib/settingsStore";
-import type { Topic, TopicNode } from "../lib/types";
+import type { Collection, Topic, TopicNode } from "../lib/types";
 
 interface Props {
+  /**
+   * The app-wide topic tree. The form scopes the parent picker to the selected
+   * collection itself, so it needs every root, not a pre-filtered slice.
+   */
   tree: TopicNode[];
   initialParentId?: number | null;
+  /** Collection to preselect — the one the sidebar is showing. */
+  collectionId?: number | null;
   onCreated: (topic: Topic) => void;
   /** When provided, renders a Cancel button (e.g. inside the modal wrapper). */
   onCancel?: () => void;
@@ -23,6 +29,7 @@ interface Props {
 export function TopicCreateForm({
   tree,
   initialParentId = null,
+  collectionId = null,
   onCreated,
   onCancel,
   submitLabel = "Create topic",
@@ -33,6 +40,10 @@ export function TopicCreateForm({
   const [parentId, setParentId] = useState<number | "">(
     initialParentId === null ? "" : initialParentId,
   );
+  const [collections, setCollections] = useState<Collection[]>([]);
+  // Only set once the user picks one. The effective value is derived below, so
+  // it can't snapshot a prop that hasn't resolved yet on a cold load.
+  const [collectionOverride, setCollectionOverride] = useState<number | null>(null);
   const [repo, setRepo] = useState("");
   const [issueNumber, setIssueNumber] = useState("");
   const [createLinkedIssue, setCreateLinkedIssue] = useState(false);
@@ -42,6 +53,28 @@ export function TopicCreateForm({
   const settings = useSettings();
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
 
+  // A subtree lives in exactly one collection, so a chosen parent decides —
+  // matching what the server does. Otherwise it's the user's pick, falling back
+  // to the collection the sidebar is showing.
+  const parentCollectionId = useMemo(
+    () => (parentId === "" ? null : (findNode(tree, parentId)?.collection_id ?? null)),
+    [tree, parentId],
+  );
+  const effectiveCollectionId: number | "" =
+    parentCollectionId ?? collectionOverride ?? collectionId ?? "";
+
+  // Only this collection's topics can parent the new one; membership cascades,
+  // so filtering the roots covers their whole subtrees.
+  const parentOptions = useMemo(
+    () =>
+      flatten(
+        effectiveCollectionId === ""
+          ? tree
+          : tree.filter((n) => n.collection_id === effectiveCollectionId),
+      ),
+    [tree, effectiveCollectionId],
+  );
+
   useEffect(() => {
     void (async () => {
       try {
@@ -49,6 +82,11 @@ export function TopicCreateForm({
         setDefaultRepo(s.github_repo);
       } catch {
         /* settings optional */
+      }
+      try {
+        setCollections(await api.collections.list());
+      } catch {
+        /* collections optional */
       }
     })();
   }, []);
@@ -63,6 +101,10 @@ export function TopicCreateForm({
         title: trimmed,
         description: description.trim() || null,
         parent_id: parentId === "" ? null : parentId,
+        // A sub-topic inherits its parent's collection server-side; only a
+        // top-level topic names one.
+        collection_id:
+          parentId === "" ? (effectiveCollectionId === "" ? null : effectiveCollectionId) : null,
         github_repo: repo.trim() || null,
         github_issue_number: createLinkedIssue
           ? null
@@ -110,6 +152,32 @@ export function TopicCreateForm({
         />
       </div>
 
+      {collections.length > 1 && (
+        <div>
+          <label className="block text-xs text-muted mb-1">Collection</label>
+          <Select
+            value={effectiveCollectionId === "" ? "" : String(effectiveCollectionId)}
+            onChange={(v) => {
+              setCollectionOverride(v === "" ? null : Number(v));
+              // The parent list is scoped to the collection, so a parent from
+              // the previous one would silently drag the topic back into it.
+              setParentId("");
+            }}
+            ariaLabel="Collection"
+            fullWidth
+            options={collections.map((c) => ({
+              value: String(c.id),
+              label: c.name,
+            }))}
+          />
+          <p className="mt-1 text-xs text-muted">
+            {parentId === ""
+              ? "Where this topic lands in the sidebar."
+              : "Sub-topics inherit their parent's collection."}
+          </p>
+        </div>
+      )}
+
       <div>
         <label className="block text-xs text-muted mb-1">Parent topic</label>
         <Select
@@ -119,7 +187,7 @@ export function TopicCreateForm({
           fullWidth
           options={[
             { value: "", label: "— top level —" },
-            ...flatten(tree).map((opt) => ({
+            ...parentOptions.map((opt) => ({
               value: String(opt.id),
               label: `${"\u00A0".repeat(opt.depth * 2)}${opt.title}`,
             })),
@@ -221,4 +289,13 @@ function flatten(
     if (node.children.length) flatten(node.children, depth + 1, out);
   }
   return out;
+}
+
+function findNode(tree: TopicNode[], id: number): TopicNode | null {
+  for (const node of tree) {
+    if (node.id === id) return node;
+    const hit = findNode(node.children, id);
+    if (hit) return hit;
+  }
+  return null;
 }

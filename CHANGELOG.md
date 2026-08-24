@@ -11,15 +11,60 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A topic's collection is now part of its URL, and every topic has a
+  permalink.** The readable address gained the collection slug —
+  `/topics/client-a/csu/capacity-review` — so a bookmark or a shared link lands
+  in the right collection instead of whichever one the browser last remembered,
+  and `/topics/<collection-slug>` on its own opens that collection's start
+  surface. Because that address moves whenever a topic is renamed, re-parented
+  or moved between collections, every topic also gained an immutable
+  `/t/<uuid>` **permalink**: opening it resolves the topic and rewrites the
+  address bar to the readable form. Copy it from **topic settings →
+  Permalink**. Links minted before collections joined the URL still resolve —
+  the trailing slug is unique on its own. Topics over MCP report the same
+  collection-prefixed `path`, and a new `public_id` field.
+
+- **A WorkIQ sign-in prompt can now be explained after the fact.** Every decision
+  taken about a WorkIQ / Agent 365 credential — the keep-alive's verdict, the
+  Entra `AADSTS…` code that refused a silent refresh, each leg of a re-auth,
+  whether a token was even renewable — reports to a dedicated `precursor.mcp.auth`
+  channel prefixed `[workiq-auth]`, tagged with an **episode** id that stitches a
+  keep-alive failure, a hands-free pass and a manual click into one story. The
+  reason a renewal was refused was previously *nowhere*: the MCP SDK logs a bare
+  `Token refresh failed: 400`, naming neither the credential nor Entra's answer,
+  so the single most useful datum for choosing a renewal strategy was discarded
+  before anyone could see it. The channel has its own level
+  (`PRECURSOR_WORKIQ_AUTH_LOG_LEVEL`, default `debug`) independent of the app
+  log level, because a lapse is rare, only reproducible in the wild, and useless
+  to diagnose after the fact — the trace has to already be running when it
+  happens. It is silent outside an auth episode.
+
+- **`GET /api/mcp/auth/diagnostics` — the whole episode in one request.**
+  Terminals scroll and a packaged app has none, so the same records are kept in
+  memory and served alongside the state that explains them: settings in force,
+  then per credential whether a token is stored, whether it has a **refresh
+  token** at all, when it expires, how long it's been idle, and whether connects
+  are being fast-failed. `await precursorWorkiqAuthReport()` in the console
+  merges it with the browser-side trace and puts the result on your clipboard,
+  ready to paste into an issue. Episode records are buffered apart from the
+  keep-alive's ambient heartbeat — otherwise a credential that lapsed overnight
+  would have been pushed out by a thousand once-a-minute "nothing to do" ticks
+  before anyone looked — and the ticker now reports a verdict only when it
+  changes. Token values never leave the process; secrets and account names are
+  reduced to `<present:N chars>`, and Agent 365's ~37-entry scope list is
+  summarized to a count plus whether `offline_access` is in it.
+
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor
-  slugs joined root-first (`csu/cto/capacity-uat-interim-pierre`), so a caller
-  no longer has to re-fetch every parent to rebuild it. A workflow step that
-  matched meetings to topics was spending half its MCP calls — 7 `get_topic`s
-  against 7 real `search`es — climbing `parent_id` by hand, with a depth guard
-  and a cycle guard in its prompt. Paths resolve from a single `(id, slug,
-  parent_id)` index load, so a 200-topic response is still one extra query, not
-  200 chain walks, and a cyclic parent link terminates instead of hanging.
+  slugs joined root-first, prefixed by its collection slug
+  (`client-a/csu/cto/capacity-uat-interim-pierre`) so the value mirrors the URL,
+  and a caller no longer has to re-fetch every parent to rebuild it. A workflow
+  step that matched meetings to topics was spending half its MCP calls — 7
+  `get_topic`s against 7 real `search`es — climbing `parent_id` by hand, with a
+  depth guard and a cycle guard in its prompt. Paths resolve from a single
+  `(id, slug, parent_id)` index load, so a 200-topic response is still one extra
+  query, not 200 chain walks, and a cyclic parent link terminates instead of
+  hanging.
 
 - **`append_note` — file text into a topic without paying for a turn.** The
   built-in `precursor` MCP server gains an `append_note(topic_id, text)` tool
@@ -302,6 +347,44 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   mints a real agent or the step's private vessel — omitting it keeps the vessel,
   so existing payloads are unchanged.
 
+### Fixed
+
+- **The WorkIQ refresh token is now actually used, so an expiry stops costing a
+  sign-in.** The MCP SDK's `OAuthClientProvider` restores stored tokens on
+  startup but not their expiry, and its `is_token_valid()` treats an unknown
+  expiry as valid — so a credential read back from the database always looked
+  fresh, the silent-refresh branch that check guards was never entered, and the
+  401 that eventually followed escalated straight to a full browser grant, which
+  never attempts a refresh either. The refresh token was dead weight, and every
+  access-token expiry became an interactive sign-in. The trace added above is
+  what caught it: over 401 recorded events, **58 escalations to a full
+  authorization and zero refresh attempts**, against credentials that held a
+  refresh token throughout. Precursor already records when each token was issued,
+  so it now restores the real expiry (less a minute of skew) as the credential
+  loads, and the SDK's own refresh path works as designed. A legacy token with no
+  recorded issue time is still assumed valid rather than forced through a sign-in
+  that may not be needed.
+
+- **Startup migrations no longer silence the app's own logs.** `init_db` runs
+  `alembic upgrade head` on every boot, and Alembic's `env.py` applied
+  `alembic.ini`'s logging with `fileConfig`'s default
+  `disable_existing_loggers=True` — which switched off every `precursor.*` logger
+  created at import time, replaced the unified handler and formatter, and pulled
+  the root level down to `WARN`. From the first migration onwards the backend was
+  substantially quieter than configured, which is why raising `--log-level` often
+  changed so little. Alembic's own logging config is now applied only when it's
+  driven from its CLI, and never disables existing loggers.
+
+- **A failed automatic re-auth no longer costs you the credential.** The
+  hands-free passes clear the stored token before running, so the SDK is forced
+  through a fresh grant instead of short-circuiting on one it still considers
+  valid — but if the pass then failed, that credential was simply gone. Since the
+  verdict that triggers a pass can come from a transient 401, a refresh token
+  that would have worked on the next try was being thrown away, turning a blip
+  into a mandatory interactive sign-in. The old credential is now restored
+  whenever a hands-free pass doesn't complete, at a cost of at most one doomed
+  refresh later. An explicit **Sign in** still clears outright.
+
 ### Removed
 
 - **The GitHub Models provider, and the retirement machinery built around it.**
@@ -501,7 +584,32 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **A JSON object body no longer fails the `fetch` server's `http_request`.** The
+- **A new topic lands in the collection you're looking at, and the form says
+  which.** The create form never sent the active collection, so every new
+  top-level topic silently fell back to the default one — leaving you to move it
+  by hand each time, or to wonder why it hadn't appeared in the tree at all. It
+  now carries a **Collection** field, preselected to the collection you're
+  viewing, so the destination is visible and changeable *before* the topic
+  exists rather than being an invisible consequence of the sidebar. Picking a
+  parent scopes that field to the parent's collection instead, since a subtree
+  lives in exactly one. Two other paths were worse and left the membership
+  *null*, which no collection filter matches, so the topic was invisible in the
+  sidebar until you found it through search: promoting a chat to a topic, and
+  the MCP `create_schedule` tool. Both now resolve a collection
+  (`?collection_id=` and a `collection` argument respectively, defaulting to the
+  protected default), and a migration re-homes any topic already stranded that
+  way. `GET /api/topics` and `GET /api/topics/archived` gained the
+  `?collection_id=` filter the tree endpoint already had.
+
+- **A subtree can no longer end up split across two collections.** Saving topic
+  settings sends the parent and the collection together, so a re-parent could be
+  overruled by the collection dropdown's stale value and drop the topic into the
+  wrong collection. The two are now reconciled by *what changed*: re-parenting
+  adopts the new parent's collection, and moving a sub-topic to another
+  collection promotes it to a top-level topic (taking its own children) rather
+  than leaving a branch straddling both.
+
+
   `body` parameter was string-only, so a model reaching for the object the target
   endpoint documents — the natural move — hit a validation error whose shape it
   couldn't see, and retried its way through progressively stranger encodings. It

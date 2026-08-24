@@ -12,6 +12,9 @@ export type TopicKind = "standard";
 export interface Topic {
   id: number;
   slug: string;
+  // Immutable UUID permalink (`/t/<public_id>`). Unlike the readable URL it
+  // never changes when the topic is renamed, re-parented or moved collection.
+  public_id: string;
   title: string;
   description: string | null;
   parent_id: number | null;
@@ -1206,6 +1209,22 @@ export interface MCPServerStatus {
   // Populated for user-defined entries only.
   id: number | null;
   header_keys: string[];
+}
+
+/**
+ * ``GET /api/mcp/auth/diagnostics`` — everything the backend knows about the
+ * WorkIQ OAuth credentials, in one extractable blob.
+ *
+ * Deliberately loose about ``credentials``/``events`` payloads: this is a
+ * diagnostic surface read by humans (via ``window.precursorWorkiqAuthReport()``)
+ * rather than a contract the UI renders, so it should keep working when the
+ * backend adds a field rather than needing a mirrored edit here.
+ */
+export interface McpAuthDiagnostics {
+  generated_at: string;
+  settings: Record<string, unknown>;
+  credentials: Record<string, unknown>[];
+  events: Record<string, unknown>[];
 }
 
 export interface MCPServerCreate {

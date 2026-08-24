@@ -31,8 +31,47 @@ Right-click any topic in the sidebar to act on it without opening it: rename,
 pin, set a reminder, move it to another [collection](/features/collections), or
 archive.
 
+Over [MCP](/features/mcp), a topic's place in that tree comes back already
+resolved as a `path` — the collection slug followed by the ancestor chain
+(`client-a/csu/capacity-review`) — so an agent never has to walk `parent_id`
+upward. It mirrors the URL exactly, so a `path` can be pasted into the
+browser.
+
 Above the tree, [**collections**](/features/collections) split your topics into
 separate workspaces and filter the sidebar to one at a time.
+
+## Addressing a topic
+
+Every topic has two addresses.
+
+The **readable** one describes where the topic sits — its collection, then the
+ancestor chain, then its own slug:
+
+```
+/topics/client-a/csu/cto/capacity-review
+```
+
+It's the URL the address bar shows, and it's meant to be legible. That also
+means it *moves*: rename the topic, drag it under a different parent, or send it
+to another collection and the readable URL changes with it.
+
+The **permalink** never moves:
+
+```
+/t/6f2b1c9e-6b1a-4a0e-9f0f-2f5b0f9f1c2a
+```
+
+It's an immutable UUID minted when the topic is created. Opening it resolves the
+topic and rewrites the address bar to the readable URL, so you land in the right
+place with a legible address. Copy it from **topic settings → Permalink** — it's
+the address to paste into an issue, a commit message, or a bookmark that has to
+survive reorganising.
+
+::: tip Old links keep working
+Links minted before collections joined the URL (`/topics/csu/capacity-review`)
+still resolve: the trailing slug is unique on its own, and Precursor rewrites the
+address to the current readable form once it has loaded.
+:::
 
 ## Scheduling & reminders
 

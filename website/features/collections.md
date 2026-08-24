@@ -25,9 +25,11 @@ wrong filter.
 
 <Screenshot src="/screenshots/collection-switcher.png" alt="The collection switcher open at the top of the Topics sidebar, listing four collections with their topic counts, plus New collection and Manage collections actions" caption="The switcher lists every collection with its topic count, and lets you create or manage them without leaving the sidebar." />
 
-The selection is remembered per browser, and the switcher hides itself entirely
-while you only have the default collection, so the feature stays out of the way
-until you want it.
+The switcher hides itself entirely while you only have the default collection,
+so the feature stays out of the way until you want it. The active collection is
+**part of the URL** — `/topics/client-a`, or `/topics/client-a/csu/capacity-review`
+for a topic inside it — so a reload, a bookmark or a shared link lands in the
+right collection. Switching collections clears the open topic.
 
 Because the tree is filtered, unread activity in the collections you *aren't*
 looking at would otherwise be invisible — so the switcher carries a dot when
@@ -62,11 +64,21 @@ There are four ways to move a topic:
 - Open **topic settings** and pick a **Collection**.
 - Type **`/collection <name>`** in the topic's composer. Run it bare to list your
   collections and see where the current topic sits.
-- Create it while a collection is selected — new topics land in the collection
-  you're currently viewing, and sub-topics inherit their parent's.
+- Create it while a collection is selected — the create form's **Collection**
+  field starts on the one you're viewing, and you can change it there before the
+  topic exists. Picking a parent instead makes the sub-topic inherit the
+  parent's collection, and the field says so.
 
 **Sub-topics always follow their parent.** Moving a topic moves its whole
-subtree, so a branch of the tree can never be split across collections.
+subtree, and re-parenting a topic under a parent in another collection pulls the
+subtree along with it — a branch can never be split across collections. For the
+same reason, moving a *sub-topic* to another collection **promotes it to a
+top-level topic**: it takes its own children with it and leaves its former
+parent behind.
+
+Because the collection is part of a topic's URL, moving one rewrites that URL.
+Its [permalink](/features/topics#addressing-a-topic) (`/t/<uuid>`) doesn't
+change, so links you've already shared keep resolving.
 
 ## Per-collection GitHub repository
 
@@ -104,11 +116,17 @@ deleted — so there is always somewhere for topics to land.
 
 ## Over MCP
 
-Precursor's own [MCP server](/features/mcp) is collection-aware: `list_topics`
-and `get_topic` report each topic's `collection_id` and `collection` name, and
-`list_topics` accepts an optional **`collection`** filter matched
-case-insensitively against a name or slug. So an external agent can ask for "the
-topics in *Client A*" the same way you'd filter the sidebar.
+Precursor's own [MCP server](/features/mcp) is collection-aware:
+
+- `list_topics` and `get_topic` report each topic's `collection_id` and
+  `collection` name, plus a `path` that starts with the collection's slug.
+- `list_topics` accepts an optional **`collection`** filter, matched
+  case-insensitively against a name or slug.
+- `create_schedule` accepts the same **`collection`** argument, so a scheduled
+  topic an agent creates lands where you'd expect instead of the default.
+
+So an external agent can ask for "the topics in *Client A*" the same way you'd
+filter the sidebar.
 
 ## Not to be confused with…
 

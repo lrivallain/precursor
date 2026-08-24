@@ -13,6 +13,10 @@ from precursor.backend.db import get_session
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
 from precursor.backend.schemas.topic import TopicRead
+from precursor.backend.services.collections import (
+    resolve_collection_default_role_id,
+    resolve_collection_id,
+)
 from precursor.backend.services.events import publish_read_changed, publish_topic_changed
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.unread import message_unread_counts
@@ -224,6 +228,7 @@ async def unarchive_chat(
 @router.post("/{chat_id}/promote", response_model=TopicRead)
 async def promote_chat_to_topic(
     chat_id: int,
+    collection_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
     """Promote a flat chat into a full topic.
@@ -231,16 +236,23 @@ async def promote_chat_to_topic(
     Creates a topic from the chat's title/description, re-parents every message
     onto the new topic (clearing chat_id), then deletes the now-empty chat. The
     transcript is preserved verbatim.
+
+    Chats have no collection of their own, so the caller passes the one it is
+    looking at; anything unresolvable falls back to the default. Leaving it null
+    would strand the topic — no collection filter matches a null membership.
     """
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
+    resolved_collection_id = await resolve_collection_id(session, collection_id)
     topic = Topic(
         title=chat.title,
         slug=await allocate_unique_slug(session, slugify(chat.title) or "topic", Topic),
         description=chat.description,
         pinned=chat.pinned,
+        collection_id=resolved_collection_id,
+        role_id=await resolve_collection_default_role_id(session, resolved_collection_id),
     )
     session.add(topic)
     await session.flush()  # assign topic.id

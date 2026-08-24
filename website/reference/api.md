@@ -51,10 +51,10 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 
 | Area | What it covers |
 | --- | --- |
-| `topics` | CRUD for topics, the topic tree, read/unread state, and per-topic messages. |
+| `topics` | CRUD for topics, the topic tree, read/unread state, and per-topic messages. Reads carry the topic's immutable `public_id`; `GET /by-slug/{slug}` and `GET /by-public-id/{public_id}` back the `/topics/…` and `/t/{uuid}` routes. `GET /api/topics` and `GET /api/topics/archived` accept `?collection_id=`, and `GET /api/topics/tree` already did. |
 | `collections` | CRUD for [collections](/features/collections); deleting one re-homes its topics via `?reassign_to=`. |
 | `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events. |
-| `chats` | Quick throwaway chats, including read/unread state. |
+| `chats` | Quick throwaway chats, including read/unread state. `POST /{id}/promote` turns one into a topic and takes `?collection_id=` for where it lands. |
 | `commands` | The `/slash` [commands](/features/skills-memory) a topic composer can run. |
 | `attachments` | Upload / fetch [attachments](/features/attachments) on a topic or chat. |
 | `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed). |
@@ -62,7 +62,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `me` | The connected GitHub identity for the sidebar persona, plus `GET /api/me/copilot` for Copilot AI-credit usage (both degrade to `null` when no token is configured). |
 | `github` | Issue/label/comment operations behind topic linking. |
 | `github/projects` | GitHub Projects v2 columns and cards behind the [Kanban board](/features/kanban). |
-| `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. |
+| `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. `GET /api/mcp/auth/diagnostics` returns the [WorkIQ sign-in trace](/features/mcp#when-a-sign-in-prompt-needs-explaining) — settings in force, a per-credential fact sheet (token/refresh-token presence, expiry, idle time, state) and the recent auth-episode records. Token values never leave the process. |
 | `skills` / `memories` | Skill enablement and long-term memory. |
 | `roles` | Assistant [roles](/features/skills-memory) (persona presets). |
 | `…/schedule` | Recurrence and **Run now**, as a sub-resource of the thing being scheduled (`/api/topics/{id}/schedule`, `/api/agents/{id}/schedule`) rather than a top-level router. |

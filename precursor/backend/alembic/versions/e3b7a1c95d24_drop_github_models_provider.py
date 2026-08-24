@@ -7,7 +7,7 @@ explanation — so repoint it at GitHub Copilot, which authenticates with the ve
 same GitHub token.
 
 Revision ID: e3b7a1c95d24
-Revises: b6c8e14a92df
+Revises: e7c4a91d3b60
 Create Date: 2026-08-24 00:00:00.000000
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "e3b7a1c95d24"
-down_revision = "b6c8e14a92df"
+down_revision = "e7c4a91d3b60"
 branch_labels = None
 depends_on = None
 

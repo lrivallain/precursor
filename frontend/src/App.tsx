@@ -99,14 +99,23 @@ function parseWsRoute(): WsRoute {
 }
 
 // Path-based routing for every mode:
-//   /topics/<ancestor-slugs…>/<slug>   → topics, item resolved by the last slug
-//   /chats/<slug>                      → chats
-//   /ws/<slug>/<file/path>             → workspaces
-// Slugs are globally unique, so the trailing topic slug alone identifies the
-// item; the ancestor slugs make the URL readable + bookmarkable.
+//   /topics/<collection-slug>/<ancestor-slugs…>/<slug>   → topics
+//   /t/<public-id>                                       → topic permalink
+//   /chats/<slug>                                        → chats
+//   /ws/<slug>/<file/path>                               → workspaces
+// Topic slugs are globally unique, so the trailing slug alone identifies the
+// item; the collection slug and the ancestor slugs make the URL readable +
+// bookmarkable. `/t/<uuid>` is the immutable address — it survives renames,
+// re-parenting and collection moves, and the SPA rewrites it to the readable
+// form once resolved.
 interface AppRoute {
   mode: SidebarMode;
-  topicSlug: string | null;
+  // Path segments after `/topics` — `[collection?, …ancestors, slug]`. Legacy
+  // links minted before collections joined the URL simply have no collection
+  // segment; the trailing slug still resolves them.
+  topicPath: string[];
+  // The UUID from a `/t/<public-id>` permalink.
+  topicPublicId: string | null;
   chatSlug: string | null;
   liveSlug: string | null;
   // The raw agent path segment — a public UUID for new links, or a legacy
@@ -140,7 +149,8 @@ function parseAppRoute(): AppRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   const base: AppRoute = {
     mode: "topics",
-    topicSlug: null,
+    topicPath: [],
+    topicPublicId: null,
     chatSlug: null,
     liveSlug: null,
     agentRef: null,
@@ -183,9 +193,15 @@ function parseAppRoute(): AppRoute {
       kanbanItemRef: parseHashNumber(window.location.hash),
     };
   }
+  if (segs[0] === "t") {
+    return {
+      ...base,
+      mode: "topics",
+      topicPublicId: segs[1] ? decodeURIComponent(segs[1]) : null,
+    };
+  }
   if (segs[0] === "topics") {
-    const last = segs.length > 1 ? decodeURIComponent(segs[segs.length - 1]) : null;
-    return { ...base, mode: "topics", topicSlug: last };
+    return { ...base, mode: "topics", topicPath: segs.slice(1).map(decodeURIComponent) };
   }
   return base;
 }
@@ -214,10 +230,18 @@ function topicSlugPath(tree: TopicNode[], topicId: number): string[] {
   return path;
 }
 
-function topicUrl(tree: TopicNode[], topic: Topic): string {
+function topicUrl(tree: TopicNode[], topic: Topic, collections: Collection[]): string {
   const segs = topicSlugPath(tree, topic.id);
   const chain = segs.length ? segs : [topic.slug];
-  return "/topics/" + chain.map(encodeURIComponent).join("/");
+  const collectionSlug = collections.find((c) => c.id === topic.collection_id)?.slug;
+  const all = collectionSlug ? [collectionSlug, ...chain] : chain;
+  return "/topics/" + all.map(encodeURIComponent).join("/");
+}
+
+/** The Topics mode's own URL when nothing is selected: `/topics/<collection>`. */
+function topicsModeUrl(collections: Collection[], collectionId: number | null): string {
+  const slug = collections.find((c) => c.id === collectionId)?.slug;
+  return slug ? `/topics/${encodeURIComponent(slug)}` : "/topics";
 }
 
 /** Ancestor chain (root → immediate parent, excluding self) for a topic. */
@@ -704,6 +728,15 @@ export default function App() {
     setActiveCollectionId(id);
   }
 
+  // Explicit switch from the switcher: the collection is a lens over the tree,
+  // so drop a selection that belongs to the collection we just left rather than
+  // leaving a topic open beside a sidebar that no longer lists it.
+  function chooseCollection(id: number): void {
+    if (id === activeCollectionId) return;
+    selectCollection(id);
+    if (activeTopic && activeTopic.collection_id !== id) setActiveTopic(null);
+  }
+
   async function createCollection(name: string): Promise<void> {
     const created = await api.collections.create({ name });
     await refreshCollections();
@@ -711,7 +744,10 @@ export default function App() {
   }
 
   async function moveTopicToCollection(topicId: number, collectionId: number): Promise<void> {
-    await api.topics.update(topicId, { collection_id: collectionId });
+    const updated = await api.topics.update(topicId, { collection_id: collectionId });
+    // Keep the open topic in step so the URL picks up the new collection slug.
+    if (activeTopicRef.current?.id === topicId) setActiveTopic(updated);
+    selectCollection(collectionId);
     await Promise.all([refreshTree(), refreshCollections()]);
   }
 
@@ -828,6 +864,23 @@ export default function App() {
   useEffect(() => {
     treeRef.current = tree;
   }, [tree]);
+  // Collections back the URL's first `/topics` segment, so the (once-registered)
+  // route resolver needs the current list without re-subscribing.
+  const collectionsRef = useRef<Collection[]>(collections);
+  useEffect(() => {
+    collectionsRef.current = collections;
+  }, [collections]);
+  const activeCollectionIdRef = useRef<number | null>(activeCollectionId);
+  useEffect(() => {
+    activeCollectionIdRef.current = activeCollectionId;
+  }, [activeCollectionId]);
+  // Set while resolving a `/t/<uuid>` permalink so the readable URL replaces it
+  // instead of stacking a second history entry for the same topic.
+  const permalinkRewriteRef = useRef(false);
+  // Set while a topic URL is being resolved. The "nothing selected" effect must
+  // not normalise the address bar in the meantime — it would drop the incoming
+  // deep link (or permalink) before it has had a chance to land.
+  const pendingTopicRouteRef = useRef(false);
   const notificationsEnabledRef = useRef(false);
   useEffect(() => {
     notificationsEnabledRef.current = settings?.notifications_enabled ?? false;
@@ -878,9 +931,24 @@ export default function App() {
 
   // ---- Path-based routing ----------------------------------------------
   // The URL path is the single source of truth for mode + selection:
-  //   /topics/<ancestor-slugs…>/<slug>   /chats/<slug>   /ws/<slug>/<path>
+  //   /topics/<collection>/<ancestor-slugs…>/<slug>   /chats/<slug>   /ws/<slug>/<path>
   // `syncFromUrl` runs on mount + back/forward; the effects below push the URL
   // when the active item changes. Equality checks break the feedback loop.
+
+  // Adopt a topic the URL resolved to. A deep link (or a permalink) can point
+  // outside the collection the user last had open, so the lens follows the
+  // topic rather than rendering an empty tree beside it.
+  async function adoptTopicFromUrl(t: Topic): Promise<void> {
+    setActiveTopic(t);
+    if (t.collection_id != null) selectCollection(t.collection_id);
+    try {
+      await api.topics.markRead(t.id);
+      await refreshTree();
+    } catch {
+      // non-fatal
+    }
+  }
+
   useEffect(() => {
     const syncFromUrl = (): void => {
       // Keep the highlight term in step with the URL for reloads / back-forward.
@@ -960,20 +1028,52 @@ export default function App() {
         return;
       }
       if (r.mode === "topics") {
-        const slug = r.topicSlug;
-        if (!slug || activeTopicRef.current?.slug === slug) return;
+        // `/t/<uuid>` — the immutable permalink. Resolve it, then let the URL
+        // effect below rewrite the address bar to the readable path.
+        if (r.topicPublicId) {
+          const publicId = r.topicPublicId;
+          pendingTopicRouteRef.current = true;
+          void (async () => {
+            try {
+              const t = await api.topics.getByPublicId(publicId);
+              permalinkRewriteRef.current = true;
+              await adoptTopicFromUrl(t);
+            } catch {
+              // unknown permalink — leave the user where they are
+            } finally {
+              pendingTopicRouteRef.current = false;
+            }
+          })();
+          return;
+        }
+        const segs = r.topicPath;
+        if (!segs.length) return;
+        const slug = segs[segs.length - 1];
+        if (activeTopicRef.current?.slug === slug) return;
+        pendingTopicRouteRef.current = true;
         void (async () => {
           try {
             const t = await api.topics.getBySlug(slug);
-            setActiveTopic(t);
-            try {
-              await api.topics.markRead(t.id);
-              await refreshTree();
-            } catch {
-              // non-fatal
-            }
+            await adoptTopicFromUrl(t);
           } catch {
-            // unknown slug — leave the user where they are
+            // Not a topic slug. A lone segment is the bare collection route
+            // (`/topics/<collection-slug>`) — switch the lens and show the
+            // start hero rather than leaving a stale selection.
+            if (segs.length !== 1) return;
+            try {
+              const list = collectionsRef.current.length
+                ? collectionsRef.current
+                : await api.collections.list();
+              const match = list.find((c) => c.slug === slug);
+              if (match) {
+                selectCollection(match.id);
+                setActiveTopic(null);
+              }
+            } catch {
+              // collections unavailable — leave the user where they are
+            }
+          } finally {
+            pendingTopicRouteRef.current = false;
           }
         })();
         return;
@@ -1001,28 +1101,45 @@ export default function App() {
     return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
 
-  // activeTopic -> /topics/<…>/<slug>. pushState for a different item (so
-  // back/forward walks topics); replaceState to *refine* the same item's path
-  // (e.g. once the tree loads and the ancestor chain is known). Never strips
-  // ancestors, so a deep link like /topics/a/b/c survives the initial load.
+  // activeTopic -> /topics/<collection>/<…>/<slug>. pushState for a different
+  // item (so back/forward walks topics); replaceState when the same item's
+  // readable path merely changes — the collection prefix and ancestor chain
+  // are only knowable once the tree and collections have loaded, and they move
+  // again whenever the topic is re-parented or changes collection.
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "topics" || !activeTopic) return;
-    const target = topicUrl(tree, activeTopic);
+    // Wait for both, otherwise a deep link like /topics/work/a/b/c would be
+    // rewritten to the bare /topics/c and then back again.
+    if (tree.length === 0 || collections.length === 0) return;
+    const target = topicUrl(tree, activeTopic, collections);
     if (window.location.pathname === target) return;
     const curSegs = window.location.pathname
       .replace(/\/+$/, "")
       .split("/")
       .filter(Boolean);
     const lastSeg = decodeURIComponent(curSegs[curSegs.length - 1] ?? "");
-    if (lastSeg === activeTopic.slug) {
-      // Same item already in the URL — only extend the ancestor chain.
-      const targetSegs = target.split("/").filter(Boolean);
-      if (targetSegs.length > curSegs.length) history.replaceState(null, "", target);
+    if (lastSeg === activeTopic.slug || permalinkRewriteRef.current) {
+      permalinkRewriteRef.current = false;
+      history.replaceState(null, "", target);
     } else {
       history.pushState(null, "", target);
     }
-  }, [activeTopic, sidebarMode, tree, atHome]);
+  }, [activeTopic, sidebarMode, tree, collections, atHome]);
+
+  // Topics mode with nothing selected -> /topics/<collection>, so the lens is
+  // part of the address and a reload lands back in the same collection. This
+  // only *normalises* the URL (replaceState); the surfaces that intend a
+  // navigation push their own entry first.
+  useEffect(() => {
+    if (atHome) return;
+    if (sidebarMode !== "topics" || activeTopic) return;
+    if (collections.length === 0) return;
+    // A deep link still resolving would be overwritten before it lands.
+    if (pendingTopicRouteRef.current) return;
+    const target = topicsModeUrl(collections, activeCollectionId);
+    if (window.location.pathname !== target) history.replaceState(null, "", target);
+  }, [activeTopic, sidebarMode, collections, activeCollectionId, atHome]);
 
   // activeChat -> /chats/<slug>.
   useEffect(() => {
@@ -1256,8 +1373,8 @@ export default function App() {
     let target = "/topics";
     if (next === "topics") {
       target = activeTopicRef.current
-        ? topicUrl(treeRef.current, activeTopicRef.current)
-        : "/topics";
+        ? topicUrl(treeRef.current, activeTopicRef.current, collectionsRef.current)
+        : topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current);
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
     } else if (next === "live") {
@@ -1300,7 +1417,11 @@ export default function App() {
       setActiveTopic(null);
       setTopicDraftParentId(null);
       setTopicDraftNonce((n) => n + 1);
-      history.pushState(null, "", "/topics");
+      history.pushState(
+        null,
+        "",
+        topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current),
+      );
       setSidebarMode("topics");
     } else if (mode === "chats") {
       setActiveChat(null);
@@ -1339,6 +1460,9 @@ export default function App() {
     setTopicDraftParentId(null);
     setAtHome(false);
     setSidebarMode("topics");
+    // A sub-topic inherits its parent's collection, which may differ from the
+    // one on screen — follow the topic we just created.
+    if (topic.collection_id != null) selectCollection(topic.collection_id);
     await refreshTree();
     setActiveTopic(topic);
   }
@@ -2150,9 +2274,10 @@ export default function App() {
     setTopicDraftParentId(parent);
     setTopicDraftNonce((n) => n + 1);
     setActiveTopic(null);
-    if (window.location.pathname !== "/topics") {
-      history.pushState(null, "", "/topics");
-    }
+    // Push rather than let the "nothing selected" effect replace: Back should
+    // return to the topic you were reading, not skip past it.
+    const target = topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
   }
 
   function openTopicSettings(tab: "settings" | "context" = "settings"): void {
@@ -2213,7 +2338,7 @@ export default function App() {
         collections={collections}
         activeCollectionId={activeCollectionId}
         unreadByCollection={unreadByCollection}
-        onCollectionChange={selectCollection}
+        onCollectionChange={chooseCollection}
         onCollectionCreate={createCollection}
         onManageCollections={() => {
           setSettingsCategory("collections");
@@ -2623,7 +2748,11 @@ export default function App() {
               onOpenSettings={() => setGlobalSettingsOpen(true)}
               onOpenArchive={() => setArchiveOpen(true)}
               topicSurface={
-                <TopicStartHero tree={collectionTree} onCreated={handleTopicCreated} />
+                <TopicStartHero
+                  tree={tree}
+                  collectionId={activeCollectionId}
+                  onCreated={handleTopicCreated}
+                />
               }
               chatSurface={<ChatStartHero onStart={startChatFromHome} />}
               liveSurface={
@@ -2686,8 +2815,9 @@ export default function App() {
             ) : (
               <TopicStartHero
                 key={`topic-create-${topicDraftParentId ?? "root"}-${topicDraftNonce}`}
-                tree={collectionTree}
+                tree={tree}
                 initialParentId={topicDraftParentId}
+                collectionId={activeCollectionId}
                 onCreated={handleTopicCreated}
               />
             )
@@ -2872,6 +3002,7 @@ export default function App() {
       {chatSettingsOpen && activeChat && (
         <ChatSettingsPanel
           chat={activeChat}
+          collectionId={activeCollectionId}
           onClose={() => setChatSettingsOpen(false)}
           onSaved={(updated) => {
             setActiveChat(updated);
@@ -2897,6 +3028,7 @@ export default function App() {
             setActiveChat(null);
             setChatListReloadKey((k) => k + 1);
             changeMode("topics");
+            if (topic.collection_id != null) selectCollection(topic.collection_id);
             setActiveTopic(topic);
             await refreshTree();
           }}

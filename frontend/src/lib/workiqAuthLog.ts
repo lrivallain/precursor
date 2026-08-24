@@ -26,9 +26,19 @@
  * Every line is also kept in a small ring buffer that
  * ``window.precursorWorkiqAuthTrace()`` returns, so a whole episode can be
  * copied out of the console in one go.
+ *
+ * The SPA only sees half the story, though — the legs it *observes* rather than
+ * the ones it drives. ``window.precursorWorkiqAuthReport()`` closes that gap: it
+ * pulls the backend's own trace and credential fact sheet from
+ * ``GET /api/mcp/auth/diagnostics``, merges both halves keyed by the backend's
+ * episode ids, and **puts the result on the clipboard** ready to paste into an
+ * issue. That is the reason the backend stamps ``auth_episode`` onto its re-auth
+ * responses: a line here and a line there can be put on the same timeline.
  */
 
+import { api } from "./api";
 import { mcpAuthFamily } from "./mcpServers";
+import type { McpAuthDiagnostics } from "./types";
 
 const STORAGE_KEY = "precursor.debug.workiqAuth";
 const PREFIX = "[workiq-auth]";
@@ -139,9 +149,72 @@ export function probeFrame(frame: HTMLIFrameElement): Record<string, unknown> {
 declare global {
   interface Window {
     precursorWorkiqAuthTrace?: () => AuthTraceEntry[];
+    precursorWorkiqAuthReport?: () => Promise<WorkiqAuthReport>;
+  }
+}
+
+/** Both halves of an auth investigation: what the SPA saw and what the backend did. */
+export interface WorkiqAuthReport {
+  capturedAt: string;
+  /** The SPA's own ring buffer (this window only). */
+  frontend: AuthTraceEntry[];
+  /** ``GET /api/mcp/auth/diagnostics`` — settings, credential facts, backend trace. */
+  backend: McpAuthDiagnostics | { error: string };
+}
+
+/**
+ * Collect one pasteable report covering an entire auth episode.
+ *
+ * The SPA and the backend each hold half of it, and neither half is conclusive
+ * alone: the SPA knows the iframe never loaded, the backend knows Entra answered
+ * ``AADSTS700082``. Fetching the backend side on demand (rather than streaming
+ * it continuously) keeps this free until someone actually investigates.
+ *
+ * Never rejects — a backend that can't answer is itself a finding, so the error
+ * is recorded in place of the diagnostics.
+ */
+export async function collectAuthReport(): Promise<WorkiqAuthReport> {
+  let backend: McpAuthDiagnostics | { error: string };
+  try {
+    backend = await api.mcp.authDiagnostics();
+  } catch (err) {
+    backend = { error: (err as Error).message };
+  }
+  return { capturedAt: new Date().toISOString(), frontend: [...trace], backend };
+}
+
+/**
+ * Put the report on the clipboard, because copying it is the entire point.
+ *
+ * Left to the caller this is `copy(JSON.stringify(await …, null, 2))` — three
+ * things to remember at the exact moment someone is already annoyed enough to be
+ * opening a console. Doing it here makes the documented gesture one call.
+ *
+ * The write can legitimately fail: `navigator.clipboard` needs the *page* to
+ * have focus, and running a command in DevTools means DevTools has it. That's
+ * not an error worth throwing over, so we fall back to printing the JSON as a
+ * single string, which DevTools lets you copy from directly.
+ */
+async function copyReport(report: WorkiqAuthReport): Promise<void> {
+  const json = JSON.stringify(report, null, 2);
+  try {
+    await navigator.clipboard.writeText(json);
+    console.info(`${PREFIX} report copied to the clipboard (${json.length} chars).`);
+    return;
+  } catch {
+    console.info(
+      `${PREFIX} couldn't reach the clipboard (the page needs focus) — ` +
+        `here is the report, or run: copy(await precursorWorkiqAuthReport())`,
+    );
+    console.log(json);
   }
 }
 
 if (typeof window !== "undefined") {
   window.precursorWorkiqAuthTrace = () => [...trace];
+  window.precursorWorkiqAuthReport = async () => {
+    const report = await collectAuthReport();
+    await copyReport(report);
+    return report;
+  };
 }

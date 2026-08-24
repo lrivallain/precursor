@@ -32,7 +32,7 @@ import webbrowser
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Final, cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from mcp import ClientSession
@@ -44,6 +44,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AppSetting
 from precursor.backend.services.events import publish_mcp_auth_url
+from precursor.backend.services.mcp import auth_trace
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +336,7 @@ def cancel_reauthenticate_workiq(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) 
     if event is None or event.is_set():
         return False
     event.set()
+    auth_trace.record(profile.server, "in-flight sign-in signalled to abort")
     return True
 
 
@@ -478,6 +480,7 @@ class DbTokenStorage(TokenStorage):
         issued_at = json.dumps(datetime.now(UTC).isoformat())
         # Best-effort: remember the account so we can pre-select it on re-auth.
         login_hint = _login_hint_from_access_token(tokens.access_token)
+        previous = await self.get_tokens()
         async with SessionLocal() as session:
             row = await session.get(AppSetting, self._profile.tokens_key)
             if row is None:
@@ -497,6 +500,22 @@ class DbTokenStorage(TokenStorage):
                 else:
                     hint_row.value = encoded_hint
             await session.commit()
+        # Whether Entra *rotated* the refresh token decides how long this
+        # credential can survive unattended: a rotated token restarts its own
+        # inactivity window on every refresh, a reused one keeps counting down
+        # from the original sign-in. Nothing else in the stack can tell us which
+        # regime we're in, and it's the crux of any renewal strategy.
+        rotated: bool | None = None
+        if previous is not None and previous.refresh_token and tokens.refresh_token:
+            rotated = previous.refresh_token != tokens.refresh_token
+        auth_trace.record(
+            self._profile.server,
+            "tokens persisted",
+            replaced_existing=previous is not None,
+            refresh_token_rotated=rotated,
+            captured_login_hint=bool(login_hint),
+            **_token_facts(tokens),
+        )
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
         return self._client_info
@@ -506,18 +525,67 @@ class DbTokenStorage(TokenStorage):
         return None
 
 
-async def clear_workiq_oauth_tokens(profile: WorkIQOAuthProfile = PREVIEW_PROFILE) -> None:
+async def clear_workiq_oauth_tokens(
+    profile: WorkIQOAuthProfile = PREVIEW_PROFILE, *, reason: str = "unspecified"
+) -> dict[str, str]:
     """Forget any stored tokens so the next connect re-runs the browser login.
 
     The captured ``login_hint`` (last account) deliberately survives: it isn't a
     credential, and keeping it lets the next re-auth pre-select the same account.
+
+    Returns the rows that were removed, keyed by ``AppSetting`` key, so a caller
+    that clears *speculatively* — the hands-free passes, which must start from a
+    blank slate to force a fresh grant — can put them back when the attempt
+    fails. See :func:`restore_workiq_oauth_tokens`. ``reason`` is recorded in the
+    trace: destroying a credential is the event most likely to *cause* the next
+    sign-in prompt, so it must never be anonymous.
     """
+    removed: dict[str, str] = {}
     async with SessionLocal() as session:
         for key in (profile.tokens_key, profile.issued_at_key):
             row = await session.get(AppSetting, key)
             if row is not None:
+                removed[key] = row.value
                 await session.delete(row)
         await session.commit()
+    auth_trace.record(
+        profile.server,
+        "stored tokens cleared",
+        reason=reason,
+        had_tokens=profile.tokens_key in removed,
+    )
+    return removed
+
+
+async def restore_workiq_oauth_tokens(
+    profile: WorkIQOAuthProfile, removed: dict[str, str], *, reason: str = "unspecified"
+) -> None:
+    """Put back rows a speculative :func:`clear_workiq_oauth_tokens` took away.
+
+    A hands-free pass clears the stored credential before attempting, so the SDK
+    is forced through a fresh grant rather than short-circuiting on a token it
+    still considers valid. When that attempt then fails, the old credential — a
+    refresh token that may well have been fine, since the verdict that triggered
+    the pass can come from a transient 401 — would otherwise be gone for good,
+    turning a recoverable blip into a mandatory interactive sign-in. Restoring it
+    costs at most one doomed refresh on the next connect.
+
+    Only restores rows the flow itself removed, and never overwrites a *newer*
+    credential: if the attempt (or a concurrent one) did manage to write tokens,
+    those win.
+    """
+    if not removed:
+        return
+    async with SessionLocal() as session:
+        restored = False
+        for key, value in removed.items():
+            if await session.get(AppSetting, key) is not None:
+                continue
+            session.add(AppSetting(key=key, value=value))
+            restored = True
+        if restored:
+            await session.commit()
+    auth_trace.record(profile.server, "stored tokens restored", reason=reason)
 
 
 def _claims_from_access_token(access_token: str) -> dict[str, Any] | None:
@@ -685,6 +753,15 @@ async def _redirect_handler(
         authorization_url, login_hint=login_hint, prompt=prompt
     )
     logger.info("%s: authorization URL ready; surfacing sign-in", profile.server)
+    auth_trace.record(
+        profile.server,
+        "authorization URL built",
+        prompt=prompt or "(unset)",
+        has_login_hint=bool(login_hint),
+        published_over_sse=publish_url,
+        opens_os_browser=open_system_browser,
+        **_describe_authorization_url(authorization_url),
+    )
     if publish_url:
         with contextlib.suppress(Exception):
             await publish_mcp_auth_url(profile.server, authorization_url)
@@ -694,6 +771,35 @@ async def _redirect_handler(
         webbrowser.open(authorization_url)
     except Exception as exc:  # pragma: no cover - platform dependent
         logger.warning("%s: could not open a browser automatically: %s", profile.server, exc)
+        auth_trace.record(
+            profile.server,
+            "could not open the OS browser",
+            level=logging.WARNING,
+            error=_short_error(exc),
+        )
+
+
+def _describe_authorization_url(url: str) -> dict[str, Any]:
+    """Safe summary of an authorization URL for the trace.
+
+    Mirrors the SPA's ``describeAuthUrl`` so the two halves of an episode line up
+    when read side by side. ``state``/``nonce``/``login_hint`` are deliberately
+    left out; ``client_id`` and ``redirect_uri`` stay, because *which* credential
+    and *which* loopback port a leg used is exactly what a port-busy or
+    wrong-client episode turns on.
+    """
+    try:
+        split = urlsplit(url)
+        params = dict(parse_qsl(split.query, keep_blank_values=True))
+    except ValueError:  # pragma: no cover - defensive
+        return {"authorize_url": "(unparseable)"}
+    return {
+        "authorize_host": split.netloc,
+        "authorize_path": split.path,
+        "client_id": params.get("client_id"),
+        "redirect_uri": params.get("redirect_uri"),
+        **_summarize_scope(params.get("scope")),
+    }
 
 
 def _make_redirect_handler(
@@ -957,7 +1063,21 @@ def _make_callback_handler(
                     return
 
                 interaction_required = error in _INTERACTION_REQUIRED_ERRORS
-
+                auth_trace.record(
+                    profile.server,
+                    "loopback received the Entra redirect",
+                    silent_pass=silent,
+                    outcome=(
+                        "interaction_required"
+                        if interaction_required
+                        else error
+                        if error
+                        else "code"
+                        if code
+                        else "empty"
+                    ),
+                    error=error,
+                )
                 if interaction_required:
                     # A silent ``prompt=none`` pass Precursor will retry with a
                     # visible prompt — show a calm "one moment" page, not a failure.
@@ -1026,8 +1146,22 @@ def _make_callback_handler(
             # typed error the up-front preflight raises rather than a generic
             # transport failure.
             if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.EACCES):
+                auth_trace.record(
+                    profile.server,
+                    "loopback could not bind — port taken",
+                    level=logging.WARNING,
+                    port=profile.redirect_port,
+                )
                 raise WorkIQAuthPortBusyError(_port_busy_message(profile)) from exc
             raise
+        auth_trace.record(
+            profile.server,
+            "loopback listening for the redirect",
+            level=logging.DEBUG,
+            port=profile.redirect_port,
+            timeout_seconds=timeout,
+            silent_pass=silent,
+        )
         try:
             async with server:
                 cancel_event = _active_signin_cancels.get(profile.auth_family)
@@ -1056,8 +1190,15 @@ def _make_callback_handler(
                     raise TimeoutError
                 # The user closed the popup before the redirect: abort cleanly so
                 # the loopback releases the fixed port instead of squatting it.
+                auth_trace.record(profile.server, "loopback cancelled before the redirect arrived")
                 raise WorkIQAuthCancelledError(f"{profile.label} sign-in was cancelled.")
         except TimeoutError as exc:
+            auth_trace.record(
+                profile.server,
+                "loopback timed out — no redirect ever arrived",
+                silent_pass=silent,
+                waited_seconds=timeout,
+            )
             if silent:
                 # A silent (``prompt=none``) pass whose loopback never fired: the
                 # invisible frame couldn't complete the sign-in without UI. Treat
@@ -1077,6 +1218,241 @@ def _make_callback_handler(
             ) from exc
 
     return _callback_handler
+
+
+def _summarize_scope(scope: str | None) -> dict[str, Any]:
+    """Reduce an Entra scope list to the parts that are actually diagnostic.
+
+    Agent 365 grants ~37 scopes, each a fully-qualified URL naming the tenant and
+    server — roughly 4 KB of near-identical text. Logging it verbatim buried
+    every other field on the line and made the whole trace unreadable, which
+    defeats the point. Only three things about a scope list matter here: how many
+    there are, which resource they address, and whether **``offline_access``** is
+    among them — that last one decides whether the credential can be renewed at
+    all, and is the first thing to check when a session keeps dying.
+    """
+    if not scope:
+        return {"scope": "<absent>"}
+    scopes = scope.split()
+    resources = {
+        s.rsplit("/", 1)[0] for s in scopes if s.startswith(("http://", "https://")) and "/" in s
+    }
+    facts: dict[str, Any] = {
+        "scope_count": len(scopes),
+        "scope_offline_access": OFFLINE_ACCESS_SCOPE in scopes,
+    }
+    # One resource is the norm; list them only when something unexpected happened.
+    if len(resources) == 1:
+        facts["scope_resource"] = next(iter(resources))
+    elif resources:
+        facts["scope_resources"] = sorted(resources)
+    return facts
+
+
+def _token_facts(token: OAuthToken | None) -> dict[str, Any]:
+    """Safe, diagnostic summary of a token set — never the token values.
+
+    The three questions a lapse always turns on: *is* there a refresh token (no
+    ``offline_access`` means the credential is terminal), how long was the access
+    token minted for (a 24h refresh window looks very different from 90 days),
+    and which Entra app/tenant/audience it was minted for (the WorkIQ preview and
+    Agent 365 clients are routinely confused for one another).
+    """
+    if token is None:
+        return {"tokens": "<absent>"}
+    facts: dict[str, Any] = {
+        "expires_in": token.expires_in,
+        "has_refresh_token": bool(token.refresh_token),
+        "token_type": token.token_type,
+        **_summarize_scope(token.scope),
+    }
+    claims = _claims_from_access_token(token.access_token)
+    if claims:
+        issued, expires = claims.get("iat"), claims.get("exp")
+        facts["aud"] = claims.get("aud")
+        facts["appid"] = claims.get("appid") or claims.get("azp")
+        facts["tid"] = claims.get("tid")
+        if isinstance(issued, int) and isinstance(expires, int):
+            facts["jwt_lifetime_seconds"] = expires - issued
+    return facts
+
+
+# Entra returns its diagnosis of a refused grant in the token-endpoint body, and
+# these are the fields worth keeping. ``error_description`` carries the
+# ``AADSTS…`` code that distinguishes "expired due to inactivity" from "revoked
+# by Conditional Access" from "the app needs consent" — the single most useful
+# datum for choosing a renewal strategy, and the one the SDK discards.
+_OAUTH_ERROR_FIELDS: Final = (
+    "error",
+    "error_description",
+    "error_codes",
+    "suberror",
+    "correlation_id",
+    "trace_id",
+    "timestamp",
+)
+
+
+async def _oauth_error_facts(response: Any) -> dict[str, Any]:
+    """Pull Entra's error payload off a failed token-endpoint response.
+
+    Only ever called for a non-200 from the *token endpoint*, whose body is a
+    small JSON document — never for the MCP endpoint's streaming response.
+    """
+    try:
+        body = await response.aread()
+        payload = json.loads(body)
+    except Exception:
+        # Not JSON (an HTML error page, a proxy interstitial): keep a short
+        # excerpt, which is itself diagnostic of a captive network.
+        try:
+            return {"body_excerpt": response.text[:200]}
+        except Exception:  # pragma: no cover - defensive
+            return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {field: payload[field] for field in _OAUTH_ERROR_FIELDS if field in payload}
+
+
+# How far ahead of the real expiry a stored token is treated as already dead.
+# The check that consumes it is a plain ``now <= expiry`` comparison, so a token
+# with two seconds left passes it and then expires in flight. Standing back a
+# minute means a renewal happens just before the cliff rather than just after,
+# which is the difference between a silent refresh and a browser prompt.
+_TOKEN_EXPIRY_SKEW_SECONDS: Final = 60.0
+
+
+class _WorkIQOAuthClientProvider(OAuthClientProvider):
+    """The SDK provider, with the stored credential's expiry restored and every
+    decision reported to the trace.
+
+    **The expiry.** ``OAuthClientProvider._initialize`` loads the stored tokens
+    but *not* their expiry, and ``is_token_valid()`` treats an unknown expiry as
+    valid. A token read back from storage is therefore always considered good, so
+    ``async_auth_flow``'s refresh branch — guarded by ``not is_token_valid()`` —
+    is never entered; the 401 that eventually follows goes straight to a full
+    browser grant, which that path never attempts a refresh before. Net effect:
+    the refresh token is dead weight and every access-token expiry costs an
+    interactive sign-in. A trace over 401 real events showed 58 escalations to a
+    full authorization and **zero** refresh attempts, against credentials that
+    had a refresh token throughout. We know the true expiry —
+    :class:`DbTokenStorage` stamps the issue time precisely so it can be
+    recovered — so we put it back and the SDK's own refresh path starts working.
+
+    **The tracing.** The SDK is otherwise silent about all of this bar one
+    ``Token refresh failed: 400`` line naming neither the credential nor Entra's
+    reason. The remaining overrides are pure instrumentation — each defers to
+    ``super()`` — and hang off the SDK's own seams:
+
+    * :meth:`_initialize` — what was loaded from storage (this is where a missing
+      refresh token first becomes visible);
+    * :meth:`_refresh_token` / :meth:`_handle_refresh_response` — the silent
+      renewal we want to succeed, and the ``AADSTS…`` reason when it doesn't;
+    * :meth:`_perform_authorization` — the escalation to a full browser grant,
+      i.e. the moment the user is about to be interrupted;
+    * :meth:`_handle_token_response` — the code exchange that ends an episode.
+
+    ``purpose`` names the flow that built the provider (``background``,
+    ``interactive``, ``silent``…) so one line tells you whether a refresh was a
+    keep-alive tick or a click.
+    """
+
+    def __init__(
+        self, *args: Any, profile: WorkIQOAuthProfile, purpose: str, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._profile = profile
+        self._purpose = purpose
+
+    def _trace(self, phase: str, *, level: int = logging.INFO, **detail: Any) -> None:
+        auth_trace.record(self._profile.server, phase, level=level, purpose=self._purpose, **detail)
+
+    async def _initialize(self) -> None:
+        await super()._initialize()
+        tokens = self.context.current_tokens
+        expiry = await _stored_token_expiry(tokens, self._profile) if tokens else None
+        if expiry is not None:
+            # Without this the SDK cannot tell a fresh token from a long-dead one
+            # and so never refreshes either. A legacy token with no recorded
+            # issue time leaves it unset, which preserves the old assume-valid
+            # behaviour rather than forcing a sign-in that may not be needed.
+            self.context.token_expiry_time = expiry.timestamp() - _TOKEN_EXPIRY_SKEW_SECONDS
+        self._trace(
+            "provider loaded stored credential",
+            level=logging.DEBUG,
+            expiry_known=expiry is not None,
+            token_considered_valid=self.context.is_token_valid(),
+            **_token_facts(tokens),
+        )
+
+    async def _refresh_token(self) -> Any:
+        self._trace(
+            "silent refresh: requesting new tokens from Entra",
+            token_valid=self.context.is_token_valid(),
+        )
+        return await super()._refresh_token()
+
+    async def _handle_refresh_response(self, response: Any) -> bool:
+        if response.status_code != 200:
+            # The SDK is about to drop the tokens and fall through to a full
+            # browser grant. This is the line that explains *why* the user is
+            # about to be asked to sign in.
+            self._trace(
+                "silent refresh REFUSED by Entra",
+                level=logging.WARNING,
+                status=response.status_code,
+                **await _oauth_error_facts(response),
+            )
+            return await super()._handle_refresh_response(response)
+        ok = await super()._handle_refresh_response(response)
+        self._trace(
+            "silent refresh succeeded" if ok else "silent refresh response unusable",
+            level=logging.INFO if ok else logging.WARNING,
+            **_token_facts(self.context.current_tokens if ok else None),
+        )
+        return ok
+
+    async def _perform_authorization(self) -> Any:
+        # Reached only when a 401 survived the refresh attempt: from here the
+        # provider needs a browser, so a non-interactive flow dies at the
+        # redirect handler and an interactive one interrupts the user.
+        self._trace("escalating to a full authorization (browser grant needed)")
+        return await super()._perform_authorization()
+
+    async def _handle_token_response(self, response: Any) -> None:
+        if response.status_code != 200:
+            self._trace(
+                "authorization code exchange REFUSED by Entra",
+                level=logging.WARNING,
+                status=response.status_code,
+                **await _oauth_error_facts(response),
+            )
+            await super()._handle_token_response(response)
+            return
+        await super()._handle_token_response(response)
+        self._trace(
+            "authorization code exchanged for fresh tokens",
+            **_token_facts(self.context.current_tokens),
+        )
+
+
+# The overrides above hang off private SDK methods. An SDK upgrade that renames
+# one would not break anything — the flow still works — it would just go dark,
+# which is the failure mode this whole module exists to prevent. Say so loudly
+# once at import rather than discovering it mid-investigation.
+_TRACED_SDK_HOOKS: Final = (
+    "_initialize",
+    "_refresh_token",
+    "_handle_refresh_response",
+    "_perform_authorization",
+    "_handle_token_response",
+)
+_missing_hooks = [hook for hook in _TRACED_SDK_HOOKS if not hasattr(OAuthClientProvider, hook)]
+if _missing_hooks:  # pragma: no cover - only trips on an SDK upgrade
+    logger.warning(
+        "MCP OAuth SDK no longer exposes %s; WorkIQ auth tracing is partially blind.",
+        ", ".join(_missing_hooks),
+    )
 
 
 def build_oauth_provider(
@@ -1118,7 +1494,15 @@ def build_oauth_provider(
         response_types=["code"],
         client_name=profile.client_name,
     )
-    return OAuthClientProvider(
+    if not interactive:
+        purpose = "background"
+    elif prompt == "none":
+        purpose = "silent"
+    elif hands_free:
+        purpose = "auto-interactive"
+    else:
+        purpose = "interactive"
+    return _WorkIQOAuthClientProvider(
         server_url=profile.url,
         client_metadata=client_metadata,
         storage=DbTokenStorage(profile),
@@ -1138,11 +1522,15 @@ def build_oauth_provider(
                 _HANDS_FREE_AUTOCLOSE_SECONDS if hands_free else _CALLBACK_AUTOCLOSE_SECONDS
             ),
         ),
+        profile=profile,
+        purpose=purpose,
     )
 
 
 async def resolve_workiq_bearer_token(
     profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
+    *,
+    caller: str = "unspecified",
 ) -> tuple[str, datetime | None] | None:
     """Resolve a current WorkIQ access token plus its expiry, or ``None``.
 
@@ -1157,9 +1545,17 @@ async def resolve_workiq_bearer_token(
     the silent refresh needs an interactive sign-in. On success returns
     ``(access_token, expires_at)``; ``expires_at`` is ``None`` when the lifetime
     can't be determined (legacy token / no ``expires_in``).
+
+    This is also *the* silent-renewal path — the keep-alive's only lever — so
+    each of its three very different ``None`` returns is traced separately
+    (``caller`` naming who asked). They used to be indistinguishable, which made
+    "the token could not be renewed" unfalsifiable from the outside.
     """
     storage = DbTokenStorage(profile)
     if await storage.get_tokens() is None:
+        auth_trace.record(
+            profile.server, "silent renewal skipped — nothing stored to renew", caller=caller
+        )
         return None
     try:
         provider = build_oauth_provider(profile=profile, interactive=False)
@@ -1179,14 +1575,47 @@ async def resolve_workiq_bearer_token(
         from precursor.backend.services.mcp.client import _find_in_exception
 
         if _find_in_exception(exc, WorkIQAuthRequiredError) is not None:
+            auth_trace.record(
+                profile.server,
+                "silent renewal exhausted — an interactive sign-in is now required",
+                caller=caller,
+            )
             return None
         # A transient connect failure shouldn't strand the agent: fall back to
         # whatever token we already have stored.
         logger.warning("WorkIQ token refresh for agent attach failed: %s", exc)
+        auth_trace.record(
+            profile.server,
+            "silent renewal hit a transport error — keeping the stored token",
+            level=logging.WARNING,
+            caller=caller,
+            error=_short_error(exc),
+        )
     tokens = await storage.get_tokens()
     if tokens is None:
+        auth_trace.record(
+            profile.server,
+            "silent renewal left no usable token behind",
+            level=logging.WARNING,
+            caller=caller,
+        )
         return None
-    return tokens.access_token, await _stored_token_expiry(tokens, profile)
+    expiry = await _stored_token_expiry(tokens, profile)
+    auth_trace.record(
+        profile.server,
+        "silent renewal produced a usable token",
+        level=logging.DEBUG,
+        caller=caller,
+        expires_at=expiry.isoformat() if expiry else None,
+        **_token_facts(tokens),
+    )
+    return tokens.access_token, expiry
+
+
+def _short_error(exc: BaseException) -> str:
+    """One-line ``Type: message`` rendering for the trace, capped in length."""
+    message = str(exc).replace("\n", " ").strip()
+    return f"{type(exc).__name__}: {message}"[:300]
 
 
 async def _run_signin(provider: OAuthClientProvider, profile: WorkIQOAuthProfile) -> None:
@@ -1236,6 +1665,14 @@ async def _try_silent_reauth(
         callback_timeout=callback_timeout,
         hands_free=hands_free,
     )
+    auth_trace.record(
+        profile.server,
+        "leg ① starting: silent prompt=none authorization",
+        has_login_hint=bool(login_hint),
+        callback_timeout=callback_timeout or _CALLBACK_TIMEOUT_SECONDS,
+        os_browser_fallback=open_system_browser,
+        redirect_port=profile.redirect_port,
+    )
     try:
         await _run_signin(provider, profile)
     except Exception as exc:
@@ -1245,9 +1682,21 @@ async def _try_silent_reauth(
 
         if _find_in_exception(exc, WorkIQInteractionRequiredError) is not None:
             logger.info("%s: silent re-auth needs interaction; prompting.", profile.server)
+            auth_trace.record(
+                profile.server,
+                "leg ① gave up: Entra needs a human (or the frame was blocked)",
+                reason=_short_error(exc),
+            )
             return False
+        auth_trace.record(
+            profile.server,
+            "leg ① failed unexpectedly",
+            level=logging.WARNING,
+            error=_short_error(exc),
+        )
         raise
     logger.info("%s: silent re-auth succeeded without a prompt.", profile.server)
+    auth_trace.record(profile.server, "leg ① SUCCEEDED — renewed with zero clicks")
     return True
 
 
@@ -1293,7 +1742,23 @@ async def reauthenticate_workiq(
     it cannot be preempted. A silent/auto pass never disturbs an in-flight flow;
     an explicit interactive retry preempts a *stale* one (its popup/tab gone, so
     the abandon-cancel never fired) by signalling it to abort and taking over.
+
+    The hands-free passes (``silent_only`` / ``auto``) **put the old tokens back**
+    when they fail. They clear first so the SDK is forced through a fresh grant
+    rather than short-circuiting on a token it still considers valid — but the
+    verdict that triggered them can come from a transient 401, and a discarded
+    refresh token that was actually fine turns a blip into a mandatory
+    interactive sign-in. Restoring costs at most one doomed refresh on the next
+    connect. The explicit interactive flow keeps clearing outright: the user is
+    there, signing in.
     """
+    mode = "silent-only" if silent_only else "auto" if auto else "interactive"
+    auth_trace.begin_episode(
+        profile.server,
+        f"re-auth requested ({mode})",
+        credential_label=profile.label,
+        preferred_redirect_port=profile.redirect_port,
+    )
     lock = _lock_for(profile)
     if lock.locked():
         # A sign-in is already parked on this family's lock. A silent/auto pass
@@ -1307,13 +1772,20 @@ async def reauthenticate_workiq(
         # has arrived, so a genuinely near-complete sign-in is still left to finish
         # and we fall through to the conflict below.
         interactive = not (silent_only or auto)
+        auth_trace.record(
+            profile.server, "another sign-in already holds this credential's lock", mode=mode
+        )
         if not (interactive and cancel_reauthenticate_workiq(profile)):
             raise WorkIQAuthInProgressError(f"A {profile.label} sign-in is already in progress.")
         try:
             await asyncio.wait_for(_wait_lock_free(lock), _PREEMPT_LOCK_TIMEOUT_SECONDS)
+            auth_trace.record(profile.server, "preempted the stale sign-in and took over")
         except TimeoutError as exc:
             # The prior holder didn't release in time — its redirect landed
             # mid-cancel and it is genuinely completing. Leave it be.
+            auth_trace.record(
+                profile.server, "could not preempt — the prior sign-in is genuinely completing"
+            )
             raise WorkIQAuthInProgressError(
                 f"A {profile.label} sign-in is already in progress."
             ) from exc
@@ -1332,28 +1804,44 @@ async def reauthenticate_workiq(
                 profile = _bind_loopback_profile(profile)
             except WorkIQAuthPortBusyError as exc:
                 logger.info("%s: silent auto re-auth skipped: %s", profile.server, exc)
+                auth_trace.end_episode(
+                    profile.server, "silent-only skipped — loopback port busy", detail=str(exc)
+                )
                 return False
-            # Drop stale tokens so the flow always re-runs the grant (the retained
-            # login_hint still lets the user pick another account in the prompt).
-            await clear_workiq_oauth_tokens(profile)
             if not login_hint:
                 # Nothing to disambiguate with: Entra answers a hintless
                 # ``prompt=none`` against a browser holding several identities
                 # with AADSTS16000 — a rendered error page, not a redirect — so
                 # the loopback would just hang. Report "can't do it silently".
                 logger.info("%s: no known account; silent auto re-auth skipped.", profile.server)
+                auth_trace.end_episode(
+                    profile.server, "silent-only skipped — no remembered account to hint with"
+                )
                 return False
+            # Drop stale tokens so the flow always re-runs the grant (the retained
+            # login_hint still lets the user pick another account in the prompt),
+            # but keep them so a failed attempt can hand them back.
+            removed = await clear_workiq_oauth_tokens(profile, reason="silent-only pass")
             try:
-                return await _try_silent_reauth(
+                if await _try_silent_reauth(
                     profile=profile,
                     login_hint=login_hint,
                     open_system_browser=False,
                     callback_timeout=_SILENT_REAUTH_CALLBACK_TIMEOUT_SECONDS,
                     hands_free=True,
-                )
+                ):
+                    auth_trace.end_episode(profile.server, "renewed silently")
+                    return True
             except Exception as exc:
                 logger.info("%s: silent auto re-auth could not complete: %s", profile.server, exc)
-                return False
+                auth_trace.record(
+                    profile.server, "silent-only pass errored", error=_short_error(exc)
+                )
+            await restore_workiq_oauth_tokens(
+                profile, removed, reason="silent-only pass did not complete"
+            )
+            auth_trace.record(profile.server, "silent-only pass could not complete")
+            return False
 
         if auto:
             # Hands-free self-triggering re-auth: prefer the invisible silent pass,
@@ -1365,12 +1853,23 @@ async def reauthenticate_workiq(
                 profile = _bind_loopback_profile(profile)
             except WorkIQAuthPortBusyError as exc:
                 logger.info("%s: auto re-auth skipped: %s", profile.server, exc)
+                auth_trace.end_episode(
+                    profile.server, "auto skipped — loopback port busy", detail=str(exc)
+                )
                 return False
-            await clear_workiq_oauth_tokens(profile)
+            removed = await clear_workiq_oauth_tokens(profile, reason="hands-free auto re-auth")
             _active_signin_cancels[profile.auth_family] = asyncio.Event()
+            silent_enabled = get_settings().workiq_silent_reauth_enabled
+            if not (silent_enabled and login_hint):
+                auth_trace.record(
+                    profile.server,
+                    "leg ① skipped",
+                    silent_reauth_enabled=silent_enabled,
+                    has_login_hint=bool(login_hint),
+                )
             try:
                 if (
-                    get_settings().workiq_silent_reauth_enabled
+                    silent_enabled
                     and login_hint
                     and await _try_silent_reauth(
                         profile=profile,
@@ -1380,11 +1879,18 @@ async def reauthenticate_workiq(
                         hands_free=True,
                     )
                 ):
+                    auth_trace.end_episode(profile.server, "renewed silently")
                     return True
                 # Silent pass needs a human — self-trigger the visible prompt via
                 # the OS browser (no popup gesture). Don't publish the URL: the
                 # silent frame is still attached and would otherwise race the OS
                 # browser for the single loopback port.
+                auth_trace.record(
+                    profile.server,
+                    "leg ② starting: self-opening the OS browser for a visible prompt",
+                    has_login_hint=bool(login_hint),
+                    redirect_port=profile.redirect_port,
+                )
                 provider = build_oauth_provider(
                     profile=profile,
                     interactive=True,
@@ -1395,9 +1901,18 @@ async def reauthenticate_workiq(
                     hands_free=True,
                 )
                 await _run_signin(provider, profile)
+                auth_trace.end_episode(profile.server, "renewed via the self-opened OS browser")
                 return True
             except Exception as exc:
                 logger.info("%s: auto re-auth could not complete: %s", profile.server, exc)
+                await restore_workiq_oauth_tokens(
+                    profile, removed, reason="auto re-auth did not complete"
+                )
+                auth_trace.record(
+                    profile.server,
+                    "hands-free re-auth exhausted — the manual banner is next",
+                    error=_short_error(exc),
+                )
                 return False
             finally:
                 _active_signin_cancels.pop(profile.auth_family, None)
@@ -1409,7 +1924,7 @@ async def reauthenticate_workiq(
         profile = _bind_loopback_profile(profile)
         # Drop stale tokens so the flow always re-runs the grant (the retained
         # login_hint still lets the user pick another account in the prompt).
-        await clear_workiq_oauth_tokens(profile)
+        await clear_workiq_oauth_tokens(profile, reason="interactive sign-in")
 
         # Arm the cancel channel so the SPA can abort this sign-in (freeing the
         # loopback port immediately) when its popup is closed without finishing.
@@ -1424,8 +1939,16 @@ async def reauthenticate_workiq(
                     open_system_browser=open_system_browser,
                 )
             ):
+                auth_trace.end_episode(profile.server, "renewed silently on the manual click")
                 return True
 
+            auth_trace.record(
+                profile.server,
+                "visible prompt starting",
+                os_browser_fallback=open_system_browser,
+                has_login_hint=bool(login_hint),
+                redirect_port=profile.redirect_port,
+            )
             provider = build_oauth_provider(
                 profile=profile,
                 interactive=True,
@@ -1434,6 +1957,12 @@ async def reauthenticate_workiq(
                 prompt=_interactive_prompt(login_hint),
             )
             await _run_signin(provider, profile)
+            auth_trace.end_episode(profile.server, "renewed by a manual sign-in")
             return True
+        except Exception as exc:
+            auth_trace.record(
+                profile.server, "manual sign-in did not complete", error=_short_error(exc)
+            )
+            raise
         finally:
             _active_signin_cancels.pop(profile.auth_family, None)
