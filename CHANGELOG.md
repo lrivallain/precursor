@@ -29,7 +29,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   Extras are additive and de-duplicated by project, and once boards come from
   more than one account the picker labels each with its owner, which is what
   tells two projects called "Roadmap" apart. A source you have lost access to is
-  skipped rather than taking the whole picker down.
+  skipped rather than taking the whole picker down. The board's sidebar header
+  gained a **+** for it, in the section's own tint: a plugin section can now
+  supply the header's "New …" action (`onNew`) and reach its own settings page
+  (`SectionHost.openSettings`), so core keeps owning where the button sits while
+  the section decides what it means.
 
 - **Plugins are now a real extension system, and the Kanban board is the first
   one.** A plugin is one Python package that can bring three things at once — a

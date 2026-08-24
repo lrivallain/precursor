@@ -158,9 +158,19 @@ whose section is nowhere to be seen is otherwise indistinguishable from a broken
 one.
 
 `Provider` wraps the app shell while the section is active, which is where shared
-state goes: `Sidebar` and `Main` render into different subtrees. Declaring
-`newLabel` adds a "New …" button to the sidebar header; omit it and core hides
-the `+`.
+state goes: `Sidebar` and `Main` render into different subtrees.
+
+`onNew` puts a "New …" button in the sidebar header, labelled by `newLabel` and
+tinted with the section's own palette — core owns the button so every section's
+sits in the same place, the section owns what it does. Omit `onNew` and there is
+no button; a label with nothing behind it is worse than none. The kanban board
+uses it to open its own settings, since "new" there means "track another
+project":
+
+```tsx
+newLabel: "Add a project",
+onNew: (host) => host.openSettings("kanban"),
+```
 
 ### Settings pages
 
@@ -220,6 +230,7 @@ Every section component receives a `host` — the only thing core promises it:
 | `hash` | Current URL hash, without the `#`. |
 | `navigate(segments, hash?, { push })` | Rewrite the section-relative URL (idempotent). |
 | `openTopic(id)` | Leave the section and open a topic. |
+| `openSettings(pageId?)` | Open the Settings modal, on a plugin's own page when named. |
 | `settings` | App settings, or `null` while they load. |
 
 ### `@precursor/host`

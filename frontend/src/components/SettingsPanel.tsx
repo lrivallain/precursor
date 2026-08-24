@@ -142,6 +142,11 @@ interface CategoryDef {
 // content area — and the widened `Category` type would not catch it.
 const PLUGIN_TAB_PREFIX = "plugin:";
 
+/** Settings tab id for a plugin's page. The one place that encodes the scheme. */
+export function pluginSettingsTab(pageId: string): string {
+  return `${PLUGIN_TAB_PREFIX}${pageId}`;
+}
+
 // Groups in nav order. "Plugins" is declared here but populated at runtime from
 // whatever plugins publish a settings page; `SidebarTabs` hides it when empty.
 const SETTINGS_GROUPS: readonly SettingsGroup[] = [

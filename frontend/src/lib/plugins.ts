@@ -83,6 +83,14 @@ export interface SectionHost {
   navigate: (segments: string[], hash?: string, opts?: { push?: boolean }) => void;
   /** Leave the section and open a Precursor topic. */
   openTopic: (topicId: number) => void;
+  /**
+   * Open the Settings modal, on a plugin's own page when one is named.
+   *
+   * Pass the settings-page id (usually the plugin's own); the host handles
+   * addressing it, so a plugin never has to know how tabs are keyed. With no
+   * argument it opens the Plugins list.
+   */
+  openSettings: (pluginPageId?: string) => void;
   /** App settings, or `null` while they load. */
   settings: Settings | null;
 }
@@ -109,9 +117,16 @@ export interface SectionPlugin {
   keywords?: string;
   /**
    * Label for the header "New …" action. Omit for a section with no create
-   * flow — core then hides the "+" affordance entirely.
+   * flow — core then hides the "+" affordance entirely. Pair it with `onNew`,
+   * which is what the button actually does.
    */
   newLabel?: string;
+  /**
+   * Run the section's "New …" action. Core owns the button (so every section's
+   * sits in the same place and wears the section's own tint) and the section
+   * owns what it means.
+   */
+  onNew?: (host: SectionHost) => void;
   /** Tailwind class tokens for the section's colour scheme. */
   colors: SectionColor;
   /** `--section-accent` in light / dark, injected as a stylesheet on register. */

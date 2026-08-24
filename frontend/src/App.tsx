@@ -26,7 +26,7 @@ import { ChatList } from "./components/ChatList";
 import { ChatSessionPanel } from "./components/ChatSessionPanel";
 import { ChatSettingsPanel } from "./components/ChatSettingsPanel";
 import { McpAuthBanner } from "./components/McpAuthBanner";
-import { SettingsPanel } from "./components/SettingsPanel";
+import { SettingsPanel, pluginSettingsTab } from "./components/SettingsPanel";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
 import { ChatStartHero, TopicStartHero } from "./components/StartHero";
 import { HomePage } from "./components/HomePage";
@@ -421,9 +421,11 @@ export default function App() {
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
-  const [settingsCategory, setSettingsCategory] = useState<
-    "collections" | "agents" | undefined
-  >(undefined);
+  // Core categories plus, via `SectionHost.openSettings`, a plugin page's tab id
+  // (`plugin:<id>` — see SettingsPanel), which is why this isn't a closed union.
+  const [settingsCategory, setSettingsCategory] = useState<string | undefined>(
+    undefined,
+  );
   // AgentView's "Open Settings" only ever appears in its "Agents mode is off"
   // state, so it lands on the Agents category rather than making the user hunt
   // for the toggle it just told them to flip.
@@ -1933,10 +1935,10 @@ export default function App() {
       setActiveWorkflowRunSeg(null);
       setWorkflowNewSignal((n) => n + 1);
     }
-    // Plugin sections declare their own create flow (or none at all), so core
-    // has nothing to do for them — the header hides the "+" accordingly.
+    // Core owns the button; the section owns what it means. A section with no
+    // `onNew` has no "+" either (see `supportsNew` in Sidebar).
     else if (isPluginMode(sidebarMode)) {
-      /* handled by the section, if it offers one */
+      activeSection?.onNew?.(sectionHost);
     } else setCreateWorkspaceOpen(true);
   }
 
@@ -1990,6 +1992,10 @@ export default function App() {
       openTopic: (topicId: number) => {
         void changeModeRef.current("topics");
         void handleSelectRef.current(topicId);
+      },
+      openSettings: (pluginPageId?: string) => {
+        setSettingsCategory(pluginPageId ? pluginSettingsTab(pluginPageId) : "plugins");
+        setGlobalSettingsOpen(true);
       },
       settings,
     }),

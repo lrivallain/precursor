@@ -99,6 +99,10 @@ registerSection({
     }
     return null;
   },
+  // The board's "New" is "track another project", which lives in this plugin's
+  // own settings — so the header "+" opens it rather than being absent.
+  newLabel: "Add a project",
+  onNew: (host) => host.openSettings(KANBAN_SECTION_ID),
   Provider: ({ host, children }: { host: SectionHost; children: React.ReactNode }) => (
     <KanbanProvider host={host}>{children}</KanbanProvider>
   ),

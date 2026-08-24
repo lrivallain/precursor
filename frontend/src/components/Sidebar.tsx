@@ -84,10 +84,11 @@ function newActionLabel(mode: SidebarMode, section: SectionPlugin | null): strin
   }
 }
 
-// Whether a section offers a "New …" action at all. Plugin sections opt in by
-// declaring a `newLabel`; core's own always do.
+// Whether a section offers a "New …" action at all. A plugin section opts in by
+// providing `onNew` — the handler, not the label, since a labelled button with
+// nothing behind it is worse than no button. Core's own sections always do.
 function supportsNew(mode: SidebarMode, section: SectionPlugin | null): boolean {
-  if (section) return section.newLabel != null;
+  if (section) return section.onNew != null;
   return CORE_MODE_KEYS.has(mode);
 }
 
