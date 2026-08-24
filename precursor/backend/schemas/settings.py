@@ -55,6 +55,7 @@ class SettingsPayload(BaseModel):
     mcp_expose: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
     mcp_http_enabled: bool | None = None
+    plugin_install_enabled: bool | None = None
     # Entra tenant GUID for the Agent 365 MCP servers (workiq-teams / workiq-user).
     workiq_tenant_id: str | None = None
     # Browser channel the built-in 'playwright' server drives (--browser).
@@ -141,6 +142,7 @@ class SettingsRead(BaseModel):
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
     # HTTP transport for the built-in 'precursor' MCP server.
     mcp_http_enabled: bool = False
+    plugin_install_enabled: bool = False
     # Effective localhost endpoint URL, or null when the app isn't loopback-bound.
     mcp_http_url: str | None = None
     # True when the app is bound to a loopback host (HTTP transport is allowed).

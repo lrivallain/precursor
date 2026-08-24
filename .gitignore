@@ -62,3 +62,7 @@ website/.vitepress/cache/
 # Scratch dir for the documentation-screenshot demo instance (seeded database,
 # data dir, demo skills and a local Playwright install). See scripts/seed_demo.py.
 .demo/
+
+# Built frontend of an in-repo plugin: `make plugins-build` compiles
+# plugins/<dist>/web/src into the Python package, where it ships in the wheel.
+plugins/*/src/*/web/

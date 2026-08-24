@@ -55,6 +55,12 @@ postgres = ["asyncpg>=0.31"]
 # installing it is opt-in to avoid forcing that payload on every install. Run
 # the app with it via `uv run --extra agents precursor --dev` (or `make dev`).
 agents = ["github-copilot-sdk>=1.0"]
+# The kanban board (GitHub Projects v2) ships as the first official plugin — a
+# separate distribution under plugins/precursor-kanban with its own routes,
+# schemas and release cadence. It stays in the default install via this extra so
+# `pip install precursor-ai[kanban]` (or the dev workspace) keeps the section,
+# while `pip install precursor-ai` gets a core with no GitHub Projects surface.
+kanban = ["precursor-kanban>=0.1"]
 
 # Dev tooling lives in a PEP 735 dependency group rather than an extra, so uv
 # includes it by DEFAULT on every `uv run` / `uv sync` (no `--extra dev` to
@@ -63,6 +69,9 @@ agents = ["github-copilot-sdk>=1.0"]
 # so `pip install precursor-ai` is unaffected.
 [dependency-groups]
 dev = [
+    # In-repo plugins, installed editable so the host resolves their entry points
+    # during development and CI (mirrors `precursor-ai[kanban]` for end users).
+    "precursor-kanban",
     "ruff>=0.15",
     "mypy>=2.1",
     "pytest>=9.1",
@@ -82,7 +91,8 @@ precursor = "precursor.backend.__main__:main"
 # Plugin discovery — third-party packages register entry points under this group.
 # A plugin module must expose a `register(registry)` callable.
 [project.entry-points."precursor.plugins"]
-# example_plugin = "my_pkg.precursor_plugin:register"
+# Core registers no plugins itself; the group exists so third-party (and our
+# own, e.g. precursor-kanban) distributions can hook in. See docs/plugins.md.
 
 [project.urls]
 Homepage = "https://github.com/lrivallain/precursor"
@@ -92,6 +102,15 @@ Changelog = "https://github.com/lrivallain/precursor/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["precursor"]
+
+# In-repo plugins are separate distributions resolved from the working tree, so
+# `uv sync` installs them editable alongside the host and `make check` type-checks
+# and tests them against the live plugin API.
+[tool.uv.sources]
+precursor-kanban = { workspace = true }
+
+[tool.uv.workspace]
+members = ["plugins/*"]
 
 # The built SPA (frontend/dist) is bundled inside the package as
 # precursor/frontend_dist so an installed wheel is self-contained — `uvx
@@ -141,12 +160,20 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # B008: FastAPI's `Depends()` / `Query()` defaults are the framework idiom.
 ignore = ["E501", "B008"]
 
+# In-repo plugins live under their own src roots, so ruff can't infer that they
+# are ours. Naming them keeps host and plugin imports in one first-party block.
+[tool.ruff.lint.isort]
+known-first-party = ["precursor", "precursor_kanban"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 exclude = ["frontend/", "precursor/backend/alembic/versions/"]
+# In-repo plugins live under a src layout, so point mypy at their source roots.
+mypy_path = "plugins/precursor-kanban/src"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+# Core suite plus every in-repo plugin's own tests, so `make test` covers both.
+testpaths = ["tests", "plugins/precursor-kanban/tests"]

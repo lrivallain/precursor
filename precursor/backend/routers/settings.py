@@ -38,6 +38,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_provider,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
+    resolve_plugin_install_enabled,
     resolve_system_settings,
     resolve_workflows_default_capabilities,
     resolve_workflows_default_step_timeout,
@@ -124,6 +125,7 @@ async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
     tenant = configured or await discover_tenant_id()
     return {
         "mcp_http_enabled": await resolve_mcp_http_enabled(session),
+        "plugin_install_enabled": await resolve_plugin_install_enabled(session),
         "mcp_http_url": http_endpoint_url(),
         "mcp_http_loopback_ok": is_loopback_host(cfg.host),
         "workiq_tenant_id": tenant,

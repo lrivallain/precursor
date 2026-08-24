@@ -13,7 +13,7 @@ couple of minutes. If you haven't installed Precursor yet, see the
 ```bash
 uv run precursor --dev        # dev stack (hot reload + Vite HMR)
 # or, from a published build:
-uvx precursor-ai              # single-process, zero setup
+uvx "precursor-ai[kanban]"    # single-process, zero setup
 ```
 
 Open the URL printed in the startup banner. You'll land on the **home** launcher:

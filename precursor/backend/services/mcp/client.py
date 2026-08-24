@@ -152,7 +152,12 @@ class MCPServerEntry:
     # WorkIQ preview OAuth provider). When set, the transport authenticates via
     # this instead of (or in addition to) ``headers_provider``.
     auth_provider: httpx.Auth | None = None
+    # False only for user-defined (DB-backed, editable) entries. A plugin's
+    # servers are ``True`` — the user can enable/disable them but not edit them.
     builtin: bool = True
+    # Id of the plugin that contributed this entry, for provenance in the UI.
+    # ``None`` for core's own built-ins and for user-defined servers.
+    plugin_id: str | None = None
     state: ConnectionState = "disconnected"
     error: str | None = None
     tools: list[MCPToolDef] = field(default_factory=list)
@@ -605,6 +610,61 @@ class MCPClientManager:
         self._servers[name] = entry
         return entry
 
+    def register_plugin_entry(
+        self,
+        *,
+        plugin_id: str,
+        name: str,
+        transport: Literal["streamable_http", "stdio"],
+        url: str | None = None,
+        command: str | None = None,
+        args: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        forward_env: bool = False,
+    ) -> MCPServerEntry:
+        """Register a server contributed by a plugin.
+
+        Plugin entries join the same catalogue as the built-ins, so they inherit
+        the existing per-surface toggles, probing and tool plumbing for free.
+        They are marked ``builtin`` because they are not user-editable rows, and
+        carry ``plugin_id`` so the UI can attribute them.
+
+        Names are namespaced by the caller (see ``PluginRegistry.add_mcp_server``)
+        so two plugins can't collide, and a core built-in always wins.
+        """
+        existing = self._servers.get(name)
+        if existing is not None and existing.plugin_id is None:
+            raise ValueError(f"'{name}' is already registered by core or a user server")
+        static_headers = dict(headers) if headers else None
+        provider: HeadersProvider | None = (
+            (lambda _token, h=static_headers: dict(h)) if static_headers else None
+        )
+        entry = MCPServerEntry(
+            name=name,
+            transport=transport,
+            url=url,
+            command=command,
+            args=list(args or []),
+            # Plugins ship in the app's own environment, so an in-process stdio
+            # server needs the same DB/config access the in-tree ones get.
+            env=dict(os.environ) if forward_env else None,
+            headers_provider=provider,
+            builtin=True,
+            plugin_id=plugin_id,
+        )
+        self._servers[name] = entry
+        return entry
+
+    def plugin_entry_names(self) -> set[str]:
+        return {name for name, e in self._servers.items() if e.plugin_id is not None}
+
+    def unregister_plugin_entry(self, name: str) -> bool:
+        entry = self._servers.get(name)
+        if entry is None or entry.plugin_id is None:
+            return False
+        del self._servers[name]
+        return True
+
     def unregister_user_entry(self, name: str) -> bool:
         entry = self._servers.get(name)
         if entry is None or entry.builtin:
@@ -959,6 +1019,8 @@ class MCPClientManager:
             "error": entry.error,
             "tools": [{"name": t.name, "description": t.description} for t in entry.tools],
             "builtin": entry.builtin,
+            # Which plugin contributed this server, or None for core/user ones.
+            "plugin_id": entry.plugin_id,
             "enabled": enabled,
             # Preview toggle is workiq-specific; None means "not applicable" so
             # the UI only renders the extra checkbox for that server.

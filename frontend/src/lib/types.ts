@@ -966,6 +966,7 @@ export interface Settings {
   mcp_expose: Record<string, boolean>;
   // HTTP transport for the built-in 'precursor' MCP server.
   mcp_http_enabled: boolean;
+  plugin_install_enabled: boolean;
   mcp_http_url: string | null;
   mcp_http_loopback_ok: boolean;
   // Tenant GUID used by the Agent 365 servers (workiq-teams / workiq-user).
@@ -1046,6 +1047,7 @@ export interface SettingsUpdate {
   live_reasoning_effort?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
+  plugin_install_enabled?: boolean;
   workiq_tenant_id?: string;
   playwright_browser?: string;
   llm_max_input_tokens?: number;
@@ -1107,43 +1109,9 @@ export interface GitHubIssue {
   updated_at: string;
 }
 
-// --- GitHub Projects v2 (kanban board) ---
-// Mirrors precursor.backend.schemas.projects.
-
-export interface ProjectSummary {
-  id: string;
-  number: number;
-  title: string;
-  url: string | null;
-  closed: boolean;
-  short_description: string | null;
-}
-
-export interface ProjectColumn {
-  id: string;
-  name: string;
-}
-
-export interface ProjectStatusField {
-  id: string;
-  name: string;
-  options: ProjectColumn[];
-}
-
-export interface ProjectCard {
-  // ProjectV2 item id — the handle used for status mutations.
-  id: string;
-  type: "issue" | "pull_request";
-  number: number | null;
-  title: string;
-  url: string | null;
-  state: string | null;
-  // owner/name of the item's source repo (ProjectsV2 can span repos).
-  repo: string | null;
-  status_option_id: string | null;
-  status_name: string | null;
-  labels: IssueLabel[];
-}
+// The GitHub issue read models below mirror precursor.backend.schemas.issues.
+// The Projects v2 board models live with the kanban plugin
+// (frontend/src/plugins/kanban/types.ts).
 
 export interface IssueComment {
   id: number;
@@ -1165,20 +1133,6 @@ export interface IssueDetail {
   linked_topic_id: number | null;
   linked_topic_title: string | null;
 }
-
-export interface ProjectBoard {
-  id: string;
-  title: string;
-  url: string | null;
-  status_field: ProjectStatusField | null;
-  items: ProjectCard[];
-}
-
-export interface ItemStatusResult {
-  item_id: string;
-  option_id: string;
-}
-
 
 export interface MCPTool {
   name: string;
@@ -1347,12 +1301,58 @@ export interface GhCloseResult {
   message: Message;
 }
 
+/**
+ * A contribution a backend plugin published via `GET /api/plugins`.
+ * Mirrors precursor.backend.plugins.registry.FrontendExtension.
+ */
 export interface PluginDescriptor {
   id: string;
   kind: string;
   slot: string;
   title: string;
+  /** Plugin-defined payload. Sections use `order`; the `id` is the URL segment. */
   config: Record<string, unknown>;
+  /** Which plugin contributed this. */
+  plugin_id: string;
+  /**
+   * URL of the plugin's built ES module, when it ships one. The SPA imports it
+   * before resolving the descriptor, so an out-of-tree plugin can register its
+   * own React components. `null` for plugins bundled into the core SPA.
+   */
+  entry: string | null;
+}
+
+/** How a plugin can be installed into this instance. */
+export interface PluginEnvironment {
+  /** "uv-tool" | "uv-venv" | "pip" — which installer owns the environment. */
+  installer: string;
+  /** The command a user can run themselves, with `<package>` to substitute. */
+  command_template: string;
+  python: string;
+  /** Whether the server may run the install itself right now. */
+  can_install: boolean;
+  /** Whether it *could*, if the user opted in — drives the opt-in checkbox. */
+  installable_here: boolean;
+  reason: string | null;
+  restart_supported: boolean;
+}
+
+/** An installed plugin as reported by `GET /api/plugins/installed`. */
+export interface InstalledPlugin {
+  id: string;
+  distribution: string | null;
+  version: string | null;
+  summary: string | null;
+  homepage: string | null;
+  enabled: boolean;
+  /** Non-null when the plugin's `register()` raised; it can't be enabled. */
+  error: string | null;
+  entry: string | null;
+  sections: Array<{ id: string; title: string }>;
+  extensions: Array<{ id: string; kind: string; slot: string; title: string }>;
+  /** Route prefixes the plugin mounted, e.g. `/api/github/projects`. */
+  routes: string[];
+  mcp_servers: Array<{ name: string; title: string }>;
 }
 
 export interface GitHubIdentity {

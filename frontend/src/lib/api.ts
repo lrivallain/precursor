@@ -43,7 +43,6 @@ import type {
   IssueLabel,
   IssuePushResult,
   IssueSummary,
-  ItemStatusResult,
   LLMModel,
   LLMProviderSpec,
   LocalPath,
@@ -68,9 +67,9 @@ import type {
   Message,
   NotesDraft,
   NoteDraftAttachment,
+  InstalledPlugin,
   PluginDescriptor,
-  ProjectBoard,
-  ProjectSummary,
+  PluginEnvironment,
   IssueDetail,
   Reminder,
   ReminderContainer,
@@ -120,7 +119,12 @@ import type {
 } from "./types";
 import { CLIENT_ID } from "./clientId";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Issue a JSON API request with the shared headers + error unwrapping. Exported
+ * so plugin bundles (`src/plugins/*`) can call their own backend routes without
+ * re-implementing the transport — see `plugins/kanban/api.ts`.
+ */
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: {
       "Content-Type": "application/json",
@@ -774,13 +778,6 @@ export const api = {
         body: JSON.stringify(data),
       }),
 
-    // Projects v2 (kanban board)
-    listProjects: (repo?: string) => {
-      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
-      return request<ProjectSummary[]>(`/api/github/projects${qs}`);
-    },
-    projectBoard: (projectId: string) =>
-      request<ProjectBoard>(`/api/github/projects/${encodeURIComponent(projectId)}/board`),
     getIssue: (number: number, repo?: string) => {
       const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
       return request<IssueDetail>(`/api/github/issues/${number}${qs}`);
@@ -799,18 +796,6 @@ export const api = {
       const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
       return request<IssueLabel[]>(`/api/github/labels${qs}`);
     },
-    setProjectItemStatus: (
-      projectId: string,
-      itemId: string,
-      data: { field_id: string; option_id: string },
-    ) =>
-      request<ItemStatusResult>(
-        `/api/github/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(
-          itemId,
-        )}/status`,
-        { method: "POST", body: JSON.stringify(data) },
-      ),
-
     // Summaries
     summarizeIssue: (topicId: number, opts: { force?: boolean } = {}) =>
       request<IssueSummary>(
@@ -968,8 +953,42 @@ export const api = {
   },
 
   plugins: {
-    // Plugins
+    /** Frontend extension descriptors from every enabled plugin. */
     list: () => request<PluginDescriptor[]>(`/api/plugins`),
+    /** Every installed plugin, enabled or not, for the Settings panel. */
+    installed: () => request<InstalledPlugin[]>(`/api/plugins/installed`),
+    setEnabled: (id: string, enabled: boolean) =>
+      request<{ id: string; enabled: boolean }>(
+        `/api/plugins/installed/${encodeURIComponent(id)}`,
+        { method: "PUT", body: JSON.stringify({ enabled }) },
+      ),
+    /** How to install into this instance (and whether the app may do it). */
+    environment: () => request<PluginEnvironment>(`/api/plugins/environment`),
+    install: (pkg: string) =>
+      request<{ package: string; output: string; restart_required: boolean }>(
+        `/api/plugins/install`,
+        { method: "POST", body: JSON.stringify({ package: pkg }) },
+      ),
+    uninstall: (id: string) =>
+      request<{ package: string; output: string; restart_required: boolean }>(
+        `/api/plugins/installed/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ),
+    /** Restart the server so plugin discovery runs again. */
+    restart: () =>
+      request<{ status: string }>(`/api/plugins/restart`, { method: "POST" }),
+    /** A plugin's own settings blob — opaque to core. */
+    settings: {
+      get: (id: string) =>
+        request<Record<string, unknown>>(
+          `/api/plugins/installed/${encodeURIComponent(id)}/settings`,
+        ),
+      put: (id: string, values: Record<string, unknown>) =>
+        request<Record<string, unknown>>(
+          `/api/plugins/installed/${encodeURIComponent(id)}/settings`,
+          { method: "PUT", body: JSON.stringify(values) },
+        ),
+    },
   },
 
   skills: {

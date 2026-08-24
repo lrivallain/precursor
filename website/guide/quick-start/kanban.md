@@ -5,14 +5,27 @@ title: Quick start — Kanban
 # Quick start: Kanban
 
 [Kanban](/features/kanban) renders a GitHub **Projects v2** board inside
-Precursor, so your issues are visible next to the conversations about them.
+Precursor, so your issues are visible next to the conversations about them. It
+ships as a [plugin](/features/plugins), so it is installed rather than built in.
 
 ## Make the section appear
 
-Kanban is hidden until two things are true in **Settings**:
+First it has to be **installed** — it rides along with the `kanban` extra, which
+the recommended install already includes:
 
-1. a **global GitHub repo** is set — its owner's projects are what gets listed;
+```bash
+uv tool install "precursor-ai[kanban]"
+# or, into an existing install
+uv pip install precursor-kanban
+```
+
+Then two things have to be true in **Settings**:
+
+1. a **global GitHub repo** is set — its owner's projects are the default listing;
 2. **issue associations** are enabled.
+
+Turn either off and the section withdraws. **Settings → Plugins** says which one
+is missing if it doesn't appear.
 
 Your token also needs Projects access (the `read:project` scope, or a
 fine-grained token with Projects read). Precursor resolves it from
@@ -31,6 +44,14 @@ Open **Kanban** and pick one of your projects:
 
 Open a card to preview the full issue without leaving Precursor — body, labels
 and comments — and post a comment or edit labels from there.
+
+## Boards from other accounts
+
+The default listing is the projects owned by whoever owns your configured repo.
+To follow someone else's board — a customer's roadmap, another org — add it in
+**Settings → Plugins → Kanban** (or hit the **+** in the board's header): an
+account name adds every open project it owns, `owner#number` or a project URL
+adds just that one.
 
 ::: tip Pairs with the scheduler
 Combine the board with a [scheduled topic](/features/scheduler) — a nightly

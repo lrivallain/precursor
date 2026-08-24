@@ -14,14 +14,14 @@ import {
   Radio,
   Search,
   Sparkles,
-  SquareKanban,
   StickyNote,
   Type,
   User,
   Workflow,
 } from "lucide-react";
 import type { SidebarMode } from "./Sidebar";
-import { SECTION_COLORS } from "../lib/sections";
+import { sectionColor } from "../lib/sections";
+import type { SectionPlugin } from "../lib/plugins";
 import { Modal } from "./Modal";
 import { api } from "../lib/api";
 import type { AgentSession, SearchField, SearchResult, SearchSection } from "../lib/types";
@@ -29,7 +29,7 @@ import { agentNeedsAttention, sortAgentsByUrgency } from "../lib/agents";
 
 /**
  * A single jump target in the palette. `mode` drives the icon tint (via
- * SECTION_COLORS) and is undefined for the Home target, which has its own
+ * sectionColor) and is undefined for the Home target, which has its own
  * neutral accent.
  */
 interface PaletteItem {
@@ -60,7 +60,8 @@ interface Props {
   /** Jump straight to a specific agent session. */
   onOpenAgent?: (id: number) => void;
   liveEnabled?: boolean;
-  kanbanEnabled?: boolean;
+  /** Plugin-contributed sections, listed after core's own. */
+  pluginSections?: SectionPlugin[];
   /**
    * Seed the input with the ongoing search term (from `?q=`) so reopening the
    * palette after picking a hit continues the same search instead of starting
@@ -69,7 +70,7 @@ interface Props {
   initialQuery?: string;
 }
 
-// Section → icon for a content hit's left badge (tinted via SECTION_COLORS).
+// Section → icon for a content hit's left badge (tinted via sectionColor).
 const SECTION_ICON: Record<SearchSection, ComponentType<{ size?: number; className?: string }>> = {
   topics: MessagesSquare,
   chats: MessageSquare,
@@ -150,7 +151,7 @@ export function CommandPalette({
   agents = [],
   onOpenAgent,
   liveEnabled = true,
-  kanbanEnabled = false,
+  pluginSections = [],
   initialQuery = "",
 }: Props) {
   const [query, setQuery] = useState(initialQuery);
@@ -259,19 +260,15 @@ export function CommandPalette({
         mode: "workflows",
         run: nav("workflows"),
       },
-      ...(kanbanEnabled
-        ? [
-            {
-              id: "kanban",
-              label: "Kanban",
-              hint: "Issue board",
-              keywords: "kanban board issues tracking",
-              icon: SquareKanban,
-              mode: "kanban" as const,
-              run: nav("kanban"),
-            },
-          ]
-        : []),
+      ...pluginSections.map((plugin) => ({
+        id: plugin.id,
+        label: plugin.label,
+        hint: plugin.description,
+        keywords: `${plugin.label} ${plugin.keywords ?? ""}`.toLowerCase(),
+        icon: plugin.icon,
+        mode: plugin.id,
+        run: nav(plugin.id),
+      })),
       {
         id: "docs",
         label: "Documentation",
@@ -285,7 +282,7 @@ export function CommandPalette({
       },
     ];
     return all;
-  }, [liveEnabled, kanbanEnabled, onNavigate, onGoHome, onClose, agents, onOpenAgent]);
+  }, [liveEnabled, pluginSections, onNavigate, onGoHome, onClose, agents, onOpenAgent]);
 
   const sections = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -397,8 +394,8 @@ export function CommandPalette({
 
   function resultRow(r: SearchResult, index: number): ReactNode {
     const isActive = index === active;
-    const tint = SECTION_COLORS[r.section].icon;
-    const accent = SECTION_COLORS[r.section].accentText;
+    const tint = sectionColor(r.section).icon;
+    const accent = sectionColor(r.section).accentText;
     const SectionIcon = SECTION_ICON[r.section];
     const meta = FIELD_META[r.field];
     const FieldIcon = meta.icon;
@@ -501,7 +498,7 @@ export function CommandPalette({
             {sections.map((it, i) => {
               const isActive = i === active;
               const tint = it.mode
-                ? SECTION_COLORS[it.mode].icon
+                ? sectionColor(it.mode).icon
                 : "bg-accent/10 text-accent";
               return (
                 <li key={it.id}>

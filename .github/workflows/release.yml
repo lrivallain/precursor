@@ -36,6 +36,12 @@ jobs:
           npm ci
           npm run build
 
+      # Each in-repo plugin's UI is built into its own Python package, so it
+      # ships inside that plugin's wheel and Precursor can serve it. Without
+      # this a released plugin would have a backend but no interface.
+      - name: Build plugin frontends
+        run: make plugins-build
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:

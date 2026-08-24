@@ -194,6 +194,16 @@ const scenes = {
     },
   },
 
+  // Settings → Plugins: the installed packages and what each contributes.
+  plugins: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Plugins");
+      return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
   // Settings → System, where the command-runner sandbox is configured.
   "command-runner": {
     viewport: { width: 1440, height: 1000 },

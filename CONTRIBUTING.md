@@ -61,7 +61,7 @@ make check
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy precursor
+uv run mypy precursor plugins/precursor-kanban/src
 uv run pytest
 
 npm --prefix frontend run typecheck
@@ -71,11 +71,39 @@ npm --prefix frontend run build
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
 
-The suite is hermetic: `tests/conftest.py` points the app at a throwaway
+The suite is hermetic: the root `conftest.py` points the app at a throwaway
 database, skills and data directory, and keeps the LLM provider on the offline
 `MockProvider` by hiding any GitHub token from it. So `make check` behaves the
 same whether or not you're signed in to `gh` — a test that needs model output
-injects its own fake provider rather than calling one.
+injects its own fake provider rather than calling one. It lives at the
+repository root, not under `tests/`, so in-repo plugins get the same isolation.
+
+## In-repo plugins
+
+Anything that isn't "topics, chat, GitHub" belongs in a plugin rather than in
+core — see [docs/plugins.md](docs/plugins.md) for the contract, and
+`plugins/precursor-kanban/` for a worked example.
+
+An in-repo plugin is a separate distribution and a `uv` workspace member
+(`[tool.uv.workspace] members = ["plugins/*"]`), so `uv sync` installs it
+editable and `make check` lints, type-checks and tests it alongside core.
+
+Its **frontend** lives in `plugins/<dist>/web/src` and builds into the Python
+package (`plugins/<dist>/src/<module>/web`), so it ships in the wheel and
+Precursor serves it at runtime:
+
+```bash
+make plugins-build      # add the distribution name to PLUGINS in the Makefile
+```
+
+It builds with the *host's* Vite/React toolchain rather than its own npm
+project. That avoids a second lockfile and — the real reason — guarantees the
+plugin compiles against exactly the React it will share at runtime. Its sources
+are type-checked by `npm --prefix frontend run typecheck`.
+
+Ship a plugin to users as an optional extra on `precursor-ai` and add its test
+directory to `testpaths`. Adding or removing a workspace member changes
+`uv.lock`, which CI regenerates — see below.
 
 ## Lockfiles
 

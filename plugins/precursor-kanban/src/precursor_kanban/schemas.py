@@ -6,9 +6,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from precursor.plugin_api import IssueLabel
+
 
 class ProjectSummary(BaseModel):
-    """A ProjectV2 linked to the configured repository."""
+    """A ProjectV2 available to the board.
+
+    Either owned by the configured repository's owner, or added explicitly as an
+    extra source in the plugin's settings — hence ``owner``, which is what tells
+    two identically titled boards apart.
+    """
 
     id: str
     number: int
@@ -16,11 +23,7 @@ class ProjectSummary(BaseModel):
     url: str | None = None
     closed: bool = False
     short_description: str | None = None
-
-
-class ProjectLabel(BaseModel):
-    name: str
-    color: str
+    owner: str | None = None
 
 
 class ProjectColumn(BaseModel):
@@ -53,7 +56,7 @@ class ProjectCard(BaseModel):
     repo: str | None = None
     status_option_id: str | None = None
     status_name: str | None = None
-    labels: list[ProjectLabel] = Field(default_factory=list)
+    labels: list[IssueLabel] = Field(default_factory=list)
 
 
 class ProjectBoard(BaseModel):
@@ -74,27 +77,3 @@ class ItemStatusUpdate(BaseModel):
 class ItemStatusResult(BaseModel):
     item_id: str
     option_id: str
-
-
-class IssueComment(BaseModel):
-    id: int
-    user: str
-    body: str
-    created_at: str | None = None
-    updated_at: str
-
-
-class IssueDetail(BaseModel):
-    """Full issue/PR view for the kanban card preview."""
-
-    number: int
-    title: str
-    state: str
-    url: str | None = None
-    body: str = ""
-    labels: list[ProjectLabel] = Field(default_factory=list)
-    updated_at: str | None = None
-    comments: list[IssueComment] = Field(default_factory=list)
-    # The linked Precursor topic, when a topic points at this issue/repo.
-    linked_topic_id: int | None = None
-    linked_topic_title: str | None = None
