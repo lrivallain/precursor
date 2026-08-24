@@ -66,8 +66,10 @@ There are four ways to move a topic:
 - Open **topic settings** and pick a **Collection**.
 - Type **`/collection <name>`** in the topic's composer. Run it bare to list your
   collections and see where the current topic sits.
-- Create it while a collection is selected — new topics land in the collection
-  you're currently viewing, and sub-topics inherit their parent's.
+- Create it while a collection is selected — the create form's **Collection**
+  field starts on the one you're viewing, and you can change it there before the
+  topic exists. Picking a parent instead makes the sub-topic inherit the
+  parent's collection, and the field says so.
 
 **Sub-topics always follow their parent.** Moving a topic moves its whole
 subtree, and re-parenting a topic under a parent in another collection pulls the
