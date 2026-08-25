@@ -1158,6 +1158,101 @@ async def test_update_agent_task_rejected_while_running() -> None:
         assert "stop the agent" in resp.json()["detail"].lower()
 
 
+async def test_update_agent_mcp_scope_round_trips_all_three_states() -> None:
+    """The server allowlist is tri-state on the agent, exactly as on a step.
+
+    ``null`` (every enabled server), a populated list, and ``""`` (none at all)
+    are three distinct saved states, so the empty case must survive the
+    round-trip instead of collapsing back into "all".
+    """
+    await _ensure_schema()
+    agent_id = await _make_agent(task_prompt="seed", status="idle")
+
+    with TestClient(create_app()) as client:
+        # Unscoped out of the box — today's behaviour is preserved for agents
+        # that never touch the picker.
+        assert client.get(f"/api/agents/{agent_id}").json()["mcp_servers"] is None
+
+        # Narrowing normalises: whitespace trimmed, duplicates dropped, order kept.
+        resp = client.patch(
+            f"/api/agents/{agent_id}",
+            json={"mcp_servers": " cmd-runner , workspace-fs ,cmd-runner "},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["mcp_servers"] == "cmd-runner,workspace-fs"
+
+        # An explicitly empty scope means "no servers at all" and is not the
+        # same as clearing back to null.
+        assert (
+            client.patch(f"/api/agents/{agent_id}", json={"mcp_servers": ""}).json()["mcp_servers"]
+            == ""
+        )
+
+        # Explicit null widens back to the whole enabled catalogue.
+        assert (
+            client.patch(f"/api/agents/{agent_id}", json={"mcp_servers": None}).json()[
+                "mcp_servers"
+            ]
+            is None
+        )
+
+
+async def test_update_agent_omitting_mcp_scope_leaves_it_unchanged() -> None:
+    """Omitting the key is "leave alone" — distinct from sending an explicit null.
+
+    Both are falsy on the wire, so the router keys off ``model_fields_set``; a
+    title-only save must not silently widen a narrowed agent back to every
+    server.
+    """
+    await _ensure_schema()
+    agent_id = await _make_agent(task_prompt="seed", status="idle")
+
+    with TestClient(create_app()) as client:
+        client.patch(f"/api/agents/{agent_id}", json={"mcp_servers": "fetch"})
+        body = client.patch(f"/api/agents/{agent_id}", json={"title": "Renamed"}).json()
+        assert body["title"] == "Renamed"
+        assert body["mcp_servers"] == "fetch"
+
+
+async def test_create_agent_accepts_an_mcp_scope(monkeypatch) -> None:
+    """A scope can be set at creation, so a focused agent is never briefly
+    unscoped between spawning and its first narrowing save."""
+    from precursor.backend.services.agents import runtime
+
+    monkeypatch.setattr(runtime, "agents_available", lambda: (True, "test: ready"))
+    await _ensure_schema()
+
+    with TestClient(create_app()) as client:
+        await _set_agents_enabled(True)
+        try:
+            resp = client.post(
+                "/api/agents",
+                json={"task": "triage", "mcp_servers": "cmd-runner, workspace-fs", "start": False},
+            )
+            assert resp.status_code == 201
+            assert resp.json()["mcp_servers"] == "cmd-runner,workspace-fs"
+        finally:
+            await _set_agents_enabled(False)
+
+
+def test_normalize_mcp_scope_pairs_with_parse() -> None:
+    """Everything written goes through normalize, everything read through parse,
+    so the stored and effective forms can't drift."""
+    from precursor.backend.services.agents.manager import normalize_mcp_scope, parse_mcp_scope
+
+    # Null and empty stay distinct through the write half, matching parse.
+    assert normalize_mcp_scope(None) is None
+    assert normalize_mcp_scope("  ,  ") == ""
+    assert parse_mcp_scope(normalize_mcp_scope("  ,  ")) == frozenset()
+    # De-duplicated with order kept.
+    assert normalize_mcp_scope(" fetch , workiq ,fetch ") == "fetch,workiq"
+    # Unknown names survive: an agent is portable, and a server absent here
+    # simply matches nothing rather than being silently dropped.
+    assert normalize_mcp_scope("ghost") == "ghost"
+    # Bounded by the column width so a pathological payload can't overflow it.
+    assert len(normalize_mcp_scope(",".join(f"server-{i}" for i in range(200)))) <= 400
+
+
 async def test_restart_with_task_replays_on_a_fresh_run_inheriting_the_sdk_handle() -> None:
     """Re-seeding drops the live session and replays the task on a *new run* that
     carries the previous run's ``copilot_session_id`` over.
@@ -1601,6 +1696,7 @@ async def test_spawn_agent_parked_stays_waiting() -> None:
             topic_id=None,
             chat_id=None,
             role_id=None,
+            mcp_servers=None,
             autonomy_enabled=False,
             max_steps=8,
             approval_policy=None,

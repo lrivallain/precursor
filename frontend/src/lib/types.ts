@@ -197,6 +197,8 @@ export interface AgentRun {
   use_mcp: boolean;
   use_skills: boolean;
   use_memory: boolean;
+  /** The server allowlist this run executes under (see `AgentSession`). */
+  mcp_servers: string | null;
   approval_policy: AgentApprovalPolicy | null;
   role_id: number | null;
   started_at: string | null;
@@ -256,6 +258,10 @@ export interface AgentSession {
   use_mcp: boolean;
   use_skills: boolean;
   use_memory: boolean;
+  /** Which MCP servers it may see. Null = every enabled server (the default),
+   *  `"a,b"` = only those, `""` = none at all. A workflow step's own scope
+   *  still overrides this for the duration of that step. */
+  mcp_servers: string | null;
   last_activity_at: string | null;
   archived_at: string | null;
   last_read_at: string | null;

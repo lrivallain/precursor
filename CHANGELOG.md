@@ -11,6 +11,23 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **An agent can now be told which MCP servers it may see.** Agents attached
+  *every* enabled server, and only workflow steps could narrow that — so a
+  focused conversational agent got the browser, the CRM and the shell whatever
+  its instructions said, and paid for all their schemas on every turn. The
+  settings drawer gains an **MCP servers** row, the same tri-state allowlist the
+  step editor already had: **All** (default, unchanged behaviour), a chosen few,
+  or none at all. It is a real allowlist — an unpicked server is never attached,
+  so the agent cannot call it, which prompt instructions alone never achieve.
+
+  The list stays dynamic: it is whatever is registered and enabled right now, so
+  a server installed later is offered without editing anything and an unscoped
+  agent picks it up on its next turn. Unknown names are kept rather than dropped
+  (struck through, red when nothing by that name is installed, amber when it is
+  installed but switched off), so a scoped agent survives a move between
+  machines. A workflow step's own scope still wins for the duration of that step,
+  so narrowing a shared agent can't silently disarm a pipeline.
+
 - **A plugin whose interface is missing now says so.** A plugin's frontend is a
   build product inside its package, so a source checkout that hasn't built it
   gets the backend without the UI: the section is advertised, the SPA has nothing

@@ -503,6 +503,36 @@ def parse_mcp_scope(raw: str | None) -> frozenset[str] | None:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+#: Ceiling for a stored scope, matching the ``mcp_servers`` column width on
+#: ``AgentSession``, ``AgentRun`` and ``WorkflowStep``.
+MCP_SCOPE_MAX_LEN = 400
+
+
+def normalize_mcp_scope(raw: str | None) -> str | None:
+    """Tidy an ``mcp_servers`` allowlist for storage without collapsing its empty case.
+
+    Deliberately *not* the ``(x or "").strip() or None`` idiom used for other
+    optional strings: here null and empty mean different things (every enabled
+    server versus none at all), so an explicitly empty selection has to survive
+    the round-trip. Names are de-duplicated with their order kept, and never
+    checked against the local registry — the parse half makes the same promise,
+    and an agent or workflow is portable, so a server absent on this machine
+    simply matches nothing.
+
+    Paired with :func:`parse_mcp_scope`: everything that writes a scope goes
+    through this, everything that reads one goes through that, so the stored and
+    effective forms can't drift.
+    """
+    if raw is None:
+        return None
+    seen: list[str] = []
+    for part in raw.split(","):
+        name = part.strip()
+        if name and name not in seen:
+            seen.append(name)
+    return ",".join(seen)[:MCP_SCOPE_MAX_LEN]
+
+
 #: The built-in server, attached from :meth:`AgentManager._precursor_mcp_config`
 #: rather than from the enabled catalogue.
 _PRECURSOR_SERVER = "precursor"

@@ -450,6 +450,9 @@ export const api = {
         use_mcp?: boolean;
         use_skills?: boolean;
         use_memory?: boolean;
+        /** Tri-state, so `null` is meaningful ("every enabled server") and is
+         *  sent rather than omitted; omit the key entirely to leave unchanged. */
+        mcp_servers?: string | null;
       },
     ) =>
       request<AgentSession>(`/api/agents/${id}`, {

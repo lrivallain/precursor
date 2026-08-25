@@ -86,6 +86,9 @@ class AgentRunRead(BaseModel):
     use_mcp: bool = True
     use_skills: bool = True
     use_memory: bool = True
+    # The server allowlist this run executes under. Tri-state — null = every
+    # enabled server, ``"a,b"`` = only those, ``""`` = none at all.
+    mcp_servers: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     role_id: int | None = None
     started_at: UtcDateTime | None = None
@@ -135,6 +138,11 @@ class AgentSessionRead(BaseModel):
     use_mcp: bool = True
     use_skills: bool = True
     use_memory: bool = True
+    # Which MCP servers it may see, as a tri-state allowlist: null = every
+    # enabled server (the default), ``"a,b"`` = only those, ``""`` = none at
+    # all. Narrowing this is how a focused agent is kept off tools it should
+    # never reach for; see ``parse_mcp_scope``.
+    mcp_servers: str | None = None
     last_activity_at: UtcDateTime | None = None
     archived_at: UtcDateTime | None = None
     last_read_at: UtcDateTime | None = None
@@ -209,6 +217,11 @@ class AgentSessionCreate(BaseModel):
     topic_id: int | None = None
     chat_id: int | None = None
     role_id: int | None = None
+    # Restrict which MCP servers the new agent may see. Null (the default)
+    # attaches every enabled server; ``"a,b"`` attaches only those; ``""``
+    # attaches none. Not validated against the local registry — an unknown name
+    # simply matches nothing, so a blueprint stays portable.
+    mcp_servers: str | None = Field(default=None, max_length=400)
     # Opt the session into the autonomous goal loop (default off). ``max_steps``
     # bounds how many continuation steps it may take before pausing for a human.
     autonomy_enabled: bool = False
@@ -247,6 +260,11 @@ class AgentUpdateRequest(BaseModel):
     use_mcp: bool | None = None
     use_skills: bool | None = None
     use_memory: bool | None = None
+    # Narrow (or widen) which MCP servers the agent may see. Tri-state, so
+    # ``None`` is a *meaningful* value here — "every enabled server" — and the
+    # router keys off ``model_fields_set`` to tell it apart from "leave
+    # unchanged". ``""`` means no servers at all.
+    mcp_servers: str | None = Field(default=None, max_length=400)
     # Toggle autonomy or retune the step budget after creation. Both optional so
     # the Settings drawer can patch either independently.
     autonomy_enabled: bool | None = None
