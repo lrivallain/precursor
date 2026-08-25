@@ -260,6 +260,13 @@ build: {
 ```
 
 Match the host's React **major**; the instance you get at runtime is the host's.
+> **A plugin's frontend is a build product.** `<package>/web/` is generated, not
+> committed. From a source checkout it exists only after `make plugins-build`
+> (which `make sync`, `make dev` and `make build` now run for you). Without it
+> the backend still advertises the section, the SPA has nothing to import, and
+> the section silently doesn't appear — Settings -> Plugins says so when it
+> detects that state.
+
 
 **In-repo plugins** skip the separate npm project entirely and build with the
 host's toolchain, which guarantees that match:

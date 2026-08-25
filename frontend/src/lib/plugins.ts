@@ -158,6 +158,16 @@ export interface SectionPlugin {
 
 const sections = new Map<string, SectionPlugin>();
 
+// `resolveSections` runs on every settings/descriptor change, so the warning
+// below has to fire once per section rather than once per render.
+const warned = new Set<string>();
+
+function warnOnce(key: string, message: string): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(message);
+}
+
 /**
  * Register a section implementation. Call once at module scope from the
  * plugin's entry file; `frontend/src/plugins/index.ts` imports them all.
@@ -184,9 +194,26 @@ export function resolveSections(
   return descriptors
     .filter((d) => d.kind === SECTION_KIND && d.slot === SECTION_SLOT)
     .map((d) => ({ descriptor: d, section: sections.get(d.id) }))
+    .filter((x) => {
+      if (x.section == null) {
+        // The backend advertised a section nothing registered — almost always a
+        // plugin whose frontend bundle is missing from its package. Say so here
+        // too; Settings → Plugins explains it, but the console is where someone
+        // debugging a vanished section usually looks first.
+        warnOnce(
+          x.descriptor.id,
+          `Precursor: plugin "${x.descriptor.plugin_id}" advertises the section ` +
+            `"${x.descriptor.id}" but no implementation is registered. Its frontend ` +
+            `bundle is probably missing (build it with \`make plugins-build\`, or ` +
+            `reinstall the package).`,
+        );
+        return false;
+      }
+      return sectionUnavailableReason(x.section, ctx) === null;
+    })
     .filter(
       (x): x is { descriptor: PluginDescriptor; section: SectionPlugin } =>
-        x.section != null && sectionUnavailableReason(x.section, ctx) === null,
+        x.section != null,
     )
     .sort((a, b) => sectionOrder(a.descriptor) - sectionOrder(b.descriptor))
     .map((x) => x.section);

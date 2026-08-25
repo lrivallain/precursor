@@ -11,6 +11,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A plugin whose interface is missing now says so.** A plugin's frontend is a
+  build product inside its package, so a source checkout that hasn't built it
+  gets the backend without the UI: the section is advertised, the SPA has nothing
+  to import, and it simply never appears while Settings → Plugins reports the
+  plugin installed, enabled and healthy. That state is now detected and
+  explained, and `make sync`, `make dev` and `make backend` build in-repo plugin
+  frontends so it stops arising during development at all.
+
 - **Plugins can bring their own settings page, and the Kanban board can track
   projects that aren't yours.** A plugin declares
   `registry.add_settings_page(...)` and registers a React panel; it appears in
