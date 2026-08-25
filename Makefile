@@ -18,19 +18,20 @@ hooks:  ## Install the git hooks (blocks proxy-polluted lockfiles)
 # The `dev` dependency group is included by uv automatically, so `uv sync` /
 # `uv run` always carry the tooling (ruff/pytest/mypy) — no `--extra dev`.
 # `npm ci` (not `install`) installs *from* the lockfile without rewriting it.
-sync:  ## Install/refresh the dev environment (uv + npm)
+sync: ## Install/refresh the dev environment (uv + npm + plugin UIs)
 	uv sync
 	npm --prefix frontend ci
 	npm --prefix website ci
+	$(MAKE) plugins-build
 
 # Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). `--extra
 # agents` pulls the Copilot SDK so Agents mode is live (opt-in payload, kept out
 # of `make sync`/CI). Drop it if you don't need Agents mode.
-dev:  ## Run the full dev stack (API + Vite HMR, with Agents mode)
+dev: plugins-build  ## Run the full dev stack (API + Vite HMR, with Agents mode)
 	uv run --extra agents precursor --dev
 
 # Backend only (uvicorn --reload, no Vite).
-backend:  ## Run the backend only (uvicorn --reload, with Agents mode)
+backend: plugins-build  ## Run the backend only (uvicorn --reload, with Agents mode)
 	uv run --extra agents precursor --dev --no-frontend
 
 # Vite dev server only.

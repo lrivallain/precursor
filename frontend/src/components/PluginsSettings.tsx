@@ -12,7 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, apiErrorMessage } from "../lib/api";
-import { getSection, sectionUnavailableReason } from "../lib/plugins";
+import { getSection, getSettingsPage, sectionUnavailableReason } from "../lib/plugins";
 import { pluginStore } from "../lib/pluginStore";
 import { useSettings } from "../lib/settingsStore";
 import type { InstalledPlugin, PluginEnvironment, Settings } from "../lib/types";
@@ -285,6 +285,7 @@ export function PluginsSettings() {
               ) : (
                 <>
                   <Contributions plugin={plugin} />
+                  {plugin.enabled && <MissingFrontend plugin={plugin} />}
                   {plugin.enabled && <Unavailable plugin={plugin} settings={settings} />}
                 </>
               )}
@@ -447,6 +448,44 @@ function Unavailable({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A plugin that publishes UI but whose bundle never arrived.
+ *
+ * A plugin's frontend is a build product shipped inside its wheel. If it is
+ * missing — a source checkout that hasn't run `make plugins-build`, or a wheel
+ * built without it — the backend still advertises the section, the SPA has
+ * nothing to import, `registerSection` never runs, and the section is dropped.
+ * Everything else looks healthy: installed, enabled, no error. Without this
+ * notice the only symptom is a section that silently isn't there.
+ */
+function MissingFrontend({ plugin }: { plugin: InstalledPlugin }) {
+  // A plugin bundled into core's own build also has no `entry`, but it *is*
+  // registered — so "advertises UI, has no entry, and nothing registered under
+  // its id" is what identifies a genuinely missing bundle.
+  const advertised = plugin.extensions.filter(
+    (e) => e.kind === "section" || e.kind === "settings-page",
+  );
+  if (advertised.length === 0 || plugin.entry !== null) return null;
+  const registered = advertised.some(
+    (e) =>
+      (e.kind === "section" && getSection(e.id) != null) ||
+      (e.kind === "settings-page" && getSettingsPage(e.id) != null),
+  );
+  if (registered) return null;
+
+  return (
+    <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs">
+      <AlertTriangle size={13} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+      <span className="min-w-0">
+        Its interface is missing, so nothing it contributes to the UI will appear.
+        A plugin's frontend is built into its package — from a source checkout run{" "}
+        <code className="rounded bg-surface px-1 py-0.5">make plugins-build</code>;
+        otherwise reinstall the package.
+      </span>
     </div>
   );
 }
