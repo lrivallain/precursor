@@ -68,7 +68,11 @@ from precursor.backend.schemas.agent_state import (
 from precursor.backend.schemas.workflow import WorkflowSummary
 from precursor.backend.services import agent_state as agent_state_service
 from precursor.backend.services.agents import fleet, runtime
-from precursor.backend.services.agents.manager import get_agent_manager, parse_agent_command
+from precursor.backend.services.agents.manager import (
+    get_agent_manager,
+    normalize_mcp_scope,
+    parse_agent_command,
+)
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.schedule_timing import compute_next_run
@@ -443,6 +447,9 @@ async def instantiate_blueprint(
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
         role_id=blueprint.role_id,
+        # Blueprints carry no server scope of their own (no column for it), so a
+        # stamped agent starts unscoped and is narrowed after the fact.
+        mcp_servers=None,
         autonomy_enabled=blueprint.autonomy_enabled,
         max_steps=blueprint.max_steps,
         approval_policy=blueprint.approval_policy,
@@ -546,6 +553,7 @@ async def _spawn_agent(
     topic_id: int | None,
     chat_id: int | None,
     role_id: int | None,
+    mcp_servers: str | None,
     autonomy_enabled: bool,
     max_steps: int,
     approval_policy: str | None,
@@ -568,6 +576,7 @@ async def _spawn_agent(
         topic_id=topic_id,
         chat_id=chat_id,
         role_id=role_id,
+        mcp_servers=normalize_mcp_scope(mcp_servers),
         autonomy_enabled=autonomy_enabled,
         max_steps=max_steps,
         approval_policy=approval_policy,
@@ -619,6 +628,7 @@ async def create_agent(
         role_id=payload.role_id
         if payload.role_id is not None
         else (blueprint.role_id if blueprint else None),
+        mcp_servers=payload.mcp_servers,
         autonomy_enabled=payload.autonomy_enabled
         or (blueprint.autonomy_enabled if blueprint else False),
         max_steps=payload.max_steps,
@@ -918,6 +928,16 @@ async def update_agent(
         value = getattr(payload, field)
         if value is not None and value != getattr(agent, field):
             setattr(agent, field, value)
+            caps_changed = True
+
+    # The server allowlist is baked into the session at build time (it decides
+    # which MCP configs are attached), so a change rebuilds it exactly like the
+    # toggles above. Tri-state: ``None`` here means "every enabled server", a
+    # real value distinct from "field omitted", so key off ``model_fields_set``.
+    if "mcp_servers" in payload.model_fields_set:
+        scope = normalize_mcp_scope(payload.mcp_servers)
+        if scope != agent.mcp_servers:
+            agent.mcp_servers = scope
             caps_changed = True
 
     task_changed = False

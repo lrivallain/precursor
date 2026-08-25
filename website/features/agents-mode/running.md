@@ -25,6 +25,46 @@ the fleet-wide default.
 The policy is read at the start of each turn, so switching it takes effect next
 turn with **no session rebuild**, unlike editing the objective or role.
 
+## Picking which tool servers an agent gets (per agent)
+
+An agent attaches **every** [MCP server](/features/mcp) you have enabled, and
+that is rarely what a focused agent needs. A modest install registers a few
+hundred tools between them and re-sends their schemas on **every turn**, so the
+cost is continuous rather than one-off — and an agent handed a browser, a CRM
+and a shell will reach for them, whatever its instructions say.
+
+So the settings drawer has an **MCP servers** row. It lists every server enabled
+in **Settings → MCP** with its tool count, so the cost is visible where the
+choice is made.
+
+| Selection | The agent gets |
+| --- | --- |
+| **All** (default) | Every enabled server, including ones you add later. |
+| One or more servers | Only those. |
+| Nothing selected | No tool servers at all — identical to **Tools: off**. |
+
+This is a real allowlist, not a request: the servers you didn't pick are never
+attached to the session, so the agent *cannot* call them and their schemas cost
+nothing. Asking a model in the prompt not to use a tool is not equivalent — it
+reliably reaches for one anyway.
+
+Note what stays dynamic. The list is **not** a fixed catalogue: it's whatever is
+registered and enabled right now, so a server you install tomorrow is offered
+tomorrow, and an unscoped agent picks it up on its next turn with nothing to
+edit. Names are never validated against the local registry either — a scope that
+mentions a server this machine doesn't have keeps it (shown struck through,
+**red** if nothing by that name is installed, **amber** if it's installed but
+switched off) rather than silently dropping it, so an agent survives the trip
+between machines.
+
+Changing the scope **rebuilds the session** on the next run, exactly like the
+capability toggles — the server set is wired in at build time.
+
+A shared agent driven by a [workflow step](/features/workflows/steps) keeps that
+step's own scope for the duration of the step: the step's choice is snapshotted
+onto its run and wins, including its "all servers" default, so narrowing an agent
+here never silently disarms a pipeline that depends on it.
+
 ## Editing an agent (save vs. run)
 
 The **settings drawer** separates *persisting* changes from *acting* on them.

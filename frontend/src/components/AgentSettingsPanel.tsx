@@ -5,6 +5,7 @@ import {
   Coins,
   Download,
   Play,
+  Plug,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -16,9 +17,11 @@ import type {
   AgentApprovalPolicy,
   AgentSession,
   Collection,
+  MCPServerStatus,
   Topic,
   WorkflowSummary,
 } from "../lib/types";
+import { McpScopePicker, parseScope, serializeScope } from "./McpScopePicker";
 import { useConfirm } from "./ConfirmDialog";
 import { useSettings } from "../lib/settingsStore";
 import { RefineTextarea } from "./RefineTextarea";
@@ -91,6 +94,12 @@ export function AgentSettingsPanel({
     agent.token_budget != null ? String(agent.token_budget) : "",
   );
   const [maxRetries, setMaxRetries] = useState<number>(agent.max_retries ?? 0);
+  // Which MCP servers this agent may see. Tri-state: null = every enabled
+  // server, [] = none at all. The catalogue is fetched non-probing — the drawer
+  // only needs names and tool counts, and a probe would stall it behind every
+  // unresolved server's handshake.
+  const [mcpScope, setMcpScope] = useState<string[] | null>(parseScope(agent.mcp_servers));
+  const [mcpServers, setMcpServers] = useState<MCPServerStatus[]>([]);
   const [saving, setSaving] = useState(false);
   // True only while the in-flight save is a "Save & run" (so the two footer
   // buttons can show distinct busy labels).
@@ -126,6 +135,7 @@ export function AgentSettingsPanel({
     void api.collections.list()
       .then(setCollections)
       .catch(() => setCollections([]));
+    void api.mcp.list(false).then(setMcpServers).catch(() => {});
   }, []);
 
   // Persist every edited field. `run` additionally launches the objective once
@@ -146,6 +156,7 @@ export function AgentSettingsPanel({
         approval_policy?: AgentApprovalPolicy | null;
         token_budget?: number | null;
         max_retries?: number;
+        mcp_servers?: string | null;
       } = {};
       if (trimmedTitle !== agent.title) patch.title = trimmedTitle;
       if (trimmedTask && trimmedTask !== agent.task_prompt) patch.task = trimmedTask;
@@ -161,12 +172,17 @@ export function AgentSettingsPanel({
         patch.token_budget = nextBudget;
       }
       if (maxRetries !== (agent.max_retries ?? 0)) patch.max_retries = maxRetries;
+      // Tri-state: null ("every enabled server") is a real value, so compare the
+      // serialised forms and send null explicitly rather than omitting the key.
+      const nextScope = serializeScope(mcpScope);
+      if (nextScope !== (agent.mcp_servers ?? null)) patch.mcp_servers = nextScope;
       if (
         patch.title !== undefined ||
         patch.task !== undefined ||
         patch.approval_policy !== undefined ||
         patch.token_budget !== undefined ||
-        patch.max_retries !== undefined
+        patch.max_retries !== undefined ||
+        patch.mcp_servers !== undefined
       ) {
         await api.agents.update(agent.id, patch);
       }
@@ -389,6 +405,24 @@ export function AgentSettingsPanel({
                 {approvalPolicy
                   ? (APPROVAL_POLICIES.find((p) => p.value === approvalPolicy)?.hint ?? "")
                   : "Falls back to the global default set in Settings. Takes effect on the agent's next turn — no session rebuild."}
+              </p>
+            </section>
+
+            <section>
+              <label className="flex items-center gap-1.5 text-xs text-muted mb-2">
+                <Plug size={13} />
+                MCP servers
+              </label>
+              <McpScopePicker
+                value={mcpScope}
+                onChange={setMcpScope}
+                servers={mcpServers}
+                label="Attach"
+              />
+              <p className="text-[11px] text-muted mt-2 leading-relaxed">
+                {mcpScope === null
+                  ? "Every server enabled in Settings → MCP, including ones added later. Narrow this to keep a focused agent off tools it should never reach for — each attached server's tool schemas are re-sent on every turn."
+                  : "Only the selected servers attach. Unknown names are kept, not dropped, so the agent survives a move between machines. A workflow step's own scope still overrides this while that step runs."}
               </p>
             </section>
 
