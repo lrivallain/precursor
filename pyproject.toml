@@ -61,6 +61,11 @@ agents = ["github-copilot-sdk>=1.0"]
 # `pip install precursor-ai[kanban]` (or the dev workspace) keeps the section,
 # while `pip install precursor-ai` gets a core with no GitHub Projects surface.
 kanban = ["precursor-kanban>=0.1"]
+# Menu-bar / system-tray control for a background instance (`precursor tray`).
+# An extra because pystray + Pillow pull GUI bindings that a headless or
+# server-side install has no use for; the `precursor service …` commands cover
+# the same ground without them.
+tray = ["pystray>=0.19", "pillow>=11.0"]
 
 # Dev tooling lives in a PEP 735 dependency group rather than an extra, so uv
 # includes it by DEFAULT on every `uv run` / `uv sync` (no `--extra dev` to

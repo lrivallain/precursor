@@ -27,6 +27,9 @@ older ones.
   and schedule/webhook triggers
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
+- **Runs in the background**: one-command install, a login item, a menu-bar icon
+  showing whether it's up, and `precursor service update` to pull the newest
+  build and restart
 - **Plugin-ready**: backend entry points + a frontend extension registry,
   designed for things like a future drawio preview/generator
 
@@ -45,7 +48,21 @@ older ones.
 
 Precursor uses **[uv](https://docs.astral.sh/uv/)** for everything Python —
 environment, running, building, and releasing. Install it once
-([instructions](https://docs.astral.sh/uv/getting-started/installation/)), then:
+([instructions](https://docs.astral.sh/uv/getting-started/installation/)).
+
+**Just want to use it?** One command installs Precursor, registers it to start
+at login, and starts it now:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
+```
+
+It is then managed rather than launched — `precursor service status`,
+`precursor service update`, `precursor tray`. See
+[Background app](https://lrivallain.github.io/precursor/features/background-app)
+for the whole surface.
+
+**Want to hack on it?** Clone the repo and set up both halves of the stack:
 
 ```bash
 uv sync                       # backend: .venv + Python deps (uv manages the interpreter)
@@ -61,7 +78,9 @@ cp .env.example .env
 **GitHub credentials (optional).** Precursor resolves a GitHub token in this
 order: (1) a token saved in **Settings → GitHub**, then (2) your **GitHub
 CLI** session (`gh auth token`) if you're signed in via `gh auth login`. So if
-you already use `gh`, you don't need to set anything. A token needs the
+you already use `gh`, you don't need to set anything. If several accounts are
+signed in, set `PRECURSOR_GITHUB_CLI_USER=<login>` so the token doesn't depend
+on whoever last ran `gh auth switch`. A token needs the
 `models:read` fine-grained permission (or Copilot access) for real model
 responses. With **no** token at all, Precursor falls back to the `MockProvider`
 so the chat flow stays usable offline.

@@ -52,6 +52,8 @@ These work across the sections above:
   import.
 - [**Storage & retention**](/features/storage) — per-feature sweeps that bound
   database growth, plus an on-demand cleanup cockpit and database compaction.
+- [**Background app**](/features/background-app) — install with one command, run
+  it at login, drive it from a menu-bar icon, and update in place.
 
 ## What's under the hood
 

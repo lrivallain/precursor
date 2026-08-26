@@ -5,10 +5,35 @@ title: Installation
 # Installation
 
 Precursor uses **[uv](https://docs.astral.sh/uv/)** for everything Python —
-environment, running, building, and releasing. There are two ways to install it:
-grab a published build to just *use* it, or clone the repo to *develop* it.
+environment, running, building, and releasing. Pick the option that matches what
+you want: keep it running all the time, run it occasionally, or develop it.
 
-## Option A — run a published build (zero setup)
+## Option A — install it as a background app (recommended)
+
+One command installs Precursor, registers it to start when you log in, and
+starts it now:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
+```
+
+After that, the app is managed rather than launched:
+
+```bash
+precursor service status    # where it's running
+precursor service update    # newest build + restart
+precursor tray              # menu-bar icon
+```
+
+See [Background app](/features/background-app) for the whole surface — the login
+item, the menu-bar control, update channels, and where the data lives.
+
+::: info Channels
+The script installs the **nightly** build (a rolling prerelease of `main`) by
+default. For tagged releases only, prefix it with `PRECURSOR_CHANNEL=stable`.
+:::
+
+## Option B — run a published build (zero setup)
 
 The published wheel bundles the pre-built SPA, so an installed package is
 completely self-contained:
@@ -37,8 +62,9 @@ Some features ship as separate [plugins](/features/plugins) so they aren't force
 on every install. `[kanban]` pulls in the
 [GitHub Projects board](/features/kanban); drop it (`uvx precursor-ai`) for a
 lean core with no board. `[agents]` adds
-[Agents mode](/features/agents) — a ~90 MB payload, so it stays opt-in. Combine
-them: `uvx "precursor-ai[kanban,agents]"`.
+[Agents mode](/features/agents-mode) — a ~90 MB payload, so it stays opt-in.
+`[tray]` adds the [menu-bar control](/features/background-app#the-menu-bar-icon).
+Combine them: `uvx "precursor-ai[kanban,agents]"`.
 :::
 
 ::: info Requirements
@@ -48,7 +74,7 @@ them: `uvx "precursor-ai[kanban,agents]"`.
   wheel.
 :::
 
-## Option B — from source (for development)
+## Option C — from source (for development)
 
 Clone the repository and let `uv` and `npm` set up both halves of the stack:
 

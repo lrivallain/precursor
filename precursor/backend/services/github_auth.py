@@ -3,6 +3,8 @@
 Priority:
 1. ``github_token`` saved in the app settings (``api_keys`` in the DB).
 2. ``gh auth token`` output, if the GitHub CLI is installed and signed in.
+   ``PRECURSOR_GITHUB_CLI_USER`` pins which login is used when several are
+   signed in, so the result doesn't depend on the CLI's active account.
 
 The CLI result is cached for a short TTL rather than the process lifetime:
 GitHub scopes entitlements (notably the Copilot model catalogue) to the token
@@ -22,6 +24,7 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.config import get_settings
 from precursor.backend.models import AppSetting
 
 logger = logging.getLogger(__name__)
@@ -39,9 +42,17 @@ _gh_token_cache: tuple[float, str] | None = None
 def _run_gh_auth_token() -> str:
     if shutil.which("gh") is None:
         return ""
+    # `gh auth token` follows the CLI's *active* account, so with several logins
+    # the answer depends on whoever last ran `gh auth switch`. Pinning the login
+    # in settings makes the resolution deterministic and removes that step from
+    # any launcher/startup sequence.
+    cmd = ["gh", "auth", "token"]
+    user = get_settings().github_cli_user.strip()
+    if user:
+        cmd += ["--user", user]
     try:
         result = subprocess.run(
-            ["gh", "auth", "token"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=3,
@@ -51,6 +62,12 @@ def _run_gh_auth_token() -> str:
         logger.debug("gh auth token failed: %s", exc)
         return ""
     if result.returncode != 0:
+        if user:
+            logger.warning(
+                "`gh auth token --user %s` failed (%s) — is that account signed in?",
+                user,
+                result.stderr.strip() or f"exit {result.returncode}",
+            )
         return ""
     return result.stdout.strip()
 

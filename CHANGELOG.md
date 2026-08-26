@@ -11,6 +11,58 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Precursor can now run as a background app instead of a terminal process.**
+  Keeping it available all day meant keeping a terminal open, remembering which
+  directory to be in, and repeating a multi-command ritual after every reboot —
+  in one reported case `git pull && gh auth switch && make plugins-build &&
+  uv run precursor --strict-port`, by hand, on every machine, at every startup.
+  Each part of that is now unnecessary.
+
+  A new `precursor service` command supervises a detached instance —
+  `start`, `stop`, `restart`, `status`, `logs` — and `install` registers it to
+  run at login (a launchd agent on macOS, a systemd *user* unit on Linux, a
+  Startup entry on Windows). It records what it started in `runtime.json` in the
+  data directory, so there is one source of truth for "is it up, and where"
+  rather than a port to guess: `status` exits non-zero when nothing is running,
+  heals a state file left behind by a crash, and starting is idempotent so a
+  login item, a tray click and a manual start can't produce two instances
+  fighting over one database.
+
+  `precursor tray` puts that on a menu bar (behind a new `tray` extra): a filled
+  dot when running, a hollow ring when not, and entries to open, start, stop,
+  restart, and update. It is a convenience only — every action has a command
+  behind it, so the app never depends on a GUI being present.
+
+  `precursor service update` replaces the manual `git pull`. It detects how
+  Precursor was installed and does the right thing for each shape: a checkout is
+  updated with `git pull --ff-only` plus a plugin-frontend rebuild, an installed
+  wheel by reinstalling. `GET /api/version/check` exposes the same check to the
+  UI; *applying* an update deliberately stays out of the API, since it replaces
+  the very process serving the request.
+
+  Feeding all of this, a new **nightly channel** publishes a rolling build of
+  `main` as a prerelease on every push, wheels and all. That removes the reason
+  to run from a source checkout at all: the published wheel already carries the
+  SPA, the in-app docs and every plugin frontend, so tracking `main` no longer
+  needs a clone, Node.js, or `make plugins-build`. A single command now goes
+  from nothing to installed-and-running-at-login:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
+  ```
+
+  Development is untouched: a source checkout keeps its defaults, so every
+  worktree still runs `precursor --dev` on an auto-bumped port against its own
+  database, and cannot collide with the installed instance.
+
+- **`PRECURSOR_GITHUB_CLI_USER` pins which `gh` account supplies the token.**
+  `gh auth token` follows the CLI's *active* account, so with several logins the
+  credentials Precursor resolved depended on whoever last ran `gh auth switch`
+  in an unrelated shell — fine interactively, and unworkable for an instance
+  started at login. Naming the login passes `--user`, making the resolution
+  deterministic. A token saved in **Settings → GitHub** still wins, as before.
+
+
 - **An agent can now be told which MCP servers it may see.** Agents attached
   *every* enabled server, and only workflow steps could narrow that — so a
   focused conversational agent got the browser, the CRM and the shell whatever
@@ -482,6 +534,23 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `WorkflowStepInput.reusable`, which decides whether a step-authored prompt
   mints a real agent or the step's private vessel — omitting it keeps the vessel,
   so existing payloads are unchanged.
+
+### Changed
+
+- **An installed Precursor now stores its data in a per-user directory.**
+  `PRECURSOR_DATABASE_URL` and `PRECURSOR_DATA_DIR` defaulted to paths relative
+  to the working directory (`./precursor.db`, `./.precursor`), which is exactly
+  right for a checkout — it is what makes each clone and worktree an isolated
+  sandbox — but wrong for an installed wheel, which a launcher starts with its
+  working directory set to `/`. That silently produced a fresh, empty database
+  wherever it happened to launch from.
+
+  The defaults now depend on how Precursor was installed: a source checkout
+  keeps the relative paths, while a wheel resolves to
+  `~/Library/Application Support/Precursor` (macOS),
+  `$XDG_DATA_HOME/precursor` (Linux) or `%APPDATA%\Precursor` (Windows). Setting
+  either variable explicitly overrides both, so existing configurations are
+  unaffected.
 
 ### Fixed
 
