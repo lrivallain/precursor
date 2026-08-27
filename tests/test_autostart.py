@@ -1,8 +1,9 @@
 """Login-item generation, and the CLI dispatch that must not disturb dev flows.
 
-The autostart unit is what actually runs Precursor after a reboot, so the parts
+The autostart units are what actually run Precursor after a reboot, so the parts
 worth pinning are the ones that silently break there: an argv the login manager
-can resolve, and a working directory that isn't ``/``.
+can resolve, a working directory that isn't ``/``, and — since the app and the
+tray are separate processes — two units that never collide.
 """
 
 from __future__ import annotations
@@ -26,26 +27,45 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 def test_launch_command_prefers_the_console_script(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
-    assert autostart._launch_command() == [
+    assert autostart._launch_command(autostart.APP) == [
         "/opt/bin/precursor-ai",
         "service",
         "start",
         "--foreground",
     ]
+    assert autostart._launch_command(autostart.TRAY) == ["/opt/bin/precursor-ai", "tray"]
 
 
 def test_launch_command_falls_back_to_the_module(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(autostart.shutil, "which", lambda _name: None)
-    cmd = autostart._launch_command()
+    cmd = autostart._launch_command(autostart.APP)
     # A login item gets a minimal PATH, so the fallback must be absolute.
     assert cmd[0] == sys.executable
     assert cmd[1:] == ["-m", "precursor.backend", "service", "start", "--foreground"]
 
 
+def test_the_app_keeps_its_original_identifiers() -> None:
+    """Renaming the app's unit on upgrade would orphan the one already loaded."""
+    assert autostart.APP.label == autostart.LAUNCHD_LABEL
+    assert autostart.APP.systemd_name == autostart.SYSTEMD_UNIT
+
+
+def test_the_two_units_never_collide() -> None:
+    labels = {unit.label for unit in autostart.UNITS}
+    systemd = {unit.systemd_name for unit in autostart.UNITS}
+    windows = {unit.windows_name for unit in autostart.UNITS}
+    assert len(labels) == len(systemd) == len(windows) == len(autostart.UNITS)
+
+
+def test_units_land_on_distinct_paths() -> None:
+    paths = {str(autostart._target_path(unit)) for unit in autostart.UNITS}
+    assert len(paths) == len(autostart.UNITS)
+
+
 def test_launchd_plist_is_well_formed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
     path = tmp_path / "agent.plist"
-    autostart._write_launchd(path)
+    autostart._write_launchd(autostart.APP, path)
 
     plist = plistlib.loads(path.read_bytes())
     assert plist["Label"] == autostart.LAUNCHD_LABEL
@@ -54,17 +74,42 @@ def test_launchd_plist_is_well_formed(monkeypatch: pytest.MonkeyPatch, tmp_path:
     # launchd starts agents with cwd=/, so an explicit writable one is required.
     assert plist["WorkingDirectory"] == str(supervisor.working_dir())
     assert "PATH" in plist["EnvironmentVariables"]
+    # A clean exit must not be restarted: that's how the app yields to a live
+    # instance, and how "Quit tray" stays quit.
+    assert plist["KeepAlive"] == {"SuccessfulExit": False}
+
+
+def test_launchd_units_log_to_separate_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
+    logs = set()
+    for unit in autostart.UNITS:
+        path = tmp_path / f"{unit.key}.plist"
+        autostart._write_launchd(unit, path)
+        plist = plistlib.loads(path.read_bytes())
+        logs.add(plist["StandardErrorPath"])
+    assert len(logs) == len(autostart.UNITS)
 
 
 def test_systemd_unit_is_well_formed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
     path = tmp_path / "precursor.service"
-    autostart._write_systemd(path)
+    autostart._write_systemd(autostart.APP, path)
 
     text = path.read_text(encoding="utf-8")
     assert "ExecStart=/opt/bin/precursor-ai service start --foreground" in text
     assert "WantedBy=default.target" in text  # a *user* unit, not a system daemon
     assert f"WorkingDirectory={supervisor.working_dir()}" in text
+
+
+def test_info_reports_not_installed_for_a_missing_unit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(autostart, "_target_path", lambda _unit: tmp_path / "nope")
+    info = autostart.info()
+    assert info.supported is True
+    assert info.installed is False
 
 
 def test_a_checkout_runs_from_the_repo_root(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,13 +133,11 @@ def test_an_installed_build_runs_from_its_data_dir(
     assert supervisor.working_dir() == (tmp_path / "data").resolve()
 
 
-def test_info_reports_not_installed_for_a_missing_unit(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(autostart, "_target_path", lambda: tmp_path / "nope")
-    info = autostart.info()
-    assert info.supported is True
-    assert info.installed is False
+def test_install_registers_the_tray_by_default() -> None:
+    from precursor.backend.service_cli import build_parser
+
+    assert build_parser().parse_args(["install"]).tray is True
+    assert build_parser().parse_args(["install", "--no-tray"]).tray is False
 
 
 def test_service_subcommand_does_not_shadow_the_normal_parser() -> None:

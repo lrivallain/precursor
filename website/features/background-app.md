@@ -47,8 +47,8 @@ precursor service stop        # stop it
 precursor service restart     # bounce it (keeps the port it was on)
 precursor service logs -n 100 # tail the instance log
 precursor service data-dir    # print the data directory (--reveal opens it)
-precursor service install     # run at login (and start now)
-precursor service uninstall   # remove the login item
+precursor service install     # run at login (app + tray) and start now
+precursor service uninstall   # remove the login items
 ```
 
 `status` exits non-zero when nothing is running, so it drops straight into a
@@ -111,8 +111,10 @@ uv tool install --force "precursor-ai[kanban,tray]"
 
 ::: tip Keep the tray running too
 The tray is a separate, disposable process — quitting it does **not** stop
-Precursor. Add it to your desktop's login items if you want the icon back
-automatically.
+Precursor. `precursor service install` registers it as its own login item
+alongside the app, so the icon comes back after a reboot; pass `--no-tray` to
+register only the app. On a machine without the `tray` extra it is skipped
+automatically, rather than leaving a login item that fails every boot.
 :::
 
 ## Updating in place

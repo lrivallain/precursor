@@ -67,9 +67,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0 if status.running else 1
 
 
-def _cmd_install(_args: argparse.Namespace) -> int:
-    info = autostart.install()
+def _cmd_install(args: argparse.Namespace) -> int:
+    info = autostart.install(autostart.APP)
     print(f"Autostart installed ({info.kind}): {info.path}")
+
+    # The tray is a second, independent login item — the icon coming back at
+    # login is what people expect, but it only makes sense where the GUI extra
+    # actually resolved.
+    if args.tray:
+        if autostart.tray_supported():
+            tray_info = autostart.install(autostart.TRAY)
+            print(f"Tray autostart installed: {tray_info.path}")
+        else:
+            print("Tray autostart skipped — the `tray` extra is not installed.")
+
     # launchd (RunAtLoad) and systemd (--now) start the instance as part of
     # registering it, so give the unit a moment to come up before deciding
     # whether anything is still missing. Starting one here unconditionally
@@ -86,8 +97,8 @@ def _cmd_install(_args: argparse.Namespace) -> int:
 
 
 def _cmd_uninstall(_args: argparse.Namespace) -> int:
-    info = autostart.uninstall()
-    print(f"Autostart removed ({info.kind}).")
+    for info in autostart.uninstall_all():
+        print(f"Autostart removed ({info.kind}): {info.unit}")
     return 0
 
 
@@ -191,10 +202,18 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     status.set_defaults(func=_cmd_status)
 
-    sub.add_parser(
+    install = sub.add_parser(
         "install", help="Start Precursor at login (launchd/systemd/Startup) and start it now."
-    ).set_defaults(func=_cmd_install)
-    sub.add_parser("uninstall", help="Remove the login item.").set_defaults(func=_cmd_uninstall)
+    )
+    install.add_argument(
+        "--no-tray",
+        dest="tray",
+        action="store_false",
+        help="Register only the app, not the menu-bar icon.",
+    )
+    install.set_defaults(func=_cmd_install, tray=True)
+
+    sub.add_parser("uninstall", help="Remove the login items.").set_defaults(func=_cmd_uninstall)
 
     check = sub.add_parser("check", help="Check whether a newer build is available.")
     check.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")

@@ -21,7 +21,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   A new `precursor service` command supervises a detached instance —
   `start`, `stop`, `restart`, `status`, `logs` — and `install` registers it to
   run at login (a launchd agent on macOS, a systemd *user* unit on Linux, a
-  Startup entry on Windows). It records what it started in `runtime.json` in the
+  Startup entry on Windows), together with a second, independent unit for the
+  menu-bar icon so both come back after a reboot. The tray unit is skipped where
+  the `tray` extra isn't installed — a headless box gets no login item rather
+  than one that fails every boot — and `--no-tray` opts out explicitly. It
+  records what it started in `runtime.json` in the
   data directory, so there is one source of truth for "is it up, and where"
   rather than a port to guess: `status` exits non-zero when nothing is running,
   heals a state file left behind by a crash, and starting is idempotent so a
