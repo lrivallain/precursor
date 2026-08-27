@@ -9,6 +9,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Fixed
+
+- **Updating a login-item instance left it dead with the port still taken.**
+  Once registered, a launchd agent (or systemd unit) *is* the supervisor:
+  `KeepAlive` and `Restart=` exist precisely to undo a kill. `precursor service
+  restart` signalled the process anyway, so the manager immediately started a
+  replacement while the supervisor started its own, and the two raced for the
+  port. One won; the loser retried on a 30-second throttle forever. The
+  symptom, from the tray's "Update and restart": the old instance is not
+  replaced, the new one cannot bind, and the log fills with `Port 9000 is in
+  use`.
+
+  `start`, `stop` and `restart` now delegate to the service manager when a
+  controllable unit owns the instance — `launchctl bootstrap` / `bootout` /
+  `kickstart -k`, or the systemd equivalents. `kickstart -k` matters
+  specifically: it kills and restarts in one operation, leaving no window for
+  anything else to claim the port, which a stop-then-start cannot promise. A
+  Windows Startup entry is only a shortcut executed at login, so it is not
+  treated as a manager and the direct path still applies. An explicit
+  `--port`/`--host` override also keeps the direct path, since the unit carries
+  its own configuration.
+
+- **A failed start could delete a healthy instance's state file.** `runtime.json`
+  was cleared unconditionally on shutdown, so a process that lost the race for
+  the port erased the record belonging to the instance that won it — leaving
+  `precursor service status` reporting "not running" while the app was plainly
+  serving. It is now cleared only by the process that owns it.
+
 ### Added
 
 - **Precursor can now run as a background app instead of a terminal process.**

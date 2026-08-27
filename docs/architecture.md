@@ -75,6 +75,15 @@ detached background process, so Precursor can run without a terminal:
   `stop`, `restart`, the tray's state — from that file plus a liveness probe,
   so there is exactly one source of truth and no port to guess. Starting is
   idempotent; a state file whose process is gone is healed rather than trusted.
+- **Who owns the process matters.** Once a login item is registered, the
+  *service manager* supervises it: launchd's `KeepAlive` and systemd's
+  `Restart=` both exist to undo a plain kill. So when a controllable unit is
+  installed, `start`/`stop`/`restart` delegate to it (`launchctl bootstrap` /
+  `bootout` / `kickstart -k`) instead of signalling the process. Doing it
+  directly means the manager starts a replacement while the supervisor starts
+  its own, and the two race for the port — one wins, the loser retries on a
+  throttle forever. A Windows Startup entry is only a shortcut, so it is not
+  treated as a manager and the direct path still applies.
 - **`working_dir()`** decides where the instance runs, which matters because a
   checkout's default database URL is *relative*: a source tree anchors at the
   repo root (same database as `uv run precursor`), an installed wheel at its
