@@ -75,6 +75,16 @@ class AutostartInfo:
     kind: str
     path: str | None = None
 
+    @property
+    def controllable(self) -> bool:
+        """Whether the platform can start/stop this unit on demand.
+
+        launchd and systemd are real service managers. A Windows Startup entry
+        is just a shortcut executed at login — there is nothing to ask, so the
+        supervisor keeps managing that process directly.
+        """
+        return self.installed and self.kind in ("launchd", "systemd")
+
 
 def tray_supported() -> bool:
     """Whether registering the tray makes sense on this install.
@@ -288,3 +298,83 @@ def uninstall(unit: Unit = APP) -> AutostartInfo:
 
 def uninstall_all() -> list[AutostartInfo]:
     return [uninstall(unit) for unit in UNITS]
+
+
+# --- controlling an installed unit ------------------------------------------
+#
+# Once a login item is registered, *it* owns the process: launchd's KeepAlive
+# and systemd's Restart= both resurrect a process that merely gets killed. So
+# stopping or restarting has to go through the service manager, or the manager
+# and the caller end up racing each other for the port.
+
+
+def _run_unit_cmd(cmd: list[str], action: str, unit: Unit) -> None:
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise AutostartError(
+            f"Could not {action} {unit.title}: {result.stderr.strip() or result.returncode}"
+        )
+
+
+def _macos_bootstrap(unit: Unit, action: str) -> None:
+    """Load the job into the user's GUI domain, which also starts it (RunAtLoad)."""
+    path = _target_path(unit)
+    if path is None:
+        raise AutostartError(f"Autostart is not supported on {sys.platform}.")
+    _run_unit_cmd(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], action, unit)
+
+
+def start_unit(unit: Unit = APP) -> None:
+    """Ask the service manager to start the unit."""
+    if sys.platform == "darwin":
+        # `kickstart` only works on a job that is already loaded; a job that was
+        # booted out (which is how we stop) has to be bootstrapped again.
+        probe = subprocess.run(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/{unit.label}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            _macos_bootstrap(unit, "start")
+    elif os.name != "nt":
+        _run_unit_cmd(["systemctl", "--user", "start", unit.systemd_name], "start", unit)
+
+
+def stop_unit(unit: Unit = APP) -> None:
+    """Ask the service manager to stop the unit, and to stay stopped.
+
+    On launchd that means booting the job out rather than signalling it: a
+    plain kill is exactly what KeepAlive exists to undo. The plist stays on
+    disk, so it is loaded again at the next login.
+    """
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/{unit.label}"],
+            check=False,
+            capture_output=True,
+        )
+    elif os.name != "nt":
+        subprocess.run(
+            ["systemctl", "--user", "stop", unit.systemd_name], check=False, capture_output=True
+        )
+
+
+def restart_unit(unit: Unit = APP) -> None:
+    """Restart the unit in one operation, leaving no window for a race."""
+    if sys.platform == "darwin":
+        # -k kills the running instance and starts a new one atomically, so
+        # nothing else can claim the port in between. It still needs a *loaded*
+        # job, though: a plist on disk is not the same as a job launchd knows
+        # about, and the two diverge whenever the instance was stopped or its
+        # executable was replaced underneath it.
+        probe = subprocess.run(
+            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{unit.label}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            _macos_bootstrap(unit, "restart")
+    elif os.name != "nt":
+        _run_unit_cmd(["systemctl", "--user", "restart", unit.systemd_name], "restart", unit)

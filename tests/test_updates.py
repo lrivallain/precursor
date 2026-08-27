@@ -7,6 +7,7 @@ can share a base version), so they compare by commit.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -153,3 +154,65 @@ def test_results_are_cached(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_source_checkout_is_the_install_mode_here() -> None:
     assert updates.install_mode() == "source"
+
+
+def _write_receipt(tmp_path: Path, extras: list[str]) -> None:
+    (tmp_path / "uv-receipt.toml").write_text(
+        "[tool]\n"
+        "requirements = [\n"
+        f'    {{ name = "precursor-ai", extras = {extras!r} }},\n'
+        '    { name = "precursor-kanban" },\n'
+        "]\n".replace("'", '"'),
+        encoding="utf-8",
+    )
+
+
+def test_extras_are_read_from_the_install_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What is installed is the truth; a configured list is a copy that drifts."""
+    _write_receipt(tmp_path, ["tray", "agents"])
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    assert updates.installed_extras() == ("tray", "agents")
+
+
+def test_an_update_does_not_silently_drop_installed_extras(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The bug this guards: installing `[tray,agents]` and then updating against
+    the default `kanban` uninstalled the menu-bar icon and Agents mode without
+    saying anything."""
+    _write_receipt(tmp_path, ["tray", "agents"])
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    monkeypatch.setenv("PRECURSOR_UPDATE_EXTRAS", "kanban")
+    config.get_settings.cache_clear()
+
+    requirement = updates._requirement()
+    for extra in ("tray", "agents", "kanban"):
+        assert extra in requirement, requirement
+
+
+def test_the_setting_can_still_add_an_extra_not_yet_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_receipt(tmp_path, ["tray"])
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    monkeypatch.setenv("PRECURSOR_UPDATE_EXTRAS", "agents")
+    config.get_settings.cache_clear()
+    assert updates._requirement() == "precursor-ai[tray,agents]"
+
+
+def test_a_missing_receipt_falls_back_to_the_setting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path / "nothing-here"))
+    monkeypatch.setenv("PRECURSOR_UPDATE_EXTRAS", "kanban")
+    config.get_settings.cache_clear()
+    assert updates.installed_extras() == ()
+    assert updates._requirement() == "precursor-ai[kanban]"
+
+
+def test_a_corrupt_receipt_is_not_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "uv-receipt.toml").write_text("this is not toml [[[", encoding="utf-8")
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    assert updates.installed_extras() == ()

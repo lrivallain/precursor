@@ -160,9 +160,39 @@ def _write_state(state: RuntimeState) -> None:
     tmp.replace(path)
 
 
-def _clear_state() -> None:
+def _clear_state(*, only_if_pid: int | None = None) -> None:
+    """Remove the runtime state file.
+
+    ``only_if_pid`` guards against a losing process deleting the record of a
+    *different*, healthy instance — which is how ``service status`` ends up
+    reporting "not running" while something is plainly serving.
+    """
+    if only_if_pid is not None:
+        state = _read_state()
+        if state is not None and state.pid != only_if_pid:
+            return
     with contextlib.suppress(OSError):
         _state_path().unlink()
+
+
+def managed_unit() -> Any | None:
+    """The login item that owns this instance's lifecycle, if there is one.
+
+    When a launchd agent or systemd unit is installed, *it* is the supervisor:
+    killing the process is precisely what its KeepAlive/Restart directive exists
+    to undo. So stop and restart have to be asked of the service manager. Doing
+    it directly means the manager immediately starts a replacement while we
+    start our own, and the two race for the port — one wins, the loser retries
+    on a throttle forever.
+    """
+    try:
+        from precursor.backend import autostart
+
+        info = autostart.info(autostart.APP)
+        return autostart.APP if info.controllable else None
+    except Exception:  # pragma: no cover - never let this break start/stop
+        logger.debug("Could not determine the autostart unit", exc_info=True)
+        return None
 
 
 def _pid_alive(pid: int) -> bool:
@@ -255,6 +285,24 @@ def start(
     port = port if port is not None else cfg.port
     log_level = log_level or cfg.log_level
 
+    # A registered login item owns the process. Ask it to start rather than
+    # spawning a second one it would then fight for the port. An explicit
+    # host/port override is the exception: the unit has its own configuration,
+    # so honouring the override means running it ourselves.
+    unit = (
+        managed_unit() if (host, port, log_level) == (cfg.host, cfg.port, cfg.log_level) else None
+    )
+    if unit is not None:
+        from precursor.backend import autostart
+
+        autostart.start_unit(unit)
+        settled = _await_state(port=port, host=host)
+        if settled.running:
+            return settled
+        raise SupervisorError(
+            f"The {unit.title} login item did not come up on port {port}. See {_log_path()}."
+        )
+
     if _port_responds(host if host not in ("0.0.0.0", "::", "") else "127.0.0.1", port):
         raise SupervisorError(
             f"Port {port} is already in use by something Precursor didn't start. "
@@ -313,8 +361,46 @@ def start(
     return Status(running=True, state=state)
 
 
+def _await_state(*, port: int, host: str, timeout: float = _START_TIMEOUT_SECONDS) -> Status:
+    """Wait for a service-manager-started instance to publish its state.
+
+    The unit's own process writes ``runtime.json`` once it is listening (see
+    :func:`run_foreground`), so the supervisor watches for that rather than
+    guessing a pid it never spawned.
+    """
+    connect_host = _loopback_host(host)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        current = status()
+        if current.running and _port_responds(connect_host, current.state.port, timeout=0.3):  # type: ignore[union-attr]
+            return current
+        time.sleep(0.25)
+    return status()
+
+
+def _loopback_host(host: str) -> str:
+    return "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+
+
 def stop(*, timeout: float = _STOP_TIMEOUT_SECONDS) -> bool:
     """Stop the supervised instance. Returns False if it wasn't running."""
+    unit = managed_unit()
+    if unit is not None:
+        from precursor.backend import autostart
+
+        was_running = status().running
+        # Boot the job out rather than signalling it: a plain kill is exactly
+        # what KeepAlive undoes, and the replacement would then collide with
+        # whatever starts next.
+        autostart.stop_unit(unit)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not status().running:
+                break
+            time.sleep(0.2)
+        _clear_state()
+        return was_running
+
     current = status()
     if not current.running or current.state is None:
         _clear_state()
@@ -355,6 +441,26 @@ def restart(
     port: int | None = None,
     log_level: str | None = None,
 ) -> Status:
+    cfg = instance_settings()
+    overridden = any(
+        value is not None and value != default
+        for value, default in ((host, cfg.host), (port, cfg.port), (log_level, cfg.log_level))
+    )
+    unit = managed_unit() if not overridden else None
+    if unit is not None:
+        from precursor.backend import autostart
+
+        # One atomic operation, so nothing can claim the port in the gap
+        # between the old process dying and the new one binding — which is
+        # exactly the race a stop-then-start loses.
+        autostart.restart_unit(unit)
+        settled = _await_state(port=port if port is not None else cfg.port, host=host or cfg.host)
+        if settled.running:
+            return settled
+        raise SupervisorError(
+            f"The {unit.title} login item did not come back up. See {_log_path()}."
+        )
+
     previous = _read_state()
     stop()
     return start(
@@ -422,4 +528,6 @@ def run_foreground(
     try:
         _run_prod(host, resolved, log_level, strict_port=True, open_browser=False)
     finally:
-        _clear_state()
+        # Only if the record is still ours. A losing process must not delete
+        # the state of a different, healthy instance.
+        _clear_state(only_if_pid=os.getpid())

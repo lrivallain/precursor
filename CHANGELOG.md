@@ -9,6 +9,50 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Fixed
+
+- **Updating a login-item instance left it dead with the port still taken.**
+  Once registered, a launchd agent (or systemd unit) *is* the supervisor:
+  `KeepAlive` and `Restart=` exist precisely to undo a kill. `precursor service
+  restart` signalled the process anyway, so the manager immediately started a
+  replacement while the supervisor started its own, and the two raced for the
+  port. One won; the loser retried on a 30-second throttle forever. The
+  symptom, from the tray's "Update and restart": the old instance is not
+  replaced, the new one cannot bind, and the log fills with `Port 9000 is in
+  use`.
+
+  `start`, `stop` and `restart` now delegate to the service manager when a
+  controllable unit owns the instance — `launchctl bootstrap` / `bootout` /
+  `kickstart -k`, or the systemd equivalents. `kickstart -k` matters
+  specifically: it kills and restarts in one operation, leaving no window for
+  anything else to claim the port, which a stop-then-start cannot promise. A
+  Windows Startup entry is only a shortcut executed at login, so it is not
+  treated as a manager and the direct path still applies. An explicit
+  `--port`/`--host` override also keeps the direct path, since the unit carries
+  its own configuration.
+
+- **A failed start could delete a healthy instance's state file.** `runtime.json`
+  was cleared unconditionally on shutdown, so a process that lost the race for
+  the port erased the record belonging to the instance that won it — leaving
+  `precursor service status` reporting "not running" while the app was plainly
+  serving. It is now cleared only by the process that owns it.
+
+- **`precursor service update` silently uninstalled extras.** The reinstall was
+  built from `PRECURSOR_UPDATE_EXTRAS`, a setting defaulting to `kanban` that
+  the user had to remember to mirror by hand. So an install made with
+  `precursor-ai[tray,agents]` came back as `precursor-ai[kanban]` on the next
+  update, removing the menu-bar icon and Agents mode without saying anything.
+  The extras are now read from uv's own install receipt — what is actually
+  installed, rather than a copy that drifts — with the setting kept as the way
+  to *add* an extra the current install doesn't have yet.
+
+- **Restarting a login item that launchd had unloaded failed outright.** A plist
+  on disk is not the same as a job launchd knows about, and the two diverge
+  whenever the instance was stopped or its executable was replaced underneath
+  it. `launchctl kickstart` needs a loaded job, so `service restart` reported
+  *"Could not find service … in domain for user"* instead of starting it. Both
+  start and restart now fall back to bootstrapping the job.
+
 ### Added
 
 - **Precursor can now run as a background app instead of a terminal process.**
