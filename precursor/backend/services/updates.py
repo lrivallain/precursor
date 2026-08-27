@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -294,11 +295,41 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> str:
     return result.stdout
 
 
+def installed_extras() -> tuple[str, ...]:
+    """The extras this tool was actually installed with, per uv's receipt.
+
+    Read from disk rather than from configuration because it is the truth: a
+    configured list is a copy the user has to keep in sync by hand, and the
+    failure mode is silent. Installing ``precursor-ai[tray,agents]`` and then
+    updating against a default of ``kanban`` uninstalls the menu-bar icon and
+    Agents mode without saying anything.
+    """
+    receipt = Path(sys.prefix) / "uv-receipt.toml"
+    try:
+        with receipt.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return ()
+    requirements = data.get("tool", {}).get("requirements", [])
+    if not isinstance(requirements, list):
+        return ()
+    for entry in requirements:
+        if isinstance(entry, dict) and entry.get("name") == "precursor-ai":
+            extras = entry.get("extras") or []
+            return tuple(str(e) for e in extras) if isinstance(extras, list) else ()
+    return ()
+
+
 def _requirement() -> str:
-    extras = ",".join(
-        part.strip() for part in get_settings().update_extras.split(",") if part.strip()
-    )
-    return f"precursor-ai[{extras}]" if extras else "precursor-ai"
+    # The receipt wins when there is one; the setting remains the way to add an
+    # extra the current install doesn't have yet, and the fallback for installs
+    # uv didn't make.
+    extras = list(installed_extras())
+    for part in get_settings().update_extras.split(","):
+        name = part.strip()
+        if name and name not in extras:
+            extras.append(name)
+    return f"precursor-ai[{','.join(extras)}]" if extras else "precursor-ai"
 
 
 def apply(info: UpdateInfo | None = None) -> str:

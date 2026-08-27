@@ -37,6 +37,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   `precursor service status` reporting "not running" while the app was plainly
   serving. It is now cleared only by the process that owns it.
 
+- **`precursor service update` silently uninstalled extras.** The reinstall was
+  built from `PRECURSOR_UPDATE_EXTRAS`, a setting defaulting to `kanban` that
+  the user had to remember to mirror by hand. So an install made with
+  `precursor-ai[tray,agents]` came back as `precursor-ai[kanban]` on the next
+  update, removing the menu-bar icon and Agents mode without saying anything.
+  The extras are now read from uv's own install receipt — what is actually
+  installed, rather than a copy that drifts — with the setting kept as the way
+  to *add* an extra the current install doesn't have yet.
+
+- **Restarting a login item that launchd had unloaded failed outright.** A plist
+  on disk is not the same as a job launchd knows about, and the two diverge
+  whenever the instance was stopped or its executable was replaced underneath
+  it. `launchctl kickstart` needs a loaded job, so `service restart` reported
+  *"Could not find service … in domain for user"* instead of starting it. Both
+  start and restart now fall back to bootstrapping the job.
+
 ### Added
 
 - **Precursor can now run as a background app instead of a terminal process.**

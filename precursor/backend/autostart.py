@@ -316,22 +316,27 @@ def _run_unit_cmd(cmd: list[str], action: str, unit: Unit) -> None:
         )
 
 
+def _macos_bootstrap(unit: Unit, action: str) -> None:
+    """Load the job into the user's GUI domain, which also starts it (RunAtLoad)."""
+    path = _target_path(unit)
+    if path is None:
+        raise AutostartError(f"Autostart is not supported on {sys.platform}.")
+    _run_unit_cmd(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], action, unit)
+
+
 def start_unit(unit: Unit = APP) -> None:
     """Ask the service manager to start the unit."""
     if sys.platform == "darwin":
-        path = _target_path(unit)
-        # `kickstart` starts an already-bootstrapped job; if the job was booted
-        # out (which is how we stop), it has to be bootstrapped again first.
+        # `kickstart` only works on a job that is already loaded; a job that was
+        # booted out (which is how we stop) has to be bootstrapped again.
         probe = subprocess.run(
             ["launchctl", "kickstart", f"gui/{os.getuid()}/{unit.label}"],
             check=False,
             capture_output=True,
             text=True,
         )
-        if probe.returncode != 0 and path is not None:
-            _run_unit_cmd(
-                ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], "start", unit
-            )
+        if probe.returncode != 0:
+            _macos_bootstrap(unit, "start")
     elif os.name != "nt":
         _run_unit_cmd(["systemctl", "--user", "start", unit.systemd_name], "start", unit)
 
@@ -359,9 +364,17 @@ def restart_unit(unit: Unit = APP) -> None:
     """Restart the unit in one operation, leaving no window for a race."""
     if sys.platform == "darwin":
         # -k kills the running instance and starts a new one atomically, so
-        # nothing else can claim the port in between.
-        _run_unit_cmd(
-            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{unit.label}"], "restart", unit
+        # nothing else can claim the port in between. It still needs a *loaded*
+        # job, though: a plist on disk is not the same as a job launchd knows
+        # about, and the two diverge whenever the instance was stopped or its
+        # executable was replaced underneath it.
+        probe = subprocess.run(
+            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{unit.label}"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
+        if probe.returncode != 0:
+            _macos_bootstrap(unit, "restart")
     elif os.name != "nt":
         _run_unit_cmd(["systemctl", "--user", "restart", unit.systemd_name], "restart", unit)

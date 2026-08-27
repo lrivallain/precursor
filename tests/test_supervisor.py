@@ -9,7 +9,10 @@ adopt a port something else already owns.
 from __future__ import annotations
 
 import json
+import pathlib
 import socket
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -218,6 +221,42 @@ def test_a_windows_startup_entry_is_not_treated_as_a_service_manager() -> None:
         assert managed.controllable is True
     absent = autostart.AutostartInfo(unit="app", supported=True, installed=False, kind="launchd")
     assert absent.controllable is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchctl semantics")
+def test_unit_control_bootstraps_a_job_launchd_does_not_know_yet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plist on disk is not the same as a loaded job.
+
+    `kickstart` only works on a job launchd already knows about, and the two
+    diverge whenever the instance was stopped or its executable was replaced
+    underneath it. Both start and restart must fall back to bootstrapping
+    rather than reporting "Could not find service".
+    """
+    from precursor.backend import autostart
+
+    for control in (autostart.start_unit, autostart.restart_unit):
+        commands: list[list[str]] = []
+
+        def fake_run(
+            cmd: list[str], _sink: list[list[str]] = commands, **_kw: object
+        ) -> subprocess.CompletedProcess[str]:
+            _sink.append(cmd)
+            # Mimic launchctl refusing a job it has never loaded.
+            failed = "kickstart" in cmd
+            return subprocess.CompletedProcess(
+                cmd, 1 if failed else 0, stdout="", stderr="Could not find service"
+            )
+
+        monkeypatch.setattr(autostart.subprocess, "run", fake_run)
+        monkeypatch.setattr(autostart, "_target_path", lambda _u: pathlib.Path("/tmp/x.plist"))
+        control(autostart.APP)
+
+        assert any("kickstart" in c for c in commands), control.__name__
+        assert any("bootstrap" in c for c in commands), (
+            f"{control.__name__} gave up instead of loading the job"
+        )
 
 
 def test_run_foreground_yields_to_an_existing_instance(monkeypatch: pytest.MonkeyPatch) -> None:
