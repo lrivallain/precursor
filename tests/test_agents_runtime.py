@@ -27,6 +27,12 @@ import pytest
 
 from precursor.backend.services.agents import runtime
 
+# Captured at import, before any fixture runs: ``conftest`` installs an autouse
+# fixture that replaces ``agents_available`` with a stub, so app startup never
+# spawns a real CLI. These tests are the ones that *do* want the real probe, and
+# the fixture keeps no public handle on what it displaced.
+_REAL_AGENTS_AVAILABLE = runtime.agents_available
+
 _MISSING = object()
 
 
@@ -37,6 +43,7 @@ def _neutral_environment(monkeypatch, tmp_path):
     Without this, a machine with a system-wide ``copilot`` (Homebrew, npm) would
     resolve at the ``PATH`` step and quietly pass the tests that assert a *miss*.
     """
+    monkeypatch.setattr(runtime, "agents_available", _REAL_AGENTS_AVAILABLE)
     monkeypatch.delenv("COPILOT_CLI_PATH", raising=False)
     empty = tmp_path / "empty-path"
     empty.mkdir()
