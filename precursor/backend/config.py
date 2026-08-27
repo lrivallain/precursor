@@ -3,11 +3,48 @@
 from __future__ import annotations
 
 import os
+import sys
 from functools import cached_property, lru_cache
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def is_source_checkout() -> bool:
+    """True when the package is imported from a working copy of the repo.
+
+    A checkout keeps its state *beside the code* (``./precursor.db``,
+    ``./.precursor``) so every worktree is an isolated sandbox. An installed
+    wheel has no such home — and is typically started by a launcher whose
+    working directory is ``/`` — so it must fall back to a per-user directory
+    instead of scattering databases wherever it happened to be launched from.
+    """
+    root = Path(__file__).resolve().parents[2]
+    return (root / "pyproject.toml").is_file() and (root / "frontend" / "package.json").is_file()
+
+
+def user_data_dir() -> Path:
+    """The per-user state directory for an installed Precursor."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Precursor"
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        return (Path(base) if base else Path.home() / "AppData" / "Roaming") / "Precursor"
+    xdg = os.environ.get("XDG_DATA_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / "precursor"
+
+
+def _default_data_dir() -> str:
+    return ".precursor" if is_source_checkout() else str(user_data_dir())
+
+
+def _default_database_url() -> str:
+    if is_source_checkout():
+        return "sqlite+aiosqlite:///./precursor.db"
+    # as_posix() keeps the URL valid on Windows, where a native path would
+    # inject backslashes into the SQLAlchemy URL.
+    return f"sqlite+aiosqlite:///{(user_data_dir() / 'precursor.db').as_posix()}"
 
 
 class Settings(BaseSettings):
@@ -35,12 +72,15 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_origins_raw.split(",") if item.strip()]
 
-    # Database
-    database_url: str = "sqlite+aiosqlite:///./precursor.db"
+    # Database. In a source checkout this stays repo-relative (one DB per
+    # worktree); an installed wheel resolves to the per-user data directory so a
+    # launcher-started process finds the same database every time.
+    database_url: str = Field(default_factory=_default_database_url)
 
     # On-disk data directory for working copies (e.g. Workspace git
-    # clones). Relative paths resolve against the process working directory.
-    data_dir: str = ".precursor"
+    # clones), the blob store, logs and the supervisor's runtime state.
+    # Relative paths resolve against the process working directory.
+    data_dir: str = Field(default_factory=_default_data_dir)
 
     @cached_property
     def workspaces_dir(self) -> str:
@@ -282,6 +322,33 @@ class Settings(BaseSettings):
     # ``backup_interval_seconds`` has elapsed since the last success.
     backup_interval_seconds: int = 86_400
     backup_poll_seconds: int = 3_600
+
+    # GitHub CLI account pinning (services/github_auth.py). With several
+    # accounts signed in via `gh auth login`, `gh auth token` returns whichever
+    # one is *active* — which makes the effective token depend on unrelated
+    # shell state. Naming the login here passes `--user`, so Precursor always
+    # resolves the same account without a prior `gh auth switch`.
+    github_cli_user: str = ""
+
+    # Update checks (services/updates.py). "stable" tracks tagged releases;
+    # "nightly" tracks the rolling prerelease built from main. Empty means
+    # "match the running build" — a dev version follows nightly, a tagged one
+    # follows stable.
+    update_repo: str = "lrivallain/precursor"
+    update_channel: str = ""
+    # Extras carried across a self-update, so `precursor service update` doesn't
+    # silently drop the kanban plugin (or Agents mode) the user installed with.
+    update_extras: str = "kanban"
+    update_check_ttl_seconds: int = 900
+
+    @cached_property
+    def logs_dir(self) -> str:
+        return str(Path(self.data_dir).resolve() / "logs")
+
+    @cached_property
+    def runtime_state_file(self) -> str:
+        """Where the supervisor records the running instance (pid, port, url)."""
+        return str(Path(self.data_dir).resolve() / "runtime.json")
 
 
 @lru_cache

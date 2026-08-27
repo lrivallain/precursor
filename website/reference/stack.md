@@ -18,6 +18,7 @@ release.
 | **MCP** | the `mcp` Python SDK (client + server) |
 | **Frontend** | Vite + React 19 + TypeScript, Tailwind CSS, Lucide icons |
 | **DB** | SQLite for dev (`aiosqlite`), PostgreSQL for prod (`asyncpg`, extra) |
+| **Desktop** | `pystray` + `Pillow` for the menu-bar icon (`tray` extra); launchd / systemd user units / Startup entries for login items |
 | **Docs** | Markdown in-repo; this site is built with VitePress |
 
 ## Backend

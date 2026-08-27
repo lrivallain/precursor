@@ -128,6 +128,7 @@ export default withMermaid(
             { text: "Command runner", link: "/features/command-runner" },
             { text: "Attachments", link: "/features/attachments" },
             { text: "Storage & retention", link: "/features/storage" },
+            { text: "Background app", link: "/features/background-app" },
             { text: "Plugins", link: "/features/plugins" },
           ],
         },

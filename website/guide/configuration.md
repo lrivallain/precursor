@@ -46,6 +46,19 @@ The token value itself is never returned by the API. When a token resolves to a
 real GitHub account, the sidebar persona menu also shows your Copilot **AI
 credits** and the next reset date.
 
+### Several accounts signed in to `gh`
+
+`gh auth token` follows whichever account is *active*, so with more than one
+login the token Precursor gets depends on whoever last ran `gh auth switch` in an
+unrelated shell. That's fine interactively, and hopeless for an instance
+[started at login](/features/background-app). Pin the login instead:
+
+```bash
+PRECURSOR_GITHUB_CLI_USER=your_login
+```
+
+Precursor then asks for that account specifically, every time.
+
 ### Which repository issues go to
 
 **Settings → GitHub** also holds the default `owner/name` repository used when a

@@ -40,7 +40,12 @@ dependencies = [
     "sse-starlette>=3.4",
     "httpx>=0.28",
     "openai>=2.43",
-    "mcp>=1.28",
+    # Capped below 2.0: that release renamed the client entry points we import
+    # (``streamablehttp_client`` → ``streamable_http_client``) and dropped the
+    # old names, so an uncapped floor resolves a wheel the app cannot import.
+    # uv.lock protects dev and CI, but *end users of the published wheel*
+    # resolve fresh — so an API-breaking major needs a real cap here.
+    "mcp>=1.28,<2",
     "python-multipart>=0.0.32",
     "pypdf>=6.13",
     "pyyaml>=6.0",
@@ -61,6 +66,11 @@ agents = ["github-copilot-sdk>=1.0"]
 # `pip install precursor-ai[kanban]` (or the dev workspace) keeps the section,
 # while `pip install precursor-ai` gets a core with no GitHub Projects surface.
 kanban = ["precursor-kanban>=0.1"]
+# Menu-bar / system-tray control for a background instance (`precursor tray`).
+# An extra because pystray + Pillow pull GUI bindings that a headless or
+# server-side install has no use for; the `precursor service …` commands cover
+# the same ground without them.
+tray = ["pystray>=0.19", "pillow>=11.0"]
 
 # Dev tooling lives in a PEP 735 dependency group rather than an extra, so uv
 # includes it by DEFAULT on every `uv run` / `uv sync` (no `--extra dev` to

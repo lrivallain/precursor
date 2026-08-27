@@ -93,7 +93,7 @@ original. It's idempotent, so running it twice is harmless.
 
 ## Backups are separate
 
-The [backup](/reference/configuration#backups) job copies the database and blobs
+The [backup](/reference/configuration#backup) job copies the database and blobs
 into a plain folder on its own schedule and keeps its own snapshot retention.
 Cleaning up doesn't touch existing snapshots — but a snapshot taken *before* a
 cleanup still holds the old data, which is exactly what you want if you ever need

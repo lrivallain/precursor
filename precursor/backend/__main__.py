@@ -13,6 +13,15 @@ Two modes:
   the docs on another (``--docs-port``, default ``--port`` + 2). All processes
   are managed together and shut down on Ctrl-C. Requires a source checkout
   (``uv run precursor --dev``).
+
+Two sub-commands sit alongside them, for running Precursor as a managed
+background app rather than in a terminal:
+
+* ``precursor service …`` — start/stop/restart a detached instance, register it
+  as a login item, and update it in place (see
+  :mod:`precursor.backend.service_cli`).
+* ``precursor tray`` — a menu-bar/tray icon driving that instance (see
+  :mod:`precursor.backend.tray`).
 """
 
 from __future__ import annotations
@@ -615,6 +624,18 @@ def _run_dev(
 
 
 def main() -> None:
+    # `service` / `tray` are dispatched before the main parser so the flat
+    # `precursor [--dev] …` interface (and every dev workflow built on it) keeps
+    # parsing exactly as before.
+    if sys.argv[1:2] == ["service"]:
+        from precursor.backend.service_cli import main as service_main
+
+        raise SystemExit(service_main(sys.argv[2:]))
+    if sys.argv[1:2] == ["tray"]:
+        from precursor.backend.tray import main as tray_main
+
+        raise SystemExit(tray_main(sys.argv[2:]))
+
     cfg = get_settings()
     parser = argparse.ArgumentParser(prog="precursor", description=__doc__)
     parser.add_argument(

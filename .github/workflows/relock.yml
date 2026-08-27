@@ -83,6 +83,15 @@ jobs:
         if: env.TARGETS == 'all' || env.TARGETS == 'python'
         run: uv sync --locked
 
+      # …including the optional extras. A wheel user installing
+      # `precursor-ai[tray]` resolves those too, and an extra that cannot be
+      # satisfied would otherwise sail through every gate — the base sync never
+      # touches it. `agents` is excluded deliberately: its wheel bundles a
+      # ~150 MB native runtime, and it is opt-in for exactly that reason.
+      - name: Verify the optional extras install
+        if: env.TARGETS == 'all' || env.TARGETS == 'python'
+        run: uv sync --locked --extra kanban --extra tray --extra postgres
+
       - name: Verify the frontend lockfile builds
         if: env.TARGETS == 'all' || env.TARGETS == 'frontend'
         run: npm ci && npm run typecheck && npm run build

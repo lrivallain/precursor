@@ -93,8 +93,52 @@ uvx precursor-ai              # run the published wheel directly
 uv tool install precursor-ai  # or install the `precursor-ai` command
 ```
 
+## The nightly channel
+
+Tagged releases are the *stable* channel. Alongside them, `nightly.yml`
+publishes a **rolling prerelease of `main` on every push** — the same wheels and
+sdists, attached to a permanently-named `nightly` tag that is replaced each run.
+
+It exists to remove the last reason to run Precursor from a source checkout: the
+published wheel already carries the SPA, the in-app docs and every plugin
+frontend, so following `main` needs no clone, no Node.js and no
+`make plugins-build`.
+
+Alongside the artifacts it uploads a small `version.json`:
+
+```json
+{
+  "channel": "nightly",
+  "version": "2026.7.1.dev229",
+  "commit": "679a4fe6e",
+  "wheel_url": "https://github.com/…/precursor_ai-….whl",
+  "extra_wheel_urls": ["https://github.com/…/precursor_kanban-….whl"]
+}
+```
+
+That manifest is what `precursor service check` reads — one request, rather than
+listing release assets and guessing which is the host wheel. `extra_wheel_urls`
+pins the plugin wheels built from the *same commit*, so a nightly host is never
+paired with a months-old plugin resolved from PyPI.
+
+Two consequences worth knowing:
+
+- **Dev versions aren't ordered** — two branches can share a base version — so
+  the nightly channel compares the **commit**, not the version number. Stable
+  compares versions normally.
+- The release is **deleted and recreated** each run (`--cleanup-tag`) so the tag
+  follows `main` and no stale wheel is left for a client to resolve.
+
+Nothing here interacts with tagging: cutting a release is exactly the process
+above, and the nightly tag is never a release candidate.
+
 ## Notes & known follow-ups
 
+- **Dependency floors vs. the published wheel.** `uv.lock` pins exact versions
+  for dev and CI, but **end users of the wheel resolve fresh** and never see the
+  lockfile. Coarse `>=major.minor` floors are right for compatible releases; an
+  API-breaking major needs a real cap in `pyproject.toml` (see the `mcp<2` pin).
+  A green CI run does *not* prove a fresh `uvx precursor-ai` works.
 - **Commit messages** follow Conventional Commits (see `CONTRIBUTING.md`); the
   GitHub Release notes are generated from them.
 - **PyPI**: each tagged release publishes the wheel + sdist to PyPI via Trusted

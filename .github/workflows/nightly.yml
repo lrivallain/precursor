@@ -1,0 +1,141 @@
+name: Nightly
+
+# Publish a rolling build of `main` so an installed Precursor can track the
+# development line without a source checkout — no `git pull`, no Node.js, no
+# plugin frontend build on the user's machine.
+#
+# The artifacts land on a single, permanently-named `nightly` prerelease that is
+# replaced on every push. Alongside the wheels it carries `version.json`, a tiny
+# manifest the app reads to answer "is there something newer than me?" in one
+# request (see precursor/backend/services/updates.py).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    name: Build and publish the rolling build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # replace the `nightly` release and its assets
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history + tags so hatch-vcs derives a dev version that encodes
+          # the commit (…dev227+g<sha>), which is what the update check compares.
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (bundled into the wheel)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build plugin frontends
+        run: make plugins-build
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Build wheels + sdists
+        run: uv build --all-packages
+
+      - name: Write the version manifest
+        id: manifest
+        run: |
+          set -euo pipefail
+          # Built entirely in Python, passed the wheel list as argv: no shell
+          # quoting boundary to get wrong, and the output is valid JSON by
+          # construction rather than by a heredoc's good behaviour. Every client
+          # parses this file, so a filename needing escaping must not corrupt it.
+          python3 - dist/*.whl <<'PY' > dist/version.json
+          import datetime, json, os, pathlib, sys
+
+          wheels = [pathlib.Path(w) for w in sys.argv[1:]]
+          hosts = [w for w in wheels if w.name.startswith("precursor_ai-")]
+          # Exactly one is expected: fresh checkout, fresh build. Assert it
+          # rather than picking the first of several, which would publish a
+          # manifest pointing at the wrong build.
+          if len(hosts) != 1:
+              sys.exit(f"Expected exactly 1 host wheel, found {len(hosts)}: {[w.name for w in hosts]}")
+          host = hosts[0]
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["GITHUB_SHA"]
+          base = f"https://github.com/{repo}/releases/download/nightly"
+
+          json.dump(
+              {
+                  "channel": "nightly",
+                  # e.g. precursor_ai-2026.7.1.dev229+g679a4fe6e-py3-none-any.whl
+                  "version": host.name.split("-")[1],
+                  "commit": sha[:9],
+                  "full_commit": sha,
+                  "built_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+                      "%Y-%m-%dT%H:%M:%SZ"
+                  ),
+                  "wheel_url": f"{base}/{host.name}",
+                  # Plugin wheels ride along so a nightly install gets nightly
+                  # plugins rather than whatever is on PyPI (see `--with` in
+                  # services/updates.py).
+                  "extra_wheel_urls": [f"{base}/{w.name}" for w in wheels if w != host],
+              },
+              sys.stdout,
+              indent=2,
+          )
+          PY
+          cat dist/version.json
+          version=$(python3 -c "import json;print(json.load(open('dist/version.json'))['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Replace the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Written to a file rather than passed inline: the notes contain
+          # backticks and fenced blocks, which are a shell-quoting minefield.
+          cat > notes.md <<EOF
+          Rolling build of \`main\` (${GITHUB_SHA:0:9}).
+
+          > [!WARNING]
+          > This is an unstable prerelease rebuilt on every push. Use a tagged
+          > release if you want stability.
+
+          Install (or update) in one command:
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh
+          \`\`\`
+
+          An existing install updates itself with \`precursor service update\`.
+          EOF
+          # Delete-then-create (rather than editing) so the tag moves to this
+          # commit and no stale wheel from a previous run is left behind for a
+          # client to resolve.
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly \
+            --title "Nightly ($VERSION)" \
+            --notes-file notes.md \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            dist/*.whl dist/*.tar.gz dist/version.json

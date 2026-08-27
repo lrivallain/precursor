@@ -83,6 +83,11 @@ Health and version:
 
 - `GET /api/health` — liveness + version.
 - `GET /api/version` — the CalVer version (derived from git tags at build time).
+- `GET /api/version/check` — whether a newer build is published on the active
+  channel, plus how this instance was installed. Read-only on purpose: applying
+  an update replaces the process serving the request, so it belongs to
+  [`precursor service update`](/features/background-app#updating-in-place).
+  Cached; pass `?force=true` to re-ask GitHub.
 
 ::: warning One route lives outside `/api/*`
 `GET /raw/{slug}/{path}` serves a [workspace](/features/workspaces) file straight

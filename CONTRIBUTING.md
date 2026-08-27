@@ -46,6 +46,23 @@ make build        # npm --prefix frontend run build
 uv run precursor  # serves API + SPA on :8000
 ```
 
+### Working on the background app
+
+`precursor service …` and `precursor tray` (see
+[docs/architecture.md](docs/architecture.md#supervised-background-instance)) also
+work from a checkout, and deliberately keep a checkout's paths: the supervised
+instance anchors at the repo root, so it uses the same `./precursor.db` and
+`.precursor/` as `uv run precursor`. Running `precursor service start` in a
+worktree therefore supervises *that* worktree.
+
+The menu-bar icon needs the GUI extra; without it the tray tests skip rather
+than fail:
+
+```bash
+uv sync --extra tray
+uv run precursor tray
+```
+
 
 ## Quality gates
 

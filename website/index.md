@@ -104,6 +104,14 @@ features:
       local DB and are never echoed back by the API.
     link: /reference/architecture
     linkText: How it works
+  - icon: 🚦
+    title: Runs in the background
+    details: >-
+      Install with one command, start at login, and drive it from a menu-bar
+      icon that shows whether it's up — including a one-click update to the
+      newest build.
+    link: /features/background-app
+    linkText: About the background app
 ---
 
 <div style="max-width: 1152px; margin: 4rem auto 0; padding: 0 24px;">

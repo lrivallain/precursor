@@ -57,7 +57,38 @@ A single `uvicorn` worker hosts everything (`precursor/backend/main.py`):
   group, also started in the lifespan.
 
 Version is CalVer, derived from git tags by hatch-vcs at build time and exposed
-at `GET /api/version` (and `/api/health`).
+at `GET /api/version` (and `/api/health`). `GET /api/version/check` additionally
+reports whether a newer build exists on the active channel — read-only, because
+applying an update replaces the process serving the request.
+
+### Supervised background instance
+
+The uvicorn worker above is the whole app; everything here is *around* it, so
+`uv run precursor` in a checkout is unaffected by any of it.
+
+`precursor service` (`backend/service_cli.py`) manages that worker as a
+detached background process, so Precursor can run without a terminal:
+
+- **`backend/supervisor.py`** owns the lifecycle. It spawns the worker with
+  `--strict-port`, records `pid`/`host`/`port`/`url`/`version` in
+  `runtime.json` under the data dir, and derives everything else — `status`,
+  `stop`, `restart`, the tray's state — from that file plus a liveness probe,
+  so there is exactly one source of truth and no port to guess. Starting is
+  idempotent; a state file whose process is gone is healed rather than trusted.
+- **`working_dir()`** decides where the instance runs, which matters because a
+  checkout's default database URL is *relative*: a source tree anchors at the
+  repo root (same database as `uv run precursor`), an installed wheel at its
+  data dir. `instance_settings()` resolves `.env` from there rather than from
+  wherever the CLI was invoked, so the port doesn't depend on the caller's cwd.
+- **`backend/autostart.py`** writes the login items — a launchd agent, a systemd
+  *user* unit, or a Startup entry. Two units: the app and the tray, separately,
+  because quitting the icon must not stop the app.
+- **`backend/tray.py`** is a `pystray` menu-bar control behind the `tray` extra.
+  It holds no state of its own and every action it offers has a
+  `precursor service …` equivalent.
+- **`services/updates.py`** detects how Precursor was installed (`source` vs
+  `uv-tool`) and updates in place accordingly — `git pull` plus a plugin
+  frontend rebuild, or a wheel reinstall.
 
 ## Request flow: streamed chat
 
@@ -400,6 +431,15 @@ the server preflights Docker availability against the effective jail setting.
   frontend typecheck+build on every PR. A tag push (`v*`) triggers
   `release.yml`, which builds the wheel and publishes a GitHub Release. See
   [../RELEASING.md](../RELEASING.md).
+- `nightly.yml` publishes a **rolling prerelease** of `main` on every push:
+  wheels plus a small `version.json` the update check reads in one request. It
+  exists so tracking `main` doesn't require a source checkout — the wheel
+  already carries the SPA, the docs and every plugin frontend, so there is
+  nothing left for a user to build. The manifest is a contract between that
+  workflow and `services/updates.py`, and `tests/test_nightly_manifest.py`
+  runs the workflow's actual step against the actual parser so the two can't
+  drift — the workflow itself only ever runs on `main`, after merge, so a
+  rename would otherwise surface in production.
 
 ## Plugin contract
 

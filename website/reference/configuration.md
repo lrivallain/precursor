@@ -36,7 +36,21 @@ CLI flags mirror several of these: `--port`, `--api-port`, `--host`,
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` | Async SQLAlchemy URL. Point at Postgres for production. |
-| `PRECURSOR_DATA_DIR` | `.precursor` | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), and the agents runtime's Copilot home (`agents/copilot-home/`). Relative paths resolve against the process working directory. |
+| `PRECURSOR_DATA_DIR` | `.precursor` *(checkout)* / *user data dir* *(installed)* | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), the agents runtime's Copilot home (`agents/copilot-home/`), and the [background app](/features/background-app)'s `runtime.json` + `logs/`. Relative paths resolve against the process working directory. |
+
+The two defaults above depend on **how Precursor was installed**. A source
+checkout keeps its state beside the code, so every clone and worktree is an
+isolated sandbox. An installed wheel has no such home — and is typically started
+by a login item whose working directory is `/` — so it resolves to a per-user
+directory instead:
+
+| Platform | User data dir |
+| --- | --- |
+| macOS | `~/Library/Application Support/Precursor` |
+| Linux | `$XDG_DATA_HOME/precursor`, else `~/.local/share/precursor` |
+| Windows | `%APPDATA%\Precursor` |
+
+Setting either variable explicitly overrides both behaviours.
 
 ```bash
 # SQLite (default — no setup)
@@ -45,6 +59,18 @@ PRECURSOR_DATABASE_URL=sqlite+aiosqlite:///./precursor.db
 # PostgreSQL (needs the `postgres` extra for asyncpg)
 PRECURSOR_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/precursor
 ```
+
+## Background app & updates
+
+Used by the [background app](/features/background-app) — the supervisor, the
+menu-bar tray, and the in-place updater.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_UPDATE_REPO` | `lrivallain/precursor` | Repository the update check reads releases from. Point it at a fork to track your own builds. |
+| `PRECURSOR_UPDATE_CHANNEL` | *(empty)* | `stable` (tagged releases) or `nightly` (rolling build of `main`). Empty means "match the running build": a dev version follows nightly, a tagged one follows stable. |
+| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. |
+| `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | How long an update-check result is cached before GitHub is asked again. |
 
 ## Diagram editor
 
@@ -64,6 +90,10 @@ The provider and its credentials are configured **at runtime** — **Settings �
 Model** — not via the environment. The GitHub providers fall back to your
 `gh auth login` session when no token is saved. See
 [Configuration → Connecting a model](/guide/configuration#connecting-a-model).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |
 
 ## Backup
 
