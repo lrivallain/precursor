@@ -558,6 +558,37 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **`mcp` was uncapped, so a fresh install resolved a wheel the app cannot
+  import.** `mcp` 2.0 renamed the client entry points Precursor imports
+  (`streamablehttp_client` → `streamable_http_client`) and dropped the old
+  names, and the `>=1.28` floor accepted it — so `uvx precursor-ai` on a machine
+  resolving today's index got an instance that died on startup with an
+  `ImportError`. Capped to `>=1.28,<2`.
+
+  Worth noting the shape of this: `uv.lock` pins exact versions for dev and CI,
+  which is why the suite stayed green, but **end users of the published wheel
+  resolve fresh** and the lockfile never reaches them. Coarse floors are fine
+  for compatible releases; an API-breaking major needs a real cap.
+
+- **The supervisor read settings from the caller's directory, not the
+  instance's.** `pydantic-settings` resolves `.env` relative to the process
+  working directory, but the CLI and the tray can be invoked from anywhere while
+  the instance always runs in its own working directory. Running
+  `precursor service start` from `~` therefore missed the `.env` beside the
+  data, fell back to the default port, and passed the child an explicit
+  `--port` that overrode the `.env` it would otherwise have read — silently
+  moving an instance configured for `:9000` onto `:8000`. Settings are now
+  resolved as the child will see them, and the foreground path adopts the
+  working directory before reading them.
+
+- **Installing the login item while an instance was already running caused a
+  crash loop.** launchd's `RunAtLoad` (and systemd's `--now`) start the instance
+  as part of registering it, which raced the start `service install` did itself;
+  the loser hit `--strict-port` and exited non-zero, which `KeepAlive` reads as
+  a crash and retries every 30 seconds forever. The foreground path now yields
+  to a healthy existing instance and exits *successfully*, and `service install`
+  waits for the unit to come up instead of racing it.
+
 - **Archived agent events could grow without bound.** The event normaliser
   capped captured tool I/O only when the value was already a string; anything
   rendered through `jsonify` — notably a hook's `input`, which re-embeds the

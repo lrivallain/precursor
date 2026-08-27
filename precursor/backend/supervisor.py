@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import signal
 import socket
@@ -30,7 +31,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from precursor.backend.config import get_settings
+from precursor.backend.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 # How long to wait for a freshly spawned instance to accept connections before
 # giving up and reporting the log file. Generous: the first start of a new
@@ -107,6 +110,22 @@ def working_dir() -> Path:
     if is_source_checkout():
         return Path(__file__).resolve().parents[2]
     return Path(get_settings().data_dir).resolve()
+
+
+def instance_settings() -> Settings:
+    """Settings as the *supervised child* will resolve them.
+
+    ``pydantic-settings`` reads ``.env`` relative to the process working
+    directory, but the CLI and the tray can be invoked from anywhere while the
+    instance always runs in :func:`working_dir`. Resolving from the caller's
+    directory would make the port depend on where you happened to type the
+    command — and then hand the child an explicit ``--port`` that overrides the
+    ``.env`` it would have read itself.
+    """
+    env_file = working_dir() / ".env"
+    if env_file.is_file():
+        return Settings(_env_file=env_file)
+    return get_settings()
 
 
 def _read_state() -> RuntimeState | None:
@@ -231,7 +250,7 @@ def start(
     if current.running:
         return current
 
-    cfg = get_settings()
+    cfg = instance_settings()
     host = host or cfg.host
     port = port if port is not None else cfg.port
     log_level = log_level or cfg.log_level
@@ -363,6 +382,26 @@ def run_foreground(
     from precursor import __version__
     from precursor.backend.__main__ import _loopback, _resolve_port, _run_prod
 
+    # A login item and a manual `service start` can both fire — on install, the
+    # launchd/systemd unit starts at load while the user may already have one
+    # running. Binding regardless would hit --strict-port and exit non-zero,
+    # which KeepAlive reads as a crash and retries forever. Exiting *successfully*
+    # says "already served, nothing to do" and ends the loop.
+    current = status()
+    if current.running and current.state is not None:
+        logger.info(
+            "Precursor is already running on %s (pid %s) — nothing to do.",
+            current.state.url,
+            current.state.pid,
+        )
+        return
+
+    # Become the process the detached path would have spawned: Popen gives that
+    # child ``cwd=working_dir()``, and settings (``.env``, and a checkout's
+    # relative database URL) resolve against the working directory — so adopt it
+    # here too, then re-read settings so both paths land on identical values.
+    os.chdir(working_dir())
+    get_settings.cache_clear()
     cfg = get_settings()
     host = host or cfg.host
     log_level = log_level or cfg.log_level

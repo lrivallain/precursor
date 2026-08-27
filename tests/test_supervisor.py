@@ -104,3 +104,51 @@ def test_start_refuses_a_port_owned_by_something_else() -> None:
 
 def test_stop_is_a_no_op_when_not_running() -> None:
     assert supervisor.stop() is False
+
+
+def test_run_foreground_yields_to_an_existing_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A login item starting while an instance already runs must exit *0*.
+
+    Binding regardless would hit --strict-port and exit non-zero, which
+    launchd's KeepAlive reads as a crash — producing a retry loop every 30s
+    forever rather than a no-op.
+    """
+    import os
+
+    supervisor._write_state(_state(os.getpid()))
+
+    def _must_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("run_foreground tried to bind over a live instance")
+
+    monkeypatch.setattr(supervisor, "_resolve_port", _must_not_run, raising=False)
+
+    supervisor.run_foreground()  # returns cleanly == exit 0
+
+
+def test_settings_come_from_the_instance_dir_not_the_callers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The CLI and the tray can be invoked from anywhere, but the instance
+    always runs in ``working_dir()``.
+
+    Resolving ``.env`` from the caller's directory instead would make the port
+    depend on where you happened to type the command — and then hand the child
+    an explicit ``--port`` overriding the ``.env`` it would have read itself.
+    """
+    instance_dir = tmp_path / "instance"
+    instance_dir.mkdir()
+    (instance_dir / ".env").write_text("PRECURSOR_PORT=9000\n", encoding="utf-8")
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(supervisor, "working_dir", lambda: instance_dir)
+
+    assert supervisor.instance_settings().port == 9000
+
+
+def test_instance_settings_fall_back_when_there_is_no_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(supervisor, "working_dir", lambda: tmp_path / "empty")
+    assert supervisor.instance_settings().port == config.get_settings().port

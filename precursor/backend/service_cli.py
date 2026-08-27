@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Sequence
 
 from precursor.backend import autostart, desktop, supervisor
@@ -69,9 +70,18 @@ def _cmd_status(args: argparse.Namespace) -> int:
 def _cmd_install(_args: argparse.Namespace) -> int:
     info = autostart.install()
     print(f"Autostart installed ({info.kind}): {info.path}")
+    # launchd (RunAtLoad) and systemd (--now) start the instance as part of
+    # registering it, so give the unit a moment to come up before deciding
+    # whether anything is still missing. Starting one here unconditionally
+    # would race the unit and lose to --strict-port.
+    for _ in range(20):
+        if supervisor.status().running:
+            break
+        time.sleep(0.5)
     status = supervisor.status()
     if not status.running:
-        _print_status(supervisor.start(), as_json=False)
+        status = supervisor.start()
+    _print_status(status, as_json=False)
     return 0
 
 
