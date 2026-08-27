@@ -9,8 +9,9 @@ that works in the **background** while you do something else.
 
 ## Enable them first
 
-Agents are **opt-in** and ship behind an extra, because the wheel bundles a
-~90 MB native runtime:
+Agents are **opt-in** and ship behind an extra, because they drive a ~90 MB
+native runtime the SDK downloads on first use (or picks up from a system-wide
+`copilot` install):
 
 ```bash
 uv sync --extra agents                 # adds the Copilot SDK runtime

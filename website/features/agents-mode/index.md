@@ -23,7 +23,7 @@ off by default**.
 ## Enabling agents
 
 Agents mode isn't part of the default install — it lives behind an `agents`
-extra that bundles the native Copilot CLI runtime:
+extra that pulls the Copilot SDK:
 
 ```bash
 uv sync --extra agents                 # adds github-copilot-sdk
@@ -36,9 +36,12 @@ turn it off there to stop the runtime without uninstalling anything. Without the
 extra, agents stay off and Settings tells you which install command to run.
 
 ::: warning ~90 MB native runtime
-The `github-copilot-sdk` wheel bundles the native runtime binary (~90 MB
-download, ~145 MB on disk) — which is exactly why it's an opt-in extra rather
-than a default dependency. See [installation](/guide/installation#optional-agents-mode).
+The SDK wheel is small, but it drives a **native Copilot CLI** (~90 MB, ~145 MB
+on disk) that it downloads on first use — or reuses from a system-wide `copilot`
+install. That payload is exactly why this is an opt-in extra rather than a
+default dependency. Precursor's own probe is read-only and never downloads; see
+[installation](/guide/installation#pointing-at-a-specific-cli) for the resolution
+order and `COPILOT_CLI_PATH`.
 :::
 
 ## The agent dashboard

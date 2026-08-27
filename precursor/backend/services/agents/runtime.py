@@ -6,10 +6,17 @@ between Precursor and that optional dependency: everything here is safe to
 import even when the SDK is absent, so the rest of the app degrades gracefully
 to "Agents unavailable" instead of failing to start.
 
-On the platforms we target, the SDK wheel **bundles** the native Copilot CLI
-runtime binary, so installing the extra is all that's required — there is no
-separate download step. ``agents_available`` reflects both conditions: the
-Python package is importable *and* a runnable CLI binary resolves.
+The SDK wheel is a plain ``py3-none-any`` package that **downloads** the native
+Copilot CLI on first use (it used to ship platform-specific wheels that bundled
+the binary). So installing the extra no longer guarantees a runnable runtime,
+and ``agents_available`` reflects both conditions separately: the Python package
+is importable *and* a CLI binary resolves.
+
+Resolution here is deliberately **read-only** — it reports what is already on
+disk and never triggers the SDK's on-demand download. A capability probe runs on
+every Settings render, and pulling a ~90 MB binary as a side effect of drawing a
+toggle would be indefensible; provisioning belongs behind an explicit user
+action.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ import importlib
 import importlib.util
 import logging
 import os
+import shutil
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -27,6 +35,7 @@ from precursor.backend.config import get_settings
 logger = logging.getLogger(__name__)
 
 _SDK_MODULE = "copilot"
+_CLI_EXECUTABLE = "copilot"
 
 
 def sdk_installed() -> bool:
@@ -38,23 +47,68 @@ def sdk_installed() -> bool:
 
 
 def runtime_binary_path() -> str | None:
-    """Resolve the Copilot CLI binary the SDK would use, or ``None``.
+    """Resolve a Copilot CLI binary the SDK can drive, or ``None``.
 
-    Order mirrors the SDK: an explicit ``COPILOT_CLI_PATH`` wins, otherwise the
-    binary bundled inside the installed wheel.
+    Layered on purpose, because the SDK's own resolution order (explicit path >
+    ``COPILOT_CLI_PATH`` > its download cache) would otherwise *fetch* the binary
+    when nothing is cached, and a probe must never do that:
+
+    1. ``COPILOT_CLI_PATH`` — the SDK's documented escape hatch, so an operator
+       who pinned a binary sees that exact one reported back.
+    2. The SDK's own download cache, which is what it would use next.
+    3. A ``copilot`` executable on ``PATH`` — a system-wide CLI install (Homebrew,
+       npm, the official installer) is a perfectly good runtime, and ignoring it
+       is what made a working machine report "unavailable".
+    4. The binary bundled inside pre-1.0.11 platform-specific wheels.
+
+    Only steps 2 and 4 reach into SDK internals, and each is independently
+    guarded — the env var and ``PATH`` paths keep working even if the SDK moves
+    its private symbols again.
     """
-    explicit = os.environ.get("COPILOT_CLI_PATH")
-    if explicit and Path(explicit).exists():
+    explicit = _existing(os.environ.get("COPILOT_CLI_PATH"))
+    if explicit:
         return explicit
     if not sdk_installed():
         return None
+    cached = _sdk_cached_cli_path()
+    if cached:
+        return cached
+    # `which` already screens for an executable file. A same-named binary that
+    # isn't the Copilot CLI would fail loudly when the manager starts the client,
+    # which is a better outcome than declaring the runtime missing outright.
+    on_path = shutil.which(_CLI_EXECUTABLE)
+    if on_path:
+        return on_path
+    return _legacy_bundled_cli_path()
+
+
+def _existing(path: str | None) -> str | None:
+    """Return ``path`` only when it still points at something on disk."""
+    return path if path and Path(path).exists() else None
+
+
+def _sdk_cached_cli_path() -> str | None:
+    """Path of the CLI the SDK already downloaded, if any.
+
+    Calls ``get_cached_cli_path`` rather than ``get_or_download_cli`` so the
+    probe stays read-only. The lookup is pinned to the SDK's expected CLI
+    version, so a cache holding only *other* versions correctly reads as a miss.
+    """
+    try:
+        download_mod = importlib.import_module("copilot._cli_download")
+        return _existing(download_mod.get_cached_cli_path())
+    except Exception:  # pragma: no cover - private API may move between versions
+        logger.debug("Could not read the Copilot CLI download cache", exc_info=True)
+        return None
+
+
+def _legacy_bundled_cli_path() -> str | None:
+    """Path of the CLI bundled inside pre-1.0.11 SDK wheels, if that line is installed."""
     try:
         client_mod = importlib.import_module("copilot.client")
-        resolver = client_mod._get_bundled_cli_path
-        path = resolver()
-        return path if path and Path(path).exists() else None
-    except Exception:  # pragma: no cover - private API may move between versions
-        logger.debug("Could not resolve bundled Copilot CLI path", exc_info=True)
+        return _existing(client_mod._get_bundled_cli_path())
+    except Exception:  # pragma: no cover - absent on every current SDK release
+        logger.debug("Could not resolve a bundled Copilot CLI path", exc_info=True)
         return None
 
 
@@ -69,7 +123,10 @@ def agents_available() -> tuple[bool, str]:
         return False, "github-copilot-sdk not installed — run `uv sync --extra agents`"
     binary = runtime_binary_path()
     if not binary:
-        return False, "Copilot CLI runtime binary not found for this platform"
+        return False, (
+            "Copilot CLI runtime binary not found — install the Copilot CLI "
+            "(so `copilot` is on PATH) or point COPILOT_CLI_PATH at one"
+        )
     return True, f"ready ({binary})"
 
 

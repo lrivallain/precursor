@@ -11,19 +11,46 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Agents mode reported its runtime as missing on installs that had a perfectly
+  good Copilot CLI.** `github-copilot-sdk` 1.0.11 replaced its platform-specific
+  wheels — which *bundled* the ~90 MB native CLI — with a small pure-Python wheel
+  that downloads the binary on first use. The private helper Precursor called to
+  locate that bundled binary went with it, and because the whole lookup sat
+  inside a bare `except Exception`, the failure was silent: **Settings → Agents**
+  simply said *"Copilot CLI runtime binary not found for this platform"* on a
+  machine where the SDK was installed, working, and a system-wide `copilot` was
+  already on `PATH`.
+
+  Resolution is now layered and no longer hinges on any single SDK internal:
+  `COPILOT_CLI_PATH`, then the SDK's download cache, then a `copilot` executable
+  on `PATH`, then the old bundled location for pre-1.0.11 SDK lines. Each step
+  that reaches into the SDK is guarded independently, so the env var and `PATH`
+  keep working even if those internals move again. The probe stays **read-only**
+  — it reports what already exists and never triggers the SDK's download, because
+  it runs on every Settings render and pulling ~90 MB as a side effect of drawing
+  a toggle would be indefensible.
+
+  Whatever the probe resolves is now handed to the SDK when the runtime starts.
+  Left to itself the SDK ignores `PATH` and downloads instead, so a machine whose
+  only CLI is a Homebrew install would have passed the probe and then pulled the
+  binary anyway — and could have ended up driving a different one than Settings
+  reported. `github-copilot-sdk` is also capped at `<2` now, for the same reason
+  `mcp` is: Precursor reaches into its private CLI-resolution helpers, and an
+  uncapped floor is what let a *patch* release break this in the first place.
+
 - **Updating left the menu-bar icon running the previous release.**
   `precursor service update` restarts the app so the new code is serving, but
   the tray is a separate long-lived process: replacing the wheel changes the
   code on disk while the running icon keeps executing what it imported at
   startup. That is not cosmetic — the tray's menu is what drives the
   supervisor, so a stale icon kept offering the *previous* version's behaviour
-  indefinitely — including, right after the previous release, the restart bug that release had just fixed. Both `service update`
+  indefinitely — including, right after the release that fixed the restart
+  race, the icon's own Restart entry still having the racing version of it.
+  Both `service update`
   and the tray's own "Update and restart" now bounce the tray unit; the tray
   restarts itself last, so the service manager brings a fresh icon straight
   back. A tray started by hand is left alone, and a failure to restart it is
   reported as a note rather than failing an otherwise-successful update.
-
-### Fixed
 
 - **Updating a login-item instance left it dead with the port still taken.**
   Once registered, a launchd agent (or systemd unit) *is* the supervisor:

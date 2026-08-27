@@ -54,12 +54,18 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.31"]
 # Opt-in "Agents" mode: the GitHub Copilot SDK drives long-running agent
-# sessions. Kept as an extra because the published 1.0.x wheels are
-# platform-specific and *bundle* the ~90 MB native Copilot CLI runtime binary
-# (there is no lightweight download-on-demand wheel for this API line yet), so
-# installing it is opt-in to avoid forcing that payload on every install. Run
-# the app with it via `uv run --extra agents precursor --dev` (or `make dev`).
-agents = ["github-copilot-sdk>=1.0"]
+# sessions. Kept as an extra because it pulls a second agent runtime — the SDK
+# is a small pure-Python wheel, but it drives a ~90 MB native Copilot CLI that it
+# downloads on first use (or reuses from a system-wide `copilot` install), and a
+# default install has no reason to provision that. Run the app with it via
+# `uv run --extra agents precursor --dev` (or `make dev`).
+#
+# Capped at <2 for the same reason as `mcp`: Precursor reaches into the SDK's
+# private CLI-resolution helpers, so an uncapped floor let a *patch* release move
+# a symbol out from under the runtime probe. The probe now degrades to
+# `COPILOT_CLI_PATH` / `PATH` when those internals move, and the cap bounds the
+# blast radius of a major rewrite of the public client API on top of that.
+agents = ["github-copilot-sdk>=1.0,<2"]
 # The kanban board (GitHub Projects v2) ships as the first official plugin — a
 # separate distribution under plugins/precursor-kanban with its own routes,
 # schemas and release cadence. It stays in the default install via this extra so
