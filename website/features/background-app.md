@@ -46,6 +46,7 @@ precursor service start       # start a detached instance
 precursor service stop        # stop it
 precursor service restart     # bounce it (keeps the port it was on)
 precursor service logs -n 100 # tail the instance log
+precursor service data-dir    # print the data directory (--reveal opens it)
 precursor service install     # run at login (and start now)
 precursor service uninstall   # remove the login item
 ```
@@ -74,9 +75,32 @@ instances fighting over one database.
 precursor tray
 ```
 
-A filled dot means running, a hollow ring means stopped. The menu offers
-**Open Precursor**, **Start** / **Stop** / **Restart**, and an update entry that
-becomes *"Update to … and restart"* once a newer build is published.
+The icon is Precursor's own mark, in **brand colour when the instance is
+running** and **grey when it is stopped** — the shape stays the same either way,
+so it never looks like a different app. The menu offers:
+
+| Entry | Does |
+| --- | --- |
+| **Open Precursor** | opens the running instance in your browser |
+| **Reveal data folder in Finder**¹ | opens the [data directory](#where-the-data-lives) in your file manager |
+| **Start** / **Stop** / **Restart** | the supervisor actions above |
+| **Check for updates** | becomes *"Update to … and restart"* once a newer build exists |
+| **Quit tray** | closes the icon only — Precursor keeps running |
+
+¹ Named for the platform: *Show data folder in Explorer* on Windows, *Open data
+folder* elsewhere.
+
+The data-folder entry is deliberately **not** disabled while the instance is
+stopped: the database and the logs are exactly what you want to reach when it
+*won't* start. It also creates the directory if a fresh install hasn't written
+it yet, since an empty folder beats a file-manager error. The same thing from a
+shell:
+
+```bash
+precursor service data-dir            # print the path
+precursor service data-dir --reveal   # open it in the file manager
+cd "$(precursor service data-dir)"    # it composes
+```
 
 The tray needs the `tray` extra (`pystray` + `Pillow`), which the install script
 includes by default:

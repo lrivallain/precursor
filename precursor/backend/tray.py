@@ -18,13 +18,16 @@ import argparse
 import importlib
 import importlib.util
 import logging
+import os
 import sys
 import threading
 import webbrowser
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
-from precursor.backend import supervisor
+from precursor.backend import desktop, supervisor
+from precursor.backend.config import get_settings
 from precursor.backend.services import updates
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,20 @@ _POLL_SECONDS = 3.0
 _UPDATE_POLL_SECONDS = 1800.0
 
 _ICON_SIZE = 64
+# The logo is drawn at a multiple of the target size and downsampled, because
+# Pillow's shape primitives are not antialiased — at 1x the bubble's rounded
+# corners and the tail's diagonal come out visibly jagged.
+_SUPERSAMPLE = 8
+
+# Precursor's mark, transcribed from frontend/public/logo.svg (viewBox 0 0
+# 64 64): a rounded speech bubble with two message lines, a tail, and an accent
+# dot. Redrawn with Pillow rather than loading the SVG so the tray needs no
+# rasteriser dependency and no asset lookup that a source checkout might not
+# have built yet. Keep in sync if the mark itself changes.
+_BRAND = (14, 165, 233, 255)  # bubble, between the SVG gradient's two stops
+_ACCENT = (251, 191, 36, 255)  # the amber dot
+_IDLE = (145, 152, 161, 255)  # stopped: the same mark, drained of brand colour
+_IDLE_ACCENT = (110, 117, 125, 255)
 
 # The GUI bindings live behind the `tray` extra, so they are reached through
 # importlib rather than a module-level import — mirroring how the optional
@@ -65,25 +82,38 @@ def _missing_deps_message() -> str:
 
 
 def _make_image(running: bool) -> Any:
-    """A filled dot for running, a hollow ring for stopped.
+    """The Precursor mark, in brand colour when running and grey when stopped.
 
-    Drawn rather than shipped as an asset so the icon has no binary file to keep
-    in sync with the theme, and reads correctly on both light and dark menu bars.
+    Using the real logo rather than an abstract indicator makes the icon
+    recognisable in a crowded menu bar; colour alone carries the state. The
+    shape stays identical between the two so the icon doesn't appear to change
+    identity when the instance stops.
     """
     image_mod = importlib.import_module("PIL.Image")
     draw_mod = importlib.import_module("PIL.ImageDraw")
 
-    image = image_mod.new("RGBA", (_ICON_SIZE, _ICON_SIZE), (0, 0, 0, 0))
+    scale = _SUPERSAMPLE
+    size = _ICON_SIZE * scale
+    image = image_mod.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = draw_mod.Draw(image)
-    # A neutral mid grey reads on both light and dark menu bars without needing
-    # per-theme assets; green is reserved for "actually serving".
-    colour = (46, 160, 67, 255) if running else (140, 140, 140, 255)
-    box = (8, 8, _ICON_SIZE - 8, _ICON_SIZE - 8)
-    if running:
-        draw.ellipse(box, fill=colour)
-    else:
-        draw.ellipse(box, outline=colour, width=6)
-    return image
+
+    body = _BRAND if running else _IDLE
+    accent = _ACCENT if running else _IDLE_ACCENT
+
+    def s(*values: float) -> list[float]:
+        return [v * scale for v in values]
+
+    # Bubble body: rect(6, 8, 52x40, r=12) in SVG units.
+    draw.rounded_rectangle(s(6, 8, 58, 48), radius=12 * scale, fill=body)
+    # Tail: the SVG's polygon(24 48, 24 58, 34 48).
+    draw.polygon([(*s(24, 48),), (*s(24, 58),), (*s(34, 48),)], fill=body)
+    # Two message lines, the upper one lighter (SVG opacity 0.75).
+    draw.line(s(22, 30, 40, 30), fill=(255, 255, 255, 255), width=4 * scale)
+    draw.line(s(22, 22, 34, 22), fill=(255, 255, 255, 191), width=4 * scale)
+    # Accent dot, punched out of the bubble like the original.
+    draw.ellipse(s(40, 12, 52, 24), fill=accent)
+
+    return image.resize((_ICON_SIZE, _ICON_SIZE), image_mod.LANCZOS)
 
 
 class TrayApp:
@@ -148,6 +178,16 @@ class TrayApp:
         if state is not None:
             webbrowser.open(state.url)
 
+    def _reveal_data_dir(self, *_: object) -> None:
+        # Synchronous: handing a path to the file manager returns immediately,
+        # and the busy-state dance would only make the menu flicker.
+        path = Path(get_settings().data_dir).resolve()
+        try:
+            desktop.reveal(path)
+        except desktop.RevealError as exc:
+            logger.error("Could not open the data folder: %s", exc)
+            self._notify("Could not open the data folder", str(exc))
+
     def _start(self, *_: object) -> None:
         self._in_background("starting", supervisor.start)
 
@@ -202,6 +242,15 @@ class TrayApp:
             return f"Update to {info.latest_version or 'latest'} and restart"
         return "Check for updates"
 
+    @staticmethod
+    def _reveal_label() -> str:
+        """Name the file manager the platform actually uses."""
+        if sys.platform == "darwin":
+            return "Reveal data folder in Finder"
+        if os.name == "nt":
+            return "Show data folder in Explorer"
+        return "Open data folder"
+
     def _build_menu(self) -> Any:
         pystray = _pystray()
 
@@ -214,6 +263,9 @@ class TrayApp:
                 default=True,
                 enabled=lambda _: self._running and self._busy is None,
             ),
+            # Deliberately not gated on the instance running: the database and
+            # the logs are exactly what you want to reach when it *won't* start.
+            pystray.MenuItem(self._reveal_label(), self._reveal_data_dir),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Start",

@@ -13,7 +13,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from precursor.backend import autostart, supervisor
+from precursor.backend import autostart, desktop, supervisor
 from precursor.backend.services import updates
 
 
@@ -116,6 +116,20 @@ def _cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_data_dir(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from precursor.backend.config import get_settings
+
+    path = Path(get_settings().data_dir).resolve()
+    if args.reveal:
+        desktop.reveal(path)
+        return 0
+    # Bare path on stdout so it composes: `cd "$(precursor service data-dir)"`.
+    print(path)
+    return 0
+
+
 def _cmd_logs(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -186,6 +200,14 @@ def build_parser() -> argparse.ArgumentParser:
     logs.add_argument("-n", "--lines", type=int, default=50, help="How many lines to show.")
     logs.set_defaults(func=_cmd_logs)
 
+    data_dir = sub.add_parser("data-dir", help="Print the data directory (database, blobs, logs).")
+    data_dir.add_argument(
+        "--reveal",
+        action="store_true",
+        help="Open it in the file manager instead of printing the path.",
+    )
+    data_dir.set_defaults(func=_cmd_data_dir)
+
     return parser
 
 
@@ -194,6 +216,11 @@ def main(argv: Sequence[str]) -> int:
     try:
         result: int = args.func(args)
         return result
-    except (supervisor.SupervisorError, autostart.AutostartError, updates.UpdateError) as exc:
+    except (
+        supervisor.SupervisorError,
+        autostart.AutostartError,
+        updates.UpdateError,
+        desktop.RevealError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

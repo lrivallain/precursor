@@ -28,10 +28,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   login item, a tray click and a manual start can't produce two instances
   fighting over one database.
 
-  `precursor tray` puts that on a menu bar (behind a new `tray` extra): a filled
-  dot when running, a hollow ring when not, and entries to open, start, stop,
-  restart, and update. It is a convenience only — every action has a command
-  behind it, so the app never depends on a GUI being present.
+  `precursor tray` puts that on a menu bar (behind a new `tray` extra), showing
+  Precursor's own mark in brand colour when the instance is running and grey
+  when it is stopped, with entries to open the app, reveal the data folder,
+  start, stop, restart, and update. It is a convenience only — every action has
+  a command behind it (the data folder is `precursor service data-dir
+  [--reveal]`), so the app never depends on a GUI being present. The data-folder
+  entry stays enabled while the instance is stopped, because the database and
+  the logs are exactly what you need when it won't start.
 
   `precursor service update` replaces the manual `git pull`. It detects how
   Precursor was installed and does the right thing for each shape: a checkout is
