@@ -175,6 +175,24 @@ _START_TIMEOUT_SECONDS = 30.0
 # How often the watchdog sweeps for stalled running sessions.
 _WATCHDOG_INTERVAL_SECONDS = 60.0
 
+
+def _runtime_env() -> dict[str, str]:
+    """Environment for the spawned CLI, pinned to the binary the probe resolved.
+
+    Left to itself the SDK resolves ``COPILOT_CLI_PATH`` and then *downloads* the
+    CLI when its cache is empty — so a machine whose only Copilot CLI is on
+    ``PATH`` would pass the capability probe and then pull ~90 MB at startup, and
+    could even end up driving a different binary than the one Settings reported.
+    Handing the probe's answer back over the SDK's own env contract keeps the two
+    in agreement and keeps startup off the network.
+    """
+    env = dict(os.environ)
+    resolved = runtime.runtime_binary_path()
+    if resolved:
+        env["COPILOT_CLI_PATH"] = resolved
+    return env
+
+
 # --- Autonomy goal loop --------------------------------------------------------
 # When an autonomous agent finishes a turn without declaring completion, we nudge
 # it to take the next step toward its objective with this message. It's phrased so
@@ -758,7 +776,7 @@ class AgentManager:
                 sdk = runtime.load_sdk()
                 self._client = sdk.CopilotClient(
                     base_directory=runtime.agents_home_dir(),
-                    env=dict(os.environ),
+                    env=_runtime_env(),
                     log_level=get_settings().log_level,
                 )
                 await asyncio.wait_for(self._client.start(), timeout=_START_TIMEOUT_SECONDS)

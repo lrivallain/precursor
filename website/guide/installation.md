@@ -62,7 +62,8 @@ Some features ship as separate [plugins](/features/plugins) so they aren't force
 on every install. `[kanban]` pulls in the
 [GitHub Projects board](/features/kanban); drop it (`uvx precursor-ai`) for a
 lean core with no board. `[agents]` adds
-[Agents mode](/features/agents-mode) — a ~90 MB payload, so it stays opt-in.
+[Agents mode](/features/agents-mode) — which then provisions a ~90 MB native
+runtime, so it stays opt-in.
 `[tray]` adds the [menu-bar control](/features/background-app#the-menu-bar-icon).
 Combine them: `uvx "precursor-ai[kanban,agents]"`.
 :::
@@ -147,11 +148,27 @@ uv run --extra agents precursor --dev  # …or run the dev stack with it (= make
 ```
 
 ::: warning ~90 MB native runtime
-The `github-copilot-sdk` wheel **bundles the native Copilot CLI runtime binary**
-(~90 MB download, ~145 MB on disk), which is why it's kept out of the default
-install. Installing the extra is the opt-in — agents follow the runtime and come
-on once it resolves, with the switch in **Settings → Agents**.
+The SDK wheel itself is small, but Agents mode needs the **native Copilot CLI**
+(~90 MB, ~145 MB on disk). The SDK downloads it on first use, or reuses a
+system-wide `copilot` install — which is why the extra is kept out of the default
+install. Installing it is the opt-in — agents follow the runtime and come on once
+it resolves, with the switch in **Settings → Agents**.
 :::
+
+### Pointing at a specific CLI
+
+Precursor resolves the runtime **read-only**, so rendering Settings never pulls
+a binary. It takes the first of:
+
+1. `COPILOT_CLI_PATH`, if it points at an existing file.
+2. The SDK's own download cache (`~/Library/Caches/github-copilot-sdk` on macOS,
+   `~/.cache/github-copilot-sdk` on Linux).
+3. A `copilot` executable on `PATH` — a Homebrew, npm or installer-provisioned
+   CLI counts.
+
+Whatever it finds is handed to the SDK, so the runtime always drives the binary
+**Settings → Agents** reports. If none resolve, install the
+[Copilot CLI](https://github.com/github/copilot-cli) or set `COPILOT_CLI_PATH`.
 
 ## Automatic upgrades on startup
 

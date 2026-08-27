@@ -11,6 +11,33 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Agents mode reported its runtime as missing on installs that had a perfectly
+  good Copilot CLI.** `github-copilot-sdk` 1.0.11 replaced its platform-specific
+  wheels — which *bundled* the ~90 MB native CLI — with a small pure-Python wheel
+  that downloads the binary on first use. The private helper Precursor called to
+  locate that bundled binary went with it, and because the whole lookup sat
+  inside a bare `except Exception`, the failure was silent: **Settings → Agents**
+  simply said *"Copilot CLI runtime binary not found for this platform"* on a
+  machine where the SDK was installed, working, and a system-wide `copilot` was
+  already on `PATH`.
+
+  Resolution is now layered and no longer hinges on any single SDK internal:
+  `COPILOT_CLI_PATH`, then the SDK's download cache, then a `copilot` executable
+  on `PATH`, then the old bundled location for pre-1.0.11 SDK lines. Each step
+  that reaches into the SDK is guarded independently, so the env var and `PATH`
+  keep working even if those internals move again. The probe stays **read-only**
+  — it reports what already exists and never triggers the SDK's download, because
+  it runs on every Settings render and pulling ~90 MB as a side effect of drawing
+  a toggle would be indefensible.
+
+  Whatever the probe resolves is now handed to the SDK when the runtime starts.
+  Left to itself the SDK ignores `PATH` and downloads instead, so a machine whose
+  only CLI is a Homebrew install would have passed the probe and then pulled the
+  binary anyway — and could have ended up driving a different one than Settings
+  reported. `github-copilot-sdk` is also capped at `<2` now, for the same reason
+  `mcp` is: Precursor reaches into its private CLI-resolution helpers, and an
+  uncapped floor is what let a *patch* release break this in the first place.
+
 - **Updating a login-item instance left it dead with the port still taken.**
   Once registered, a launchd agent (or systemd unit) *is* the supervisor:
   `KeepAlive` and `Restart=` exist precisely to undo a kill. `precursor service
