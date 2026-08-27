@@ -134,7 +134,30 @@ def _cmd_update(args: argparse.Namespace) -> int:
         _print_status(supervisor.restart(), as_json=False)
     else:
         print("Precursor is not running — start it with `precursor service start`.")
+    _restart_tray_after_update()
     return 0
+
+
+def _restart_tray_after_update() -> None:
+    """Bounce the menu-bar icon so it isn't left running the previous release.
+
+    The tray is a separate long-lived process: updating the wheel replaces the
+    code on disk but leaves the running icon executing whatever it imported at
+    startup. That is not cosmetic — the tray's own menu drives the supervisor,
+    so a stale icon keeps offering the *previous* version's behaviour long after
+    the app itself has moved on.
+    """
+    info = autostart.info(autostart.TRAY)
+    if not info.controllable:
+        # Not registered as a unit: either it isn't running, or the user starts
+        # it by hand and owns its lifecycle.
+        return
+    try:
+        autostart.restart_unit(autostart.TRAY)
+        print("Menu-bar icon restarted.")
+    except autostart.AutostartError as exc:
+        # Never fail an otherwise-successful update over the icon.
+        print(f"note: could not restart the menu-bar icon ({exc}). Restart it when convenient.")
 
 
 def _cmd_data_dir(args: argparse.Namespace) -> int:
