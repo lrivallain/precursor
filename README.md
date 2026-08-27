@@ -96,16 +96,17 @@ uv run --extra agents precursor --dev # …or run the dev stack with it in one s
 ```
 
 > [!IMPORTANT]
-> The `github-copilot-sdk` wheel **bundles the native Copilot CLI runtime
-> binary** (~90 MB download, ~145 MB on disk), which is why it is kept out of
-> the default install. Installing the extra is the only step that pulls that
-> payload — there is no separate, smaller "download the runtime later" path for
-> the published `1.0.x` wheels.
+> The `github-copilot-sdk` wheel is small, but Agents mode also needs the
+> **native Copilot CLI** (~90 MB, ~145 MB on disk) — the SDK downloads it on
+> first use, or reuses a system-wide `copilot` install. Precursor resolves, in
+> order: `COPILOT_CLI_PATH`, the SDK's download cache, then `copilot` on your
+> `PATH`. **Settings → Agents** reports which one it found without ever
+> downloading anything itself.
 
 Installing the extra *is* the opt-in: with no stored preference Agents mode
-follows the runtime, so it comes on as soon as the CLI resolves on your platform.
-**Settings → Agents** is the one control on top of that, and reports whether the
-runtime resolved.
+follows the runtime, so it comes on as soon as a CLI resolves. **Settings →
+Agents** is the one control on top of that, and reports whether the runtime
+resolved.
 
 ### Run it (one command)
 
