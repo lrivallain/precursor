@@ -62,27 +62,48 @@ jobs:
         id: manifest
         run: |
           set -euo pipefail
-          host_wheel=$(ls dist/precursor_ai-*.whl | head -n1)
-          version=$(basename "$host_wheel" | sed -E 's#^precursor_ai-([^-]+)-.*#\1#')
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly"
-          # Plugin wheels ride along so a nightly install gets nightly plugins
-          # rather than whatever is on PyPI (see `--with` in services/updates.py).
-          extras=$(ls dist/*.whl \
-            | grep -v '^dist/precursor_ai-' \
-            | while read -r w; do echo "\"$base/$(basename "$w")\""; done \
-            | paste -sd, -)
-          cat > dist/version.json <<EOF
-          {
-            "channel": "nightly",
-            "version": "$version",
-            "commit": "${GITHUB_SHA:0:9}",
-            "full_commit": "${GITHUB_SHA}",
-            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "wheel_url": "$base/$(basename "$host_wheel")",
-            "extra_wheel_urls": [${extras}]
-          }
-          EOF
+          # Built entirely in Python, passed the wheel list as argv: no shell
+          # quoting boundary to get wrong, and the output is valid JSON by
+          # construction rather than by a heredoc's good behaviour. Every client
+          # parses this file, so a filename needing escaping must not corrupt it.
+          python3 - dist/*.whl <<'PY' > dist/version.json
+          import datetime, json, os, pathlib, sys
+
+          wheels = [pathlib.Path(w) for w in sys.argv[1:]]
+          hosts = [w for w in wheels if w.name.startswith("precursor_ai-")]
+          # Exactly one is expected: fresh checkout, fresh build. Assert it
+          # rather than picking the first of several, which would publish a
+          # manifest pointing at the wrong build.
+          if len(hosts) != 1:
+              sys.exit(f"Expected exactly 1 host wheel, found {len(hosts)}: {[w.name for w in hosts]}")
+          host = hosts[0]
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["GITHUB_SHA"]
+          base = f"https://github.com/{repo}/releases/download/nightly"
+
+          json.dump(
+              {
+                  "channel": "nightly",
+                  # e.g. precursor_ai-2026.7.1.dev229+g679a4fe6e-py3-none-any.whl
+                  "version": host.name.split("-")[1],
+                  "commit": sha[:9],
+                  "full_commit": sha,
+                  "built_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+                      "%Y-%m-%dT%H:%M:%SZ"
+                  ),
+                  "wheel_url": f"{base}/{host.name}",
+                  # Plugin wheels ride along so a nightly install gets nightly
+                  # plugins rather than whatever is on PyPI (see `--with` in
+                  # services/updates.py).
+                  "extra_wheel_urls": [f"{base}/{w.name}" for w in wheels if w != host],
+              },
+              sys.stdout,
+              indent=2,
+          )
+          PY
           cat dist/version.json
+          version=$(python3 -c "import json;print(json.load(open('dist/version.json'))['version'])")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Replace the nightly release

@@ -435,7 +435,11 @@ the server preflights Docker availability against the effective jail setting.
   wheels plus a small `version.json` the update check reads in one request. It
   exists so tracking `main` doesn't require a source checkout — the wheel
   already carries the SPA, the docs and every plugin frontend, so there is
-  nothing left for a user to build.
+  nothing left for a user to build. The manifest is a contract between that
+  workflow and `services/updates.py`, and `tests/test_nightly_manifest.py`
+  runs the workflow's actual step against the actual parser so the two can't
+  drift — the workflow itself only ever runs on `main`, after merge, so a
+  rename would otherwise surface in production.
 
 ## Plugin contract
 
