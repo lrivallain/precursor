@@ -13,7 +13,8 @@ import sys
 
 import pytest
 
-from precursor.backend import tray
+from precursor.backend import supervisor, tray
+from precursor.backend.services import updates
 
 requires_gui = pytest.mark.skipif(
     not tray.gui_available(), reason="needs the `tray` extra (pystray + Pillow)"
@@ -128,7 +129,7 @@ def test_the_tray_restarts_itself_after_an_update(monkeypatch: pytest.MonkeyPatc
     )
     monkeypatch.setattr(tray.time, "sleep", lambda _s: None)
 
-    tray.TrayApp(check_updates=False)._restart_self()
+    assert tray.TrayApp(check_updates=False)._restart_self() is True
     assert calls == ["tray"]
 
 
@@ -150,7 +151,7 @@ def test_a_hand_started_tray_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> N
             AssertionError("restarted a tray it does not manage")
         ),
     )
-    tray.TrayApp(check_updates=False)._restart_self()
+    assert tray.TrayApp(check_updates=False)._restart_self() is False
 
 
 def test_service_update_restarts_the_tray_too(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,3 +190,172 @@ def test_a_failing_tray_restart_does_not_fail_the_update(monkeypatch: pytest.Mon
         lambda unit=autostart.APP: (_ for _ in ()).throw(autostart.AutostartError("boom")),
     )
     service_cli._restart_tray_after_update()  # must not raise
+
+
+# --- "I am the stale one" (issue #274) ----------------------------------------
+#
+# `precursor.__version__` is resolved once, at import, so a long-lived tray keeps
+# comparing the release it *started* with against the published build — and goes
+# on offering an update that is already installed. `runtime.json` carries the
+# version the (freshly spawned) instance actually launched with, which is enough
+# to notice the disagreement.
+
+
+def _running_at(version: str, *, running: bool = True) -> supervisor.Status:
+    return supervisor.Status(
+        running=running,
+        state=supervisor.RuntimeState(
+            pid=4242,
+            host="127.0.0.1",
+            port=8765,
+            url="http://127.0.0.1:8765",
+            version=version,
+            started_at="2026-01-01T00:00:00Z",
+            log_file="/tmp/precursor.log",
+        ),
+    )
+
+
+def _app(status: supervisor.Status, monkeypatch: pytest.MonkeyPatch) -> tray.TrayApp:
+    """A tray whose view of the supervisor is fixed, and which runs its actions
+    inline so a test doesn't have to join a daemon thread."""
+    monkeypatch.setattr(tray.supervisor, "status", lambda: status)
+    app = tray.TrayApp(check_updates=False)
+    monkeypatch.setattr(app, "_in_background", lambda _label, fn: fn())
+    return app
+
+
+def _update_info(**overrides: object) -> updates.UpdateInfo:
+    fields: dict[str, object] = {
+        "current_version": "2026.1.0",
+        "current_commit": None,
+        "latest_version": "2026.2.0",
+        "latest_commit": None,
+        "update_available": True,
+        "channel": "stable",
+        "install_mode": "uv-tool",
+    }
+    fields.update(overrides)
+    return updates.UpdateInfo(**fields)  # type: ignore[arg-type]
+
+
+def test_a_moved_instance_marks_this_process_as_the_stale_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(_running_at("2026.9.0.dev245"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    assert app._stale_build() == "2026.9.0.dev245"
+
+
+def test_matching_versions_are_not_staleness(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _app(_running_at("2026.9.0.dev245"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev245")
+    assert app._stale_build() is None
+
+
+def test_a_stopped_instance_is_no_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing is running, so nothing says what is installed."""
+    app = _app(_running_at("2026.9.0.dev245", running=False), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    assert app._stale_build() is None
+
+
+def test_a_state_file_without_a_version_is_no_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`version` is read with a default, so an older record can be empty."""
+    app = _app(_running_at(""), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    assert app._stale_build() is None
+
+
+def test_staleness_replaces_the_update_offer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole point: never offer an update for a build already installed."""
+    app = _app(_running_at("2026.9.0.dev245"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    app._update = _update_info(latest_version="2026.9.0.dev245")
+
+    label = app._update_label()
+    assert "Restart the icon" in label
+    assert "Update to" not in label
+
+
+def test_a_current_tray_still_offers_the_update(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _app(_running_at("2026.9.0.dev238"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    app._update = _update_info(latest_version="2026.9.0.dev245")
+    assert app._update_label() == "Update to 2026.9.0.dev245 and restart"
+
+
+def test_clicking_the_entry_bounces_the_icon_and_drops_the_stale_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend import autostart
+
+    calls: list[str] = []
+    invalidated: list[bool] = []
+    monkeypatch.setattr(
+        autostart,
+        "info",
+        lambda unit=autostart.APP: autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=True, kind="launchd"
+        ),
+    )
+    monkeypatch.setattr(
+        autostart, "restart_unit", lambda unit=autostart.APP: calls.append(unit.key)
+    )
+    monkeypatch.setattr(tray.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(tray.updates, "invalidate", lambda: invalidated.append(True))
+    monkeypatch.setattr(
+        tray.updates,
+        "apply",
+        lambda _info: pytest.fail("applied an update that is already installed"),
+    )
+
+    app = _app(_running_at("2026.9.0.dev245"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    app._update = _update_info(latest_version="2026.9.0.dev245")
+
+    app._update_action()
+
+    assert calls == ["tray"]
+    assert invalidated == [True]
+    # The cached result was measured against this process's own stale version,
+    # so the menu must stop showing it.
+    assert app._update is None
+
+
+def test_a_hand_started_stale_tray_is_told_what_to_do(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_restart_self` is a no-op for an icon no login item owns, so silently
+    doing nothing would leave the click looking broken."""
+    from precursor.backend import autostart
+
+    monkeypatch.setattr(
+        autostart,
+        "info",
+        lambda unit=autostart.APP: autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=False, kind="launchd"
+        ),
+    )
+    monkeypatch.setattr(tray.updates, "invalidate", lambda: None)
+
+    app = _app(_running_at("2026.9.0.dev245"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    notices: list[tuple[str, str]] = []
+    monkeypatch.setattr(app, "_notify", lambda title, message: notices.append((title, message)))
+
+    app._update_action()
+
+    assert len(notices) == 1
+    assert "precursor tray" in notices[0][1]
+
+
+@requires_gui
+def test_the_menu_itself_surfaces_the_restart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards the wiring, not just the label helper: the entry is built from a
+    callable, so a mis-wired menu would still pass the unit tests above."""
+    app = _app(_running_at("2026.9.0.dev245"), monkeypatch)
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0.dev238")
+    app._update = _update_info(latest_version="2026.9.0.dev245")
+
+    labels = [str(item.text) for item in app._build_menu()]
+    assert any("Restart the icon" in label for label in labels), labels
+    assert not any("Update to" in label for label in labels), labels
