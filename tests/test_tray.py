@@ -106,3 +106,86 @@ def test_menu_offers_the_data_folder_whether_or_not_it_is_running() -> None:
 
     item = next(i for i in app._build_menu() if str(i.text) == tray.TrayApp._reveal_label())
     assert item.enabled is True
+
+
+def test_the_tray_restarts_itself_after_an_update(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Updating replaces the code on disk, but this process keeps running what
+    it imported at startup — including its own menu actions, which drive the
+    supervisor. A stale icon therefore keeps offering the previous release's
+    behaviour indefinitely."""
+    from precursor.backend import autostart
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        autostart,
+        "info",
+        lambda unit=autostart.APP: autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=True, kind="launchd"
+        ),
+    )
+    monkeypatch.setattr(
+        autostart, "restart_unit", lambda unit=autostart.APP: calls.append(unit.key)
+    )
+    monkeypatch.setattr(tray.time, "sleep", lambda _s: None)
+
+    tray.TrayApp(check_updates=False)._restart_self()
+    assert calls == ["tray"]
+
+
+def test_a_hand_started_tray_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If no unit manages it, its lifecycle isn't ours to interfere with."""
+    from precursor.backend import autostart
+
+    monkeypatch.setattr(
+        autostart,
+        "info",
+        lambda unit=autostart.APP: autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=False, kind="launchd"
+        ),
+    )
+    monkeypatch.setattr(
+        autostart,
+        "restart_unit",
+        lambda unit=autostart.APP: (_ for _ in ()).throw(
+            AssertionError("restarted a tray it does not manage")
+        ),
+    )
+    tray.TrayApp(check_updates=False)._restart_self()
+
+
+def test_service_update_restarts_the_tray_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend import autostart, service_cli
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        autostart,
+        "info",
+        lambda unit=autostart.APP: autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=True, kind="launchd"
+        ),
+    )
+    monkeypatch.setattr(
+        autostart, "restart_unit", lambda unit=autostart.APP: calls.append(unit.key)
+    )
+    service_cli._restart_tray_after_update()
+    assert calls == ["tray"]
+
+
+def test_a_failing_tray_restart_does_not_fail_the_update(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The app is already updated and serving by this point; the icon is not
+    worth reporting an otherwise-successful update as a failure."""
+    from precursor.backend import autostart, service_cli
+
+    monkeypatch.setattr(
+        autostart,
+        "info",
+        lambda unit=autostart.APP: autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=True, kind="launchd"
+        ),
+    )
+    monkeypatch.setattr(
+        autostart,
+        "restart_unit",
+        lambda unit=autostart.APP: (_ for _ in ()).throw(autostart.AutostartError("boom")),
+    )
+    service_cli._restart_tray_after_update()  # must not raise

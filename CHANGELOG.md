@@ -11,6 +11,20 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Updating left the menu-bar icon running the previous release.**
+  `precursor service update` restarts the app so the new code is serving, but
+  the tray is a separate long-lived process: replacing the wheel changes the
+  code on disk while the running icon keeps executing what it imported at
+  startup. That is not cosmetic — the tray's menu is what drives the
+  supervisor, so a stale icon kept offering the *previous* version's behaviour
+  indefinitely — including, right after the previous release, the restart bug that release had just fixed. Both `service update`
+  and the tray's own "Update and restart" now bounce the tray unit; the tray
+  restarts itself last, so the service manager brings a fresh icon straight
+  back. A tray started by hand is left alone, and a failure to restart it is
+  reported as a note rather than failing an otherwise-successful update.
+
+### Fixed
+
 - **Updating a login-item instance left it dead with the port still taken.**
   Once registered, a launchd agent (or systemd unit) *is* the supervisor:
   `KeepAlive` and `Restart=` exist precisely to undo a kill. `precursor service

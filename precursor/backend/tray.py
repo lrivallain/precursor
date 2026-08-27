@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 import threading
+import time
 import webbrowser
 from collections.abc import Sequence
 from pathlib import Path
@@ -209,8 +210,33 @@ class TrayApp:
             if was_running:
                 supervisor.restart()
             self._notify("Precursor updated", summary)
+            self._restart_self()
 
         self._in_background("updating", _run)
+
+    def _restart_self(self) -> None:
+        """Bounce the icon so it stops running the release it was started with.
+
+        Updating replaces the code on disk, but this process keeps executing
+        what it imported at startup — including its own menu actions. Since the
+        tray is what drives the supervisor, leaving it stale means the icon
+        offers the previous version's behaviour indefinitely.
+
+        Restarting is fatal to *this* process by design: the service manager
+        brings a fresh icon straight back.
+        """
+        from precursor.backend import autostart
+
+        if not autostart.info(autostart.TRAY).controllable:
+            # Started by hand, so its lifecycle isn't ours to manage.
+            return
+        # Give the notification a moment to reach the notification centre
+        # before this process stops existing.
+        time.sleep(1.5)
+        try:
+            autostart.restart_unit(autostart.TRAY)
+        except autostart.AutostartError as exc:  # pragma: no cover - platform dependent
+            logger.warning("Could not restart the tray after updating: %s", exc)
 
     def _check_now(self, *_: object) -> None:
         def _run() -> None:
