@@ -27,6 +27,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+# The release *this process* is executing. `precursor.__version__` is resolved
+# once, at import, so a long-lived tray keeps measuring against the build it was
+# started with — which is exactly what makes it the thing to compare the running
+# instance against. Aliased so the staleness check reads as a deliberate
+# snapshot rather than a live lookup.
+from precursor import __version__ as _OWN_VERSION
 from precursor.backend import desktop, supervisor
 from precursor.backend.config import get_settings
 from precursor.backend.services import updates
@@ -132,6 +138,28 @@ class TrayApp:
     def _running(self) -> bool:
         return self._status.running
 
+    def _stale_build(self) -> str | None:
+        """The instance's version, when this process is running a different one.
+
+        Updating replaces the code on disk, but the tray goes on executing what
+        it imported at startup — including its own ``__version__``. It therefore
+        compares the release it was *started* with against the published build,
+        forever, and keeps offering an update that is already installed.
+
+        The instance is the antidote: it is a fresh process, and ``runtime.json``
+        records the version it actually launched with. A disagreement means this
+        icon, not the app, is the stale one — detected within a poll interval,
+        with no extra network call and no new state.
+        """
+        state = self._status.state
+        if not self._status.running or state is None:
+            # A stopped instance is no evidence either way.
+            return None
+        version = state.version.strip()
+        if not version or version == _OWN_VERSION:
+            return None
+        return version
+
     def _refresh(self) -> None:
         self._status = supervisor.status()
         if self._icon is not None:
@@ -214,7 +242,7 @@ class TrayApp:
 
         self._in_background("updating", _run)
 
-    def _restart_self(self) -> None:
+    def _restart_self(self) -> bool:
         """Bounce the icon so it stops running the release it was started with.
 
         Updating replaces the code on disk, but this process keeps executing
@@ -223,13 +251,15 @@ class TrayApp:
         offers the previous version's behaviour indefinitely.
 
         Restarting is fatal to *this* process by design: the service manager
-        brings a fresh icon straight back.
+        brings a fresh icon straight back. Returns whether the restart was
+        asked for, so a hand-started icon can be told rather than left waiting
+        for something that will never happen.
         """
         from precursor.backend import autostart
 
         if not autostart.info(autostart.TRAY).controllable:
             # Started by hand, so its lifecycle isn't ours to manage.
-            return
+            return False
         # Give the notification a moment to reach the notification centre
         # before this process stops existing.
         time.sleep(1.5)
@@ -237,6 +267,28 @@ class TrayApp:
             autostart.restart_unit(autostart.TRAY)
         except autostart.AutostartError as exc:  # pragma: no cover - platform dependent
             logger.warning("Could not restart the tray after updating: %s", exc)
+            return False
+        return True
+
+    def _restart_icon(self, *_: object) -> None:
+        """Recover from having noticed the instance moved on without us.
+
+        The cached update result was measured against this process's own stale
+        version, so it is dropped rather than kept on show: whatever happens to
+        the icon next, it stops making a claim it can no longer back up.
+        """
+
+        def _run() -> None:
+            updates.invalidate()
+            self._update = None
+            if not self._restart_self():
+                self._notify(
+                    "Restart the icon",
+                    "No login item manages this tray — quit it and run "
+                    "`precursor tray` again to pick up the installed build.",
+                )
+
+        self._in_background("restarting the icon", _run)
 
     def _check_now(self, *_: object) -> None:
         def _run() -> None:
@@ -259,6 +311,10 @@ class TrayApp:
     # --- menu ------------------------------------------------------------
 
     def _update_label(self) -> str:
+        if self._stale_build() is not None:
+            # Offering an update for a build already installed would be the one
+            # thing this entry must not do.
+            return "Restart the icon (running an older build)"
         info = self._update
         if info is None:
             return "Check for updates"
@@ -267,6 +323,14 @@ class TrayApp:
         if info.update_available:
             return f"Update to {info.latest_version or 'latest'} and restart"
         return "Check for updates"
+
+    def _update_action(self, *_: object) -> None:
+        if self._stale_build() is not None:
+            self._restart_icon()
+        elif self._update is not None and self._update.update_available:
+            self._apply_update()
+        else:
+            self._check_now()
 
     @staticmethod
     def _reveal_label() -> str:
@@ -314,11 +378,7 @@ class TrayApp:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 lambda _: self._update_label(),
-                lambda *_: (
-                    self._apply_update()
-                    if (self._update and self._update.update_available)
-                    else self._check_now()
-                ),
+                self._update_action,
                 enabled=lambda _: self._busy is None,
             ),
             pystray.Menu.SEPARATOR,
