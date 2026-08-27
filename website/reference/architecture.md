@@ -62,7 +62,29 @@ A single `uvicorn` worker hosts everything (`precursor/backend/main.py`):
   started in the lifespan.
 
 Version is CalVer, derived from git tags by hatch-vcs at build time and exposed at
-`GET /api/version` (and `/api/health`).
+`GET /api/version` (and `/api/health`). `GET /api/version/check` reports whether a
+newer build exists on the active channel — read-only, since applying an update
+replaces the process serving the request.
+
+### Running it as a background app
+
+Everything above is the app itself. `precursor service` wraps that worker in a
+supervisor so it can run without a terminal — see
+[Background app](/features/background-app) for the user-facing side.
+
+| Module | Role |
+| --- | --- |
+| `backend/supervisor.py` | spawns and stops the worker; records `pid`/`port`/`url`/`version` in `runtime.json` under the data dir, and derives `status` from it plus a liveness probe |
+| `backend/autostart.py` | writes the login items — launchd agent, systemd *user* unit, or Startup entry; one unit for the app, one for the tray |
+| `backend/tray.py` | `pystray` menu-bar control behind the `tray` extra; holds no state, every action mirrors a `service` command |
+| `services/updates.py` | detects `source` vs `uv-tool` installs and updates each in place |
+
+Two details carry most of the correctness. `working_dir()` decides where the
+instance runs — the repo root for a checkout (whose default database URL is
+*relative*, so anywhere else would silently mean a different database), the data
+dir for an installed wheel. And `instance_settings()` resolves `.env` from
+*there* rather than from wherever the CLI happened to be invoked, so the port an
+instance comes up on doesn't depend on the caller's working directory.
 
 ## Request flow: streamed chat
 
