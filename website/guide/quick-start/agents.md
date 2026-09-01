@@ -9,18 +9,16 @@ that works in the **background** while you do something else.
 
 ## Enable them first
 
-Agents are **opt-in** and ship behind an extra, because they drive a ~90 MB
-native runtime the SDK downloads on first use (or picks up from a system-wide
-`copilot` install):
+Nothing to install: the Copilot SDK is a normal dependency. What agents *drive*
+is a ~90 MB native runtime, and that stays opt-in — open **Settings → Agents**
+and click **Install the Copilot CLI**. It downloads in the background while you
+keep working, and starts the runtime without a restart.
 
-```bash
-uv sync --extra agents                 # adds the Copilot SDK runtime
-uv run --extra agents precursor --dev
-```
+If you already have a `copilot` on your `PATH` (Homebrew, npm, the official
+installer), Precursor picks it up and there is nothing to install at all.
 
-Installing the extra *is* the opt-in — agents come on once the runtime resolves.
-**Settings → Agents** is the switch on top of that, and reports whether the
-runtime actually started.
+Agents come on once the runtime resolves; **Settings → Agents** is the switch on
+top of that, and reports whether the runtime actually started.
 
 ## Run your first agent
 

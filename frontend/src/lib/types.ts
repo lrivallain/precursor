@@ -455,6 +455,34 @@ export interface AgentPermissionGrant {
   at: string | null;
 }
 
+// An in-flight (or last finished) Copilot CLI provisioning attempt.
+export interface AgentProvisionJob {
+  state: "running" | "succeeded" | "failed";
+  detail: string;
+  // The failure as the SDK reported it, so the panel shows a real cause.
+  error: string | null;
+  cli_path: string | null;
+  // True when the runtime came up in-process, so no restart is needed.
+  runtime_started: boolean;
+  started_at: number;
+  finished_at: number | null;
+}
+
+// Everything Settings → Agents needs to explain — and fix — the runtime.
+// Answers "why not, and what can I do about it", not just "is it on".
+export interface AgentRuntimeStatus {
+  available: boolean;
+  unavailable_reason: string | null;
+  runtime_started: boolean;
+  sdk_installed: boolean;
+  cli_path: string | null;
+  can_install_cli: boolean;
+  install_blocked_reason: string | null;
+  can_restart: boolean;
+  restart_blocked_reason: string | null;
+  job: AgentProvisionJob | null;
+}
+
 export interface AgentLink {
   topic_id?: number | null;
   chat_id?: number | null;

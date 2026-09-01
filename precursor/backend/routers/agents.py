@@ -15,7 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
+from precursor.backend import supervisor
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import (
@@ -47,7 +49,9 @@ from precursor.backend.schemas.agent import (
     AgentPendingPermission,
     AgentPermissionDecision,
     AgentPermissionGrant,
+    AgentProvisionJob,
     AgentRunRead,
+    AgentRuntimeStatus,
     AgentSendRequest,
     AgentSessionCreate,
     AgentSessionRead,
@@ -67,7 +71,7 @@ from precursor.backend.schemas.agent_state import (
 )
 from precursor.backend.schemas.workflow import WorkflowSummary
 from precursor.backend.services import agent_state as agent_state_service
-from precursor.backend.services.agents import fleet, runtime
+from precursor.backend.services.agents import fleet, provision, runtime
 from precursor.backend.services.agents.manager import (
     get_agent_manager,
     normalize_mcp_scope,
@@ -207,6 +211,66 @@ async def list_agent_models(
 ) -> list[dict[str, str]]:
     """Available runtime models for the default-model picker (empty if down)."""
     return await get_agent_manager().list_models()
+
+
+# The runtime routes below are deliberately **not** behind `_require_runtime`:
+# they exist precisely for the case where the runtime is missing, and gating
+# them on it would make the only way to fix that unreachable.
+
+
+def _runtime_status() -> AgentRuntimeStatus:
+    ok, detail = runtime.agents_available()
+    can_install, install_reason = provision.download_supported()
+    can_restart, restart_reason = supervisor.restartable()
+    job = provision.current_job()
+    return AgentRuntimeStatus(
+        available=ok,
+        unavailable_reason=None if ok else detail,
+        runtime_started=get_agent_manager().ready,
+        sdk_installed=runtime.sdk_installed(),
+        cli_path=runtime.runtime_binary_path(),
+        can_install_cli=can_install,
+        install_blocked_reason=None if can_install else install_reason,
+        can_restart=can_restart,
+        restart_blocked_reason=None if can_restart else restart_reason,
+        job=AgentProvisionJob.model_validate(job.as_dict()) if job else None,
+    )
+
+
+@router.get("/runtime", response_model=AgentRuntimeStatus)
+async def get_agent_runtime() -> AgentRuntimeStatus:
+    """Runtime capability, plus whatever provisioning job is in flight.
+
+    One endpoint rather than two because the panel polls this while a download
+    runs — folding the job in keeps that a single request.
+    """
+    return _runtime_status()
+
+
+@router.post("/runtime/cli", response_model=AgentRuntimeStatus)
+async def install_agent_cli() -> AgentRuntimeStatus:
+    """Start downloading the native Copilot CLI (~90 MB).
+
+    Returns immediately: the download outlives a request, so progress is read
+    back from ``GET /runtime``. Starting twice is a no-op.
+    """
+    provision.start_download()
+    return _runtime_status()
+
+
+@router.post("/runtime/restart", status_code=status.HTTP_202_ACCEPTED)
+async def restart_for_agent_runtime() -> Response:
+    """Restart this instance so a freshly provisioned runtime is picked up.
+
+    Only needed when the runtime could not be started in-process. The work is
+    handed to a detached child, so this response is the last thing this process
+    sends.
+    """
+    try:
+        await run_in_threadpool(supervisor.request_detached_restart)
+    except supervisor.SupervisorError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
 @router.get("/permissions", response_model=list[AgentPermissionGrant])

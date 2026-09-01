@@ -28,7 +28,7 @@ Run the dev stack (uvicorn `--reload` + Vite HMR, both stop on Ctrl-C):
 
 ```bash
 make dev
-# or:  uv run --extra agents precursor --dev   (drop --extra agents to skip Agents mode)
+# or:  uv run precursor --dev
 ```
 
 Other launch options:

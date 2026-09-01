@@ -9,10 +9,55 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Added
+
+- **Agents mode can be turned on from Precursor.** It was the only capability
+  that could not be: everything else — a model provider, an MCP server, a
+  plugin, backup, retention — is a switch in Settings, while Agents mode was a
+  package extra. Enabling it meant leaving the app, knowing how you had
+  installed, and running the right variant of a command that a later
+  `service update` could silently undo.
+
+  The Copilot SDK is now a **normal dependency**, so there is no Python package
+  left to install by hand. What remains is the native Copilot CLI it drives, and
+  **Settings → Agents** installs that in one click: it asks first (it is ~90 MB),
+  runs as a background job so a slow download doesn't hang a request, and reports
+  the SDK's *actual* error rather than a generic "unavailable". On success the
+  runtime starts in place; only when that fails does the panel ask for a restart,
+  and it offers one — handing off to the supervisor exactly as
+  `precursor service update` does, or telling you it can't when the instance
+  isn't supervised.
+
+  This is safe to ship by default only because of the wheel's shape. Up to 1.0.2
+  the SDK published six platform-specific wheels that each *bundled* the CLI
+  (~145 MB unpacked); 1.0.4 replaced them with a single ~0.5 MB pure-Python wheel
+  that downloads it on demand. The dependency is floored at `>=1.0.4` for that
+  reason and nothing else, with a test guarding it, because the difference is
+  invisible in a diff. The payload itself stays opt-in — just one click inside
+  the app instead of a command outside it.
+
+  The `agents` extra is retired but still declared (and empty), so installs that
+  still name it — including any rebuilt from uv's install receipt — keep
+  resolving.
+
+### Changed
+
+- **Settings → Agents no longer renders controls that cannot work.** Default
+  model, approval policy, custom system message, watchdog and permission grants
+  were drawn whether or not a runtime existed, so the panel read as "configured
+  and ready" while the feature was inert, with the one honest signal — the
+  unavailable reason — buried among a dozen live-looking controls. They are now
+  hidden behind the install action until the runtime resolves.
+
+  Nothing is deleted: the stored values are untouched and reappear exactly as
+  they were once a runtime is present. **Timeline retention stays visible**
+  regardless, because archived events outlive the feature toggle and the sweep
+  keeps running either way.
+
 ### Fixed
 
 - **Agents mode reported its runtime as missing on installs that had a perfectly
-  good Copilot CLI.** `github-copilot-sdk` 1.0.11 replaced its platform-specific
+  good Copilot CLI.** `github-copilot-sdk` 1.0.4 replaced its platform-specific
   wheels — which *bundled* the ~90 MB native CLI — with a small pure-Python wheel
   that downloads the binary on first use. The private helper Precursor called to
   locate that bundled binary went with it, and because the whole lookup sat
@@ -23,7 +68,7 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
   Resolution is now layered and no longer hinges on any single SDK internal:
   `COPILOT_CLI_PATH`, then the SDK's download cache, then a `copilot` executable
-  on `PATH`, then the old bundled location for pre-1.0.11 SDK lines. Each step
+  on `PATH`, then the old bundled location for pre-1.0.4 SDK lines. Each step
   that reaches into the SDK is guarded independently, so the env var and `PATH`
   keep working even if those internals move again. The probe stays **read-only**
   — it reports what already exists and never triggers the SDK's download, because

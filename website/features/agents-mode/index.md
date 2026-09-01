@@ -22,24 +22,34 @@ off by default**.
 
 ## Enabling agents
 
-Agents mode isn't part of the default install — it lives behind an `agents`
-extra that pulls the Copilot SDK:
+**Settings → Agents** turns it on, and that is the whole procedure. There is no
+install command to go and find: the Copilot SDK is a normal dependency, and the
+one thing that can be missing — the native CLI — is a button in that panel.
 
-```bash
-uv sync --extra agents                 # adds github-copilot-sdk
-uv run --extra agents precursor --dev  # …or run the dev stack with it
-```
+Until the runtime resolves, the panel shows **one** action, *Install the Copilot
+CLI*, instead of a wall of controls that cannot do anything. It asks before
+downloading, streams progress while it works, and reports the real error if it
+fails. On success it starts the runtime in place; only if that doesn't take does
+it ask for a restart.
 
-Installing the extra *is* the opt-in: with no stored preference, Agents mode
-follows the runtime. **Settings → Agents** is the one control on top of that —
-turn it off there to stop the runtime without uninstalling anything. Without the
-extra, agents stay off and Settings tells you which install command to run.
+Nothing is destroyed while the runtime is missing — your model, approval policy,
+system message and watchdog are hidden, not cleared, and come back exactly as you
+left them. [Timeline retention](/features/storage) stays visible throughout, because archived
+events outlive the toggle and the sweep keeps running either way.
+
+Agents mode then **follows the runtime**: with no stored preference it comes on
+as soon as a CLI resolves, and the switch is there to turn it off again without
+uninstalling anything.
 
 ::: warning ~90 MB native runtime
-The SDK wheel is small, but it drives a **native Copilot CLI** (~90 MB, ~145 MB
-on disk) that it downloads on first use — or reuses from a system-wide `copilot`
-install. That payload is exactly why this is an opt-in extra rather than a
-default dependency. Precursor's own probe is read-only and never downloads; see
+The SDK wheel is ~0.5 MB, but it drives a **native Copilot CLI** (~90 MB,
+~145 MB on disk). That payload is why provisioning is an explicit click rather
+than something that happens on first run: Precursor's own probe is **read-only**
+and never downloads — it runs on every Settings render, and pulling 90 MB to draw
+a toggle would be indefensible.
+
+A system-wide `copilot` (Homebrew, npm, the official installer) is a perfectly
+good runtime and is adopted as-is. See
 [installation](/guide/installation#pointing-at-a-specific-cli) for the resolution
 order and `COPILOT_CLI_PATH`.
 :::

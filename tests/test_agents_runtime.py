@@ -10,8 +10,9 @@ reported "runtime binary not found".
 These tests pin the layering that replaced it — and, just as importantly, that
 the probe stays *read-only*: it must never trigger the SDK's download.
 
-The dev venv has no ``agents`` extra, so the SDK is faked. That's the point:
-each test states which of the four sources exists and asserts which one wins.
+The SDK is a normal dependency now, but these tests still fake it: each one
+states which of the four sources exists and asserts which one wins, which the
+real package (whose cache state depends on the machine) cannot express.
 """
 
 from __future__ import annotations
@@ -103,6 +104,12 @@ def test_stale_env_path_falls_through(monkeypatch, tmp_path) -> None:
 
 
 def test_no_sdk_means_no_binary(monkeypatch, tmp_path) -> None:
+    """A missing SDK is a broken install now, and the wording must say so.
+
+    It stopped being "an extra you forgot": the package is a declared
+    dependency, so pointing at an install command the user cannot usefully run
+    would send them the wrong way.
+    """
     _executable(tmp_path / "bin" / "copilot")
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     monkeypatch.setattr(runtime, "sdk_installed", lambda: False)
@@ -110,7 +117,9 @@ def test_no_sdk_means_no_binary(monkeypatch, tmp_path) -> None:
     assert runtime.runtime_binary_path() is None
     ok, detail = runtime.agents_available()
     assert ok is False
-    assert "github-copilot-sdk not installed" in detail
+    assert "github-copilot-sdk" in detail
+    assert "reinstall" in detail.lower()
+    assert "--extra agents" not in detail
 
 
 def test_sdk_cache_beats_path(monkeypatch, tmp_path) -> None:
