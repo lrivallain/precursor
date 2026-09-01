@@ -90,14 +90,12 @@ export {
   getSettingsPage,
   resolveSettingsPages,
   resolveSections,
-  sectionUnavailableReason,
   pluginsForSlot,
   SECTION_KIND,
   SECTION_SLOT,
 } from "../lib/plugins";
 export type {
   ExtensionProps,
-  SectionEnabledContext,
   SectionHost,
   SectionIconProps,
   SectionPlugin,
@@ -142,7 +140,12 @@ export type {
 
 /**
  * Version of this contract. A plugin can assert against it to fail with a clear
- * message instead of a mystery TypeError. Bumped on any breaking change; mirrors
- * `precursor.plugin_api.PLUGIN_API_VERSION` on the backend.
+ * message instead of a mystery TypeError. Bumped on any breaking change; the
+ * backend's `precursor.plugin_api.PLUGIN_API_VERSION` is the parallel number
+ * for the Python contract and moves independently.
+ *
+ * 2 — removed `SectionEnabledContext` and `sectionUnavailableReason`, and
+ *     `SectionPlugin.unavailable` with them: a registered section now always
+ *     appears.
  */
-export const HOST_API_VERSION = 1;
+export const HOST_API_VERSION = 2;

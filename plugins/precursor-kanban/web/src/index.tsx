@@ -46,7 +46,26 @@ function KanbanSidebar() {
   );
 }
 
-function KanbanMain() {
+/**
+ * What to show before the board can work.
+ *
+ * The section no longer hides itself when GitHub isn't set up — an installed,
+ * enabled plugin that is nowhere to be seen reads as broken. So the setup step
+ * is explained here, in the place the user actually lands, instead of the raw
+ * guard error the API would otherwise surface.
+ */
+function setupHint(settings: SectionHost["settings"]): string | null {
+  if (settings == null) return null;
+  if (!(settings.issue_associations_enabled ?? true)) {
+    return "GitHub issue associations are turned off. Enable them in Settings → GitHub to use the board.";
+  }
+  if ((settings.github_repo ?? "").trim().length === 0) {
+    return "Connect a GitHub repository in Settings → GitHub to see its projects here.";
+  }
+  return null;
+}
+
+function KanbanMain({ host }: { host: SectionHost }) {
   const {
     projects,
     error,
@@ -56,6 +75,12 @@ function KanbanMain() {
     fallbackRepo,
     openTopic,
   } = useKanban();
+
+  // Checked before the fetch state: with no repo configured the listing fails
+  // by design, and "No GitHub repository configured … or pass `repo`" is the
+  // API talking to a developer, not to whoever just opened the board.
+  const hint = setupHint(host.settings);
+  if (hint) return <EmptyHero label={hint} />;
 
   if (projects === null) return <EmptyHero label="Loading projects…" />;
   if (error) return <EmptyHero label={error} />;
@@ -100,20 +125,6 @@ registerSection({
     hoverTab: "hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400",
   },
   accent: { light: "#0891b2", dark: "#22d3ee" },
-  // The board reads GitHub Projects v2 through the issue surface, so it needs
-  // both a configured repo and issue associations turned on. Saying which one is
-  // missing matters: without it, installing and enabling the plugin appears to
-  // do nothing at all.
-  unavailable: ({ settings }) => {
-    if (settings == null) return "Loading settings…";
-    if (!(settings.issue_associations_enabled ?? true)) {
-      return "GitHub issue associations are turned off (Settings → GitHub).";
-    }
-    if ((settings.github_repo ?? "").trim().length === 0) {
-      return "No GitHub repository is configured (Settings → GitHub).";
-    }
-    return null;
-  },
   // The board's "New" is "track another project". It opens the section's own
   // dialog rather than routing to Settings: adding a board is the section's
   // primary create action, and a trip to a settings tab is a long way round for

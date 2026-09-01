@@ -9,6 +9,27 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Changed
+
+- **A plugin's section is always visible once enabled.** Sections could gate
+  themselves on app state and hide until it was satisfied — the kanban board
+  disappeared entirely without a configured GitHub repository. That optimised
+  for the wrong thing: an installed, enabled plugin that is nowhere in the
+  sidebar is indistinguishable from a broken one, which is why Settings →
+  Plugins needed a warning strip ("**Kanban** is hidden: No GitHub repository is
+  configured") to explain the absence.
+
+  Enabled now simply means visible. Kanban appears with or without a repository
+  and explains the setup step in the board itself, where the user actually
+  lands, instead of the developer-facing guard error the API returns. The
+  warning strip in Settings → Plugins is gone with the mechanism it described.
+
+  **Breaking for plugin authors** (`HOST_API_VERSION` 1 → 2): `SectionPlugin`
+  drops `unavailable`, and `@precursor/host` no longer exports
+  `sectionUnavailableReason` or the `SectionEnabledContext` type. A section that
+  needs setup should say so from `Main`. The backend's `PLUGIN_API_VERSION` is
+  unchanged.
+
 ### Added
 
 - **The kanban board manages its own projects.** Tracking a board used to mean a
