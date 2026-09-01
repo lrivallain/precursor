@@ -19,33 +19,6 @@ import { ProjectList } from "./ProjectList";
 /** Must match `precursor_kanban.plugin.SECTION_ID`. */
 export const KANBAN_SECTION_ID = "kanban";
 
-function KanbanSidebar() {
-  const {
-    projects,
-    activeProjectId,
-    error,
-    selectProject,
-    hideProject,
-    stopTracking,
-    boardsFromSource,
-    actionError,
-    dismissActionError,
-  } = useKanban();
-  return (
-    <ProjectList
-      projects={projects}
-      activeId={activeProjectId}
-      error={error}
-      onSelect={selectProject}
-      onHide={hideProject}
-      onStopTracking={stopTracking}
-      boardsFromSource={boardsFromSource}
-      actionError={actionError}
-      onDismissActionError={dismissActionError}
-    />
-  );
-}
-
 /**
  * What to show before the board can work.
  *
@@ -63,6 +36,40 @@ function setupHint(settings: SectionHost["settings"]): string | null {
     return "Connect a GitHub repository in Settings → GitHub to see its projects here.";
   }
   return null;
+}
+
+function KanbanSidebar({ host }: { host: SectionHost }) {
+  const {
+    projects,
+    activeProjectId,
+    error,
+    selectProject,
+    hideProject,
+    stopTracking,
+    boardsFromSource,
+    actionError,
+    dismissActionError,
+  } = useKanban();
+
+  // With GitHub unset the listing is *expected* to fail, so surfacing its guard
+  // error in red here would report a normal state as a fault — and say it twice,
+  // since the main pane already explains the setup step in the user's terms.
+  const pendingSetup = setupHint(host.settings) !== null;
+
+  return (
+    <ProjectList
+      projects={pendingSetup ? [] : projects}
+      activeId={activeProjectId}
+      error={pendingSetup ? null : error}
+      emptyLabel={pendingSetup ? "No repository connected yet." : undefined}
+      onSelect={selectProject}
+      onHide={hideProject}
+      onStopTracking={stopTracking}
+      boardsFromSource={boardsFromSource}
+      actionError={actionError}
+      onDismissActionError={dismissActionError}
+    />
+  );
 }
 
 function KanbanMain({ host }: { host: SectionHost }) {

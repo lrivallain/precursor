@@ -16,6 +16,8 @@ interface ProjectListProps {
   /** Why the last context-menu action failed, if it did. */
   actionError?: string | null;
   onDismissActionError: () => void;
+  /** Shown when there are no projects at all. */
+  emptyLabel?: string;
 }
 
 /** Sidebar picker for GitHub Projects v2, mirroring WorkspaceList. */
@@ -29,6 +31,7 @@ export function ProjectList({
   boardsFromSource,
   actionError,
   onDismissActionError,
+  emptyLabel = "No projects found for this repository.",
 }: ProjectListProps) {
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<{ project: ProjectSummary; x: number; y: number } | null>(null);
@@ -143,7 +146,7 @@ export function ProjectList({
           <div className="px-2 py-4 text-sm text-muted">Loading…</div>
         ) : filtered.length === 0 ? (
           <div className="px-2 py-4 text-sm text-muted">
-            {projects.length === 0 ? "No projects found for this repository." : "No matches."}
+            {projects.length === 0 ? emptyLabel : "No matches."}
           </div>
         ) : (
           <ul className="space-y-0.5">
