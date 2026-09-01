@@ -59,6 +59,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   they were. **Timeline retention stays visible** throughout, because archived
   events outlive the feature toggle and the sweep keeps running either way.
 
+- **Settings → Workflows says that workflows need Agents mode.** Every workflow
+  step runs an agent, so with Agents off these defaults configure a pipeline that
+  cannot run — and the panel gave no hint of it. They stay editable (they are
+  plain preferences, worth setting ahead of time, and they survive the toggle);
+  they just no longer imply a workflow could start right now. Same wording the
+  Workflows section already uses for its own empty state.
+
 ### Fixed
 
 - **Agents mode reported its runtime as missing on installs that had a perfectly

@@ -39,6 +39,7 @@ export function WorkflowsSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const timeoutSeconds = settings?.workflows_default_step_timeout_seconds ?? 0;
+  const agentsEnabled = settings?.agents_enabled ?? false;
 
   async function patch(update: Record<string, boolean | number>): Promise<void> {
     setBusy(true);
@@ -62,6 +63,19 @@ export function WorkflowsSettings() {
           starting point.
         </p>
       </div>
+
+      {/* Not hidden, unlike the Agents panel's runtime-dependent controls: these
+          are plain preferences that stay meaningful to set ahead of time, and
+          they survive the toggle. What they must not do is imply a workflow
+          could run right now — so say what the Workflows section itself says. */}
+      {!agentsEnabled && (
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          <span className="font-medium">Workflows need Agents mode.</span> A
+          workflow chains agents into a repeatable pipeline, so it runs on the
+          same runtime. These defaults are saved either way and apply once you
+          turn Agents on in <span className="font-medium">Settings → Agents</span>.
+        </p>
+      )}
 
       <section className="space-y-2">
         <h3 className="text-sm font-medium">What a new step may use</h3>
