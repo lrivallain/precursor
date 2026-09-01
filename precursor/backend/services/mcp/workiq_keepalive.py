@@ -8,10 +8,11 @@ saw that interactive prompt far too often.
 
 This ticker keeps the session warm on the backend: every
 ``workiq_keepalive_poll_seconds`` it checks the stored token's expiry and, once
-it's within ``workiq_keepalive_refresh_margin_seconds`` of expiring, drives a
-silent refresh (:func:`resolve_workiq_bearer_token`, which persists the fresh
-token). It only does work while preview is enabled **and** a token exists, so it
-never triggers a sign-in on its own — a machine that never signed in stays
+it is within :func:`~precursor.backend.services.mcp.workiq_preview.renewal_lead_seconds`
+of expiring — a lead derived from the token's own lifetime, not configured —
+drives a silent refresh (:func:`resolve_workiq_bearer_token`, which persists the
+fresh token). It only does work while preview is enabled **and** a token exists,
+so it never triggers a sign-in on its own — a machine that never signed in stays
 untouched.
 
 When a silent refresh can no longer proceed (the refresh token needs an
@@ -47,6 +48,7 @@ from precursor.backend.services.mcp.workiq_preview import (
     DbTokenStorage,
     WorkIQOAuthProfile,
     _stored_token_expiry,
+    renewal_lead_seconds,
     resolve_workiq_bearer_token,
 )
 
@@ -81,9 +83,8 @@ class WorkIQKeepAlive:
         self._last_verdict.clear()
         self._task = asyncio.create_task(self._ticker(), name="workiq-keepalive")
         logger.info(
-            "WorkIQ keep-alive started (poll=%ss, margin=%ss).",
+            "WorkIQ keep-alive started (poll=%ss).",
             self._settings.workiq_keepalive_poll_seconds,
-            self._settings.workiq_keepalive_refresh_margin_seconds,
         )
 
     async def stop(self) -> None:
@@ -143,12 +144,14 @@ class WorkIQKeepAlive:
         idle_seconds = round(seconds_since_use(profile.auth_family))
         expiry = await _stored_token_expiry(tokens, profile)
         ttl = None if expiry is None else round((expiry - datetime.now(UTC)).total_seconds())
+        lead = renewal_lead_seconds(tokens)
         # One line per credential per tick, at DEBUG: the whole reason a session
         # was (or wasn't) kept warm, so a lapse can be read backwards from the
         # moment it happened rather than inferred from its absence.
         facts: dict[str, Any] = {
             "expires_at": expiry.isoformat() if expiry else None,
             "ttl_seconds": ttl,
+            "renewal_lead_seconds": round(lead),
             "idle_seconds": idle_seconds,
             "idle_after_seconds": idle_after,
             "has_refresh_token": bool(tokens.refresh_token),
@@ -162,7 +165,7 @@ class WorkIQKeepAlive:
             await self._tick_idle(profile, tokens)
             return
 
-        if expiry is not None and not self._due_for_refresh(expiry):
+        if expiry is not None and not self._due_for_refresh(expiry, lead):
             if self._verdict_changed(profile, "fresh"):
                 auth_trace.record(
                     profile.server,
@@ -173,12 +176,11 @@ class WorkIQKeepAlive:
             return
 
         # Near expiry (or expiry unknown for a legacy token) → silently refresh.
-        # ``tokens`` is only forwarded when the expiry is known, so the
-        # no-refresh-token short-circuit can't misfire on a legacy token that may
-        # well still be valid.
+        # ``expiry`` is passed along so the no-refresh-token short-circuit can't
+        # misfire on a legacy token that may well still be valid.
         self._verdict_changed(profile, "refreshing")
         auth_trace.record(profile.server, "keep-alive: refreshing before expiry", **facts)
-        await self._silent_refresh(profile, tokens if expiry is not None else None)
+        await self._silent_refresh(profile, tokens, expiry)
 
     def _verdict_changed(self, profile: WorkIQOAuthProfile, verdict: str) -> bool:
         """Whether this tick reached a *different* conclusion than the last one.
@@ -222,22 +224,23 @@ class WorkIQKeepAlive:
         auth_trace.record(
             profile.server, "keep-alive: idle credential has expired, probing it once"
         )
-        await self._silent_refresh(profile, tokens)
+        await self._silent_refresh(profile, tokens, expiry)
 
     async def _silent_refresh(
-        self, profile: WorkIQOAuthProfile, tokens: OAuthToken | None = None
+        self, profile: WorkIQOAuthProfile, tokens: OAuthToken, expiry: datetime | None
     ) -> None:
         """Drive a silent refresh, or short-circuit one that cannot succeed.
 
-        ``tokens`` is supplied when the caller has established the access token is
-        genuinely at or past expiry. A credential stored *without* a
-        ``refresh_token`` — every WorkIQ sign-in predating the ``offline_access``
-        request — has nothing left to refresh with, so skip the round trip that
-        can only fail and raise the re-authenticate prompt directly. That's also
-        the upgrade path for those installs: the sign-in it asks for mints a
-        renewable credential.
+        A credential stored *without* a ``refresh_token`` — every WorkIQ sign-in
+        predating the ``offline_access`` request — has nothing left to refresh
+        with, so skip the round trip that can only fail and raise the
+        re-authenticate prompt directly. That's also the upgrade path for those
+        installs: the sign-in it asks for mints a renewable credential. It only
+        applies when ``expiry`` is known, i.e. when the access token is
+        established to be genuinely at or past due; a legacy token with no
+        derivable expiry may well still be valid, so let the real probe decide.
         """
-        if tokens is not None and not tokens.refresh_token:
+        if expiry is not None and not tokens.refresh_token:
             logger.info(
                 "WorkIQ keep-alive: stored %s credential has no refresh token; "
                 "requesting an interactive sign-in.",
@@ -253,12 +256,21 @@ class WorkIQKeepAlive:
         result = await resolve_workiq_bearer_token(profile, caller="keep-alive")
         if result is None:
             await self._on_refresh_failed(profile)
+            return
+        access_token, renewed_expiry = result
+        # "Renewed" has to be observed, not assumed: a refresh the SDK declined
+        # to make, or one that fell back to the stored token after a transport
+        # error, returns exactly what we already had.
+        renewed = access_token != tokens.access_token or (
+            renewed_expiry is not None and expiry is not None and renewed_expiry > expiry
+        )
+        if renewed:
+            await self._on_refresh_ok(profile, renewed_expiry)
         else:
-            await self._on_refresh_ok(profile, result[1])
+            await self._on_refresh_noop(profile, renewed_expiry)
 
-    def _due_for_refresh(self, expiry: datetime) -> bool:
-        margin = self._settings.workiq_keepalive_refresh_margin_seconds
-        return (expiry - datetime.now(UTC)).total_seconds() <= margin
+    def _due_for_refresh(self, expiry: datetime, lead: float) -> bool:
+        return (expiry - datetime.now(UTC)).total_seconds() <= lead
 
     async def _on_refresh_failed(self, profile: WorkIQOAuthProfile) -> None:
         # Feed the client manager's short-circuit verdict either way (even if the
@@ -303,6 +315,29 @@ class WorkIQKeepAlive:
         )
         if recovered:
             auth_trace.end_episode(profile.server, "recovered without prompting")
+
+    async def _on_refresh_noop(self, profile: WorkIQOAuthProfile, expiry: datetime | None) -> None:
+        """A refresh completed without renewing anything.
+
+        The session was opened, nothing refused it, and the same token came back
+        — a transport error that fell back to the stored credential, or a
+        renewal the SDK declined to make. Either way the token is still marching
+        towards its original expiry, so this is deliberately *not* treated as a
+        recovery: no banner is cleared and no episode is closed on the strength
+        of work that did not happen. Reporting these as renewals is exactly how a
+        credential drifts past expiry with the trace insisting all is well.
+        """
+        logger.debug(
+            "WorkIQ keep-alive left %s token unchanged (expires=%s).",
+            profile.server,
+            expiry.isoformat() if expiry else "unknown",
+        )
+        auth_trace.record(
+            profile.server,
+            "keep-alive: refresh returned the same token — nothing was renewed",
+            level=logging.WARNING,
+            expires_at=expiry.isoformat() if expiry else None,
+        )
 
 
 _keepalive: WorkIQKeepAlive | None = None

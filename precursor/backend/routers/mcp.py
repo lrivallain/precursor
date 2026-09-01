@@ -591,6 +591,7 @@ async def workiq_auth_diagnostics(
         _stored_token_expiry,
         _summarize_scope,
         get_workiq_login_hint,
+        renewal_lead_seconds,
     )
 
     settings = get_settings()
@@ -619,6 +620,10 @@ async def workiq_auth_diagnostics(
                 "expires_in_seconds": (
                     None if expiry is None else round((expiry - now).total_seconds())
                 ),
+                # Not configured — derived from this token's own lifetime, so the
+                # endpoint has to report it or the keep-alive's verdicts can't be
+                # checked against anything.
+                "renewal_lead_seconds": round(renewal_lead_seconds(tokens)),
                 "has_login_hint": bool(await get_workiq_login_hint(profile)),
                 "idle_seconds": round(seconds_since_use(profile.auth_family)),
                 "open_episode": auth_trace.current_episode(profile.server),
@@ -631,9 +636,6 @@ async def workiq_auth_diagnostics(
         "settings": {
             "workiq_keepalive_enabled": settings.workiq_keepalive_enabled,
             "workiq_keepalive_poll_seconds": settings.workiq_keepalive_poll_seconds,
-            "workiq_keepalive_refresh_margin_seconds": (
-                settings.workiq_keepalive_refresh_margin_seconds
-            ),
             "workiq_keepalive_idle_after_seconds": settings.workiq_keepalive_idle_after_seconds,
             "workiq_keepalive_surface_idle_lapse": settings.workiq_keepalive_surface_idle_lapse,
             "workiq_silent_reauth_enabled": settings.workiq_silent_reauth_enabled,

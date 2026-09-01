@@ -28,6 +28,7 @@ import errno
 import json
 import logging
 import socket
+import time
 import webbrowser
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -688,6 +689,29 @@ async def _stored_token_expiry(
     except (ValueError, TypeError):
         return None
     return issued + timedelta(seconds=token.expires_in)
+
+
+# How far ahead of expiry a stored token counts as due for renewal. Not a
+# setting: the only thing that matters is how many retries fit before the cliff,
+# and that follows from the token's own lifetime rather than from a preference.
+_MIN_RENEWAL_LEAD_SECONDS: Final = 300.0
+_RENEWAL_LEAD_FRACTION: Final = 0.25
+
+
+def renewal_lead_seconds(token: OAuthToken | None) -> float:
+    """Seconds before expiry at which ``token`` should start being renewed.
+
+    A quarter of the lifetime gives the Entra tokens seen here (~4200-5400s)
+    some 17-22 minutes of runway — 17+ attempts at the keep-alive's 60s poll —
+    so a delayed or failed tick has room to recover instead of racing expiry.
+    The floor keeps a short-lived token, or one whose lifetime can't be known
+    (legacy rows with no ``expires_in``), at the five minutes this used to be
+    configured to.
+    """
+    lifetime = token.expires_in if token is not None else None
+    if lifetime is None or lifetime <= 0:
+        return _MIN_RENEWAL_LEAD_SECONDS
+    return max(_MIN_RENEWAL_LEAD_SECONDS, _RENEWAL_LEAD_FRACTION * lifetime)
 
 
 def _with_offline_access(scope: str) -> str:
@@ -1433,14 +1457,23 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
     ``purpose`` names the flow that built the provider (``background``,
     ``interactive``, ``silent``…) so one line tells you whether a refresh was a
     keep-alive tick or a click.
+
+    ``renew_now`` marks a provider built *because* a renewal was already judged
+    due — see :meth:`_initialize` for why that needs saying out loud.
     """
 
     def __init__(
-        self, *args: Any, profile: WorkIQOAuthProfile, purpose: str, **kwargs: Any
+        self,
+        *args: Any,
+        profile: WorkIQOAuthProfile,
+        purpose: str,
+        renew_now: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._profile = profile
         self._purpose = purpose
+        self._renew_now = renew_now
 
     def _trace(self, phase: str, *, level: int = logging.INFO, **detail: Any) -> None:
         auth_trace.record(self._profile.server, phase, level=level, purpose=self._purpose, **detail)
@@ -1456,10 +1489,24 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
             # issue time leaves it unset, which preserves the old assume-valid
             # behaviour rather than forcing a sign-in that may not be needed.
             self.context.token_expiry_time = expiry.timestamp() - _TOKEN_EXPIRY_SKEW_SECONDS
+        if self._renew_now:
+            # Two different thresholds decide "renew this": the caller's, which
+            # led it here, and the SDK's `is_token_valid()`, which gates the only
+            # refresh branch there is. Between them the caller opens a session
+            # intending to renew, the SDK says "still valid", nothing happens and
+            # the unchanged token reads back as if it had been renewed. Stating
+            # the intent — this token is spent — makes the branch run, and a
+            # successful refresh immediately overwrites the expiry from the new
+            # token's own lifetime. Only ever set on a path that has already
+            # concluded a renewal is due: an invalid-looking token whose refresh
+            # then fails transiently is sent with no auth header at all, and the
+            # 401 escalates to a browser grant.
+            self.context.token_expiry_time = time.time() - 1.0
         self._trace(
             "provider loaded stored credential",
             level=logging.DEBUG,
             expiry_known=expiry is not None,
+            renew_now=self._renew_now,
             token_considered_valid=self.context.is_token_valid(),
             **_token_facts(tokens),
         )
@@ -1581,6 +1628,7 @@ def build_oauth_provider(
     callback_timeout: float | None = None,
     publish_url: bool = True,
     hands_free: bool = False,
+    renew_now: bool = False,
 ) -> OAuthClientProvider:
     """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
 
@@ -1601,7 +1649,11 @@ def build_oauth_provider(
     ``hands_free`` marks a sign-in the user never asked for by hand (the silent
     pass and the auto flow's self-opened prompt): its success page closes at
     once instead of showing the manual flow's short "closing in…" countdown,
-    since nobody is watching it.
+    since nobody is watching it. ``renew_now`` declares that the caller has
+    *already* decided the credential is due for renewal, so the SDK's refresh
+    branch runs instead of second-guessing that with its own freshness check —
+    reserve it for :func:`resolve_workiq_bearer_token`-style deliberate renewals
+    (see :meth:`_WorkIQOAuthClientProvider._initialize`).
     """
     client_metadata = OAuthClientMetadata(
         redirect_uris=[profile.redirect_uri],
@@ -1640,6 +1692,7 @@ def build_oauth_provider(
         ),
         profile=profile,
         purpose=purpose,
+        renew_now=renew_now,
     )
 
 
@@ -1666,6 +1719,12 @@ async def resolve_workiq_bearer_token(
     each of its three very different ``None`` returns is traced separately
     (``caller`` naming who asked). They used to be indistinguishable, which made
     "the token could not be renewed" unfalsifiable from the outside.
+
+    Every caller reaches here having already concluded the credential is due, so
+    the provider is built with ``renew_now=True``: without it the SDK's own
+    freshness check silently vetoes the refresh for any token that is close to
+    expiry but not yet past it, and the untouched token reads back looking
+    renewed.
     """
     storage = DbTokenStorage(profile)
     if await storage.get_tokens() is None:
@@ -1674,7 +1733,7 @@ async def resolve_workiq_bearer_token(
         )
         return None
     try:
-        provider = build_oauth_provider(profile=profile, interactive=False)
+        provider = build_oauth_provider(profile=profile, interactive=False, renew_now=True)
         async with (
             streamablehttp_client(profile.url, auth=provider) as (read, write, _),
             ClientSession(read, write) as session,
