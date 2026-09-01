@@ -161,6 +161,15 @@ entered, and every expiry escalated to a full browser sign-in — the refresh
 token was dead weight. Interactive sign-in is now the exception rather than the
 routine.
 
+It also resolves the **authorization server** before that refresh is built. The
+SDK discovers it only while handling a 401, which is *after* the refresh it
+attempts first, so a background renewal would otherwise fall back to guessing the
+token endpoint from the MCP URL and post the grant at the WorkIQ/Agent 365 host
+instead of Entra. Those hosts have no token endpoint, the SDK read the resulting
+404 as a refusal, and a renewable credential was thrown away in favour of a
+browser prompt — the two halves of the same bug, so fixing the expiry alone was
+not enough.
+
 ::: tip Sign-ins that were stored before this
 A token saved without a refresh token can't gain one retroactively, so Precursor
 raises the ordinary sign-in banner once instead of attempting a renewal that
