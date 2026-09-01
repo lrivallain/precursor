@@ -93,9 +93,14 @@ instance comes up on doesn't depend on the caller's working directory.
    prompt that includes the linked GitHub issue body + most-recent comments +
    labels, plus any attached skills / memory.
 3. Enabled [MCP tool servers](/features/mcp) are opened for the turn; their tools
-   are advertised to the provider. The router runs a **tool loop**: stream text,
-   collect tool calls, execute them, append `tool` results, call again — up to a
-   configured max-rounds — until the model stops requesting tools.
+   are advertised to the provider. A server that can't be reached (a lapsed
+   credential, say) still contributes its **stored** catalogue, so the turn is
+   never held up by it and the model is never quietly left without the tool. The
+   router runs a **tool loop**: stream text, collect tool calls, execute them,
+   append `tool` results, call again — up to a configured max-rounds — until the
+   model stops requesting tools. A call that reaches a server needing an
+   interactive sign-in raises the prompt **there**, waits, and retries once;
+   unattended runs skip the wait and return a tool error instead.
 4. Each round is trimmed to a token budget so a few large tool results can't
    overflow the context window.
 5. Text deltas and tool-call events stream to the browser over SSE.
@@ -152,6 +157,8 @@ Highlights:
 - **`Attachment`** — file metadata + a `sha256` pointer; **bytes live on disk** as
   content-addressed blobs, deduped, with a startup GC sweep.
 - **`MCPServer`** — user-defined external MCP tool servers.
+- **`MCPToolCache`** — each MCP server's last-known tool catalogue, so it survives
+  a restart and is available before anything connects.
 - **`IssueContextCache`** — cached GitHub issue summary/state/labels (TTL refresh).
 - **`AppSetting`** — JSON key/value for runtime settings and **secrets that are
   never echoed back** (only `*_present` booleans are returned).
@@ -211,7 +218,10 @@ Precursor is both an MCP client and an MCP server.
 - **As client** (`services/mcp/client.py`) — an `MCPClientManager` holds the
   tool-server registry: built-ins (`github`, `workiq`, `playwright`, `fetch`,
   `workspace-fs`, `drawio`, `cmd-runner`, `precursor`) plus user-defined servers.
-  Servers are toggled in Settings; sessions open per chat turn.
+  Servers are toggled in Settings; sessions are kept warm in a per-server pool
+  across turns. `services/mcp/warmup.py` connects the enabled ones sequentially
+  in the background after startup, and `services/mcp/tool_cache.py` persists each
+  catalogue so it survives a restart.
 - **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server exposing
   Precursor's own data, gated per-section by `mcp_expose` (off by default), over
   **stdio** and an in-process **HTTP** transport at `/mcp` (off by default,

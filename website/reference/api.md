@@ -126,6 +126,7 @@ client's own events are filtered back out.
 | `mcp.auth_required` | An [MCP server](/features/mcp) needs an interactive sign-in. |
 | `mcp.auth_url` | The OAuth authorization URL to open for that sign-in. |
 | `mcp.auth_resolved` | An MCP server sign-in completed. |
+| `mcp.server_state` | A server finished [warming up](/features/mcp#startup-and-the-first-prompt) — carries its resolved `state` and advertised tool count. |
 
 `agent.changed` and `read.changed` carry an `agent_run_id` alongside
 `agent_session_id`, so a listener can tell *which* execution of a shared agent

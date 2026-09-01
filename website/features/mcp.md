@@ -44,6 +44,30 @@ name the handful of servers it may use — the rest are never attached to that
 step's session.
 :::
 
+### Startup and the first prompt
+
+A dozen enabled servers used to make the *first* message of a session the
+expensive one: nothing connected at startup, so that turn paid connect +
+initialize + list_tools for every server at once — plus an `npx` spin-up for the
+stdio ones — and because they are opened concurrently the slowest set the floor.
+
+Two things remove that cost, both of them invisible:
+
+- **The tool catalogue is stored.** Each server's tool list is written after a
+  successful connect and restored on the next launch, so **Settings** renders
+  and the model is offered tools before anything has connected. It stays a
+  *hint*: the live session is still what a call reaches, and a call that finds a
+  tool the server no longer exposes re-lists the catalogue and retries once
+  rather than reporting a tool that isn't there.
+- **Enabled servers are warmed in the background.** Shortly after startup
+  Precursor connects them **one at a time**, never blocking startup or any
+  request — several built-ins each launch `npx`, and a thundering herd at launch
+  is the very stall being removed. A server whose credential needs an interactive
+  sign-in is **skipped**, so starting the app never pops a browser window at you.
+
+Both are tunable — see `PRECURSOR_MCP_WARMUP_*` in the
+[configuration reference](/reference/configuration#mcp-tool-servers).
+
 ### Playwright — authenticated scraping
 
 `playwright` wraps Microsoft's official
@@ -141,8 +165,20 @@ Existing files are never clobbered unless you pass `overwrite=true`.
 `workiq` has a **preview** toggle: off, it runs the local stdio launcher
 (read-only `ask`); on, it switches to the hosted, **OAuth-protected** HTTP
 endpoint for the full read **and write** surface. Sign-in is a browser flow, and
-when one is needed an inline banner surfaces it right in the app — chat, topic,
-workspace and agent turns pause and stream an auth prompt rather than failing.
+when one is needed an inline banner surfaces it right in the app.
+
+**The prompt waits for the tool that needs it.** A turn is never held up because
+some *other* server's credential has gone stale — with three Entra credentials in
+play, one expired WorkIQ token used to stall a question that had nothing to do
+with WorkIQ, for up to five minutes, before a single word was generated. Now the
+turn starts immediately and the sign-in is asked for only if the model actually
+reaches for a tool on the affected server, naming that tool when it does.
+
+That is not the same as hiding the tools. A blocked server still contributes its
+tools to what the model is offered, from the stored catalogue, because quietly
+removing them is what makes a model answer from memory instead of calling the
+tool. If the sign-in doesn't happen, the call comes back as an explicit error
+telling the model it could not reach the tool — never as a confident guess.
 
 Precursor is built to keep those credentials alive **without interrupting you**:
 tokens are refreshed silently before they expire, a lapsed credential is renewed
