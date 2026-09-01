@@ -87,9 +87,9 @@ export function AddProjectModal({ onClose, onAdded }: Props) {
             Add a project
           </h2>
           <p className="text-xs text-muted">
-            The board already lists every project owned by the account behind your
-            configured GitHub repository. Add another account or a single project
-            — a customer's roadmap, another org you contribute to.
+            Track a GitHub account — every open project it owns — or a single
+            project. A configured repository (Settings → GitHub) contributes its
+            owner's projects too, but isn't required.
           </p>
         </div>
 
@@ -115,13 +115,14 @@ export function AddProjectModal({ onClose, onAdded }: Props) {
           {malformed && (
             <p className="text-[11px] text-red-500">
               Not a GitHub account or project. Use <code>acme-corp</code>,{" "}
-              <code>acme-corp#4</code>, or a project URL.
+              <code>acme-corp#4</code>, or the project's full URL —{" "}
+              <code>https://github.com/users/acme-corp/projects/4</code>.
             </p>
           )}
           {full && (
             <p className="text-[11px] text-amber-600 dark:text-amber-400">
-              That's the maximum of {MAX_SOURCES} sources. Remove one in Settings →
-              Plugins → Kanban to add another.
+              That's the maximum of {MAX_SOURCES} projects. Stop tracking one
+              (right-click it in the list) to add another.
             </p>
           )}
           <p className="text-[11px] text-muted">

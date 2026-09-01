@@ -44,8 +44,12 @@ _PROJECT_URL = re.compile(
 )
 # A bare account, optionally as a profile URL.
 _OWNER_URL = re.compile(r"^https?://(?:www\.)?github\.com/(?P<owner>[^/?#]+)/?$", re.IGNORECASE)
-# GitHub logins: alphanumeric plus hyphens, no leading/trailing hyphen.
-_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+# GitHub logins: alphanumeric plus hyphens, no leading/trailing hyphen — and
+# underscores *inside*, because Enterprise Managed Users are named
+# ``<shortcode>_<enterprise>`` (e.g. ``octocat_acme``). Classic github.com
+# accounts can't contain one, so a rule written from those alone silently
+# rejects every EMU account.
+_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,37}[A-Za-z0-9])?$")
 # ASCII digits only. `str.isdigit()` would be wrong here: it accepts superscripts
 # ("²") that `int()` then refuses, turning a typo into an exception.
 _DIGITS = re.compile(r"^\d+$")

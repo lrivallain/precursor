@@ -16,8 +16,11 @@ export const HIDDEN_KEY = "hidden_projects";
 /** Mirrors `precursor_kanban.sources.MAX_SOURCES`. */
 export const MAX_SOURCES = 20;
 
-// Mirrors the regexes in `precursor_kanban.sources`.
-const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+// Mirrors the regexes in `precursor_kanban.sources`. Underscores are allowed
+// inside a login because Enterprise Managed Users are named
+// `<shortcode>_<enterprise>`; classic github.com accounts never contain one, so
+// a rule written from those alone rejects every EMU account.
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,37}[A-Za-z0-9])?$/;
 const PROJECT_URL =
   /^https?:\/\/(?:www\.)?github\.com\/(?:orgs|users)\/([^/]+)\/projects\/\d+/i;
 const OWNER_URL = /^https?:\/\/(?:www\.)?github\.com\/([^/?#]+)\/?$/i;

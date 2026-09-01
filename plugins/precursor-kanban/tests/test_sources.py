@@ -472,3 +472,35 @@ def test_the_feature_switch_still_gates_everything(monkeypatch: pytest.MonkeyPat
             ).status_code
             == 403
         )
+
+
+# --- Enterprise Managed User logins ----------------------------------------
+# EMU accounts are named `<shortcode>_<enterprise>`, so their logins contain an
+# underscore. Classic github.com accounts never do, and a login rule written
+# from those alone silently rejects every EMU account — including the URL you
+# get by copying a project straight out of the address bar.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("octocat_acme", ProjectSource("octocat_acme")),
+        ("octocat_acme#1", ProjectSource("octocat_acme", 1)),
+        ("https://github.com/octocat_acme", ProjectSource("octocat_acme")),
+        (
+            "https://github.com/users/octocat_acme/projects/1",
+            ProjectSource("octocat_acme", 1),
+        ),
+        (
+            "https://github.com/orgs/octocat_acme/projects/2",
+            ProjectSource("octocat_acme", 2),
+        ),
+    ],
+)
+def test_emu_logins_are_accepted(raw: str, expected: ProjectSource) -> None:
+    assert parse_source(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["_leading", "trailing_", "-leading", "trailing-"])
+def test_a_login_still_has_to_start_and_end_alphanumeric(raw: str) -> None:
+    assert parse_source(raw) is None
