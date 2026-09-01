@@ -62,7 +62,6 @@ from precursor.backend.services.llm.base import (
 )
 from precursor.backend.services.mcp.client import (
     AUTH_PAUSE_TIMEOUT_SECONDS,
-    MCPToolAuthRequired,
     get_mcp_client_manager,
 )
 from precursor.backend.services.roles import resolve_role_prompt
@@ -499,7 +498,8 @@ async def chat_stream(
     # Reuse the proven tool-loop helpers from the shared turn engine. Imported
     # lazily to keep the module import graph flat.
     from precursor.backend.services.turn_engine import (
-        format_tool_result,
+        ToolAuthRequired,
+        call_tool_with_auth_retry,
         load_enabled_mcp_servers,
         mcp_tools_to_provider,
     )
@@ -691,48 +691,30 @@ async def chat_stream(
                                 result_text = f"Invalid JSON arguments: {exc}"
                                 is_error = True
                             if args is not None:
-                                prompted = False
-                                while True:
-                                    try:
-                                        result = await active.call_tool(server_name, raw_name, args)
-                                    except MCPToolAuthRequired as exc:
-                                        if not prompted:
-                                            prompted = True
-                                            yield {
-                                                "event": "mcp_auth_required",
-                                                "data": json.dumps(
-                                                    {
-                                                        "server": exc.server,
-                                                        "message": exc.message,
-                                                        "tool": call.name,
-                                                    }
-                                                ),
-                                            }
-                                            await manager.wait_for_auth(
-                                                timeout=AUTH_PAUSE_TIMEOUT_SECONDS
-                                            )
-                                            continue
-                                        result_text = (
-                                            f"Tool '{call.name}' is unavailable: {exc.server} "
-                                            f"needs an interactive sign-in ({exc.message}). "
-                                            "Sign in from the banner and ask again; do not "
-                                            "guess the answer."
-                                        )
-                                        is_error = True
-                                        break
-                                    except Exception as exc:
-                                        logger.warning(
-                                            "Workspace chat: MCP call %s failed: %s",
-                                            call.name,
-                                            exc,
-                                        )
-                                        result_text = f"Tool call failed: {exc}"
-                                        is_error = True
-                                        break
+                                # Shared with the topic/chat tool loop so the
+                                # sign-in retry policy can't drift between them.
+                                async for step in call_tool_with_auth_retry(
+                                    active=active,
+                                    server=server_name,
+                                    raw_name=raw_name,
+                                    tool_name=call.name,
+                                    args=args,
+                                    auth_wait_timeout=AUTH_PAUSE_TIMEOUT_SECONDS,
+                                ):
+                                    if isinstance(step, ToolAuthRequired):
+                                        yield {
+                                            "event": "mcp_auth_required",
+                                            "data": json.dumps(
+                                                {
+                                                    "server": step.server,
+                                                    "message": step.message,
+                                                    "tool": step.tool,
+                                                }
+                                            ),
+                                        }
                                     else:
-                                        result_text = format_tool_result(result)
-                                        is_error = bool(getattr(result, "isError", False))
-                                        break
+                                        result_text = step.result_text
+                                        is_error = step.is_error
 
                         yield {
                             "event": "tool_result",

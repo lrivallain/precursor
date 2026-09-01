@@ -47,7 +47,7 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
   The turn now starts immediately and the sign-in is requested at the moment a
   tool actually needs it — naming the tool, which the old blanket prompt could
-  not. The call then waits for the sign-in and retries once. This is not the
+  not. The call then retries while it waits for that sign-in. This is not the
   tools being hidden: a blocked server still contributes its catalogue to what
   the model is offered, because dropping it is what makes a model answer from
   memory instead of calling the tool. A sign-in that never arrives yields an

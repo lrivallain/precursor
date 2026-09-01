@@ -99,7 +99,8 @@ instance comes up on doesn't depend on the caller's working directory.
    router runs a **tool loop**: stream text, collect tool calls, execute them,
    append `tool` results, call again — up to a configured max-rounds — until the
    model stops requesting tools. A call that reaches a server needing an
-   interactive sign-in raises the prompt **there**, waits, and retries once;
+   interactive sign-in raises the prompt **there** and retries while it waits,
+   re-checking every ten seconds until the interactive window elapses;
    unattended runs skip the wait and return a tool error instead.
 4. Each round is trimmed to a token budget so a few large tool results can't
    overflow the context window.

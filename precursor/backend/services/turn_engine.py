@@ -12,6 +12,7 @@ paths from diverging.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -468,6 +469,81 @@ class ToolAuthRequired:
 
 
 @dataclass(slots=True)
+class ToolCallOutcome:
+    """How one tool call ended, once any sign-in retries are exhausted."""
+
+    result_text: str
+    is_error: bool
+    # ``{"slug", "path"}`` when the tool touched a workspace file. None otherwise.
+    link: dict[str, str] | None = None
+
+
+async def call_tool_with_auth_retry(
+    *,
+    active: Any,
+    server: str,
+    raw_name: str,
+    tool_name: str,
+    args: dict[str, Any],
+    auth_wait_timeout: float,
+) -> AsyncIterator[ToolAuthRequired | ToolCallOutcome]:
+    """Run one MCP tool call, pausing for an interactive sign-in if it needs one.
+
+    Yields a :class:`ToolAuthRequired` (at most once) when the call turns out to
+    need a sign-in, so each caller can surface it in its own transport, then
+    exactly one :class:`ToolCallOutcome`. Shared by the topic/chat tool loop and
+    the workspace chat loop so this policy cannot drift between them.
+
+    The pause is bounded by ``auth_wait_timeout`` overall but re-checked every
+    ten seconds, retrying the call on each pass. That re-poll matters:
+    ``signal_auth_resolved`` is process-global, so a *concurrent* turn's sign-in
+    or the keep-alive's silent renewal can fire while we sit between raising and
+    registering our waiter, and a single long wait would miss it and park this
+    turn for the entire window — the exact stall this whole change exists to
+    remove. ``auth_wait_timeout=0`` means "surface the prompt, then give up now",
+    which is what an unattended run wants.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, auth_wait_timeout)
+    prompted = False
+    while True:
+        try:
+            result = await active.call_tool(server, raw_name, args)
+        except MCPToolAuthRequired as exc:
+            if not prompted:
+                prompted = True
+                yield ToolAuthRequired(server=exc.server, message=exc.message, tool=tool_name)
+            remaining = deadline - loop.time()
+            if remaining > 0:
+                # Wake promptly on a sign-in; cap the wait so a signal that fired
+                # outside our window is still picked up a few seconds later.
+                await active.manager.wait_for_auth(timeout=min(remaining, 10.0))
+                continue
+            # Never let the model answer as though the tool had run: report the
+            # failure so it says what it couldn't reach instead of inventing it.
+            yield ToolCallOutcome(
+                result_text=(
+                    f"Tool '{tool_name}' is unavailable: {exc.server} needs an interactive "
+                    f"sign-in ({exc.message}). Sign in from the banner and ask again; do not "
+                    "guess the answer."
+                ),
+                is_error=True,
+            )
+            return
+        except Exception as exc:
+            logger.warning("MCP call %s(%s) failed: %s", tool_name, args, exc)
+            yield ToolCallOutcome(result_text=f"Tool call failed: {exc}", is_error=True)
+            return
+        is_error = bool(getattr(result, "isError", False))
+        yield ToolCallOutcome(
+            result_text=format_tool_result(result),
+            is_error=is_error,
+            link=None if is_error else link_from_result(result),
+        )
+        return
+
+
+@dataclass(slots=True)
 class RoundCapReached:
     """The tool-round budget was exhausted without a final answer."""
 
@@ -583,48 +659,20 @@ async def run_tool_loop(
                     result_text = f"Invalid JSON arguments: {exc}"
                     is_error = True
                 if args is not None:
-                    # One retry, and only for a sign-in: the catalogue was
-                    # advertised from the stored one, so this is the first moment
-                    # we know the credential is actually needed.
-                    prompted = False
-                    while True:
-                        try:
-                            result = await active.call_tool(server_name, raw_name, args)
-                        except MCPToolAuthRequired as exc:
-                            if not prompted:
-                                prompted = True
-                                yield ToolAuthRequired(
-                                    server=exc.server, message=exc.message, tool=call.name
-                                )
-                                if auth_wait_timeout > 0:
-                                    await active.manager.wait_for_auth(timeout=auth_wait_timeout)
-                                    continue
-                            # Never let the model answer as though the tool had
-                            # run: report the failure so it says what it couldn't
-                            # reach instead of inventing the result.
-                            result_text = (
-                                f"Tool '{call.name}' is unavailable: {exc.server} needs an "
-                                f"interactive sign-in ({exc.message}). Sign in from the banner "
-                                "and ask again; do not guess the answer."
-                            )
-                            is_error = True
-                            break
-                        except Exception as exc:
-                            logger.warning(
-                                "MCP call %s(%s) failed: %s",
-                                call.name,
-                                call.arguments,
-                                exc,
-                            )
-                            result_text = f"Tool call failed: {exc}"
-                            is_error = True
-                            break
+                    async for step in call_tool_with_auth_retry(
+                        active=active,
+                        server=server_name,
+                        raw_name=raw_name,
+                        tool_name=call.name,
+                        args=args,
+                        auth_wait_timeout=auth_wait_timeout,
+                    ):
+                        if isinstance(step, ToolAuthRequired):
+                            yield step
                         else:
-                            result_text = format_tool_result(result)
-                            is_error = bool(getattr(result, "isError", False))
-                            if not is_error:
-                                link = link_from_result(result)
-                            break
+                            result_text = step.result_text
+                            is_error = step.is_error
+                            link = step.link
 
             yield ToolResultTurn(call, result_text, is_error, link)
 
@@ -658,12 +706,17 @@ async def run_message_stream(
     provider: Any,
     github_token: str,
     enabled_servers: list[str],
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
 ) -> AsyncIterator[dict[str, str]]:
     """Container-agnostic SSE generator shared by topic and chat streaming.
 
     Persists assistant/tool turns against the right container (topic or chat),
     runs the shared MCP tool loop, and yields SSE events. Errors are persisted
     as system messages so they survive a client reload.
+
+    ``auth_wait_timeout`` is how long a tool call may pause for an interactive
+    sign-in; it defaults to the interactive window and is threaded through so a
+    caller (or a test) can bound it, mirroring the scheduler's run_tool_loop.
     """
     manager = get_mcp_client_manager()
 
@@ -707,6 +760,7 @@ async def run_message_stream(
                 max_tool_rounds=max_tool_rounds,
                 max_input_tokens=max_input_tokens,
                 max_tool_result_tokens=max_tool_result_tokens,
+                auth_wait_timeout=auth_wait_timeout,
             ):
                 if isinstance(ev, AssistantTextDelta):
                     yield {

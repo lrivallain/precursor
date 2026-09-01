@@ -222,3 +222,31 @@ async def test_warmup_survives_a_failing_server(monkeypatch) -> None:  # type: i
     await _finish(warmup)
 
     assert manager.acquired_names == ["ok"]
+
+
+def test_app_lifespan_starts_and_stops_the_warmup(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The wiring itself, not just the class in isolation.
+
+    The suite disables warm-up globally (see ``conftest``), so without this the
+    lifespan hookup would be covered by inspection only: a future refactor could
+    drop the ``start()``/``stop()`` pair and every other test would still pass.
+    """
+    from fastapi.testclient import TestClient
+
+    from precursor.backend.main import create_app
+    from precursor.backend.services.mcp import warmup as warmup_mod
+
+    calls: list[str] = []
+
+    class _Recorder:
+        async def start(self) -> None:
+            calls.append("start")
+
+        async def stop(self) -> None:
+            calls.append("stop")
+
+    monkeypatch.setattr(warmup_mod, "get_mcp_warmup", lambda: _Recorder())
+
+    with TestClient(create_app()):
+        assert calls == ["start"]
+    assert calls == ["start", "stop"]

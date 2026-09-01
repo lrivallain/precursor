@@ -321,3 +321,64 @@ async def test_lazy_connect_surfaces_a_plain_failure_untouched() -> None:
         raised = str(exc)
     assert "command not found" in raised
     await manager.aclose()
+
+
+async def test_wait_is_re_polled_rather_than_one_long_block() -> None:
+    """The pause is capped per iteration so a missed global signal self-heals.
+
+    ``signal_auth_resolved`` is process-wide: a concurrent turn's sign-in, or the
+    keep-alive's silent renewal, can fire between the raise and the moment this
+    turn registers its waiter. A single ``wait_for_auth(300)`` would sleep
+    through that and park the turn for the whole window -- the exact stall this
+    change exists to remove -- so the wait is re-checked every ten seconds and
+    the call retried on each pass.
+    """
+    manager = MCPClientManager()
+    state = {"signed_in": False}
+
+    async def responder(server: str, raw_name: str, args: dict[str, Any]) -> Any:
+        _ = args
+        if not state["signed_in"]:
+            raise MCPToolAuthRequired(server, "WorkIQ sign-in expired.")
+        return {"content": [], "raw": raw_name}
+
+    asked: list[float] = []
+
+    async def fake_wait(timeout: float) -> None:
+        # Stand in for the signal this turn would otherwise have missed.
+        asked.append(timeout)
+        state["signed_in"] = True
+
+    manager.wait_for_auth = fake_wait  # type: ignore[assignment]
+    bundle = _blocked_bundle(manager, tools=[_tool()], responder=responder)
+
+    events = await _drive(bundle, _OneToolProvider("workiq__search"), auth_wait_timeout=300.0)
+
+    # Capped at ten seconds, not the full 300s window.
+    assert asked == [10.0]
+    assert len([e for e in events if isinstance(e, ToolAuthRequired)]) == 1
+    assert [e.is_error for e in events if isinstance(e, ToolResultTurn)] == [False]
+
+
+async def test_prompt_is_emitted_once_across_several_retries() -> None:
+    """Re-polling must not re-prompt on every pass."""
+    manager = MCPClientManager()
+
+    async def responder(server: str, raw_name: str, args: dict[str, Any]) -> Any:
+        _ = raw_name, args
+        raise MCPToolAuthRequired(server, "WorkIQ sign-in expired.")
+
+    waits = {"n": 0}
+
+    async def fake_wait(timeout: float) -> None:
+        _ = timeout
+        waits["n"] += 1
+
+    manager.wait_for_auth = fake_wait  # type: ignore[assignment]
+    bundle = _blocked_bundle(manager, tools=[_tool()], responder=responder)
+
+    events = await _drive(bundle, _OneToolProvider("workiq__search"), auth_wait_timeout=0.25)
+
+    assert waits["n"] >= 1  # it really did re-poll
+    assert len([e for e in events if isinstance(e, ToolAuthRequired)]) == 1
+    assert [e.is_error for e in events if isinstance(e, ToolResultTurn)] == [True]
