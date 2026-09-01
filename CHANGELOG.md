@@ -75,6 +75,25 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The tray kept offering an update the app had already installed**, because it
+  was comparing the published build against *its own* version. `__version__` is
+  resolved once, at import, so a long-lived icon measures against the release it
+  was **started** with, forever — no matter what the app is running. The result
+  was a menu entry saying *"Update to dev245"* on a machine that had been
+  running dev245 for over an hour, where the CLI (a fresh process) correctly
+  reported nothing to do.
+
+  The tray now compares its own version against the one the running instance
+  recorded when it launched — a fresh process, so a disagreement means the icon
+  is the stale one. It says so, offering **"Restart the icon (running an older
+  build)"** in place of the update, and that entry bounces the tray's login item
+  and drops the cached check. Detection rides the existing 3-second supervisor
+  poll: no extra network call, no new state.
+
+  This also covers updates that never go through `precursor service update` — a
+  manual `uv tool install --force`, for instance — which restart nothing and
+  previously left the icon lying until it was killed by hand.
+
 - **Running the test suite killed the developer's own Precursor.** Every other
   external the tests touch is redirected — the database, the data dir, the skills
   dir — but login items are not addressed by an env var: launchd reads
@@ -89,7 +108,6 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   with the tray left running against a server that no longer existed. `conftest`
   now redirects the single path chokepoint every platform goes through, and a
   test fails if that isolation is ever dropped.
-
 
 - **Agents mode reported its runtime as missing on installs that had a perfectly
   good Copilot CLI.** `github-copilot-sdk` 1.0.4 replaced its platform-specific

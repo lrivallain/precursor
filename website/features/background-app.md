@@ -90,6 +90,20 @@ so it never looks like a different app. The menu offers:
 ¹ Named for the platform: *Show data folder in Explorer* on Windows, *Open data
 folder* elsewhere.
 
+::: tip The icon can tell when *it* is the stale one
+`precursor.__version__` is resolved once, when the process starts, so a
+long-running icon would otherwise go on comparing the release it was *started*
+with against the published build — and keep offering an update that is already
+installed. The instance is a fresh process, and its runtime record carries the
+version it actually launched with, so a disagreement means the icon is behind.
+When that happens the update entry becomes **"Restart the icon (running an older
+build)"**, which bounces the tray's login item and drops the cached check.
+
+This is what catches an update that never went through `precursor service
+update` — a manual `uv tool install --force`, say — where nothing would
+otherwise have told the icon to restart.
+:::
+
 The data-folder entry is deliberately **not** disabled while the instance is
 stopped: the database and the logs are exactly what you want to reach when it
 *won't* start. It also creates the directory if a fresh install hasn't written
