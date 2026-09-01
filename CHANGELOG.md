@@ -75,6 +75,38 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Every WorkIQ silent refresh was aimed at the wrong server, so none of them
+  ever worked.** The symptom was a browser sign-in roughly every 80 minutes —
+  the access-token lifetime — plus background tabs opening unbidden and turns
+  stalling on a re-authenticate banner, against credentials that held a
+  perfectly good refresh token throughout.
+
+  The MCP SDK runs its refresh at the *top* of `async_auth_flow` but only
+  discovers the authorization server later, in the branch that handles a 401. A
+  freshly built provider — which every background renewal is — therefore reached
+  `_refresh_token()` with no metadata, and the SDK fell back to deriving the
+  token URL from the MCP endpoint. The grant was POSTed to
+  `https://workiq.svc.cloud.microsoft/token` (400 `"Invalid request, no valid
+  route."`) and `https://agent365.svc.cloud.microsoft/token` (404) — the
+  *resource* hosts, which have no token endpoint. The SDK read those as Entra
+  refusing the refresh, cleared the stored tokens and escalated to a full
+  browser grant.
+
+  Restoring each token's real expiry (previous release) made this visible rather
+  than causing it: before, `is_token_valid()` always returned `True`, so the
+  broken refresh branch was skipped entirely and the failure hid behind the
+  401 path. Once expiry was honoured, every renewal entered a branch that could
+  only fail — and discarded a renewable credential on the way out.
+
+  Precursor now resolves the authorization-server metadata before the flow runs,
+  so the refresh reaches
+  `https://login.microsoftonline.com/organizations/oauth2/v2.0/token`. Only the
+  URL changes: the metadata seeded is deliberately limited to the authorization
+  server, because seeding the protected-resource document too would add an
+  RFC 8707 `resource` field to the request body. Discovery is resolved once per
+  endpoint per process, and a discovery outage degrades to exactly the previous
+  behaviour rather than making things worse.
+
 - **Installing failed outright when something else already held port 8000**, and
   said almost nothing useful about it: `error: The Precursor login item did not
   come up on port 8000`. That is the *first* thing a new user runs, and 8000 is

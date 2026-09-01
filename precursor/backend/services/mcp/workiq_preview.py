@@ -35,10 +35,23 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Final, cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
+import httpx
 from mcp import ClientSession
 from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.auth.utils import (
+    build_oauth_authorization_server_metadata_discovery_urls,
+    build_protected_resource_metadata_discovery_urls,
+    create_oauth_metadata_request,
+    handle_auth_metadata_response,
+    handle_protected_resource_response,
+)
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.shared.auth import (
+    OAuthClientInformationFull,
+    OAuthClientMetadata,
+    OAuthMetadata,
+    OAuthToken,
+)
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
@@ -1322,9 +1335,67 @@ async def _oauth_error_facts(response: Any) -> dict[str, Any]:
 _TOKEN_EXPIRY_SKEW_SECONDS: Final = 60.0
 
 
+# Authorization-server metadata per MCP endpoint. The documents are static
+# (Entra's ``organizations`` endpoints have not moved in years) and the discovery
+# costs two round trips, so resolve each endpoint once per process.
+_DISCOVERY_TIMEOUT_SECONDS: Final = 10.0
+# How long a *failed* discovery is remembered. Without this, an endpoint that
+# can't be reached would re-pay the full timeout on every keep-alive tick; with
+# it, the cost is bounded to once a minute and recovery is still prompt.
+_DISCOVERY_RETRY_AFTER_SECONDS: Final = 60.0
+_ASM_CACHE: dict[str, OAuthMetadata] = {}
+_ASM_FAILED_UNTIL: dict[str, float] = {}
+_ASM_CACHE_LOCK: Final = asyncio.Lock()
+
+
+async def _discover_authorization_server(server_url: str) -> OAuthMetadata | None:
+    """Resolve the authorization-server metadata for ``server_url``.
+
+    Walks the same two steps the SDK's own 401 branch does — RFC 9728 protected
+    resource metadata to find the authorization server, then RFC 8414 / OpenID
+    discovery to describe it — using the SDK's URL builders and parsers so the
+    fallback ordering stays identical. Returns ``None`` on any failure, which
+    leaves the SDK's existing behaviour untouched.
+    """
+    async with _ASM_CACHE_LOCK:
+        cached = _ASM_CACHE.get(server_url)
+        if cached is not None:
+            return cached
+        loop = asyncio.get_running_loop()
+        if loop.time() < _ASM_FAILED_UNTIL.get(server_url, 0.0):
+            return None
+        try:
+            async with (
+                asyncio.timeout(_DISCOVERY_TIMEOUT_SECONDS),
+                httpx.AsyncClient(timeout=_DISCOVERY_TIMEOUT_SECONDS) as client,
+            ):
+                auth_server_url: str | None = None
+                for url in build_protected_resource_metadata_discovery_urls(None, server_url):
+                    response = await client.send(create_oauth_metadata_request(url))
+                    prm = await handle_protected_resource_response(response)
+                    if prm and prm.authorization_servers:
+                        auth_server_url = str(prm.authorization_servers[0])
+                        break
+                for url in build_oauth_authorization_server_metadata_discovery_urls(
+                    auth_server_url, server_url
+                ):
+                    response = await client.send(create_oauth_metadata_request(url))
+                    ok, asm = await handle_auth_metadata_response(response)
+                    if not ok:
+                        break
+                    if asm is not None:
+                        _ASM_CACHE[server_url] = asm
+                        _ASM_FAILED_UNTIL.pop(server_url, None)
+                        return asm
+        except Exception:
+            logger.debug("OAuth metadata discovery failed for %s", server_url, exc_info=True)
+        _ASM_FAILED_UNTIL[server_url] = loop.time() + _DISCOVERY_RETRY_AFTER_SECONDS
+        return None
+
+
 class _WorkIQOAuthClientProvider(OAuthClientProvider):
-    """The SDK provider, with the stored credential's expiry restored and every
-    decision reported to the trace.
+    """The SDK provider, with the stored credential's expiry and token endpoint
+    restored, and every decision reported to the trace.
 
     **The expiry.** ``OAuthClientProvider._initialize`` loads the stored tokens
     but *not* their expiry, and ``is_token_valid()`` treats an unknown expiry as
@@ -1338,6 +1409,13 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
     had a refresh token throughout. We know the true expiry —
     :class:`DbTokenStorage` stamps the issue time precisely so it can be
     recovered — so we put it back and the SDK's own refresh path starts working.
+
+    **The token endpoint.** Entering that refresh branch then exposed the
+    second half of the same bug: the SDK discovers the authorization server only
+    in its 401 branch, *after* the refresh, so a freshly built provider aims the
+    grant at the resource host and every silent renewal fails by construction.
+    :meth:`_seed_authorization_server` resolves the metadata first; that
+    docstring has the detail.
 
     **The tracing.** The SDK is otherwise silent about all of this bar one
     ``Token refresh failed: 400`` line naming neither the credential nor Entra's
@@ -1369,6 +1447,7 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
 
     async def _initialize(self) -> None:
         await super()._initialize()
+        await self._seed_authorization_server()
         tokens = self.context.current_tokens
         expiry = await _stored_token_expiry(tokens, self._profile) if tokens else None
         if expiry is not None:
@@ -1383,6 +1462,43 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
             expiry_known=expiry is not None,
             token_considered_valid=self.context.is_token_valid(),
             **_token_facts(tokens),
+        )
+
+    async def _seed_authorization_server(self) -> None:
+        """Populate ``context.oauth_metadata`` before the refresh branch runs.
+
+        ``async_auth_flow`` attempts the refresh *first* and only discovers the
+        authorization server later, in its 401 branch. On a freshly built
+        provider — which every background renewal is — ``oauth_metadata`` is
+        therefore still ``None`` when ``_refresh_token`` picks the token URL, so
+        the SDK falls back to ``urljoin(server_url, "/token")`` and POSTs the
+        grant at the *resource* host: ``https://workiq.svc.cloud.microsoft/token``
+        (400 "Invalid request, no valid route.") or
+        ``https://agent365.svc.cloud.microsoft/token`` (404). The SDK reads that
+        as a rejected refresh, clears the tokens and escalates to a browser
+        grant, so a perfectly renewable credential costs an interactive sign-in
+        roughly every 80 minutes.
+
+        Resolving the metadata up front points the refresh at Entra's real token
+        endpoint. Only ``oauth_metadata`` is seeded — deliberately not
+        ``protected_resource_metadata``, which would flip
+        ``should_include_resource_param`` and change the request *body* too; the
+        aim here is to change the URL and nothing else.
+        """
+        if self.context.oauth_metadata is not None:
+            return
+        asm = await _discover_authorization_server(self._profile.url)
+        if asm is None:
+            self._trace(
+                "authorization-server discovery failed — refresh may hit the wrong endpoint",
+                level=logging.WARNING,
+            )
+            return
+        self.context.oauth_metadata = asm
+        self._trace(
+            "authorization server resolved for silent refresh",
+            level=logging.DEBUG,
+            token_endpoint=str(asm.token_endpoint) if asm.token_endpoint else None,
         )
 
     async def _refresh_token(self) -> Any:
