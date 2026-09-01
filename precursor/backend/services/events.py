@@ -38,6 +38,10 @@ class Event(TypedDict, total=False):
     # Carried only by ``mcp.auth_url`` — the interactive OAuth authorization URL
     # the window that started the sign-in should open in a script-opened popup.
     url: str | None
+    # Carried by ``mcp.server_state`` — the connection state the background
+    # warm-up resolved a server to, and how many tools it now advertises.
+    state: str | None
+    tools: int | None
     # Carried by ``workflow.changed``: which pipeline changed, and the run state
     # + name the client needs to raise a notification without re-fetching.
     workflow_id: int | None

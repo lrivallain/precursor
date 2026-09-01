@@ -8,7 +8,6 @@ file's content.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shutil
@@ -63,6 +62,7 @@ from precursor.backend.services.llm.base import (
 )
 from precursor.backend.services.mcp.client import (
     AUTH_PAUSE_TIMEOUT_SECONDS,
+    MCPToolAuthRequired,
     get_mcp_client_manager,
 )
 from precursor.backend.services.roles import resolve_role_prompt
@@ -552,52 +552,15 @@ async def chat_stream(
     )
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
-        # Pause-and-resume gate: if an enabled server needs an interactive
-        # sign-in, hold the turn and surface the auth prompt instead of running
-        # the LLM with its tools missing (which yields confident, hallucinated
-        # answers). Resume once the user signs in. Mirrors the topic/chat flow.
-        if enabled_servers:
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + AUTH_PAUSE_TIMEOUT_SECONDS
-            announced: set[str] = set()
-            while True:
-                async with manager.acquired(enabled_servers, github_token=github_token) as probe:
-                    blocked = manager.auth_blocked_servers([n for n, _ in probe.unavailable])
-                if not blocked:
-                    break
-                for name in blocked:
-                    if name in announced:
-                        continue
-                    announced.add(name)
-                    entry = manager.get(name)
-                    yield {
-                        "event": "mcp_auth_required",
-                        "data": json.dumps(
-                            {
-                                "server": name,
-                                "message": (entry.error if entry else None) or "Sign-in required.",
-                            }
-                        ),
-                    }
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    yield {
-                        "event": "system",
-                        "data": json.dumps(
-                            {
-                                "message": (
-                                    "Sign-in wasn't completed in time, so I stopped instead of "
-                                    "answering without "
-                                    f"{', '.join(sorted(announced))}. Send your message again "
-                                    "after signing in."
-                                )
-                            }
-                        ),
-                    }
-                    return
-                await manager.wait_for_auth(timeout=min(remaining, 10.0))
-
-        async with manager.acquired(enabled_servers, github_token=github_token) as active:
+        # No pre-LLM auth gate: the turn starts now. A server whose credential
+        # has lapsed still contributes its stored catalogue, so the model can't
+        # quietly answer from memory instead of calling the tool, and a question
+        # that never touches that server isn't held hostage by it. The sign-in is
+        # requested at call time, naming the tool that needs it. Mirrors the
+        # topic/chat flow.
+        async with manager.acquired(
+            enabled_servers, github_token=github_token, advertise_cached=True
+        ) as active:
             tool_to_server = active.tool_to_server
             for server_name, err in active.unavailable:
                 logger.warning(
@@ -605,6 +568,8 @@ async def chat_stream(
                     server_name,
                     err,
                 )
+                if server_name in active.advertised_from_cache:
+                    continue
                 yield {
                     "event": "system",
                     "data": json.dumps(
@@ -726,18 +691,48 @@ async def chat_stream(
                                 result_text = f"Invalid JSON arguments: {exc}"
                                 is_error = True
                             if args is not None:
-                                try:
-                                    result = await active.call_tool(server_name, raw_name, args)
-                                    result_text = format_tool_result(result)
-                                    is_error = bool(getattr(result, "isError", False))
-                                except Exception as exc:
-                                    logger.warning(
-                                        "Workspace chat: MCP call %s failed: %s",
-                                        call.name,
-                                        exc,
-                                    )
-                                    result_text = f"Tool call failed: {exc}"
-                                    is_error = True
+                                prompted = False
+                                while True:
+                                    try:
+                                        result = await active.call_tool(server_name, raw_name, args)
+                                    except MCPToolAuthRequired as exc:
+                                        if not prompted:
+                                            prompted = True
+                                            yield {
+                                                "event": "mcp_auth_required",
+                                                "data": json.dumps(
+                                                    {
+                                                        "server": exc.server,
+                                                        "message": exc.message,
+                                                        "tool": call.name,
+                                                    }
+                                                ),
+                                            }
+                                            await manager.wait_for_auth(
+                                                timeout=AUTH_PAUSE_TIMEOUT_SECONDS
+                                            )
+                                            continue
+                                        result_text = (
+                                            f"Tool '{call.name}' is unavailable: {exc.server} "
+                                            f"needs an interactive sign-in ({exc.message}). "
+                                            "Sign in from the banner and ask again; do not "
+                                            "guess the answer."
+                                        )
+                                        is_error = True
+                                        break
+                                    except Exception as exc:
+                                        logger.warning(
+                                            "Workspace chat: MCP call %s failed: %s",
+                                            call.name,
+                                            exc,
+                                        )
+                                        result_text = f"Tool call failed: {exc}"
+                                        is_error = True
+                                        break
+                                    else:
+                                        result_text = format_tool_result(result)
+                                        is_error = bool(getattr(result, "isError", False))
+                                        break
 
                         yield {
                             "event": "tool_result",

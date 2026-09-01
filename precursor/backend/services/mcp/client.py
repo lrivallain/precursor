@@ -1353,13 +1353,16 @@ class ActiveTools:
             return await worker.call(raw_name, args)
 
     def _resync(self, server: str, tools: list[MCPToolDef]) -> None:
-        """Replace this bundle's view of ``server`` with a freshly listed catalogue."""
-        self.tools = [t for t in self.tools if t.server != server]
-        self.tool_to_server = {
-            qualified: route
-            for qualified, route in self.tool_to_server.items()
-            if route[0] != server
-        }
+        """Replace this bundle's view of ``server`` with a freshly listed catalogue.
+
+        Mutates in place: callers (the tool loop) hold a reference to
+        ``tool_to_server`` for the whole turn, so rebinding it would leave them
+        routing against the stale mapping.
+        """
+        self.tools[:] = [t for t in self.tools if t.server != server]
+        for qualified, route in list(self.tool_to_server.items()):
+            if route[0] == server:
+                del self.tool_to_server[qualified]
         for tool in tools:
             self.tools.append(tool)
             self.tool_to_server[tool.qualified_name] = (server, tool.name)

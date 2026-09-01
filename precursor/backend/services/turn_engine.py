@@ -12,7 +12,6 @@ paths from diverging.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -57,6 +56,7 @@ from precursor.backend.services.llm.base import (
 )
 from precursor.backend.services.mcp.client import (
     AUTH_PAUSE_TIMEOUT_SECONDS,
+    MCPToolAuthRequired,
     MCPToolDef,
     get_mcp_client_manager,
 )
@@ -452,6 +452,22 @@ class ToolResultTurn:
 
 
 @dataclass(slots=True)
+class ToolAuthRequired:
+    """A tool the model called needs an interactive sign-in before it can run.
+
+    Yielded at *call* time rather than turn-start time: the catalogue is
+    advertised from the stored one even while a credential is stale, so an
+    unrelated question is never held hostage by one expired token. The prompt is
+    also strictly better than the old blanket one, because it can name the tool
+    that actually needs the sign-in.
+    """
+
+    server: str
+    message: str
+    tool: str
+
+
+@dataclass(slots=True)
 class RoundCapReached:
     """The tool-round budget was exhausted without a final answer."""
 
@@ -463,6 +479,7 @@ TurnEvent = (
     | AssistantFinalTurn
     | AssistantToolCallsTurn
     | ToolResultTurn
+    | ToolAuthRequired
     | RoundCapReached
 )
 
@@ -478,6 +495,7 @@ async def run_tool_loop(
     max_tool_rounds: int,
     max_input_tokens: int,
     max_tool_result_tokens: int,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -486,6 +504,11 @@ async def run_tool_loop(
     the SSE and scheduler consumers can apply their own persistence policy while
     sharing this control flow. ``active`` is an acquired MCP session handle
     (exposes ``tools``, ``tool_to_server`` and ``call_tool``).
+
+    ``auth_wait_timeout`` is how long a call may pause for an interactive
+    sign-in. Pass ``0`` for unattended runs (the scheduler), where nobody is
+    there to complete one: the prompt is still surfaced, but the call fails fast
+    with a tool error instead of parking the run for minutes.
     """
     tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
     provider_tools = mcp_tools_to_provider(active.tools)
@@ -560,21 +583,48 @@ async def run_tool_loop(
                     result_text = f"Invalid JSON arguments: {exc}"
                     is_error = True
                 if args is not None:
-                    try:
-                        result = await active.call_tool(server_name, raw_name, args)
-                        result_text = format_tool_result(result)
-                        is_error = bool(getattr(result, "isError", False))
-                        if not is_error:
-                            link = link_from_result(result)
-                    except Exception as exc:
-                        logger.warning(
-                            "MCP call %s(%s) failed: %s",
-                            call.name,
-                            call.arguments,
-                            exc,
-                        )
-                        result_text = f"Tool call failed: {exc}"
-                        is_error = True
+                    # One retry, and only for a sign-in: the catalogue was
+                    # advertised from the stored one, so this is the first moment
+                    # we know the credential is actually needed.
+                    prompted = False
+                    while True:
+                        try:
+                            result = await active.call_tool(server_name, raw_name, args)
+                        except MCPToolAuthRequired as exc:
+                            if not prompted:
+                                prompted = True
+                                yield ToolAuthRequired(
+                                    server=exc.server, message=exc.message, tool=call.name
+                                )
+                                if auth_wait_timeout > 0:
+                                    await active.manager.wait_for_auth(timeout=auth_wait_timeout)
+                                    continue
+                            # Never let the model answer as though the tool had
+                            # run: report the failure so it says what it couldn't
+                            # reach instead of inventing the result.
+                            result_text = (
+                                f"Tool '{call.name}' is unavailable: {exc.server} needs an "
+                                f"interactive sign-in ({exc.message}). Sign in from the banner "
+                                "and ask again; do not guess the answer."
+                            )
+                            is_error = True
+                            break
+                        except Exception as exc:
+                            logger.warning(
+                                "MCP call %s(%s) failed: %s",
+                                call.name,
+                                call.arguments,
+                                exc,
+                            )
+                            result_text = f"Tool call failed: {exc}"
+                            is_error = True
+                            break
+                        else:
+                            result_text = format_tool_result(result)
+                            is_error = bool(getattr(result, "isError", False))
+                            if not is_error:
+                                link = link_from_result(result)
+                            break
 
             yield ToolResultTurn(call, result_text, is_error, link)
 
@@ -622,59 +672,24 @@ async def run_message_stream(
         "data": json.dumps(user_echo),
     }
 
-    # Pause-and-resume gate: if an enabled server needs an interactive sign-in,
-    # don't proceed to the LLM with its tools missing (that yields confident,
-    # hallucinated answers). Surface the auth prompt and wait for the user to
-    # sign in, then retry acquiring so the turn resumes with the real tools.
-    if enabled_servers:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + AUTH_PAUSE_TIMEOUT_SECONDS
-        announced: set[str] = set()
-        while True:
-            async with manager.acquired(enabled_servers, github_token=github_token) as probe:
-                blocked = manager.auth_blocked_servers([n for n, _ in probe.unavailable])
-            if not blocked:
-                break
-            for name in blocked:
-                if name in announced:
-                    continue
-                announced.add(name)
-                entry = manager.get(name)
-                yield {
-                    "event": "mcp_auth_required",
-                    "data": json.dumps(
-                        {
-                            "server": name,
-                            "message": (entry.error if entry else None) or "Sign-in required.",
-                        }
-                    ),
-                }
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                yield {
-                    "event": "system",
-                    "data": json.dumps(
-                        {
-                            "message": (
-                                "Sign-in wasn't completed in time, so I stopped instead of "
-                                "answering without "
-                                f"{', '.join(sorted(announced))}. Send your message again "
-                                "after signing in."
-                            )
-                        }
-                    ),
-                }
-                return
-            # Wake promptly on sign-in; cap the wait so a missed signal still
-            # re-checks within a few seconds.
-            await manager.wait_for_auth(timeout=min(remaining, 10.0))
-
-    async with manager.acquired(enabled_servers, github_token=github_token) as active:
+    # No pre-LLM auth gate: the turn starts now. The catalogue of a server whose
+    # credential has lapsed is still advertised (from the stored one), so the
+    # model can't quietly answer from memory instead of calling the tool — and a
+    # question that never touches that server is no longer held hostage by it.
+    # The sign-in is asked for at call time, by the dispatch loop, naming the
+    # tool that needs it.
+    async with manager.acquired(
+        enabled_servers, github_token=github_token, advertise_cached=True
+    ) as active:
         # Warm MCP sessions for the enabled servers (reused across turns). Each
         # contributes tools we aggregate for the LLM; failures are surfaced but
         # don't abort the turn.
         for server_name, err in active.unavailable:
             logger.warning("MCP server %s unavailable: %s", server_name, err)
+            if server_name in active.advertised_from_cache:
+                # Its tools are on offer and it reconnects on first use, so
+                # saying "unavailable" here would be both noisy and wrong.
+                continue
             yield {
                 "event": "system",
                 "data": json.dumps({"message": f"MCP server '{server_name}' unavailable: {err}"}),
@@ -859,6 +874,21 @@ async def run_message_stream(
                                 "content": ev.result_text,
                                 "is_error": ev.is_error,
                                 "link": ev.link,
+                            }
+                        ),
+                    }
+
+                elif isinstance(ev, ToolAuthRequired):
+                    # The model reached for a tool whose credential has lapsed.
+                    # This is the moment the sign-in is genuinely required, so
+                    # prompt now — naming the tool — rather than at turn start.
+                    yield {
+                        "event": "mcp_auth_required",
+                        "data": json.dumps(
+                            {
+                                "server": ev.server,
+                                "message": ev.message,
+                                "tool": ev.tool,
                             }
                         ),
                     }
