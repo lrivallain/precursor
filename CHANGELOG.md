@@ -11,6 +11,33 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **The kanban board no longer needs a configured GitHub repository.** It was
+  never really used: the repo is only ever read for its *owner* —
+  `list_repo_projects` discards the name — so it was one way of spelling "list
+  this account's boards", equivalent to adding that account as a source. Worse,
+  `GET /projects/{id}/board` and the card-move endpoint demanded a repo and then
+  **discarded it**, because project and item ids are global GitHub node ids.
+  A perfectly workable setup — a token plus an explicitly added project — was
+  blocked on configuration it would never consult.
+
+  A repository is now an optional default that contributes its owner's boards.
+  What the board actually requires is a token with the `project` scope, and the
+  **issue associations** switch, which remains the master control for the GitHub
+  surface.
+
+- **Kanban has no Settings page.** Which boards you track is managed on the
+  board: **+** adds one, right-click removes it. A second surface in Settings was
+  the same list, one navigation further away.
+
+  Two things only that page could reach are now in the picker itself, so nothing
+  you configure can be invisible *and* unremovable: a collapsible **Hidden (N)**
+  group (right-click → *Show on board*), and a **Not resolving** group listing
+  sources that currently produce no board — renamed, revoked, made private, or
+  simply empty — which previously vanished without trace.
+
+  `GET /api/github/projects` returns `{projects, unresolved}` accordingly, and
+  hidden boards are returned flagged rather than dropped.
+
 - **A plugin's section is always visible once enabled.** Sections could gate
   themselves on app state and hide until it was satisfied — the kanban board
   disappeared entirely without a configured GitHub repository. That optimised

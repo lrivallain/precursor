@@ -23,6 +23,29 @@ export interface ProjectSummary {
   source: "repo" | "account" | "pinned";
   /** The settings entry that produced it, verbatim. `null` when `repo`. */
   source_ref: string | null;
+  /**
+   * Whether the user has hidden this board. Hidden boards are still returned —
+   * the picker is the only place to unhide one, so omitting them would make
+   * hiding a one-way door.
+   */
+  hidden: boolean;
+}
+
+/**
+ * A configured source that currently yields no boards — broken (renamed,
+ * revoked, made private) or genuinely empty. Surfaced so the entry stays
+ * visible and removable instead of being invisible *and* undeletable.
+ */
+export interface UnresolvedSource {
+  /** The stored entry, verbatim, for an exact removal. */
+  ref: string;
+  kind: "account" | "pinned";
+}
+
+/** What `GET /api/github/projects` returns. */
+export interface ProjectListing {
+  projects: ProjectSummary[];
+  unresolved: UnresolvedSource[];
 }
 
 export interface ProjectColumn {

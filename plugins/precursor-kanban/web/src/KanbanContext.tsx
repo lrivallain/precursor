@@ -27,10 +27,12 @@ import type { SectionHost } from "@precursor/host";
 import { AddProjectModal } from "./AddProjectModal";
 import { kanbanApi, kanbanSettings } from "./api";
 import { projectKey } from "./sources";
-import type { ProjectSummary } from "./types";
+import type { ProjectSummary, UnresolvedSource } from "./types";
 
 interface KanbanContextValue {
   projects: ProjectSummary[] | null;
+  /** Configured sources that currently produce no board of their own. */
+  unresolved: UnresolvedSource[];
   error: string | null;
   /** Opaque ProjectV2 node id of the active board (board fetches need it). */
   activeProjectId: string | null;
@@ -43,13 +45,15 @@ interface KanbanContextValue {
   openTopic: (topicId: number) => void;
   /** Re-run the project listing (after a source or hidden-list change). */
   refreshProjects: () => void;
-  /** Take one board out of the picker; reversible from the settings page. */
+  /** Take one board out of the picker's main list. Always reversible. */
   hideProject: (project: ProjectSummary) => Promise<void>;
-  /** Drop the settings entry a board came from, and every board it brought. */
-  stopTracking: (project: ProjectSummary) => Promise<void>;
+  /** Put a hidden board back. */
+  showProject: (project: ProjectSummary) => Promise<void>;
+  /** Drop a settings entry, and every board it brought. */
+  stopTracking: (ref: string) => Promise<void>;
   /** How many listed boards a given settings entry is responsible for. */
   boardsFromSource: (ref: string) => number;
-  /** Why the last hide / stop-tracking failed, if it did. */
+  /** Why the last hide / show / stop-tracking failed, if it did. */
   actionError: string | null;
   dismissActionError: () => void;
 }
@@ -124,6 +128,7 @@ export function KanbanProvider({
   children: ReactNode;
 }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [unresolved, setUnresolved] = useState<UnresolvedSource[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -140,21 +145,24 @@ export function KanbanProvider({
   // the module-scope signal above.
   useEffect(() => onAddProjectRequested(() => setAddOpen(true)), []);
 
-  // Load the owner's boards once the section mounts, again whenever the
-  // configured repo changes (a different owner has different projects), and on
-  // demand after the source or hidden list is edited.
+  // Load the boards once the section mounts, again whenever the configured repo
+  // changes (it contributes its owner's boards), and on demand after the source
+  // or hidden list is edited.
   useEffect(() => {
     let cancelled = false;
     setProjects(null);
     setError(null);
     kanbanApi
       .listProjects()
-      .then((list) => {
-        if (!cancelled) setProjects(list);
+      .then((listing) => {
+        if (cancelled) return;
+        setProjects(listing.projects);
+        setUnresolved(listing.unresolved);
       })
       .catch((e) => {
         if (!cancelled) {
           setProjects([]);
+          setUnresolved([]);
           setError(apiErrorMessage(e, "Failed to load GitHub projects"));
         }
       });
@@ -167,14 +175,17 @@ export function KanbanProvider({
   // number-based ref against the loaded list. Re-runs when the list arrives, so
   // a deep link entered before the fetch completes still lands on its board.
   // With no (or an unresolvable) ref, fall back to the first board so entering
-  // the section always shows something.
+  // the section always shows something. Hidden boards are in the list (the
+  // picker needs them to offer "show"), but a hidden board is precisely one the
+  // user didn't want to see, so it is never the automatic choice — only an
+  // explicit URL or click opens it.
   useEffect(() => {
     if (projects === null) return;
     const match = urlNumber != null ? projects.find((p) => p.number === urlNumber) : undefined;
     setActiveProjectId((current) => {
       if (match) return match.id;
       const kept = current && projects.some((p) => p.id === current) ? current : null;
-      return kept ?? projects[0]?.id ?? null;
+      return kept ?? projects.find((p) => !p.hidden)?.id ?? null;
     });
   }, [urlNumber, projects]);
 
@@ -216,18 +227,15 @@ export function KanbanProvider({
     [host],
   );
 
-  const hideProject = useCallback(
-    async (project: ProjectSummary) => {
-      // Every board has an owner in practice, but the field is nullable and the
-      // hidden list is keyed on it — without one there is nothing to store.
-      if (!project.owner) return;
-      // The context menu invokes this fire-and-forget, so a rejection here would
-      // otherwise close the menu, skip the refresh and leave the row untouched
-      // with no hint that anything went wrong.
+  // Hiding and showing are the same edit in opposite directions, and both are
+  // invoked fire-and-forget from the context menu — so a rejection has to be
+  // caught here or the row simply wouldn't move, with nothing said about why.
+  const runAction = useCallback(
+    async (work: () => Promise<void>, failure: string) => {
       try {
-        await kanbanSettings.hideProject(projectKey(project.owner, project.number));
+        await work();
       } catch (e) {
-        setActionError(apiErrorMessage(e, `Failed to hide "${project.title}"`));
+        setActionError(apiErrorMessage(e, failure));
         return;
       }
       setActionError(null);
@@ -236,21 +244,40 @@ export function KanbanProvider({
     [refreshProjects],
   );
 
-  const stopTracking = useCallback(
+  const hideProject = useCallback(
     async (project: ProjectSummary) => {
-      // Only boards an explicit entry produced; the configured repo's own are
-      // implicit and can be hidden but not untracked.
-      if (!project.source_ref) return;
-      try {
-        await kanbanSettings.removeSource(project.source_ref);
-      } catch (e) {
-        setActionError(apiErrorMessage(e, `Failed to stop tracking ${project.source_ref}`));
-        return;
-      }
-      setActionError(null);
-      refreshProjects();
+      // Every board has an owner in practice, but the field is nullable and the
+      // hidden list is keyed on it — without one there is nothing to store.
+      if (!project.owner) return;
+      const key = projectKey(project.owner, project.number);
+      await runAction(
+        () => kanbanSettings.hideProject(key),
+        `Failed to hide "${project.title}"`,
+      );
     },
-    [refreshProjects],
+    [runAction],
+  );
+
+  const showProject = useCallback(
+    async (project: ProjectSummary) => {
+      if (!project.owner) return;
+      const key = projectKey(project.owner, project.number);
+      await runAction(
+        () => kanbanSettings.unhideProject(key),
+        `Failed to show "${project.title}"`,
+      );
+    },
+    [runAction],
+  );
+
+  const stopTracking = useCallback(
+    async (ref: string) => {
+      await runAction(
+        () => kanbanSettings.removeSource(ref),
+        `Failed to stop tracking ${ref}`,
+      );
+    },
+    [runAction],
   );
 
   const boardsFromSource = useCallback(
@@ -263,6 +290,7 @@ export function KanbanProvider({
   const value = useMemo<KanbanContextValue>(
     () => ({
       projects,
+      unresolved,
       error,
       activeProjectId,
       selectProject,
@@ -272,6 +300,7 @@ export function KanbanProvider({
       openTopic: host.openTopic,
       refreshProjects,
       hideProject,
+      showProject,
       stopTracking,
       boardsFromSource,
       actionError,
@@ -279,6 +308,7 @@ export function KanbanProvider({
     }),
     [
       projects,
+      unresolved,
       error,
       activeProjectId,
       selectProject,
@@ -288,6 +318,7 @@ export function KanbanProvider({
       host.openTopic,
       refreshProjects,
       hideProject,
+      showProject,
       stopTracking,
       boardsFromSource,
       actionError,

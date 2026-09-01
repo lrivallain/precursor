@@ -100,10 +100,12 @@ def _mock_github(monkeypatch: pytest.MonkeyPatch) -> None:
         return "tok"
 
     monkeypatch.setattr(router_module, "ProjectsClient", _FakeClient)
-    # The repo/token guards live in the host and are shared with core, so patch
-    # them where they resolve rather than on the plugin router.
-    monkeypatch.setattr(github_context, "resolve_global_github_repo", _repo)
-    monkeypatch.setattr(github_context, "resolve_issue_associations_enabled", _enabled)
+    # The board resolves the repo and the feature switch itself now (it needs
+    # the repo to be *optional*, which the host's combined guard can't express),
+    # so patch its own bindings. The token still goes through the host guard,
+    # which looks its resolver up on `github_context` at call time.
+    monkeypatch.setattr(router_module, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(router_module, "resolve_issue_associations_enabled", _enabled)
     monkeypatch.setattr(github_context, "resolve_github_token", _token)
     _FakeClient.last_status_call = None
 
@@ -125,7 +127,7 @@ def test_list_projects(_mock_github: None) -> None:
     with TestClient(app) as client:
         r = client.get("/api/github/projects")
         assert r.status_code == 200
-        body = r.json()
+        body = r.json()["projects"]
         assert body[0]["number"] == 7
         assert body[0]["title"] == "Roadmap"
 
@@ -162,7 +164,8 @@ def test_projects_gated_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _disabled(_session: Any) -> bool:
         return False
 
-    monkeypatch.setattr(github_context, "resolve_issue_associations_enabled", _disabled)
+    # The board checks the feature switch itself, so patch the binding it uses.
+    monkeypatch.setattr(router_module, "resolve_issue_associations_enabled", _disabled)
     app = create_app()
     with TestClient(app) as client:
         r = client.get("/api/github/projects")

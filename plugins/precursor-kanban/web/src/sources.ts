@@ -22,16 +22,6 @@ const PROJECT_URL =
   /^https?:\/\/(?:www\.)?github\.com\/(?:orgs|users)\/([^/]+)\/projects\/\d+/i;
 const OWNER_URL = /^https?:\/\/(?:www\.)?github\.com\/([^/?#]+)\/?$/i;
 
-export interface KanbanSettingsBlob extends Record<string, unknown> {
-  [SOURCES_KEY]: string[];
-  [HIDDEN_KEY]: string[];
-}
-
-export const SETTINGS_DEFAULTS: KanbanSettingsBlob = {
-  [SOURCES_KEY]: [],
-  [HIDDEN_KEY]: [],
-};
-
 /** Whether the server will understand `raw` as a project source. */
 export function isValidSource(raw: string): boolean {
   const text = raw.trim();

@@ -34,6 +34,31 @@ class ProjectSummary(BaseModel):
     #: it, so removing it is a plain array filter rather than a guess. ``None``
     #: for ``repo``, which no entry produced.
     source_ref: str | None = None
+    #: Whether the user has hidden this board from the picker. Hidden boards are
+    #: still returned: the picker is the only place to unhide one, so leaving
+    #: them out would make hiding a one-way door.
+    hidden: bool = False
+
+
+class UnresolvedSource(BaseModel):
+    """A configured source that currently yields no boards.
+
+    Either it broke — renamed, revoked, made private — or the account genuinely
+    has no open projects. Both are reported so the picker can show the entry and
+    offer to remove it; otherwise a source that resolves to nothing would be
+    invisible *and* undeletable.
+    """
+
+    #: The stored entry, verbatim, so removing it is an exact array filter.
+    ref: str
+    kind: Literal["account", "pinned"]
+
+
+class ProjectListing(BaseModel):
+    """Everything the picker needs: the boards, plus sources that produced none."""
+
+    projects: list[ProjectSummary] = Field(default_factory=list)
+    unresolved: list[UnresolvedSource] = Field(default_factory=list)
 
 
 class ProjectColumn(BaseModel):

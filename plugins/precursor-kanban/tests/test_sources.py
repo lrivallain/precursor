@@ -98,6 +98,22 @@ class _FakeClient:
     async def get_owner_project(self, owner: str, number: int) -> dict[str, Any] | None:
         return None if number == 99 else self._project(owner, number)
 
+    async def get_project_board(
+        self, project_id: str, *, status_field_name: str = "Status"
+    ) -> dict[str, Any]:
+        return {
+            "id": project_id,
+            "title": "Roadmap",
+            "url": None,
+            "status_field": {"id": "FIELD_1", "name": "Status", "options": []},
+            "items": [],
+        }
+
+    async def set_project_item_status(
+        self, *, project_id: str, item_id: str, field_id: str, option_id: str
+    ) -> str:
+        return item_id
+
 
 @pytest.fixture()
 def _github(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,8 +127,27 @@ def _github(monkeypatch: pytest.MonkeyPatch) -> None:
         return "tok"
 
     monkeypatch.setattr(router_module, "ProjectsClient", _FakeClient)
-    monkeypatch.setattr(github_context, "resolve_global_github_repo", _repo)
-    monkeypatch.setattr(github_context, "resolve_issue_associations_enabled", _enabled)
+    monkeypatch.setattr(router_module, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(router_module, "resolve_issue_associations_enabled", _enabled)
+    monkeypatch.setattr(github_context, "resolve_github_token", _token)
+
+
+@pytest.fixture()
+def _github_no_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authenticated, feature on, but no repository configured."""
+
+    async def _repo(_session: Any) -> str:
+        return ""
+
+    async def _enabled(_session: Any) -> bool:
+        return True
+
+    async def _token(_session: Any) -> str:
+        return "tok"
+
+    monkeypatch.setattr(router_module, "ProjectsClient", _FakeClient)
+    monkeypatch.setattr(router_module, "resolve_global_github_repo", _repo)
+    monkeypatch.setattr(router_module, "resolve_issue_associations_enabled", _enabled)
     monkeypatch.setattr(github_context, "resolve_github_token", _token)
 
 
@@ -154,12 +189,14 @@ def test_extra_owners_are_added_and_deduplicated(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, [])
-        assert [p["id"] for p in client.get("/api/github/projects").json()] == ["PVT_acme_1"]
+        assert [p["id"] for p in client.get("/api/github/projects").json()["projects"]] == [
+            "PVT_acme_1"
+        ]
 
         # "acme" re-lists the configured owner: its board 1 is already present and
         # must not appear twice, while board 2 is new.
         _set_sources(client, ["acme", "other"])
-        ids = [p["id"] for p in client.get("/api/github/projects").json()]
+        ids = [p["id"] for p in client.get("/api/github/projects").json()["projects"]]
         assert ids == ["PVT_acme_1", "PVT_acme_2", "PVT_other_1", "PVT_other_2"]
 
 
@@ -167,19 +204,32 @@ def test_a_pinned_project_adds_only_that_board(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, ["customer#7"])
-        ids = [p["id"] for p in client.get("/api/github/projects").json()]
+        ids = [p["id"] for p in client.get("/api/github/projects").json()["projects"]]
         assert ids == ["PVT_acme_1", "PVT_customer_7"]
 
 
-def test_an_unreachable_source_is_skipped_not_fatal(_github: None) -> None:
-    """A revoked or renamed source must not take the whole picker down."""
+def test_an_unreachable_source_is_skipped_and_reported(_github: None) -> None:
+    """A revoked or renamed source must not take the whole picker down.
+
+    It is reported separately rather than silently dropped: an entry that
+    resolves to no board has no row to right-click, so without this it would be
+    invisible *and* impossible to remove now that the settings page is gone.
+    """
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, ["broken", "other", "customer#99"])
         r = client.get("/api/github/projects")
         assert r.status_code == 200
-        ids = [p["id"] for p in r.json()]
-        assert ids == ["PVT_acme_1", "PVT_other_1", "PVT_other_2"]
+        body = r.json()
+        assert [p["id"] for p in body["projects"]] == [
+            "PVT_acme_1",
+            "PVT_other_1",
+            "PVT_other_2",
+        ]
+        assert body["unresolved"] == [
+            {"ref": "broken", "kind": "account"},
+            {"ref": "customer#99", "kind": "pinned"},
+        ]
 
 
 def test_projects_carry_their_owner(_github: None) -> None:
@@ -187,7 +237,7 @@ def test_projects_carry_their_owner(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, ["other"])
-        owners = {p["owner"] for p in client.get("/api/github/projects").json()}
+        owners = {p["owner"] for p in client.get("/api/github/projects").json()["projects"]}
         assert owners == {"acme", "other"}
 
 
@@ -209,7 +259,11 @@ def test_a_malformed_source_cannot_break_the_listing(_github: None) -> None:
         _set_sources(client, ["acme#\u00b2", "other"])
         r = client.get("/api/github/projects")
         assert r.status_code == 200, r.text
-        assert [p["id"] for p in r.json()] == ["PVT_acme_1", "PVT_other_1", "PVT_other_2"]
+        assert [p["id"] for p in r.json()["projects"]] == [
+            "PVT_acme_1",
+            "PVT_other_1",
+            "PVT_other_2",
+        ]
 
 
 def test_the_cap_counts_valid_sources_not_raw_entries() -> None:
@@ -240,7 +294,7 @@ def test_projects_report_where_they_came_from(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, ["other", "customer#7"])
-        by_id = {p["id"]: p for p in client.get("/api/github/projects").json()}
+        by_id = {p["id"]: p for p in client.get("/api/github/projects").json()["projects"]}
 
     # The configured owner's board is implicit: nothing to stop tracking.
     assert by_id["PVT_acme_1"]["source"] == "repo"
@@ -258,7 +312,7 @@ def test_source_ref_is_the_entry_as_typed(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, ["https://github.com/orgs/customer/projects/7"])
-        found = {p["id"]: p for p in client.get("/api/github/projects").json()}
+        found = {p["id"]: p for p in client.get("/api/github/projects").json()["projects"]}
     assert found["PVT_customer_7"]["source_ref"] == "https://github.com/orgs/customer/projects/7"
 
 
@@ -271,7 +325,11 @@ def test_a_redundant_source_does_not_override_repo_provenance(_github: None) -> 
     app = create_app()
     with TestClient(app) as client:
         _set_sources(client, ["acme#1"])
-        found = [p for p in client.get("/api/github/projects").json() if p["id"] == "PVT_acme_1"]
+        found = [
+            p
+            for p in client.get("/api/github/projects").json()["projects"]
+            if p["id"] == "PVT_acme_1"
+        ]
     assert len(found) == 1
     assert found[0]["source"] == "repo"
 
@@ -302,12 +360,21 @@ def test_parse_hidden_tolerates_a_non_list() -> None:
     assert parse_hidden(None) == set()
 
 
-def test_hiding_removes_a_board_from_the_picker(_github: None) -> None:
+def _hidden_flags(client: TestClient) -> dict[str, bool]:
+    return {p["id"]: p["hidden"] for p in client.get("/api/github/projects").json()["projects"]}
+
+
+def test_hiding_flags_a_board_rather_than_dropping_it(_github: None) -> None:
+    """Hidden boards stay in the payload, marked.
+
+    The picker is the only place to unhide one, so omitting them would make
+    hiding a one-way door.
+    """
     app = create_app()
     with TestClient(app) as client:
         _set_settings(client, project_sources=["other"], hidden_projects=["other#1"])
-        ids = [p["id"] for p in client.get("/api/github/projects").json()]
-    assert ids == ["PVT_acme_1", "PVT_other_2"]
+        flags = _hidden_flags(client)
+    assert flags == {"PVT_acme_1": False, "PVT_other_1": True, "PVT_other_2": False}
 
 
 def test_a_board_from_the_configured_owner_can_be_hidden(_github: None) -> None:
@@ -315,16 +382,17 @@ def test_a_board_from_the_configured_owner_can_be_hidden(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
         _set_settings(client, project_sources=[], hidden_projects=["acme#1"])
-        assert client.get("/api/github/projects").json() == []
+        flags = _hidden_flags(client)
+    assert flags == {"PVT_acme_1": True}
 
 
 def test_hiding_survives_a_source_being_re_added(_github: None) -> None:
-    """Hidden wins over added: it is applied last, to the merged listing."""
+    """Hidden is applied last, to the merged listing."""
     app = create_app()
     with TestClient(app) as client:
         _set_settings(client, project_sources=["other"], hidden_projects=["other#2"])
-        ids = [p["id"] for p in client.get("/api/github/projects").json()]
-    assert "PVT_other_2" not in ids
+        flags = _hidden_flags(client)
+    assert flags["PVT_other_2"] is True
 
 
 def test_a_malformed_hidden_entry_cannot_break_the_listing(_github: None) -> None:
@@ -334,4 +402,73 @@ def test_a_malformed_hidden_entry_cannot_break_the_listing(_github: None) -> Non
         _set_settings(client, project_sources=["other"], hidden_projects=["acme#\u00b2", "other#1"])
         r = client.get("/api/github/projects")
         assert r.status_code == 200, r.text
-        assert [p["id"] for p in r.json()] == ["PVT_acme_1", "PVT_other_2"]
+        flags = {p["id"]: p["hidden"] for p in r.json()["projects"]}
+    assert flags == {"PVT_acme_1": False, "PVT_other_1": True, "PVT_other_2": False}
+
+
+# --- No configured repository ----------------------------------------------
+# The repo is only ever read for its owner (`list_repo_projects` discards the
+# name), so it is one way of saying "list this account's boards" — equivalent to
+# adding that account as a source, and not a precondition for anything.
+
+
+def test_sources_alone_are_enough(_github_no_repo: None) -> None:
+    """A token plus a configured project is a complete, working setup."""
+    app = create_app()
+    with TestClient(app) as client:
+        _set_sources(client, ["customer#7"])
+        r = client.get("/api/github/projects")
+        assert r.status_code == 200, r.text
+        assert [p["id"] for p in r.json()["projects"]] == ["PVT_customer_7"]
+
+
+def test_no_repo_and_no_sources_is_empty_not_an_error(_github_no_repo: None) -> None:
+    """Nothing tracked is an empty board, not a failure."""
+    app = create_app()
+    with TestClient(app) as client:
+        _set_sources(client, [])
+        r = client.get("/api/github/projects")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"projects": [], "unresolved": []}
+
+
+def test_a_board_is_readable_without_a_configured_repo(_github_no_repo: None) -> None:
+    """Project ids are global GitHub node ids; the repo never resolved them.
+
+    The endpoint used to demand a repo and then discard it, which blocked
+    reading a board the token could fetch perfectly well.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/github/projects/PVT_customer_7/board")
+        assert r.status_code == 200, r.text
+
+
+def test_moving_a_card_without_a_configured_repo(_github_no_repo: None) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/github/projects/PVT_1/items/ITEM_1/status",
+            json={"field_id": "FIELD_1", "option_id": "OPT_DONE"},
+        )
+        assert r.status_code == 200, r.text
+
+
+def test_the_feature_switch_still_gates_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dropping the repo requirement must not drop the GitHub master switch."""
+
+    async def _disabled(_session: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(router_module, "resolve_issue_associations_enabled", _disabled)
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/github/projects").status_code == 403
+        assert client.get("/api/github/projects/PVT_1/board").status_code == 403
+        assert (
+            client.post(
+                "/api/github/projects/PVT_1/items/ITEM_1/status",
+                json={"field_id": "F", "option_id": "O"},
+            ).status_code
+            == 403
+        )

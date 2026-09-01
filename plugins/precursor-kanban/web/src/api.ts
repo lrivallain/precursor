@@ -6,7 +6,7 @@
 
 import { api, request } from "@precursor/host";
 import { HIDDEN_KEY, MAX_SOURCES, SOURCES_KEY, readList } from "./sources";
-import type { ItemStatusResult, ProjectBoard, ProjectSummary } from "./types";
+import type { ItemStatusResult, ProjectBoard, ProjectListing } from "./types";
 
 /** Settings namespace — the plugin id, mirroring `plugin.SECTION_ID`. */
 const PLUGIN_ID = "kanban";
@@ -35,7 +35,7 @@ async function editList(
 export const kanbanApi = {
   listProjects: (repo?: string) => {
     const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
-    return request<ProjectSummary[]>(`/api/github/projects${qs}`);
+    return request<ProjectListing>(`/api/github/projects${qs}`);
   },
 
   board: (projectId: string) =>
