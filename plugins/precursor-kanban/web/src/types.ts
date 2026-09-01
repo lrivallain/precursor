@@ -15,6 +15,14 @@ export interface ProjectSummary {
   short_description: string | null;
   /** Account that owns the board — boards can come from several. */
   owner: string | null;
+  /**
+   * Where the board came from. `repo` is the implicit default (the configured
+   * repository's owner) and has no settings entry behind it, so it can be
+   * hidden but not "stopped tracking"; the other two were added explicitly.
+   */
+  source: "repo" | "account" | "pinned";
+  /** The settings entry that produced it, verbatim. `null` when `repo`. */
+  source_ref: string | null;
 }
 
 export interface ProjectColumn {

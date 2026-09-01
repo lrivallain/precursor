@@ -48,10 +48,12 @@ and comments — and post a comment or edit labels from there.
 ## Boards from other accounts
 
 The default listing is the projects owned by whoever owns your configured repo.
-To follow someone else's board — a customer's roadmap, another org — add it in
-**Settings → Plugins → Kanban** (or hit the **+** in the board's header): an
-account name adds every open project it owns, `owner#number` or a project URL
-adds just that one.
+To follow someone else's board — a customer's roadmap, another org — hit the
+**+** next to the Precursor logo: an account name adds every open project it
+owns, `owner#number` or a project URL adds just that one.
+
+**Right-click a board** in the picker to hide it, or to stop tracking the source
+that added it.
 
 ::: tip Pairs with the scheduler
 Combine the board with a [scheduled topic](/features/scheduler) — a nightly

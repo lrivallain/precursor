@@ -12,7 +12,7 @@ import { SquareKanban } from "lucide-react";
 import { EmptyHero, registerSection, registerSettingsPage } from "@precursor/host";
 import type { SectionHost } from "@precursor/host";
 import { KanbanBoard } from "./KanbanBoard";
-import { KanbanProvider, useKanban } from "./KanbanContext";
+import { KanbanProvider, requestAddProject, useKanban } from "./KanbanContext";
 import { KanbanSettings } from "./KanbanSettings";
 import { ProjectList } from "./ProjectList";
 
@@ -20,13 +20,28 @@ import { ProjectList } from "./ProjectList";
 export const KANBAN_SECTION_ID = "kanban";
 
 function KanbanSidebar() {
-  const { projects, activeProjectId, error, selectProject } = useKanban();
+  const {
+    projects,
+    activeProjectId,
+    error,
+    selectProject,
+    hideProject,
+    stopTracking,
+    boardsFromSource,
+    actionError,
+    dismissActionError,
+  } = useKanban();
   return (
     <ProjectList
       projects={projects}
       activeId={activeProjectId}
       error={error}
       onSelect={selectProject}
+      onHide={hideProject}
+      onStopTracking={stopTracking}
+      boardsFromSource={boardsFromSource}
+      actionError={actionError}
+      onDismissActionError={dismissActionError}
     />
   );
 }
@@ -99,10 +114,13 @@ registerSection({
     }
     return null;
   },
-  // The board's "New" is "track another project", which lives in this plugin's
-  // own settings — so the header "+" opens it rather than being absent.
+  // The board's "New" is "track another project". It opens the section's own
+  // dialog rather than routing to Settings: adding a board is the section's
+  // primary create action, and a trip to a settings tab is a long way round for
+  // it. The settings page keeps the full list, including entries that resolve
+  // to no board and so have no row here to right-click.
   newLabel: "Add a project",
-  onNew: (host) => host.openSettings(KANBAN_SECTION_ID),
+  onNew: () => requestAddProject(),
   Provider: ({ host, children }: { host: SectionHost; children: React.ReactNode }) => (
     <KanbanProvider host={host}>{children}</KanbanProvider>
   ),

@@ -1,73 +1,42 @@
-import { useEffect, useRef, useState } from "react";
-import { Plus, SquareKanban, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Eye, Plus, SquareKanban, Trash2 } from "lucide-react";
 import { usePluginSettings } from "@precursor/host";
-
-/** Mirrors `precursor_kanban.sources.SOURCES_KEY`. */
-const SOURCES_KEY = "project_sources";
-const MAX_SOURCES = 20;
-
-// Mirrors `precursor_kanban.sources.parse_source`. The server drops anything it
-// can't read, so a bad entry is never fatal — but silently storing one the board
-// then ignores is a confusing way to find that out, so reject it here.
-const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
-const PROJECT_URL =
-  /^https?:\/\/(?:www\.)?github\.com\/(?:orgs|users)\/([^/]+)\/projects\/\d+/i;
-const OWNER_URL = /^https?:\/\/(?:www\.)?github\.com\/([^/?#]+)\/?$/i;
-
-/** Whether the server will understand `raw` as a project source. */
-function isValidSource(raw: string): boolean {
-  const text = raw.trim();
-  if (!text) return false;
-  const project = PROJECT_URL.exec(text);
-  if (project) return LOGIN.test(project[1]);
-  const owner = OWNER_URL.exec(text);
-  if (owner) return LOGIN.test(owner[1]);
-  if (text.includes("#")) {
-    const [login, number] = text.split("#", 2);
-    return LOGIN.test(login.trim()) && /^\d+$/.test(number.trim());
-  }
-  return LOGIN.test(text);
-}
-
-interface KanbanSettings extends Record<string, unknown> {
-  project_sources: string[];
-}
-
-const DEFAULTS: KanbanSettings = { project_sources: [] };
+import {
+  HIDDEN_KEY,
+  MAX_SOURCES,
+  SETTINGS_DEFAULTS,
+  SOURCES_KEY,
+  isValidSource,
+  readList,
+} from "./sources";
+import type { KanbanSettingsBlob } from "./sources";
 
 /**
  * Settings → Plugins → Kanban.
  *
- * The board lists the projects owned by whoever owns the repo in Settings →
- * GitHub. That is a sensible default and a poor ceiling: the board you care
- * about often belongs to someone else. This adds extra accounts or individual
- * projects on top.
+ * Day-to-day board management lives on the board itself: the header "+" adds a
+ * project, and right-clicking a row hides it or stops tracking its source. This
+ * page is the full picture behind that, and the only place two things are
+ * reachable:
+ *
+ * - a **broken** source — renamed, revoked, made private — resolves to no boards
+ *   at all, so it has no row on the board to right-click;
+ * - a **hidden** board is by definition not in the picker, so unhiding has to
+ *   happen from a list of what's hidden.
  */
 export function KanbanSettings() {
-  const { value, setValue, save, saving, error, dirty } = usePluginSettings<KanbanSettings>(
+  const { value, setValue, save, saving, error, dirty } = usePluginSettings<KanbanSettingsBlob>(
     "kanban",
-    DEFAULTS,
+    SETTINGS_DEFAULTS,
   );
   const [draft, setDraft] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const focused = useRef(false);
-  const loaded = value !== null;
-
-  // Land the caret in the one field this panel is for. It matters most when the
-  // board's header "+" brought you here — that click *is* "I want to add a
-  // project", so making the user click again would be a pointless step — and it
-  // is harmless when the panel is opened from the settings nav. Guarded by a ref
-  // so a later re-render can't yank focus back mid-typing, and deferred until
-  // the settings resolve, because the input doesn't exist before then.
-  useEffect(() => {
-    if (!loaded || focused.current) return;
-    focused.current = true;
-    inputRef.current?.focus();
-  }, [loaded]);
 
   if (value === null) return <div className="text-sm text-muted">Loading…</div>;
 
-  const sources = value[SOURCES_KEY] ?? [];
+  // Read defensively: the blob is whatever was last stored, and a corrupt list
+  // here would take the whole settings modal down with it.
+  const sources = readList(value, SOURCES_KEY);
+  const hidden = readList(value, HIDDEN_KEY);
   const trimmed = draft.trim();
   const full = sources.length >= MAX_SOURCES;
   const malformed = trimmed.length > 0 && !isValidSource(trimmed);
@@ -88,6 +57,10 @@ export function KanbanSettings() {
     setValue({ ...value!, [SOURCES_KEY]: sources.filter((s) => s !== entry) });
   }
 
+  function unhide(entry: string) {
+    setValue({ ...value!, [HIDDEN_KEY]: hidden.filter((h) => h !== entry) });
+  }
+
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -95,7 +68,8 @@ export function KanbanSettings() {
         <p className="text-xs text-muted">
           The board already lists every project owned by the account behind your
           configured GitHub repository. Add more accounts or individual projects
-          here — a customer's roadmap, another org you contribute to.
+          here — a customer's roadmap, another org you contribute to. You can also
+          do this from the board's <strong>+</strong> button.
         </p>
       </div>
 
@@ -112,7 +86,6 @@ export function KanbanSettings() {
         <div className="flex gap-2">
           <input
             id="kanban-source"
-            ref={inputRef}
             type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -176,6 +149,38 @@ export function KanbanSettings() {
             </li>
           ))}
         </ul>
+      )}
+
+      {hidden.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-medium" htmlFor="kanban-hidden">
+            Hidden projects
+          </label>
+          <p className="text-[11px] text-muted">
+            Boards you've hidden from the picker. Hiding never stops a source
+            being tracked, so bringing one back doesn't need re-adding anything.
+          </p>
+          <ul id="kanban-hidden" className="flex flex-col gap-1">
+            {hidden.map((entry) => (
+              <li
+                key={entry}
+                className="flex items-center gap-2 rounded border border-border bg-surface/60 px-2.5 py-1.5"
+              >
+                <SquareKanban size={13} className="shrink-0 text-muted" />
+                <span className="min-w-0 flex-1 truncate font-mono text-xs">{entry}</span>
+                <button
+                  type="button"
+                  onClick={() => unhide(entry)}
+                  className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-accent"
+                  aria-label={`Show ${entry} again`}
+                  data-tooltip="Show again"
+                >
+                  <Eye size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="flex items-center gap-3">

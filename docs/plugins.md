@@ -230,7 +230,8 @@ Every section component receives a `host` — the only thing core promises it:
 The single module a plugin imports from. It re-exports the host's **own** React,
 `react/jsx-runtime`, `react-dom` portals, the plugin registry, the HTTP client
 (`api`, `request`, `apiErrorMessage`) and shared chrome (`Modal`, `Markdown`,
-`EmptyHero`, `IssueLabelChip`, …). `HOST_API_VERSION` mirrors the backend's.
+`EmptyHero`, `IssueLabelChip`, `ContextMenu`, `useConfirm`, …).
+`HOST_API_VERSION` mirrors the backend's.
 
 This matters for one hard reason: **there must be exactly one React on the
 page.** A plugin bundling its own would give the app two dispatchers and every

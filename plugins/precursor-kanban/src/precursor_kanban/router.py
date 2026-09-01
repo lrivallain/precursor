@@ -29,7 +29,7 @@ from precursor_kanban.schemas import (
     ProjectBoard,
     ProjectSummary,
 )
-from precursor_kanban.sources import ProjectSource, configured_sources
+from precursor_kanban.sources import ProjectSource, board_config, project_key
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +46,27 @@ async def _collect_source(client: ProjectsClient, source: ProjectSource) -> list
     A source that has been renamed, made private or revoked must not take the
     whole picker down with it — the other boards are still perfectly usable, and
     the settings page is where a broken entry gets fixed.
+
+    Each board is tagged with the entry that produced it, so the picker can
+    offer to remove that entry and can warn when doing so drops several boards
+    at once.
     """
+    kind = "pinned" if source.number is not None else "account"
     try:
         if source.number is not None:
             project = await client.get_owner_project(source.owner, source.number)
-            return [project] if project else []
-        return await client.list_owner_projects(source.owner)
+            found = [project] if project else []
+        else:
+            found = await client.list_owner_projects(source.owner)
     except GitHubInsufficientScopeError:
         raise
     except Exception:
         logger.warning("Skipping unreachable project source %s", source.label, exc_info=True)
         return []
+    for project in found:
+        project["source"] = kind
+        project["source_ref"] = source.raw or source.label
+    return found
 
 
 @router.get("", response_model=list[ProjectSummary])
@@ -68,7 +78,8 @@ async def list_projects(
 
     The configured owner is the default; extras are additive and de-duplicated
     by node id, so pinning a project from an account already listed changes
-    nothing rather than showing it twice.
+    nothing rather than showing it twice. Boards the user has hidden are dropped
+    last, so hiding one works regardless of which source produced it.
     """
     target = await require_github_repo(repo, session)
     token = await require_github_token(session)
@@ -76,9 +87,12 @@ async def list_projects(
     try:
         # Inside the guard: this reads user-supplied settings, and nothing about
         # a bad entry there should be able to take the board's own listing down.
-        sources = await configured_sources(SECTION_ID)
+        config = await board_config(SECTION_ID)
         projects = await client.list_repo_projects(target)
-        for source in sources:
+        for project in projects:
+            project["source"] = "repo"
+            project["source_ref"] = None
+        for source in config.sources:
             projects.extend(await _collect_source(client, source))
     except GitHubInsufficientScopeError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
@@ -87,10 +101,19 @@ async def list_projects(
     finally:
         await client.aclose()
 
+    # First occurrence wins, so a board owned by the configured account keeps its
+    # "repo" provenance even when a redundant source also names it. That source
+    # is then only removable from the settings page, which is correct: it adds
+    # nothing to the picker, so there is no board to right-click for it.
     unique: dict[str, dict[str, Any]] = {}
     for project in projects:
         unique.setdefault(project["id"], project)
-    return [ProjectSummary.model_validate(p) for p in unique.values()]
+    visible = [
+        p
+        for p in unique.values()
+        if p.get("owner") is None or project_key(p["owner"], p["number"]) not in config.hidden
+    ]
+    return [ProjectSummary.model_validate(p) for p in visible]
 
 
 @router.get("/{project_id}/board", response_model=ProjectBoard)

@@ -28,13 +28,18 @@ Pick one of your GitHub **Projects v2** and Precursor draws it as a board:
   **open/closed** state, the **title**, and its **labels**.
 - **Filter issues** narrows the board as you type.
 
-## Boards beyond your own account
+## Managing which boards appear
 
 By default the picker lists every open project owned by the account behind your
-configured repository. That is a sensible default and a poor ceiling — the board
-you care about often belongs to somebody else.
+configured repository. That is a sensible default and a poor ceiling in both
+directions — the board you care about often belongs to somebody else, and an
+account with thirty projects drowns the picker in ones you never open.
 
-**Settings → Plugins → Kanban** takes extra sources:
+Both are handled from the board itself.
+
+### Adding a project
+
+The **+** next to the Precursor logo opens **Add a project**:
 
 | You type | You get |
 | --- | --- |
@@ -45,10 +50,32 @@ you care about often belongs to somebody else.
 Extras are additive and de-duplicated, so re-listing an account you already see
 changes nothing. Once boards come from more than one account the picker labels
 each with its owner, which is what tells two projects called "Roadmap" apart. A
-source you have lost access to is skipped rather than breaking the picker — fix
-or remove it in the same panel.
+source you have lost access to is skipped rather than breaking the picker.
 
 You still need read access to the project, and a token with the `project` scope.
+
+### Removing a project
+
+**Right-click any board** in the picker:
+
+- **Hide from board** takes that one board out of the picker. It works on every
+  row, including the ones your configured repository's owner provides — those
+  have no source entry behind them, so hiding is the only way to get them out of
+  the way. Hiding never stops a source being tracked, so it is always reversible.
+- **Stop tracking `<source>`** drops the entry that added the board. It only
+  appears for boards an entry actually produced. Because a source can be a whole
+  *account*, the action says how many boards it will take with it and asks for
+  confirmation first.
+
+### The settings panel
+
+**Settings → Plugins → Kanban** still holds the full picture, and is the only
+place two things are reachable:
+
+- a **broken** source — renamed, revoked, made private — resolves to no boards at
+  all, so it has no row in the picker to right-click;
+- a **hidden** board is by definition not in the picker, so unhiding happens from
+  the *Hidden projects* list there.
 
 ## Moving cards
 

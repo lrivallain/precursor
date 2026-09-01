@@ -119,6 +119,14 @@ export { Markdown } from "../components/Markdown";
 export { EmptyHero } from "../components/EmptyHero";
 export { IssueLabelChip, IssueStateBadge } from "../components/IssueTags";
 export { RefineTextarea } from "../components/RefineTextarea";
+// Right-click actions on a plugin's own list rows. Exported so a section's
+// sidebar behaves like core's (same portal, same clamping, same dismissal)
+// instead of growing a near-identical menu of its own.
+export { ContextMenu } from "../components/ContextMenu";
+export type { ContextMenuItem, ContextMenuSubItem } from "../components/ContextMenu";
+// The app-wide confirm dialog, for a plugin's destructive actions.
+export { useConfirm } from "../components/ConfirmDialog";
+export type { ConfirmOptions } from "../components/ConfirmDialog";
 export { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 export { useResizableBox } from "../lib/useResizableBox";
 export { sectionColor } from "../lib/sections";

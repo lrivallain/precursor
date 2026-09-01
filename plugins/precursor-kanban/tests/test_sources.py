@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from precursor.backend.main import create_app
 from precursor.backend.services import github_context
 from precursor_kanban import router as router_module
-from precursor_kanban.sources import ProjectSource, parse_source, parse_sources
+from precursor_kanban.sources import ProjectSource, parse_hidden, parse_source, parse_sources
 
 
 @pytest.mark.parametrize(
@@ -145,6 +145,11 @@ def _set_sources(client: TestClient, sources: list[str]) -> None:
     assert r.status_code == 200, r.text
 
 
+def _set_settings(client: TestClient, **values: Any) -> None:
+    r = client.put("/api/plugins/installed/kanban/settings", json=values)
+    assert r.status_code == 200, r.text
+
+
 def test_extra_owners_are_added_and_deduplicated(_github: None) -> None:
     app = create_app()
     with TestClient(app) as client:
@@ -214,3 +219,119 @@ def test_the_cap_counts_valid_sources_not_raw_entries() -> None:
 
 def test_a_project_url_owner_is_validated_like_any_other() -> None:
     assert parse_source("https://github.com/orgs/a?z=1/projects/2") is None
+
+
+# --- Provenance -------------------------------------------------------------
+# The picker's context menu can only offer "stop tracking" when it knows which
+# settings entry produced a board, and how many boards that entry brought.
+
+
+def test_parse_source_keeps_the_raw_entry_without_it_affecting_identity() -> None:
+    """Two spellings are the same source, but delete different array entries."""
+    url = parse_source("https://github.com/orgs/acme/projects/4")
+    short = parse_source("acme#4")
+    assert url == short  # `raw` is provenance, not identity
+    assert url is not None and short is not None
+    assert url.raw == "https://github.com/orgs/acme/projects/4"
+    assert short.raw == "acme#4"
+
+
+def test_projects_report_where_they_came_from(_github: None) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        _set_sources(client, ["other", "customer#7"])
+        by_id = {p["id"]: p for p in client.get("/api/github/projects").json()}
+
+    # The configured owner's board is implicit: nothing to stop tracking.
+    assert by_id["PVT_acme_1"]["source"] == "repo"
+    assert by_id["PVT_acme_1"]["source_ref"] is None
+    # An account source brought two boards, both pointing back at one entry.
+    assert by_id["PVT_other_1"]["source"] == "account"
+    assert by_id["PVT_other_2"]["source_ref"] == "other"
+    # A pinned source brought exactly one.
+    assert by_id["PVT_customer_7"]["source"] == "pinned"
+    assert by_id["PVT_customer_7"]["source_ref"] == "customer#7"
+
+
+def test_source_ref_is_the_entry_as_typed(_github: None) -> None:
+    """Removing a source is an array filter, so the ref must match verbatim."""
+    app = create_app()
+    with TestClient(app) as client:
+        _set_sources(client, ["https://github.com/orgs/customer/projects/7"])
+        found = {p["id"]: p for p in client.get("/api/github/projects").json()}
+    assert found["PVT_customer_7"]["source_ref"] == "https://github.com/orgs/customer/projects/7"
+
+
+def test_a_redundant_source_does_not_override_repo_provenance(_github: None) -> None:
+    """Pinning a board the configured owner already provides changes nothing.
+
+    It adds no row to the picker, so there is nothing to right-click; the entry
+    stays removable from the settings page.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        _set_sources(client, ["acme#1"])
+        found = [p for p in client.get("/api/github/projects").json() if p["id"] == "PVT_acme_1"]
+    assert len(found) == 1
+    assert found[0]["source"] == "repo"
+
+
+# --- Hidden boards ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (["acme#1"], {"acme#1"}),
+        (["ACME#1"], {"acme#1"}),  # owners are case-insensitive
+        (["https://github.com/orgs/acme/projects/1"], {"acme#1"}),
+        (["acme#1", "acme#1"], {"acme#1"}),
+        # An accountwide entry names no single board, so it is not a hide.
+        (["acme"], set()),
+        (["!!!", 42, None], set()),
+    ],
+)
+def test_parse_hidden_canonicalises_and_ignores_nonsense(
+    raw: list[Any], expected: set[str]
+) -> None:
+    assert parse_hidden(raw) == expected
+
+
+def test_parse_hidden_tolerates_a_non_list() -> None:
+    assert parse_hidden({"nope": True}) == set()
+    assert parse_hidden(None) == set()
+
+
+def test_hiding_removes_a_board_from_the_picker(_github: None) -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        _set_settings(client, project_sources=["other"], hidden_projects=["other#1"])
+        ids = [p["id"] for p in client.get("/api/github/projects").json()]
+    assert ids == ["PVT_acme_1", "PVT_other_2"]
+
+
+def test_a_board_from_the_configured_owner_can_be_hidden(_github: None) -> None:
+    """The whole point of the hidden list: no source produced this board."""
+    app = create_app()
+    with TestClient(app) as client:
+        _set_settings(client, project_sources=[], hidden_projects=["acme#1"])
+        assert client.get("/api/github/projects").json() == []
+
+
+def test_hiding_survives_a_source_being_re_added(_github: None) -> None:
+    """Hidden wins over added: it is applied last, to the merged listing."""
+    app = create_app()
+    with TestClient(app) as client:
+        _set_settings(client, project_sources=["other"], hidden_projects=["other#2"])
+        ids = [p["id"] for p in client.get("/api/github/projects").json()]
+    assert "PVT_other_2" not in ids
+
+
+def test_a_malformed_hidden_entry_cannot_break_the_listing(_github: None) -> None:
+    """Same guard as sources: the hidden list is user input too."""
+    app = create_app()
+    with TestClient(app) as client:
+        _set_settings(client, project_sources=["other"], hidden_projects=["acme#\u00b2", "other#1"])
+        r = client.get("/api/github/projects")
+        assert r.status_code == 200, r.text
+        assert [p["id"] for p in r.json()] == ["PVT_acme_1", "PVT_other_2"]

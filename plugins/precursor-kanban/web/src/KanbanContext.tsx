@@ -6,6 +6,10 @@
  * mounted by the section's `Provider`. This also owns the section's URL
  * contract — `/kanban/<number>-<slug>#<issue>` — which core hands over as
  * opaque segments plus a hash.
+ *
+ * Managing *which* boards appear lives here too, rather than only in Settings:
+ * adding one is the section's create action, and removing one is a right-click
+ * on the row itself. Both write to the plugin's settings blob and then re-list.
  */
 
 import {
@@ -20,7 +24,9 @@ import {
 import type { ReactNode } from "react";
 import { apiErrorMessage } from "@precursor/host";
 import type { SectionHost } from "@precursor/host";
-import { kanbanApi } from "./api";
+import { AddProjectModal } from "./AddProjectModal";
+import { kanbanApi, kanbanSettings } from "./api";
+import { projectKey } from "./sources";
 import type { ProjectSummary } from "./types";
 
 interface KanbanContextValue {
@@ -35,6 +41,17 @@ interface KanbanContextValue {
   /** Configured repo, for previewing cards that carry no repo of their own. */
   fallbackRepo: string;
   openTopic: (topicId: number) => void;
+  /** Re-run the project listing (after a source or hidden-list change). */
+  refreshProjects: () => void;
+  /** Take one board out of the picker; reversible from the settings page. */
+  hideProject: (project: ProjectSummary) => Promise<void>;
+  /** Drop the settings entry a board came from, and every board it brought. */
+  stopTracking: (project: ProjectSummary) => Promise<void>;
+  /** How many listed boards a given settings entry is responsible for. */
+  boardsFromSource: (ref: string) => number;
+  /** Why the last hide / stop-tracking failed, if it did. */
+  actionError: string | null;
+  dismissActionError: () => void;
 }
 
 const KanbanContext = createContext<KanbanContextValue | null>(null);
@@ -43,6 +60,28 @@ export function useKanban(): KanbanContextValue {
   const ctx = useContext(KanbanContext);
   if (!ctx) throw new Error("useKanban must be used inside the kanban section provider");
   return ctx;
+}
+
+/**
+ * Bridge from core's header "+" to this section's dialog.
+ *
+ * `SectionPlugin.onNew` is a plain callback with no handle on the section's
+ * React tree — core owns the button, the section owns what it does — so the
+ * registration publishes here and the provider, which *is* in the tree,
+ * subscribes. A module-scope signal rather than a context because the publisher
+ * runs outside any provider.
+ */
+type AddListener = () => void;
+const addListeners = new Set<AddListener>();
+
+/** Called by the section's `onNew`. No-op when the section isn't mounted. */
+export function requestAddProject(): void {
+  for (const listen of addListeners) listen();
+}
+
+function onAddProjectRequested(listener: AddListener): () => void {
+  addListeners.add(listener);
+  return () => addListeners.delete(listener);
 }
 
 /**
@@ -87,18 +126,27 @@ export function KanbanProvider({
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const githubRepo = (host.settings?.github_repo ?? "").trim();
   const urlNumber = projectRefNumber(host.segments[0]);
   const hashNumber = parseHashNumber(host.hash);
 
-  // Load the owner's boards once the section mounts, and again whenever the
-  // configured repo changes (a different owner has different projects).
+  const refreshProjects = useCallback(() => setReloadToken((n) => n + 1), []);
+
+  // Core's header "+" lives outside this tree, so it reaches the dialog through
+  // the module-scope signal above.
+  useEffect(() => onAddProjectRequested(() => setAddOpen(true)), []);
+
+  // Load the owner's boards once the section mounts, again whenever the
+  // configured repo changes (a different owner has different projects), and on
+  // demand after the source or hidden list is edited.
   useEffect(() => {
     let cancelled = false;
     setProjects(null);
     setError(null);
-    setActiveProjectId(null);
     kanbanApi
       .listProjects()
       .then((list) => {
@@ -113,7 +161,7 @@ export function KanbanProvider({
     return () => {
       cancelled = true;
     };
-  }, [githubRepo]);
+  }, [githubRepo, reloadToken]);
 
   // The URL is the source of truth for which board is open: resolve its
   // number-based ref against the loaded list. Re-runs when the list arrives, so
@@ -168,6 +216,50 @@ export function KanbanProvider({
     [host],
   );
 
+  const hideProject = useCallback(
+    async (project: ProjectSummary) => {
+      // Every board has an owner in practice, but the field is nullable and the
+      // hidden list is keyed on it — without one there is nothing to store.
+      if (!project.owner) return;
+      // The context menu invokes this fire-and-forget, so a rejection here would
+      // otherwise close the menu, skip the refresh and leave the row untouched
+      // with no hint that anything went wrong.
+      try {
+        await kanbanSettings.hideProject(projectKey(project.owner, project.number));
+      } catch (e) {
+        setActionError(apiErrorMessage(e, `Failed to hide "${project.title}"`));
+        return;
+      }
+      setActionError(null);
+      refreshProjects();
+    },
+    [refreshProjects],
+  );
+
+  const stopTracking = useCallback(
+    async (project: ProjectSummary) => {
+      // Only boards an explicit entry produced; the configured repo's own are
+      // implicit and can be hidden but not untracked.
+      if (!project.source_ref) return;
+      try {
+        await kanbanSettings.removeSource(project.source_ref);
+      } catch (e) {
+        setActionError(apiErrorMessage(e, `Failed to stop tracking ${project.source_ref}`));
+        return;
+      }
+      setActionError(null);
+      refreshProjects();
+    },
+    [refreshProjects],
+  );
+
+  const boardsFromSource = useCallback(
+    (ref: string) => (projects ?? []).filter((p) => p.source_ref === ref).length,
+    [projects],
+  );
+
+  const dismissActionError = useCallback(() => setActionError(null), []);
+
   const value = useMemo<KanbanContextValue>(
     () => ({
       projects,
@@ -178,6 +270,12 @@ export function KanbanProvider({
       setSelectedNumber,
       fallbackRepo: githubRepo,
       openTopic: host.openTopic,
+      refreshProjects,
+      hideProject,
+      stopTracking,
+      boardsFromSource,
+      actionError,
+      dismissActionError,
     }),
     [
       projects,
@@ -188,8 +286,21 @@ export function KanbanProvider({
       setSelectedNumber,
       githubRepo,
       host.openTopic,
+      refreshProjects,
+      hideProject,
+      stopTracking,
+      boardsFromSource,
+      actionError,
+      dismissActionError,
     ],
   );
 
-  return <KanbanContext.Provider value={value}>{children}</KanbanContext.Provider>;
+  return (
+    <KanbanContext.Provider value={value}>
+      {children}
+      {addOpen && (
+        <AddProjectModal onClose={() => setAddOpen(false)} onAdded={refreshProjects} />
+      )}
+    </KanbanContext.Provider>
+  );
 }

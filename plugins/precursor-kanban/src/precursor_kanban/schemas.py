@@ -24,6 +24,16 @@ class ProjectSummary(BaseModel):
     closed: bool = False
     short_description: str | None = None
     owner: str | None = None
+    #: Where this board came from. ``repo`` is the implicit default (the
+    #: configured repository's owner) and has no settings entry behind it;
+    #: ``account`` and ``pinned`` were both added explicitly. The board's
+    #: context menu needs this to know whether "stop tracking" is even
+    #: meaningful, and how many boards it would take with it.
+    source: Literal["repo", "account", "pinned"] = "repo"
+    #: The settings entry that produced this board, exactly as the user typed
+    #: it, so removing it is a plain array filter rather than a guess. ``None``
+    #: for ``repo``, which no entry produced.
+    source_ref: str | None = None
 
 
 class ProjectColumn(BaseModel):

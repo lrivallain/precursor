@@ -11,6 +11,36 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **The kanban board manages its own projects.** Tracking a board used to mean a
+  trip to Settings → Plugins → Kanban, and *untracking* one meant knowing that
+  the picker's rows and the settings list are not the same thing. Both now happen
+  where the boards are.
+
+  The **+** next to the Precursor logo — core's own header button, which every
+  section shares — opens the board's **Add a project** dialog instead of routing
+  to a settings tab. **Right-clicking a board** in the picker offers to open it
+  on GitHub, **hide** it, or **stop tracking** the source that added it, matching
+  how the navigation panel behaves everywhere else.
+
+  Those two removals are deliberately different, because what the picker shows
+  and what settings store never lined up one-to-one. A *source* adds boards and
+  can name a whole account, so removing one can take several boards with it —
+  the menu says how many and asks first. Hiding always means exactly one board,
+  which is what finally makes the projects owned by your **configured
+  repository's** account removable: no settings entry produced them, so until now
+  nothing could take them out of the picker. Boards therefore report where they
+  came from (`source`, `source_ref` on `GET /api/github/projects`), and a new
+  `hidden_projects` list is applied last, to the merged listing.
+
+  Settings → Plugins → Kanban keeps the full picture and gains a **Hidden
+  projects** list to undo a hide. It stays the place a *broken* source gets
+  fixed: one that has been renamed, revoked or made private resolves to no boards
+  at all, so it has no row in the picker to right-click.
+
+  For plugin authors, `@precursor/host` now also exports `ContextMenu` and
+  `useConfirm`, so a section's list rows behave like core's rather than growing a
+  near-identical menu of their own.
+
 - **Agents mode can be turned on from Precursor.** It was the only capability
   that could not be: everything else — a model provider, an MCP server, a
   plugin, backup, retention — is a switch in Settings, while Agents mode was a
