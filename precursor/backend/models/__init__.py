@@ -30,6 +30,7 @@ from precursor.backend.models.collection import (
 )
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
+from precursor.backend.models.mcp_tool_cache import MCPToolCache
 from precursor.backend.models.meeting import (
     MeetingAttachment,
     MeetingInsight,
@@ -91,6 +92,7 @@ __all__ = [
     "Collection",
     "IssueContextCache",
     "MCPServer",
+    "MCPToolCache",
     "MeetingAttachment",
     "MeetingInsight",
     "MeetingSegment",

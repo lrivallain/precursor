@@ -41,6 +41,21 @@ logger = logging.getLogger(__name__)
 AUTH_PAUSE_TIMEOUT_SECONDS = 300.0
 
 
+class MCPToolAuthRequired(RuntimeError):
+    """A tool call reached a server whose credential needs an interactive sign-in.
+
+    Raised at *call* time rather than turn-start time: the tool catalogue is
+    advertised from the cache even while a credential is stale, so an unrelated
+    question is never held hostage by one expired token. Only when the model
+    actually reaches for the affected tool does the caller surface the prompt.
+    """
+
+    def __init__(self, server: str, message: str) -> None:
+        super().__init__(message)
+        self.server = server
+        self.message = message
+
+
 def _find_in_exception(exc: BaseException, exc_type: type[BaseException]) -> BaseException | None:
     """Locate an ``exc_type`` instance within ``exc``.
 
@@ -161,6 +176,12 @@ class MCPServerEntry:
     state: ConnectionState = "disconnected"
     error: str | None = None
     tools: list[MCPToolDef] = field(default_factory=list)
+    # True when ``tools`` came from the persisted catalogue rather than a live
+    # session in this process. The catalogue is good enough to render Settings
+    # and to advertise to the model, but a caller must not read it as "this
+    # server is connected" — the warm-up and the deferred auth gate both branch
+    # on the difference.
+    tools_from_cache: bool = False
 
 
 def _github_headers(token: str) -> dict[str, str] | None:
@@ -705,6 +726,7 @@ class MCPClientManager:
         entry.state = "disconnected"
         entry.error = None
         entry.tools = []
+        entry.tools_from_cache = False
         # A fresh provider (or a revert to stdio) means "signable now" — drop any
         # short-circuit verdict so the reauth probe actually connects.
         self.clear_auth_required("workiq")
@@ -728,6 +750,7 @@ class MCPClientManager:
         entry.state = "disconnected"
         entry.error = None if url else TENANT_REQUIRED_MESSAGE
         entry.tools = []
+        entry.tools_from_cache = False
         # Installing a fresh provider means the credential is signable again —
         # drop any short-circuit verdict so the reauth probe connects for real
         # instead of being fast-failed back to ``needs_auth``.
@@ -757,6 +780,7 @@ class MCPClientManager:
         entry.state = "disconnected"
         entry.error = None
         entry.tools = []
+        entry.tools_from_cache = False
 
     async def retire_worker(self, name: str) -> None:
         """Close + drop any warm worker for ``name`` (e.g. after reconfiguring)."""
@@ -846,7 +870,7 @@ class MCPClientManager:
                 ):
                     await session.initialize()
                     tools = await self._fetch_tools(name, session)
-                    entry.tools = tools
+                    await self._adopt_tools(entry, tools)
                     entry.state = "connected"
                     yield session, tools
             elif entry.transport == "stdio":
@@ -861,7 +885,7 @@ class MCPClientManager:
                 ):
                     await session.initialize()
                     tools = await self._fetch_tools(name, session)
-                    entry.tools = tools
+                    await self._adopt_tools(entry, tools)
                     entry.state = "connected"
                     yield session, tools
             else:
@@ -900,7 +924,13 @@ class MCPClientManager:
             if entry.state == "connected":
                 entry.state = "ready"
 
-    async def acquire(self, server_names: list[str], *, github_token: str = "") -> ActiveTools:
+    async def acquire(
+        self,
+        server_names: list[str],
+        *,
+        github_token: str = "",
+        advertise_cached: bool = False,
+    ) -> ActiveTools:
         """Return aggregated tools for ``server_names`` over warm sessions.
 
         Starts (or reuses) one long-lived worker per server, waits for them to
@@ -908,9 +938,15 @@ class MCPClientManager:
         whose :meth:`ActiveTools.call_tool` routes to the right warm session.
         Servers that fail to start are reported via ``unavailable`` rather than
         raising, mirroring the previous best-effort per-server behaviour.
+
+        ``advertise_cached`` additionally contributes the *stored* catalogue of
+        each failed server, so a stale credential no longer silently removes its
+        tools from the prompt — which is what made the model answer from memory
+        instead of calling the tool. Those tools connect lazily on first use (see
+        :meth:`ActiveTools.ensure_server`).
         """
         pool_disabled = get_settings().mcp_idle_ttl_seconds <= 0
-        bundle = ActiveTools(manager=self, ephemeral=pool_disabled)
+        bundle = ActiveTools(manager=self, ephemeral=pool_disabled, github_token=github_token)
 
         async with self._pool_lock:
             targets: dict[str, _ServerWorker] = {}
@@ -943,12 +979,24 @@ class MCPClientManager:
                 async with self._pool_lock:
                     if self._workers.get(name) is worker:
                         del self._workers[name]
+                if advertise_cached:
+                    self._advertise_cached(bundle, name)
                 continue
             for tool in result:
                 bundle.tools.append(tool)
                 bundle.tool_to_server[tool.qualified_name] = (name, tool.name)
                 bundle.workers[name] = worker
         return bundle
+
+    def _advertise_cached(self, bundle: ActiveTools, name: str) -> None:
+        """Add ``name``'s last-known catalogue to a bundle it couldn't connect to."""
+        entry = self._servers.get(name)
+        if entry is None or not entry.tools:
+            return
+        bundle.advertised_from_cache.add(name)
+        for tool in entry.tools:
+            bundle.tools.append(tool)
+            bundle.tool_to_server[tool.qualified_name] = (name, tool.name)
 
     async def aclose(self) -> None:
         """Tear down every warm worker (called on app shutdown)."""
@@ -960,7 +1008,11 @@ class MCPClientManager:
 
     @asynccontextmanager
     async def acquired(
-        self, server_names: list[str], *, github_token: str = ""
+        self,
+        server_names: list[str],
+        *,
+        github_token: str = "",
+        advertise_cached: bool = False,
     ) -> AsyncIterator[ActiveTools]:
         """Context-manager flavour of :meth:`acquire`.
 
@@ -969,7 +1021,9 @@ class MCPClientManager:
         :meth:`aclose` or idle expiry tears them down). When pooling is disabled
         the bundle is ephemeral, so exiting closes its one-shot sessions.
         """
-        bundle = await self.acquire(server_names, github_token=github_token)
+        bundle = await self.acquire(
+            server_names, github_token=github_token, advertise_cached=advertise_cached
+        )
         try:
             yield bundle
         finally:
@@ -987,6 +1041,61 @@ class MCPClientManager:
             )
             for t in result.tools
         ]
+
+    async def _adopt_tools(self, entry: MCPServerEntry, tools: list[MCPToolDef]) -> None:
+        """Take a live catalogue as authoritative and persist it for next boot."""
+        from precursor.backend.services.mcp import tool_cache
+
+        entry.tools = tools
+        entry.tools_from_cache = False
+        await tool_cache.remember(entry.name, tools)
+
+    async def refresh_tools(self, name: str) -> list[MCPToolDef] | None:
+        """Re-list ``name``'s tools over its warm session and re-cache them.
+
+        Used when a call routed from the cached catalogue hits a tool the live
+        server no longer exposes: rather than trusting the stale cache, ask the
+        session what it really has, update the cache, and let the caller retry.
+        Returns ``None`` when there is no warm worker to ask.
+        """
+        worker = self._workers.get(name)
+        entry = self._servers.get(name)
+        if worker is None or entry is None or not worker.alive:
+            return None
+        tools = await worker.list_tools()
+        await self._adopt_tools(entry, tools)
+        return tools
+
+    async def ensure_worker(self, name: str, *, github_token: str = "") -> _ServerWorker:
+        """Start (or reuse) a warm worker for ``name`` and wait until it is ready.
+
+        The lazy counterpart to :meth:`acquire`, for a server that wasn't
+        connected when the turn began — either because it failed then or because
+        it was skipped as needing a sign-in. Raises :class:`MCPToolAuthRequired`
+        when the server is parked in ``needs_auth`` so the caller can surface the
+        prompt for the *specific* tool that needs it.
+        """
+        if name not in self._servers:
+            raise KeyError(f"Unknown MCP server: {name}")
+        async with self._pool_lock:
+            worker = self._workers.get(name)
+            if worker is None or not worker.alive:
+                worker = _ServerWorker(self, name, github_token)
+                if get_settings().mcp_idle_ttl_seconds > 0:
+                    self._workers[name] = worker
+        try:
+            await worker.wait_ready()
+        except BaseException as exc:
+            async with self._pool_lock:
+                if self._workers.get(name) is worker:
+                    del self._workers[name]
+            if self.auth_blocked_servers([name]):
+                entry = self._servers.get(name)
+                raise MCPToolAuthRequired(
+                    name, (entry.error if entry else None) or "Sign-in required."
+                ) from exc
+            raise
+        return worker
 
     async def probe(self, name: str, *, github_token: str = "") -> MCPServerEntry:
         """Open + close a session purely to refresh the catalog/state for the UI."""
@@ -1018,6 +1127,10 @@ class MCPClientManager:
             "state": "disabled" if not enabled else entry.state,
             "error": entry.error,
             "tools": [{"name": t.name, "description": t.description} for t in entry.tools],
+            # True when the catalogue above was restored from disk rather than
+            # listed by a live session in this process, so the UI can show the
+            # tools without claiming the server is connected.
+            "tools_from_cache": entry.tools_from_cache,
             "builtin": entry.builtin,
             # Which plugin contributed this server, or None for core/user ones.
             "plugin_id": entry.plugin_id,
@@ -1040,6 +1153,16 @@ class _ToolCall:
     future: asyncio.Future[Any]
 
 
+@dataclass(slots=True)
+class _ListTools:
+    """Ask the worker's session to re-list its tools (cache refresh)."""
+
+    future: asyncio.Future[list[MCPToolDef]]
+
+
+_WorkerItem = _ToolCall | _ListTools
+
+
 class _ServerWorker:
     """Owns a long-lived MCP session inside a dedicated task.
 
@@ -1053,7 +1176,7 @@ class _ServerWorker:
         self._manager = manager
         self.name = name
         self.github_token = github_token
-        self._queue: asyncio.Queue[_ToolCall | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[_WorkerItem | None] = asyncio.Queue()
         self._ready: asyncio.Future[list[MCPToolDef]] = asyncio.get_running_loop().create_future()
         self._task = asyncio.create_task(self._run())
 
@@ -1070,6 +1193,14 @@ class _ServerWorker:
             raise RuntimeError(f"MCP server '{self.name}' session is not running")
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         await self._queue.put(_ToolCall(raw_name=raw_name, args=args, future=future))
+        return await future
+
+    async def list_tools(self) -> list[MCPToolDef]:
+        """Re-list the live session's tools (runs inside the session's own task)."""
+        if self._task.done():
+            raise RuntimeError(f"MCP server '{self.name}' session is not running")
+        future: asyncio.Future[list[MCPToolDef]] = asyncio.get_running_loop().create_future()
+        await self._queue.put(_ListTools(future=future))
         return await future
 
     async def aclose(self) -> None:
@@ -1102,6 +1233,14 @@ class _ServerWorker:
                         break  # shutdown sentinel
                     if item.future.done():
                         continue  # caller already gave up
+                    if isinstance(item, _ListTools):
+                        try:
+                            listed = await self._manager._fetch_tools(self.name, session)
+                        except Exception as exc:
+                            item.future.set_exception(exc)
+                        else:
+                            item.future.set_result(listed)
+                        continue
                     try:
                         result = await session.call_tool(item.raw_name, item.args)
                     except Exception as exc:
@@ -1127,6 +1266,27 @@ class _ServerWorker:
                 item.future.set_exception(exc)
 
 
+_UNKNOWN_TOOL_MARKERS = (
+    "unknown tool",
+    "tool not found",
+    "no such tool",
+    "method not found",
+    "is not a registered tool",
+)
+
+
+def _looks_like_unknown_tool(exc: BaseException) -> bool:
+    """Whether ``exc`` reads as "that tool does not exist on this server".
+
+    MCP servers report a missing tool inconsistently (a JSON-RPC "Method not
+    found", a plain ``ValueError``, an SDK ``McpError``), and none of it is
+    typed, so match on the message. A false positive only costs one extra
+    ``list_tools`` plus a retry that fails the same way.
+    """
+    text = _describe_exception(exc).lower()
+    return any(marker in text for marker in _UNKNOWN_TOOL_MARKERS)
+
+
 @dataclass(slots=True)
 class ActiveTools:
     """Aggregated, ready-to-use tools backed by warm sessions for one turn."""
@@ -1142,18 +1302,67 @@ class ActiveTools:
     # True when pooling is disabled: the workers are one-shot and the caller
     # (or the ``acquired`` context manager) must close them at turn end.
     ephemeral: bool = False
+    # Token to authenticate a *lazy* connect with (see ``ensure_server``), kept
+    # so a server acquired at call time uses the same credential the turn began
+    # with.
+    github_token: str = ""
+    # Servers whose tools are advertised from the stored catalogue because they
+    # had no live session when the turn began. Calling one of their tools
+    # triggers a lazy connect (and, if needed, a sign-in prompt).
+    advertised_from_cache: set[str] = field(default_factory=set)
+
+    async def ensure_server(self, server: str) -> _ServerWorker:
+        """Return a live worker for ``server``, connecting on demand.
+
+        A server that was blocked (or simply failed) when the turn began has no
+        worker, so the first call routed to it lands here. Raises
+        :class:`MCPToolAuthRequired` when the connect needs an interactive
+        sign-in, which the tool loop turns into a prompt for this specific tool.
+        """
+        worker = self.workers.get(server)
+        if worker is not None and worker.alive:
+            return worker
+        worker = await self.manager.ensure_worker(server, github_token=self.github_token)
+        self.workers[server] = worker
+        self.advertised_from_cache.discard(server)
+        return worker
 
     async def call_tool(self, server: str, raw_name: str, args: dict[str, Any]) -> Any:
         worker = self.workers.get(server)
         if worker is None:
-            raise KeyError(f"No active MCP session for server '{server}'")
+            worker = await self.ensure_server(server)
         # Mark before the call, not after: a failing tool still proves the user
         # is actively using this server, and that's what keeps its credential
         # eligible for background refresh.
         from precursor.backend.services.mcp.usage import mark_server_used
 
         mark_server_used(server)
-        return await worker.call(raw_name, args)
+        try:
+            return await worker.call(raw_name, args)
+        except Exception as exc:
+            if not _looks_like_unknown_tool(exc):
+                raise
+            # The catalogue we routed from is stale (most likely restored from
+            # the cache and the server has since changed). Ask the live session
+            # what it really exposes, then retry once instead of reporting a
+            # phantom tool.
+            refreshed = await self.manager.refresh_tools(server)
+            if refreshed is None:
+                raise
+            self._resync(server, refreshed)
+            return await worker.call(raw_name, args)
+
+    def _resync(self, server: str, tools: list[MCPToolDef]) -> None:
+        """Replace this bundle's view of ``server`` with a freshly listed catalogue."""
+        self.tools = [t for t in self.tools if t.server != server]
+        self.tool_to_server = {
+            qualified: route
+            for qualified, route in self.tool_to_server.items()
+            if route[0] != server
+        }
+        for tool in tools:
+            self.tools.append(tool)
+            self.tool_to_server[tool.qualified_name] = (server, tool.name)
 
     async def aclose(self) -> None:
         """Close the workers backing this bundle (only used when ephemeral)."""

@@ -1194,6 +1194,10 @@ export interface MCPServerStatus {
     | "disabled";
   error: string | null;
   tools: MCPTool[];
+  // True when ``tools`` was restored from Precursor's persisted catalogue rather
+  // than listed by a live session, so the list is shown but the server is not
+  // claimed to be connected.
+  tools_from_cache: boolean;
   builtin: boolean;
   enabled: boolean;
   // Workiq-only: hosted HTTP + OAuth (writes) when true, local stdio when false.
