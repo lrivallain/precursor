@@ -192,8 +192,7 @@ nobody at a browser.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_WORKIQ_KEEPALIVE_ENABLED` | `true` | Run the background ticker that silently refreshes WorkIQ tokens before they expire. Off means every lapse needs an interactive sign-in. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_POLL_SECONDS` | `60` | How often that ticker checks whether a token is near expiry. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_REFRESH_MARGIN_SECONDS` | `300` | Refresh once the access token is within this many seconds of expiring. |
+| `PRECURSOR_WORKIQ_KEEPALIVE_POLL_SECONDS` | `60` | How often that ticker checks whether a token is near expiry. How far ahead of expiry it renews is **not** configurable: it is a quarter of the token's own lifetime (at least five minutes), which is what decides how many attempts fit before the token dies. `GET /api/mcp/auth/diagnostics` reports the resulting `renewal_lead_seconds` per credential. |
 | `PRECURSOR_WORKIQ_SILENT_REAUTH_ENABLED` | `true` | Try the hands-free (no-browser) re-authentication path before falling back to an interactive prompt. |
 | `PRECURSOR_WORKIQ_AUTO_REAUTH_ENABLED` | `true` | Automatically start a re-authentication when a credential is found to have lapsed, rather than waiting for you to click the banner. |
 | `PRECURSOR_WORKIQ_CHAIN_REAUTH_ENABLED` | `true` | After a WorkIQ / Agent 365 sign-in succeeds, immediately retry the **other** Entra credential on the hands-free silent path while the SSO session is hot, so you get [one prompt instead of one per credential](/features/mcp#signing-in-to-workiq-and-agent-365). Set `false` to renew each credential only when it's independently needed. |

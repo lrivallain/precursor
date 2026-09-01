@@ -52,7 +52,9 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
     state: dict = {
         "preview": True,
         "expiry": None,
-        "refresh_result": ("tok", None),
+        # A *different* access token than the stored one, because that is what
+        # tells the ticker a renewal genuinely happened (see the no-op test).
+        "refresh_result": ("renewed-tok", None),
         "refresh_calls": 0,
         "refresh_callers": [],
         "auth_banner_calls": [],
@@ -105,19 +107,36 @@ async def test_skips_when_no_tokens(patched: dict) -> None:
 
 async def test_skips_refresh_when_token_still_fresh(patched: dict) -> None:
     keepalive = ka.WorkIQKeepAlive()
-    margin = keepalive._settings.workiq_keepalive_refresh_margin_seconds
-    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=margin + 120)
+    lead = wp.renewal_lead_seconds(_FakeStorage.token)
+    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=lead + 120)
     await keepalive._tick_once()
     assert patched["refresh_calls"] == 0
 
 
 async def test_refreshes_when_token_near_expiry(patched: dict) -> None:
     keepalive = ka.WorkIQKeepAlive()
-    margin = keepalive._settings.workiq_keepalive_refresh_margin_seconds
-    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=margin - 30)
+    lead = wp.renewal_lead_seconds(_FakeStorage.token)
+    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=lead - 30)
     await keepalive._tick_once()
     assert patched["refresh_calls"] == 1
     assert patched["auth_banner_calls"] == []
+
+
+async def test_renewal_lead_scales_with_the_token_lifetime(patched: dict) -> None:
+    """A long-lived token earns proportionally more runway, not a fixed five minutes.
+
+    The lead used to be a flat 300s setting, which on a ~70 minute Entra token
+    left barely enough room for the renewal to be attempted before expiry once
+    the SDK's own freshness skew had eaten most of it.
+    """
+    _FakeStorage.token = OAuthToken(access_token="tok", refresh_token="rt", expires_in=4800)
+    keepalive = ka.WorkIQKeepAlive()
+    # Inside the scaled lead (1200s) but well outside the old flat 300s margin.
+    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=900)
+
+    await keepalive._tick_once()
+
+    assert patched["refresh_calls"] == 1
 
 
 async def test_refreshes_when_expiry_unknown(patched: dict) -> None:
@@ -188,7 +207,7 @@ async def test_surfaces_idle_lapse_when_token_expired(patched: dict, monkeypatch
 async def test_recovers_idle_lapse_silently(patched: dict, monkeypatch) -> None:
     """An idle credential that still refreshes clears the verdict, no banner."""
     patched["expiry"] = datetime.now(UTC) - timedelta(minutes=5)
-    patched["refresh_result"] = ("tok", None)  # silent refresh still works
+    patched["refresh_result"] = ("renewed-tok", None)  # silent refresh still works
     keepalive = ka.WorkIQKeepAlive()
     _force_idle(keepalive, monkeypatch)
 
@@ -260,7 +279,7 @@ async def test_auth_banner_rearms_after_recovery(patched: dict) -> None:
 
     patched["refresh_result"] = None
     await keepalive._tick_once()  # fail → publish
-    patched["refresh_result"] = ("tok", None)
+    patched["refresh_result"] = ("renewed-tok", None)
     await keepalive._tick_once()  # recover → clears the latch
     patched["refresh_result"] = None
     await keepalive._tick_once()  # fail again → publish again
@@ -279,8 +298,8 @@ async def test_no_refresh_token_prompts_without_a_round_trip(patched: dict) -> N
     """
     _FakeStorage.token = OAuthToken(access_token="tok", refresh_token=None)
     keepalive = ka.WorkIQKeepAlive()
-    margin = keepalive._settings.workiq_keepalive_refresh_margin_seconds
-    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=margin - 30)
+    lead = wp.renewal_lead_seconds(_FakeStorage.token)
+    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=lead - 30)
 
     await keepalive._tick_once()
 
@@ -318,3 +337,44 @@ async def test_idle_lapse_without_refresh_token_prompts_directly(
 
     assert patched["refresh_calls"] == 0
     assert patched["auth_banner_calls"] == ["workiq"]
+
+
+async def test_unchanged_token_is_not_reported_as_renewed(patched: dict) -> None:
+    """A refresh that renewed nothing must not log "token renewed".
+
+    The renewal path forces the SDK past its own freshness check, so the same
+    token coming back means the refresh did not happen — a transport error that
+    fell back to the stored credential, or a mechanism that stopped working.
+    Calling that a renewal is precisely how a token drifts past expiry with the
+    trace insisting all is well, so it is reported as the anomaly it is.
+    """
+    from precursor.backend.services.mcp import auth_trace
+
+    auth_trace.reset()
+    patched["refresh_result"] = ("tok", None)  # identical to the stored token
+    patched["expiry"] = datetime.now(UTC) + timedelta(seconds=60)
+
+    await ka.WorkIQKeepAlive()._tick_once()
+
+    phases = [event["phase"] for event in auth_trace.snapshot(50) if event["server"] == "workiq"]
+    assert not any("token renewed" in phase for phase in phases)
+    assert any("nothing was renewed" in phase for phase in phases)
+
+
+async def test_no_op_refresh_does_not_clear_a_raised_banner(patched: dict) -> None:
+    """A credential that lapsed stays lapsed until something actually renews it.
+
+    Treating the no-op as a recovery would drop the banner, close the episode and
+    re-arm the prompt — three claims made on the strength of work that did not
+    happen.
+    """
+    patched["expiry"] = None
+    keepalive = ka.WorkIQKeepAlive()
+
+    patched["refresh_result"] = None
+    await keepalive._tick_once()  # fail -> publish
+    patched["refresh_result"] = ("tok", None)  # unchanged token -> not a recovery
+    await keepalive._tick_once()
+
+    assert patched["auth_banner_calls"] == ["workiq"]
+    assert patched["manager"].cleared == []

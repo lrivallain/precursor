@@ -164,8 +164,10 @@ class Settings(BaseSettings):
     # re-sign-in. Only does work while preview is on and tokens exist.
     workiq_keepalive_enabled: bool = True
     workiq_keepalive_poll_seconds: int = 60
-    # Refresh once the access token is within this many seconds of expiring.
-    workiq_keepalive_refresh_margin_seconds: int = 300
+    # There is deliberately no refresh-margin setting: how far ahead of expiry a
+    # token is renewed follows from its own lifetime (see
+    # ``workiq_preview.renewal_lead_seconds``), which is the only thing that
+    # decides how many retries fit before the cliff.
     # Stop keeping a credential warm once it has gone this long without a tool
     # call. Refreshing a server nobody uses is wasted work, and — worse — when
     # its refresh token eventually lapses the keep-alive raises a sign-in prompt

@@ -170,6 +170,22 @@ instead of Entra. Those hosts have no token endpoint, the SDK read the resulting
 browser prompt — the two halves of the same bug, so fixing the expiry alone was
 not enough.
 
+And when it does decide a token is due, it **says so** to the SDK. The refresh
+branch is gated on the SDK's own freshness check, which was happy with a token
+that still had a few minutes left — so the keep-alive opened a session intending
+to renew, nothing happened, and the untouched token came back looking renewed.
+Renewal only really occurred in the last seconds of a token's life, which is a
+tick's delay away from the interactive prompt this all exists to avoid. The
+deliberate-renewal path now marks the credential spent, so the refresh it asked
+for is the refresh it gets, and a renewal that changed nothing is reported as the
+anomaly it is rather than logged as a success.
+
+How far ahead of expiry that happens isn't a setting. It follows from the token's
+own lifetime — a quarter of it, never less than five minutes — because the only
+thing that matters is how many attempts fit before the token dies. A typical
+Entra token lands around 17-22 minutes of runway, so a failed or delayed tick has
+a dozen more chances rather than one.
+
 ::: tip Sign-ins that were stored before this
 A token saved without a refresh token can't gain one retroactively, so Precursor
 raises the ordinary sign-in banner once instead of attempting a renewal that
@@ -179,7 +195,8 @@ credential.
 
 Every part of this is tunable; see the `PRECURSOR_WORKIQ_*` entries in the
 [configuration reference](/reference/configuration#mcp-tool-servers) to disable
-automatic re-auth, change the keep-alive window, or restore stricter behaviour.
+automatic re-auth, change how often the keep-alive polls, or restore stricter
+behaviour.
 If a prompt ever appears you can't explain, the browser console carries a
 `[workiq-auth]` trace of each step of the sign-in with timings.
 
@@ -214,7 +231,8 @@ Terminals scroll, though, and a packaged app has none. So the same records are
 kept in memory and served, with the state that explains them, by
 **`GET /api/mcp/auth/diagnostics`**: the settings in force, then per credential —
 whether a token is stored, whether it has a **refresh token** at all, when it
-expires, how long it's been idle, and whether connects are being fast-failed.
+expires, how far ahead of that it will be renewed, how long it's been idle, and
+whether connects are being fast-failed.
 
 In the SPA, one console call collects both halves and puts them on your
 clipboard, ready to paste into an issue:

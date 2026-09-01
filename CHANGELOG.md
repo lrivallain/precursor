@@ -11,6 +11,33 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
+  before it dies.** Two thresholds decided "renew this" and they disagreed. The
+  keep-alive opened a session once a token was within five minutes of expiring;
+  the MCP SDK gates its only refresh branch on its own freshness check, which
+  called the same token valid until one minute out. In between, the keep-alive
+  spent an MCP session per tick doing nothing, read back the unchanged token and
+  logged `keep-alive: token renewed` — four wasted sessions a cycle and a trace
+  that asserted a renewal that never happened. Renewal only really occurred with
+  about 30 seconds of headroom: one delayed tick from the expired credential and
+  browser prompt this machinery exists to prevent.
+
+  The deliberate-renewal path now states its intent, so the refresh it asks for
+  is the refresh it gets. That is confined to it on purpose — a token marked
+  spent whose refresh then fails transiently is sent with no auth header at all,
+  and the 401 escalates to a full sign-in, so chat turns and the warm pool keep
+  the SDK's cautious default.
+
+  How far ahead of expiry that happens is no longer a setting
+  (`PRECURSOR_WORKIQ_KEEPALIVE_REFRESH_MARGIN_SECONDS` is retired; a stale value
+  in your environment is ignored). It is derived from the token's own lifetime —
+  a quarter of it, never less than five minutes — because the only question that
+  matters is how many attempts fit before the token dies. Real tokens get some
+  17-22 minutes of runway and a dozen-plus retries instead of one.
+  `GET /api/mcp/auth/diagnostics` reports the resulting `renewal_lead_seconds`
+  per credential, and a refresh that renews nothing is now recorded as the
+  anomaly it is rather than as a success.
+
 - **A built-in plugin now updates with the host.** `precursor-kanban` pinned a
   static `version = "0.1.0"`, so every build produced a byte-identical wheel
   name and the nightly manifest advertised an unchanging URL. uv saw the

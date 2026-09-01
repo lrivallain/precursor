@@ -399,6 +399,10 @@ def test_diagnostics_reports_settings_credentials_and_events() -> None:
     assert preview["has_tokens"] is False
     assert preview["has_refresh_token"] is False
     assert preview["expires_in_seconds"] is None
+    # Derived from the token's lifetime rather than configured, so the endpoint
+    # is the only place the keep-alive's threshold can be read back.
+    assert preview["renewal_lead_seconds"] == 300
+    assert "workiq_keepalive_refresh_margin_seconds" not in body["settings"]
     assert preview["credential"] == wp.OAUTH_TOKENS_KEY
     assert any(event["phase"] == "a traced step" for event in body["events"])
 
