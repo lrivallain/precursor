@@ -75,6 +75,29 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Installing failed outright when something else already held port 8000**, and
+  said almost nothing useful about it: `error: The Precursor login item did not
+  come up on port 8000`. That is the *first* thing a new user runs, and 8000 is
+  a popular port — the login item was registered against a port it could never
+  bind, so launchd/systemd dutifully retried a doomed start forever while the
+  installer reported only the symptom.
+
+  `precursor service install` now settles the port **before** registering the
+  unit: a busy default moves to the next free port and is written to `.env` in
+  the data directory, so the login item — which launchd and systemd start with
+  no arguments — reads the port that actually works, and keeps reading it across
+  reboots instead of drifting. Both facts are printed. A port you chose yourself
+  (`PRECURSOR_PORT`, or the new `precursor service install --port`) is never
+  moved silently; the install stops and says the port is taken.
+
+  The two start paths change accordingly. The login item — unattended, and the
+  one thing `KeepAlive`/`Restart` will retry forever — no longer exits non-zero
+  when its port is taken at login: it bumps, logs where it went, and publishes
+  the real URL in `runtime.json`, which is what `service status` and the tray
+  read anyway. `precursor service start` does the same for a merely *defaulted*
+  port, while a port you pinned still fails loudly there, and the "did not come
+  up" error now names the port and says who is holding it.
+
 - **The tray kept offering an update the app had already installed**, because it
   was comparing the published build against *its own* version. `__version__` is
   resolved once, at import, so a long-lived icon measures against the release it

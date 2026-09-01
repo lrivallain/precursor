@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 _START_TIMEOUT_SECONDS = 90.0
 # How long to wait for a graceful SIGTERM before escalating to SIGKILL.
 _STOP_TIMEOUT_SECONDS = 20.0
+# The setting that pins the port, in both the environment and the instance `.env`.
+_PORT_ENV_VAR = "PRECURSOR_PORT"
 
 
 class SupervisorError(RuntimeError):
@@ -122,10 +124,137 @@ def instance_settings() -> Settings:
     command — and then hand the child an explicit ``--port`` that overrides the
     ``.env`` it would have read itself.
     """
-    env_file = working_dir() / ".env"
+    env_file = _env_file()
     if env_file.is_file():
         return Settings(_env_file=env_file)
     return get_settings()
+
+
+def _env_file() -> Path:
+    """The ``.env`` the supervised instance reads (it runs in :func:`working_dir`)."""
+    return working_dir() / ".env"
+
+
+def _env_file_port() -> int | None:
+    """The port assigned by an uncommented ``PRECURSOR_PORT`` line, if any."""
+    try:
+        lines = _env_file().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        if sep and key.strip().upper() == _PORT_ENV_VAR:
+            try:
+                return int(value.strip().strip("\"'"))
+            except ValueError:
+                return None
+    return None
+
+
+def port_is_pinned() -> bool:
+    """Whether somebody chose the port deliberately, rather than defaulting to it.
+
+    A deliberate choice is one to honour or fail loudly about — moving it would
+    break whatever depends on that number. The default is only a starting guess,
+    so it may be bumped when the port turns out to be taken.
+    """
+    if os.environ.get(_PORT_ENV_VAR, "").strip():
+        return True
+    return _env_file_port() is not None
+
+
+def _free_port(host: str, preferred: int) -> int:
+    """The first bindable port at or above ``preferred`` on ``host``."""
+    from precursor.backend.__main__ import _resolve_port
+
+    try:
+        return _resolve_port(host, preferred, strict=False)
+    except SystemExit as exc:  # exhausted the scan window
+        raise SupervisorError(str(exc)) from exc
+
+
+def _persist_port(port: int) -> Path:
+    """Write ``PRECURSOR_PORT`` into the instance's ``.env`` and return its path.
+
+    The login item is started by launchd/systemd with no arguments, so the port
+    has to live somewhere the child re-reads on its own — and ``.env`` in
+    :func:`working_dir` is exactly the file it already loads. Recording it also
+    makes the choice sticky: the URL stays the same across restarts and reboots
+    instead of drifting with whatever else happens to hold a port that day.
+    """
+    path = _env_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+
+    assignment = f"{_PORT_ENV_VAR}={port}"
+    for index, line in enumerate(lines):
+        key, sep, _ = line.strip().partition("=")
+        if sep and key.strip().upper() == _PORT_ENV_VAR:
+            lines[index] = assignment
+            break
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += [
+            "# Picked by `precursor service install` — the default port was busy.",
+            assignment,
+        ]
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    get_settings.cache_clear()
+    return path
+
+
+@dataclass(frozen=True)
+class PortReservation:
+    """The port a fresh install settled on, and where it was recorded."""
+
+    port: int
+    moved_from: int | None = None
+    env_file: str | None = None
+
+
+def reserve_port(*, host: str | None = None, port: int | None = None) -> PortReservation:
+    """Settle on a port the instance can actually bind, before registering it.
+
+    Installing is most people's *first* run, and 8000 is a popular port: some
+    other dev server holding it used to leave the login item crash-looping
+    against ``--strict-port`` and the installer reporting nothing but "did not
+    come up". So an unpinned default that is already taken is moved to the next
+    free port and written to ``.env``, while a port somebody actually chose is
+    left alone — a deliberate choice deserves an error, not a silent move.
+    """
+    cfg = instance_settings()
+    host = host or cfg.host
+    current = status()
+    if port is None and current.running and current.state is not None:
+        # Already serving: adopt its port rather than reserving a second one.
+        return PortReservation(port=current.state.port)
+
+    desired = port if port is not None else cfg.port
+    if _port_free_for(host, desired):
+        if port is not None and port != cfg.port:
+            return PortReservation(port=port, env_file=str(_persist_port(port)))
+        return PortReservation(port=desired)
+
+    if port is not None or port_is_pinned():
+        raise SupervisorError(
+            f"Port {desired} is already in use by something Precursor didn't start. "
+            "Free it, or install on another port with "
+            "`precursor service install --port <port>`."
+        )
+
+    chosen = _free_port(host, desired + 1)
+    return PortReservation(port=chosen, moved_from=desired, env_file=str(_persist_port(chosen)))
+
+
+def _port_free_for(host: str, port: int) -> bool:
+    from precursor.backend.__main__ import _port_free
+
+    return _port_free(_loopback_host(host), port)
 
 
 def _read_state() -> RuntimeState | None:
@@ -281,6 +410,7 @@ def start(
         return current
 
     cfg = instance_settings()
+    explicit_port = port is not None
     host = host or cfg.host
     port = port if port is not None else cfg.port
     log_level = log_level or cfg.log_level
@@ -299,15 +429,28 @@ def start(
         settled = _await_state(port=port, host=host)
         if settled.running:
             return settled
+        detail = (
+            f" Port {port} is held by something Precursor didn't start — free it, or move "
+            "Precursor with `precursor service install --port <port>`."
+            if _port_responds(_loopback_host(host), port)
+            else ""
+        )
         raise SupervisorError(
-            f"The {unit.title} login item did not come up on port {port}. See {_log_path()}."
+            f"The {unit.title} login item did not come up on port {port}. "
+            f"See {_log_path()}.{detail}"
         )
 
-    if _port_responds(host if host not in ("0.0.0.0", "::", "") else "127.0.0.1", port):
-        raise SupervisorError(
-            f"Port {port} is already in use by something Precursor didn't start. "
-            "Free it, or pick another with --port."
-        )
+    if _port_responds(_loopback_host(host), port):
+        if explicit_port or port_is_pinned():
+            raise SupervisorError(
+                f"Port {port} is already in use by something Precursor didn't start. "
+                "Free it, or pick another with --port."
+            )
+        # Nobody chose this port — it is just the default, and a first run
+        # shouldn't fail because some other dev server got to 8000 first.
+        bumped = _free_port(host, port + 1)
+        logger.warning("Port %s is in use — starting Precursor on %s instead.", port, bumped)
+        port = bumped
 
     log_file = _log_path()
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -557,7 +700,18 @@ def run_foreground(
     cfg = get_settings()
     host = host or cfg.host
     log_level = log_level or cfg.log_level
-    resolved = _resolve_port(host, port if port is not None else cfg.port, strict=True)
+    # Strict only for an explicit ``--port``: that is somebody watching a
+    # terminal, and exiting non-zero is how they learn the port was wrong. The
+    # login item passes no port, and for *it* a refusal is a crash loop —
+    # KeepAlive/Restart retrying forever against a port someone else owns. It
+    # would rather run somewhere and say so: `runtime.json` publishes the real
+    # URL, which is what `service status` and the tray read anyway.
+    preferred = port if port is not None else cfg.port
+    resolved = _resolve_port(host, preferred, strict=port is not None)
+    if resolved != preferred:
+        logger.warning(
+            "Port %s is in use — Precursor is starting on %s instead.", preferred, resolved
+        )
     connect_host = _loopback(host)
 
     _write_state(
