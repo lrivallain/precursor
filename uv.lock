@@ -1099,7 +1099,6 @@ dev = [
 
 [[package]]
 name = "precursor-kanban"
-version = "0.1.0"
 source = { editable = "plugins/precursor-kanban" }
 dependencies = [
     { name = "fastapi" },

@@ -332,6 +332,33 @@ Reading which plugins exist, and enabling or disabling them, is not gated — no
 of that executes anyone's code. With the installer off, the panel still shows the
 exact command to run by hand, which is the zero-risk path and always available.
 
+## Versioning a built-in plugin
+
+A plugin that lives in this repository **inherits the host's CalVer** from the
+same git tags, rather than carrying a version of its own:
+
+```toml
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+
+[project]
+dynamic = ["version"]
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../..", version_scheme = "guess-next-dev", local_scheme = "node-and-date", fallback_version = "0.0.0" }
+```
+
+This is not cosmetic. A static version produces a byte-identical wheel filename
+on every build, so the nightly manifest advertises an unchanging URL, uv finds
+the requirement already satisfied and skips the download — the host advances
+while the plugin silently stays frozen. It also makes the plugin unpublishable,
+since PyPI rejects re-uploading a version.
+
+`root = "../.."` is the only line tying a plugin to the monorepo. Extracting one
+to its own repository means dropping that option and tagging there instead;
+nothing else about the package assumes it is a workspace member.
+
 ## Stability
 
 The contract may evolve before 1.0. We keep breakage to a minimum, bump

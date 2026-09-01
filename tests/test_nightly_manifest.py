@@ -58,7 +58,11 @@ def _run_manifest_step(
 
 
 HOST = "precursor_ai-2026.7.1.dev229+gabcdef123-py3-none-any.whl"
-PLUGIN = "precursor_kanban-0.1.0-py3-none-any.whl"
+# Built-in plugins inherit the host's CalVer, so a plugin wheel carries the same
+# commit-bearing version. It used to be a static `0.1.0`, which made the
+# manifest advertise an identical URL on every build and left clients unable to
+# tell one nightly's plugin from the next.
+PLUGIN = "precursor_kanban-2026.7.1.dev229+gabcdef123-py3-none-any.whl"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the step is bash")
