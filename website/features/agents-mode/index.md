@@ -32,8 +32,12 @@ downloading, streams progress while it works, and reports the real error if it
 fails. On success it starts the runtime in place; only if that doesn't take does
 it ask for a restart.
 
-Nothing is destroyed while the runtime is missing — your model, approval policy,
-system message and watchdog are hidden, not cleared, and come back exactly as you
+The same rule applies to the switch itself: with Agents mode **off**, the panel is
+just the toggle and timeline retention — no runtime warnings about something you
+deliberately stopped, no blueprints you cannot instantiate.
+
+Nothing is destroyed either way — your model, approval policy, system message,
+watchdog and blueprints are hidden, not cleared, and come back exactly as you
 left them. [Timeline retention](/features/storage) stays visible throughout, because archived
 events outlive the toggle and the sweep keeps running either way.
 

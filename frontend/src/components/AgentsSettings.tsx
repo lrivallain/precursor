@@ -424,7 +424,11 @@ export function AgentsSettings() {
 
       {error && <p className="text-[11px] text-red-500">{error}</p>}
 
-      <AgentsRuntimeCard status={runtime} onRefresh={refreshRuntime} />
+      {/* The runtime story only makes sense once the feature is on. With Agents
+          mode off the manager is deliberately stopped, so reporting that the
+          runtime "didn't start in this process" explains a state the user chose
+          — as an alarm it is just wrong. */}
+      {enabled && <AgentsRuntimeCard status={runtime} onRefresh={refreshRuntime} />}
 
       {enabled && available && (
         <label className="block space-y-1">
@@ -661,10 +665,10 @@ export function AgentsSettings() {
         </p>
       </div>
 
-      {/* Blueprints instantiate agents, so they are inert without a runtime.
-          Hidden rather than cleared: the stored definitions survive untouched
-          and reappear the moment the runtime is provisioned. */}
-      {available && (
+      {/* Blueprints instantiate agents, so they are inert with the feature off
+          or no runtime behind it. Hidden rather than cleared: the stored
+          definitions survive untouched and reappear once both are true. */}
+      {enabled && available && (
         <div className="border-t border-border pt-4">
           <AgentBlueprintsSection />
         </div>

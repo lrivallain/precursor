@@ -43,16 +43,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 ### Changed
 
 - **Settings → Agents no longer renders controls that cannot work.** Default
-  model, approval policy, custom system message, watchdog and permission grants
-  were drawn whether or not a runtime existed, so the panel read as "configured
-  and ready" while the feature was inert, with the one honest signal — the
-  unavailable reason — buried among a dozen live-looking controls. They are now
-  hidden behind the install action until the runtime resolves.
+  model, approval policy, custom system message, watchdog, permission grants and
+  blueprints were drawn whether or not a runtime existed — and several of them
+  whether or not Agents mode was even switched on — so the panel read as
+  "configured and ready" while the feature was inert, with the one honest signal
+  buried among a dozen live-looking controls. They now require both: the feature
+  on, and a runtime behind it.
+
+  Switched off, the panel is just the toggle and timeline retention. In
+  particular it no longer warns that the runtime "didn't start in this process"
+  when the runtime was stopped *because* you turned Agents mode off — an alarm
+  for a state the user chose.
 
   Nothing is deleted: the stored values are untouched and reappear exactly as
-  they were once a runtime is present. **Timeline retention stays visible**
-  regardless, because archived events outlive the feature toggle and the sweep
-  keeps running either way.
+  they were. **Timeline retention stays visible** throughout, because archived
+  events outlive the feature toggle and the sweep keeps running either way.
 
 ### Fixed
 
