@@ -35,6 +35,19 @@ os.environ["PRECURSOR_SKILLS_DIR"] = _skills_dir
 _data_dir = tempfile.mkdtemp(prefix="precursor-test-data-")
 os.environ["PRECURSOR_DATA_DIR"] = _data_dir
 
+# Isolate the login-item units. Unlike everything above, these are NOT addressed
+# by an env var: launchd reads ``~/Library/LaunchAgents`` and systemd
+# ``~/.config/systemd/user``, both of which are global to the user account.
+#
+# That mattered more than it sounds. ``supervisor.stop()`` and ``restart()`` ask
+# ``managed_unit()`` whether a *controllable* login item owns this instance, and
+# it answered by looking at the developer's real plist — so a supervisor test
+# with a perfectly isolated data dir would still `launchctl bootout` the
+# developer's actual running Precursor. Booted out, it does not come back:
+# KeepAlive can only restart a job that is still loaded. Running the test suite
+# killed the machine's real instance.
+_units_dir = tempfile.mkdtemp(prefix="precursor-test-units-")
+
 
 @atexit.register
 def _cleanup_tmp_db() -> None:
@@ -42,6 +55,28 @@ def _cleanup_tmp_db() -> None:
         os.unlink(_tmp.name)
     shutil.rmtree(_skills_dir, ignore_errors=True)
     shutil.rmtree(_data_dir, ignore_errors=True)
+    shutil.rmtree(_units_dir, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every login-item lookup at a throwaway directory.
+
+    ``_target_path`` is the one chokepoint all three platforms go through, so
+    patching it covers ``info``/``install``/``uninstall`` and — the dangerous
+    ones — ``managed_unit`` and the ``launchctl``/``systemctl`` calls behind
+    ``stop_unit`` and ``restart_unit``. Distinct paths per unit are preserved so
+    tests can still tell the app and tray units apart.
+    """
+    from pathlib import Path
+
+    from precursor.backend import autostart
+
+    monkeypatch.setattr(
+        autostart,
+        "_target_path",
+        lambda unit: Path(_units_dir) / f"{unit.label}.plist",
+    )
 
 
 @pytest.fixture(autouse=True)

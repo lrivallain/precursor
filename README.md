@@ -87,26 +87,18 @@ so the chat flow stays usable offline.
 
 ### Optional: Agents mode
 
-**Agents mode** is **opt-in and off by default**. It is **not** installed by the
-`uv sync` above — it lives behind its own `agents` extra:
+**Agents mode** needs no extra install step. `github-copilot-sdk` is a normal
+dependency, so the `uv sync` above already brings it in — the wheel is ~0.5 MB
+and downloads nothing on its own.
 
-```bash
-uv sync --extra agents               # adds github-copilot-sdk on top of the dev deps
-uv run --extra agents precursor --dev # …or run the dev stack with it in one step (= make dev)
-```
+What it *drives* is a **native Copilot CLI** (~90 MB, ~145 MB on disk), and that
+stays opt-in. Install it in one click from **Settings → Agents**, or bring your
+own: Precursor resolves, in order, `COPILOT_CLI_PATH`, the SDK's download cache,
+then `copilot` on your `PATH`. The probe is read-only — rendering Settings never
+downloads anything.
 
-> [!IMPORTANT]
-> The `github-copilot-sdk` wheel is small, but Agents mode also needs the
-> **native Copilot CLI** (~90 MB, ~145 MB on disk) — the SDK downloads it on
-> first use, or reuses a system-wide `copilot` install. Precursor resolves, in
-> order: `COPILOT_CLI_PATH`, the SDK's download cache, then `copilot` on your
-> `PATH`. **Settings → Agents** reports which one it found without ever
-> downloading anything itself.
-
-Installing the extra *is* the opt-in: with no stored preference Agents mode
-follows the runtime, so it comes on as soon as a CLI resolves. **Settings →
-Agents** is the one control on top of that, and reports whether the runtime
-resolved.
+Agents mode follows the runtime: with no stored preference it comes on as soon as
+a CLI resolves, and **Settings → Agents** is the switch on top of that.
 
 ### Run it (one command)
 

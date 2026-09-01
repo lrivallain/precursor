@@ -24,15 +24,15 @@ sync: ## Install/refresh the dev environment (uv + npm + plugin UIs)
 	npm --prefix website ci
 	$(MAKE) plugins-build
 
-# Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). `--extra
-# agents` pulls the Copilot SDK so Agents mode is live (opt-in payload, kept out
-# of `make sync`/CI). Drop it if you don't need Agents mode.
-dev: plugins-build  ## Run the full dev stack (API + Vite HMR, with Agents mode)
-	uv run --extra agents precursor --dev
+# Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). The Copilot
+# SDK is a normal dependency now, so Agents mode needs no extra here — only the
+# native CLI it drives, which Settings → Agents provisions on demand.
+dev: plugins-build  ## Run the full dev stack (API + Vite HMR)
+	uv run precursor --dev
 
 # Backend only (uvicorn --reload, no Vite).
-backend: plugins-build  ## Run the backend only (uvicorn --reload, with Agents mode)
-	uv run --extra agents precursor --dev --no-frontend
+backend: plugins-build  ## Run the backend only (uvicorn --reload)
+	uv run precursor --dev --no-frontend
 
 # Vite dev server only.
 frontend:  ## Run the Vite dev server only

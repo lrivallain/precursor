@@ -62,6 +62,32 @@ def test_units_land_on_distinct_paths() -> None:
     assert len(paths) == len(autostart.UNITS)
 
 
+def test_unit_lookups_never_touch_the_developers_real_login_items() -> None:
+    """The suite must not be able to reach the machine's actual login items.
+
+    No env var isolates these — launchd reads ``~/Library/LaunchAgents`` and
+    systemd ``~/.config/systemd/user``, both global to the user account. That is
+    not a theoretical leak: ``supervisor.stop()`` asks ``managed_unit()`` whether
+    a *controllable* login item owns the instance, so a supervisor test with a
+    perfectly isolated data dir still `launchctl bootout`-ed the developer's real
+    Precursor — and a booted-out job does not come back, because KeepAlive can
+    only restart one that is still loaded. Running the tests killed the running
+    app.
+
+    ``conftest`` redirects the single chokepoint; this fails if that is ever
+    removed.
+    """
+    for unit in autostart.UNITS:
+        path = autostart._target_path(unit)
+        assert path is not None
+        assert Path.home() not in path.parents, f"{unit.key} resolves under the real home"
+
+    # …and the consequence that actually mattered: nothing looks installed, so
+    # `managed_unit()` never hands the real service manager a unit to stop.
+    assert autostart.info(autostart.APP).installed is False
+    assert supervisor.managed_unit() is None
+
+
 def test_launchd_plist_is_well_formed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
     path = tmp_path / "agent.plist"

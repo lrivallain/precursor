@@ -470,6 +470,52 @@ def restart(
     )
 
 
+def restartable() -> tuple[bool, str]:
+    """Whether *this* instance can restart itself, and why not when it can't.
+
+    Only a supervised instance can: :func:`restart` works by reading
+    ``runtime.json`` to find and stop the running process, and a stack started
+    with ``uv run precursor --dev`` publishes no such state (it is owned by the
+    terminal it runs in, and Vite alongside it). Saying so is more useful than a
+    button that silently does nothing.
+
+    Deliberately **read-only**, unlike :func:`status`, which deletes the state
+    file when it judges the recorded pid dead. This is a capability probe served
+    from a polled HTTP endpoint, and a probe must not evict a running instance's
+    own bookkeeping — a single misread would leave a live server reporting "not
+    running" to `service status` and the tray.
+    """
+    state = _read_state()
+    if state is None or not _pid_alive(state.pid):
+        return False, (
+            "This instance isn't supervised, so it can't restart itself — "
+            "restart it the way you started it."
+        )
+    return True, "ready"
+
+
+def request_detached_restart() -> None:
+    """Restart this instance from a **detached** child process.
+
+    The child is about to stop the very process spawning it, so it must not be
+    in our process group or die with us — hence :func:`_spawn_kwargs` and fully
+    redirected stdio. ``-m precursor.backend`` rather than the console script,
+    for the same reason :func:`_child_command` uses it: the running interpreter
+    is guaranteed to have the package importable.
+    """
+    ok, detail = restartable()
+    if not ok:
+        raise SupervisorError(detail)
+    subprocess.Popen(
+        [sys.executable, "-m", "precursor.backend", "service", "restart"],
+        cwd=str(working_dir()),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **_spawn_kwargs(),
+    )
+
+
 def run_foreground(
     *,
     host: str | None = None,

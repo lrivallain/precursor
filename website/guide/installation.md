@@ -61,11 +61,12 @@ already taken). It installs a matching **`precursor-ai`** command plus a shorter
 Some features ship as separate [plugins](/features/plugins) so they aren't forced
 on every install. `[kanban]` pulls in the
 [GitHub Projects board](/features/kanban); drop it (`uvx precursor-ai`) for a
-lean core with no board. `[agents]` adds
-[Agents mode](/features/agents-mode) — which then provisions a ~90 MB native
-runtime, so it stays opt-in.
-`[tray]` adds the [menu-bar control](/features/background-app#the-menu-bar-icon).
-Combine them: `uvx "precursor-ai[kanban,agents]"`.
+lean core with no board. `[tray]` adds the [menu-bar control](/features/background-app#the-menu-bar-icon).
+Combine them: `uvx "precursor-ai[kanban,tray]"`.
+
+`[agents]` is **retired but still accepted**: the Copilot SDK is a normal
+dependency now, so the extra resolves to nothing. Naming it is harmless — which
+is the point, since installs made before the change still do.
 :::
 
 ::: info Requirements
@@ -139,20 +140,19 @@ uv run precursor               # serves API + SPA on :8000
 
 ## Optional: Agents mode
 
-[Agents mode](/features/agents-mode) is **opt-in**: it is *not* installed by the
-steps above — it lives behind its own `agents` extra:
-
-```bash
-uv sync --extra agents                 # adds github-copilot-sdk on top of dev deps
-uv run --extra agents precursor --dev  # …or run the dev stack with it (= make dev)
-```
+[Agents mode](/features/agents-mode) needs no extra install step. The Copilot SDK
+(`github-copilot-sdk`, ~0.5 MB) is a normal dependency, so the steps above
+already installed it.
 
 ::: warning ~90 MB native runtime
-The SDK wheel itself is small, but Agents mode needs the **native Copilot CLI**
-(~90 MB, ~145 MB on disk). The SDK downloads it on first use, or reuses a
-system-wide `copilot` install — which is why the extra is kept out of the default
-install. Installing it is the opt-in — agents follow the runtime and come on once
-it resolves, with the switch in **Settings → Agents**.
+What the SDK *drives* is a **native Copilot CLI** (~90 MB, ~145 MB on disk), and
+that is still opt-in. Install it in one click from **Settings → Agents**, which
+asks first and reports the real error if the download fails. Or bring your own:
+the SDK reuses a system-wide `copilot` install, and `COPILOT_CLI_PATH` pins a
+specific binary.
+
+Agents mode follows the runtime — with no stored preference it comes on as soon
+as a CLI resolves, and the switch lives in **Settings → Agents**.
 :::
 
 ### Pointing at a specific CLI

@@ -1,16 +1,18 @@
 """Agents-mode runtime probe and lazy SDK access.
 
-Agents mode is **opt-in** and depends on the optional ``github-copilot-sdk``
-package (installed via the ``agents`` extra). This module is the single seam
-between Precursor and that optional dependency: everything here is safe to
-import even when the SDK is absent, so the rest of the app degrades gracefully
-to "Agents unavailable" instead of failing to start.
+Agents mode depends on ``github-copilot-sdk``, a normal dependency. This module
+is still the single seam between Precursor and it: everything here is safe to
+import even when the SDK is absent, so a broken or stripped install degrades
+gracefully to "Agents unavailable" instead of failing to start.
 
-The SDK wheel is a plain ``py3-none-any`` package that **downloads** the native
+The SDK wheel is a small ``py3-none-any`` package that **downloads** the native
 Copilot CLI on first use (it used to ship platform-specific wheels that bundled
-the binary). So installing the extra no longer guarantees a runnable runtime,
-and ``agents_available`` reflects both conditions separately: the Python package
-is importable *and* a CLI binary resolves.
+the binary — that line is why the package could not be a default dependency).
+Shipping the SDK therefore does not guarantee a runnable runtime, and
+``agents_available`` reflects both conditions separately: the Python package is
+importable *and* a CLI binary resolves. The CLI is the payload that stays
+opt-in, provisioned on an explicit click from Settings → Agents
+(:mod:`precursor.backend.services.agents.provision`).
 
 Resolution here is deliberately **read-only** — it reports what is already on
 disk and never triggers the SDK's on-demand download. A capability probe runs on
@@ -59,7 +61,9 @@ def runtime_binary_path() -> str | None:
     3. A ``copilot`` executable on ``PATH`` — a system-wide CLI install (Homebrew,
        npm, the official installer) is a perfectly good runtime, and ignoring it
        is what made a working machine report "unavailable".
-    4. The binary bundled inside pre-1.0.11 platform-specific wheels.
+    4. The binary bundled inside pre-1.0.4 platform-specific wheels. Our own
+       floor excludes that line, so this only fires for an install that resolved
+       the SDK some other way (a shared environment, a stale pin).
 
     Only steps 2 and 4 reach into SDK internals, and each is independently
     guarded — the env var and ``PATH`` paths keep working even if the SDK moves
@@ -103,7 +107,7 @@ def _sdk_cached_cli_path() -> str | None:
 
 
 def _legacy_bundled_cli_path() -> str | None:
-    """Path of the CLI bundled inside pre-1.0.11 SDK wheels, if that line is installed."""
+    """Path of the CLI bundled inside pre-1.0.4 SDK wheels, if that line is installed."""
     try:
         client_mod = importlib.import_module("copilot.client")
         return _existing(client_mod._get_bundled_cli_path())
@@ -118,14 +122,22 @@ def agents_available() -> tuple[bool, str]:
     Mirrors :func:`services.cmd_runner.docker_available`: a cheap capability
     probe the Settings UI surfaces so the toggle can explain *why* it's
     unavailable. Independent of the user's enabled/disabled preference.
+
+    The two failure modes are not equal. A missing CLI is the ordinary case on a
+    fresh install and the panel can fix it in one click. A missing SDK means the
+    install itself is broken — it is a declared dependency — so that wording
+    points at repairing the install rather than at a step the user forgot.
     """
     if not sdk_installed():
-        return False, "github-copilot-sdk not installed — run `uv sync --extra agents`"
+        return False, (
+            "github-copilot-sdk is missing from this installation — reinstall "
+            "Precursor (it is a required dependency, not an extra)"
+        )
     binary = runtime_binary_path()
     if not binary:
         return False, (
-            "Copilot CLI runtime binary not found — install the Copilot CLI "
-            "(so `copilot` is on PATH) or point COPILOT_CLI_PATH at one"
+            "Copilot CLI runtime not installed yet — install it from "
+            "Settings → Agents, or point COPILOT_CLI_PATH at an existing one"
         )
     return True, f"ready ({binary})"
 
@@ -154,8 +166,8 @@ def load_sdk() -> Any:
     """
     if not sdk_installed():
         raise RuntimeError(
-            "Agents mode requires the optional 'github-copilot-sdk' package "
-            "(install with `uv sync --extra agents`)."
+            "Agents mode requires 'github-copilot-sdk', which is a required "
+            "dependency but is missing from this installation — reinstall Precursor."
         )
     return _import_sdk()
 

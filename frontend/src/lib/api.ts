@@ -13,6 +13,7 @@ import type {
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
   AgentRun,
+  AgentRuntimeStatus,
   AgentSchedule,
   AgentApprovalPolicy,
   AgentScheduleCreate,
@@ -403,6 +404,13 @@ export const api = {
         `/api/agents/${id}/events${agentRunId != null ? `?agent_run_id=${agentRunId}` : ""}`,
       ),
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
+    // Runtime capability + provisioning. Unlike the rest of this namespace these
+    // stay reachable when the runtime is down — they are how it gets fixed.
+    getRuntime: () => request<AgentRuntimeStatus>(`/api/agents/runtime`),
+    installCli: () =>
+      request<AgentRuntimeStatus>(`/api/agents/runtime/cli`, { method: "POST" }),
+    restartForRuntime: () =>
+      request<void>(`/api/agents/runtime/restart`, { method: "POST" }),
     listPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
     resetPermissions: () =>
       request<{ cleared: number }>(`/api/agents/permissions/reset`, { method: "POST" }),

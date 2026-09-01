@@ -434,6 +434,48 @@ class AgentStatusCount(BaseModel):
     count: int
 
 
+class AgentProvisionJob(BaseModel):
+    """An in-flight (or last finished) Copilot CLI provisioning attempt."""
+
+    state: Literal["running", "succeeded", "failed"]
+    detail: str
+    # The failure as the SDK reported it, so the panel can show a real cause.
+    error: str | None = None
+    cli_path: str | None = None
+    # True when the runtime came up in-process, so no restart is needed.
+    runtime_started: bool = False
+    started_at: float
+    finished_at: float | None = None
+
+
+class AgentRuntimeStatus(BaseModel):
+    """Everything Settings → Agents needs to explain (and fix) the runtime.
+
+    Deliberately answers "why not, and what can I do about it" rather than just
+    "is it on": the panel hides its runtime-dependent controls behind this.
+    """
+
+    available: bool
+    unavailable_reason: str | None = None
+    # The manager's client actually came up in *this* process. Can be False even
+    # when `available` is True (e.g. the client failed to start on a reload).
+    runtime_started: bool = False
+    sdk_installed: bool = True
+    cli_path: str | None = None
+    # Whether the panel can offer to download the CLI, and why not when it can't.
+    can_install_cli: bool = False
+    install_blocked_reason: str | None = None
+    # Whether this instance can restart itself (a `--dev` stack cannot).
+    can_restart: bool = False
+    restart_blocked_reason: str | None = None
+    # Whether any archived agent timeline survives on disk. Drives whether the
+    # retention levers stay reachable with Agents mode off: the sweep keeps
+    # pruning regardless, so hiding them while events exist would leave no way
+    # to stop a background job quietly erasing that history.
+    has_archived_events: bool = False
+    job: AgentProvisionJob | None = None
+
+
 class AgentMetrics(BaseModel):
     """Fleet-wide rollup for the dashboard header."""
 
