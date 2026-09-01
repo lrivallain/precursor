@@ -256,6 +256,19 @@ class Settings(BaseSettings):
     # after this many seconds with no tool calls; set to 0 to disable pooling
     # and open a fresh session per turn.
     mcp_idle_ttl_seconds: int = 600
+    # MCP warm-up (services/mcp/warmup.py) — a background task that connects the
+    # enabled servers shortly after startup so the first prompt doesn't pay
+    # connect + initialize + list_tools for all of them at once. It runs one
+    # server at a time (several stdio servers spawn ``npx``, and a startup
+    # thundering herd is exactly what this removes), never blocks startup or a
+    # request, and never initiates an interactive sign-in.
+    mcp_warmup_enabled: bool = True
+    # Grace period before the first server is warmed, so startup work (schema
+    # migration, plugin hydration, the SPA's own first requests) gets the machine
+    # to itself.
+    mcp_warmup_delay_seconds: float = 5.0
+    # Pause between servers, keeping the sweep politely serialised.
+    mcp_warmup_gap_seconds: float = 1.0
     # GitHub MCP (remote) advertises one tool group per toolset. Requesting
     # "all" floods the prompt with hundreds of tools, slowing the first token.
     # Comma-separated list sent as the ``X-MCP-Toolsets`` header; use "all" to

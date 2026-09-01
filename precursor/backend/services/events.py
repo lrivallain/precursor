@@ -38,6 +38,10 @@ class Event(TypedDict, total=False):
     # Carried only by ``mcp.auth_url`` — the interactive OAuth authorization URL
     # the window that started the sign-in should open in a script-opened popup.
     url: str | None
+    # Carried by ``mcp.server_state`` — the connection state the background
+    # warm-up resolved a server to, and how many tools it now advertises.
+    state: str | None
+    tools: int | None
     # Carried by ``workflow.changed``: which pipeline changed, and the run state
     # + name the client needs to raise a notification without re-fetching.
     workflow_id: int | None
@@ -128,6 +132,18 @@ async def publish_mcp_auth_required(
             "message": message,
             "topic_id": topic_id,
         }
+    )
+
+
+async def publish_mcp_server_state(server: str, state: str, *, tools: int) -> None:
+    """Announce that an MCP server's connection state changed out-of-band.
+
+    Emitted by the startup warm-up as each server finishes, so an open Settings
+    panel reflects the real state (and tool count) as it resolves instead of
+    sitting on the "connecting" placeholder until the user reloads.
+    """
+    await _bus.publish(
+        {"type": "mcp.server_state", "server": server, "state": state, "tools": tools}
     )
 
 

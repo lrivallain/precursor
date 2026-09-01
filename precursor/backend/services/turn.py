@@ -44,6 +44,7 @@ from precursor.backend.services.turn_engine import (
     AssistantTextDelta,
     AssistantToolCallsTurn,
     RoundCapReached,
+    ToolAuthRequired,
     ToolResultTurn,
     build_system_context,
     hydrate_history,
@@ -138,7 +139,9 @@ async def _run(
         provider = await get_llm_provider(session)
         github_token = await resolve_github_token(session)
 
-    async with manager.acquired(enabled_servers, github_token=github_token) as active:
+    async with manager.acquired(
+        enabled_servers, github_token=github_token, advertise_cached=True
+    ) as active:
         for server_name, err in active.unavailable:
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
@@ -152,9 +155,20 @@ async def _run(
             max_tool_rounds=max_tool_rounds,
             max_input_tokens=max_input_tokens,
             max_tool_result_tokens=max_tool_result_tokens,
+            # Unattended: nobody is watching to complete a browser sign-in, so a
+            # tool that needs one raises the app-global banner and fails fast
+            # rather than parking the run for the full interactive window.
+            auth_wait_timeout=0.0,
         ):
             if isinstance(ev, AssistantTextDelta):
                 # The scheduler doesn't stream deltas; it persists whole turns.
+                continue
+
+            if isinstance(ev, ToolAuthRequired):
+                from precursor.backend.services.events import publish_mcp_auth_required
+
+                logger.warning("Scheduled run: %s needs a sign-in for %s", ev.server, ev.tool)
+                await publish_mcp_auth_required(ev.server, ev.message, topic_id=topic_id)
                 continue
 
             if isinstance(ev, AssistantFinalTurn):

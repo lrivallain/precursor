@@ -136,6 +136,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.client import configure_playwright_server
 
     await configure_playwright_server()
+    # Seed the tool catalogues from disk *after* the entries are configured (the
+    # configure_* calls above reset ``tools``), so Settings and the first prompt
+    # both have a catalogue before anything connects.
+    from precursor.backend.services.mcp import tool_cache
+
+    try:
+        await tool_cache.hydrate_entries()
+    except Exception:  # pragma: no cover - defensive: a cold cache is not fatal
+        logger.warning("MCP tool-cache hydration failed", exc_info=True)
     from precursor.backend.services.scheduler import get_scheduler
 
     scheduler = get_scheduler()
@@ -164,6 +173,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     workiq_keepalive = get_workiq_keepalive()
     await workiq_keepalive.start()
+    from precursor.backend.services.mcp.warmup import get_mcp_warmup
+
+    mcp_warmup = get_mcp_warmup()
+    await mcp_warmup.start()
     from precursor.backend.services.agents.manager import get_agent_manager
 
     agent_manager = get_agent_manager()
@@ -185,6 +198,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await agent_event_ticker.stop()
         await backup_ticker.stop()
         await workiq_keepalive.stop()
+        await mcp_warmup.stop()
         await agent_manager.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
 

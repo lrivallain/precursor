@@ -105,14 +105,15 @@ async def list_servers(
 ) -> list[dict[str, Any]]:
     manager = get_mcp_client_manager()
     enabled = await _load_enabled(session)
-    # Enabled servers with an empty tool catalogue (e.g. after a process
-    # restart) need a probe to resolve their real state + tools. The chat
-    # router opens its own sessions, but the UI relies on the cached tools
-    # list to render the catalogue.
+    # Enabled servers still need a probe to resolve their *live* state: either
+    # they have no catalogue at all, or the one they have was restored from the
+    # persisted cache at startup (good enough to render, but it proves nothing
+    # about connectivity). The chat router opens its own sessions; the UI relies
+    # on this to show a real state per card.
     stale = [
         entry.name
         for entry in manager.list_entries()
-        if enabled.get(entry.name, False) and not entry.tools
+        if enabled.get(entry.name, False) and (not entry.tools or entry.tools_from_cache)
     ]
     if probe and stale:
         # Probe concurrently so a slow server (stdio spin-up, network, OAuth)

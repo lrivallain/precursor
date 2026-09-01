@@ -23,6 +23,37 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   tree rather than a wheel. Extracting `precursor-kanban` to
   [its own repository](https://github.com/lrivallain/precursor-kanban) is what
   surfaced it.
+- **The MCP tool catalogue survives a restart.** Each server's tool list is
+  stored and restored at startup, so **Settings → MCP** renders and the model is
+  offered tools before anything has connected. The live session stays
+  authoritative: a call that finds a tool the server no longer exposes re-lists
+  the catalogue and retries once instead of reporting a tool that isn't there.
+- **Enabled MCP servers are warmed in the background at startup**, one at a time,
+  so the first prompt of a session no longer pays connect + initialize +
+  list_tools for all of them at once (and an `npx` spin-up for the stdio ones).
+  It never blocks startup or a request, and it never starts an interactive
+  sign-in — a server whose credential has lapsed is skipped, so launching the app
+  can't pop a browser window at you. Tunable via `PRECURSOR_MCP_WARMUP_ENABLED`,
+  `PRECURSOR_MCP_WARMUP_DELAY_SECONDS` and `PRECURSOR_MCP_WARMUP_GAP_SECONDS`;
+  each server that resolves publishes an `mcp.server_state` event.
+
+### Changed
+
+- **One stale credential no longer stalls unrelated work.** The MCP sign-in gate
+  ran *before* the model: if any enabled server was parked in `needs_auth`, the
+  turn waited on that sign-in for up to five minutes before generating a single
+  token. With three Entra credentials in play, an expired WorkIQ token held up
+  questions that had nothing to do with WorkIQ.
+
+  The turn now starts immediately and the sign-in is requested at the moment a
+  tool actually needs it — naming the tool, which the old blanket prompt could
+  not. The call then retries while it waits for that sign-in. This is not the
+  tools being hidden: a blocked server still contributes its catalogue to what
+  the model is offered, because dropping it is what makes a model answer from
+  memory instead of calling the tool. A sign-in that never arrives yields an
+  explicit tool error rather than a confident guess. Unattended runs (the
+  scheduler) raise the banner but fail fast, since nobody is there to complete
+  a browser flow.
 
 ### Fixed
 
