@@ -9,6 +9,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Added
+
+- **`precursor` now ships a `py.typed` marker (PEP 561), so the plugin API is a
+  typed contract outside this repository.** Without it, mypy treats every
+  `precursor.*` import in an *installed* environment as untyped and silently
+  degrades the whole surface — `PluginRegistry`, the read models, the GitHub
+  guards — to `Any`. Under `strict` that is the worst outcome available: a
+  plugin author gets no errors *and* no checking of the one boundary most likely
+  to break when Precursor moves.
+
+  In-repo plugins never noticed, because they type-check against this source
+  tree rather than a wheel. Extracting `precursor-kanban` to
+  [its own repository](https://github.com/lrivallain/precursor-kanban) is what
+  surfaced it.
+
 ### Fixed
 
 - **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
