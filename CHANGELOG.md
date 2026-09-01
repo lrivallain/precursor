@@ -68,6 +68,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Running the test suite killed the developer's own Precursor.** Every other
+  external the tests touch is redirected — the database, the data dir, the skills
+  dir — but login items are not addressed by an env var: launchd reads
+  `~/Library/LaunchAgents` and systemd `~/.config/systemd/user`, both global to
+  the user account. `supervisor.stop()` and `restart()` ask `managed_unit()`
+  whether a *controllable* login item owns the instance, and it answered from the
+  developer's real plist, so a supervisor test with a perfectly isolated data dir
+  still ran `launchctl bootout` against the machine's actual running app.
+
+  Booted out is worse than killed: `KeepAlive` can only restart a job that is
+  still loaded, so the app stayed down until someone bootstrapped it by hand —
+  with the tray left running against a server that no longer existed. `conftest`
+  now redirects the single path chokepoint every platform goes through, and a
+  test fails if that isolation is ever dropped.
+
+
 - **Agents mode reported its runtime as missing on installs that had a perfectly
   good Copilot CLI.** `github-copilot-sdk` 1.0.4 replaced its platform-specific
   wheels — which *bundled* the ~90 MB native CLI — with a small pure-Python wheel
