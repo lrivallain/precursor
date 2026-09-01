@@ -68,6 +68,18 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_install(args: argparse.Namespace) -> int:
+    # Before the login item exists, so the unit it registers starts on a port it
+    # can actually bind. launchd/systemd start the job as part of registering it,
+    # and a busy port would otherwise leave them retrying a doomed bind forever.
+    reservation = supervisor.reserve_port(port=args.port)
+    if reservation.moved_from is not None:
+        print(
+            f"Port {reservation.moved_from} is in use — Precursor will run on "
+            f"{reservation.port} instead."
+        )
+    if reservation.env_file:
+        print(f"Port {reservation.port} saved to {reservation.env_file}")
+
     info = autostart.install(autostart.APP)
     print(f"Autostart installed ({info.kind}): {info.path}")
 
@@ -233,6 +245,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="tray",
         action="store_false",
         help="Register only the app, not the menu-bar icon.",
+    )
+    install.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to run on. Defaults to the configured one, moving to the next "
+        "free port (saved to .env) if it is busy.",
     )
     install.set_defaults(func=_cmd_install, tray=True)
 

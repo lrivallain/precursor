@@ -9,6 +9,7 @@ adopt a port something else already owns.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import socket
 import subprocess
@@ -278,6 +279,34 @@ def test_run_foreground_yields_to_an_existing_instance(monkeypatch: pytest.Monke
     supervisor.run_foreground()  # returns cleanly == exit 0
 
 
+def test_run_foreground_bumps_rather_than_crash_looping(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    """The login item must never refuse to start over a busy port.
+
+    launchd's KeepAlive and systemd's Restart read a non-zero exit as a crash
+    and retry forever, so a port someone else owns would leave Precursor down
+    and looping. It runs on the next free port instead and publishes it.
+    """
+    listener, port = _busy_port()
+    (_instance_dir / ".env").write_text(f"PRECURSOR_PORT={port}\n", encoding="utf-8")
+    config.get_settings.cache_clear()
+    served: dict[str, int] = {}
+    monkeypatch.setattr(
+        "precursor.backend.__main__._run_prod",
+        lambda _host, p, *_a, **_k: served.setdefault("port", p),
+    )
+    cwd = os.getcwd()
+    try:
+        supervisor.run_foreground()
+    finally:
+        os.chdir(cwd)
+        listener.close()
+        config.get_settings.cache_clear()
+
+    assert served["port"] > port
+
+
 def test_settings_come_from_the_instance_dir_not_the_callers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -305,3 +334,115 @@ def test_instance_settings_fall_back_when_there_is_no_env_file(
 ) -> None:
     monkeypatch.setattr(supervisor, "working_dir", lambda: tmp_path / "empty")
     assert supervisor.instance_settings().port == config.get_settings().port
+
+
+@pytest.fixture
+def _instance_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """An empty, throwaway ``working_dir()`` — the `.env` reserve_port writes to."""
+    instance = tmp_path / "instance"
+    instance.mkdir()
+    monkeypatch.delenv("PRECURSOR_PORT", raising=False)
+    monkeypatch.setattr(supervisor, "working_dir", lambda: instance)
+    return instance
+
+
+def _busy_port() -> tuple[socket.socket, int]:
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    return listener, listener.getsockname()[1]
+
+
+def test_reserve_port_keeps_a_free_default_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    listener, port = _busy_port()
+    listener.close()  # ...so the "configured" port is known-free
+    monkeypatch.setattr(supervisor, "instance_settings", lambda: config.Settings(port=port))
+
+    reservation = supervisor.reserve_port()
+    assert reservation.port == port
+    assert reservation.moved_from is None
+    assert reservation.env_file is None
+    assert not (_instance_dir / ".env").exists()
+
+
+def test_reserve_port_moves_a_busy_default_and_records_it(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    """The bug a naive first install hits: something else already owns 8000.
+
+    Registering the login item against a port it can never bind leaves
+    launchd/systemd retrying a doomed start forever, so the installer must
+    settle on a free port *before* the unit exists — and persist it, or the
+    unit (started with no arguments) would read the busy default right back.
+    """
+    listener, port = _busy_port()
+    monkeypatch.setattr(supervisor, "instance_settings", lambda: config.Settings(port=port))
+    try:
+        reservation = supervisor.reserve_port()
+    finally:
+        listener.close()
+
+    assert reservation.moved_from == port
+    assert reservation.port > port
+    assert reservation.env_file == str(_instance_dir / ".env")
+    assert f"PRECURSOR_PORT={reservation.port}" in (_instance_dir / ".env").read_text()
+
+
+def test_reserve_port_replaces_a_previously_reserved_line(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    """Re-installing must not stack a second assignment the last one shadows."""
+    env = _instance_dir / ".env"
+    env.write_text("PRECURSOR_LOG_LEVEL=debug\nPRECURSOR_PORT=8000\n", encoding="utf-8")
+    supervisor._persist_port(8123)
+    body = env.read_text(encoding="utf-8")
+    assert body.count("PRECURSOR_PORT=") == 1
+    assert "PRECURSOR_PORT=8123" in body
+    assert "PRECURSOR_LOG_LEVEL=debug" in body
+
+
+def test_reserve_port_refuses_to_move_a_port_somebody_chose(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    """A pinned port is a decision: report it, don't silently serve elsewhere."""
+    listener, port = _busy_port()
+    (_instance_dir / ".env").write_text(f"PRECURSOR_PORT={port}\n", encoding="utf-8")
+    try:
+        with pytest.raises(supervisor.SupervisorError, match="already in use"):
+            supervisor.reserve_port()
+    finally:
+        listener.close()
+
+
+def test_start_bumps_a_busy_default_port(monkeypatch: pytest.MonkeyPatch, _instance_dir: Path):
+    """Nobody chose the default, so a first run shouldn't die on someone else's server."""
+    listener, port = _busy_port()
+    monkeypatch.setattr(supervisor, "instance_settings", lambda: config.Settings(port=port))
+    spawned: dict[str, int] = {}
+
+    class _Proc:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None
+
+    def _fake_popen(cmd: list[str], **_kwargs: object) -> _Proc:
+        spawned["port"] = int(cmd[cmd.index("--port") + 1])
+        return _Proc()
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", _fake_popen)
+    # Always "listening": the busy default is what triggers the bump, and the
+    # spawned child answering on the new port is what ends the readiness wait.
+    monkeypatch.setattr(supervisor, "_port_responds", lambda *_a, **_k: True)
+    monkeypatch.setattr(supervisor, "managed_unit", lambda: None)
+    try:
+        status = supervisor.start()
+    finally:
+        listener.close()
+
+    assert spawned["port"] > port
+    assert status.state is not None
+    assert status.state.port == spawned["port"]

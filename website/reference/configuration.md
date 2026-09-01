@@ -22,7 +22,7 @@ Copy `.env.example` to `.env` and uncomment only what you want to override.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_HOST` | `127.0.0.1` | Bind address. Keep it on loopback unless you front the app with your own auth. |
-| `PRECURSOR_PORT` | `8000` | The URL you open. In `--dev`, the Vite UI runs here and the backend moves to `PORT + 1`. A busy port auto-bumps to the next free one. |
+| `PRECURSOR_PORT` | `8000` | The URL you open. In `--dev`, the Vite UI runs here and the backend moves to `PORT + 1`. A busy port auto-bumps to the next free one — and `precursor service install` writes the port it settled on back to the [instance `.env`](/features/background-app#picking-a-port) so it stays put. |
 | `PRECURSOR_LOG_LEVEL` | `info` | uvicorn/app log level. |
 | `PRECURSOR_SHUTDOWN_GRACE_SECONDS` | `3` | Seconds to wait for in-flight requests (e.g. SSE streams) before force-closing on Ctrl-C, so the port is released promptly. |
 | `PRECURSOR_CORS_ORIGINS` | *(empty)* | Comma-separated list of extra allowed origins. Empty means same-origin only, which is what a local-first single-user app wants. |

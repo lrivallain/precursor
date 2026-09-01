@@ -54,6 +54,30 @@ precursor service uninstall   # remove the login items
 `status` exits non-zero when nothing is running, so it drops straight into a
 shell prompt or a monitoring check. Add `--json` for a machine-readable form.
 
+### Picking a port
+
+Installing is most people's *first* run, and `8000` is a popular port — another
+dev server holding it must not be the thing that makes an install fail.
+
+So `precursor service install` settles the port **before** it registers the
+login item: if the configured one is busy it takes the next free port and writes
+it to `.env` in the [data directory](#where-the-data-lives), then reports both.
+
+```
+Port 8000 is in use — Precursor will run on 8001 instead.
+Port 8001 saved to /home/you/.local/share/precursor/.env
+```
+
+Recording it is what makes the choice stick. launchd and systemd start the login
+item with no arguments, so the port has to live in a file the instance re-reads
+on its own — otherwise every boot would read the busy default straight back, and
+the URL would drift with whatever else happened to be listening that day.
+
+A port **you** chose — `PRECURSOR_PORT` in the environment or in that `.env`, or
+`precursor service install --port 8123` — is never moved silently: if it is
+taken, the install stops and says so, because a deliberate choice deserves an
+error rather than a different URL.
+
 ### How it knows
 
 The supervisor records the instance it started in `runtime.json` inside the
