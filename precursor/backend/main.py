@@ -173,6 +173,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     workiq_keepalive = get_workiq_keepalive()
     await workiq_keepalive.start()
+    from precursor.backend.services.mcp.warmup import get_mcp_warmup
+
+    mcp_warmup = get_mcp_warmup()
+    await mcp_warmup.start()
     from precursor.backend.services.agents.manager import get_agent_manager
 
     agent_manager = get_agent_manager()
@@ -194,6 +198,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await agent_event_ticker.stop()
         await backup_ticker.stop()
         await workiq_keepalive.stop()
+        await mcp_warmup.stop()
         await agent_manager.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
 

@@ -131,6 +131,18 @@ async def publish_mcp_auth_required(
     )
 
 
+async def publish_mcp_server_state(server: str, state: str, *, tools: int) -> None:
+    """Announce that an MCP server's connection state changed out-of-band.
+
+    Emitted by the startup warm-up as each server finishes, so an open Settings
+    panel reflects the real state (and tool count) as it resolves instead of
+    sitting on the "connecting" placeholder until the user reloads.
+    """
+    await _bus.publish(
+        {"type": "mcp.server_state", "server": server, "state": state, "tools": tools}
+    )
+
+
 async def publish_mcp_auth_url(server: str, url: str) -> None:
     """Hand the frontend the interactive OAuth authorization URL to open.
 

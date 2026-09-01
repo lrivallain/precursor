@@ -35,6 +35,13 @@ os.environ["PRECURSOR_SKILLS_DIR"] = _skills_dir
 _data_dir = tempfile.mkdtemp(prefix="precursor-test-data-")
 os.environ["PRECURSOR_DATA_DIR"] = _data_dir
 
+# Keep the startup MCP warm-up out of the suite. Every ``TestClient(create_app())``
+# runs the real lifespan, and a sweep that outlives the client's 5s grace period
+# would spawn ``npx`` subprocesses for the stdio built-ins on a developer machine
+# where they happen to be enabled. Tests that exercise the warm-up build their own
+# ``MCPWarmUp`` with explicit settings.
+os.environ["PRECURSOR_MCP_WARMUP_ENABLED"] = "false"
+
 # Isolate the login-item units. Unlike everything above, these are NOT addressed
 # by an env var: launchd reads ``~/Library/LaunchAgents`` and systemd
 # ``~/.config/systemd/user``, both of which are global to the user account.
