@@ -480,6 +480,10 @@ export interface AgentRuntimeStatus {
   install_blocked_reason: string | null;
   can_restart: boolean;
   restart_blocked_reason: string | null;
+  // Whether any archived agent timeline survives on disk — the retention levers
+  // stay reachable with Agents off only when there is history the sweep is
+  // still pruning.
+  has_archived_events: boolean;
   job: AgentProvisionJob | null;
 }
 

@@ -22,9 +22,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 
 from precursor.backend import supervisor
+from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
+from precursor.backend.models import AgentEventRecord, AgentSession
 from precursor.backend.services.agents import provision, runtime
 
 
@@ -47,6 +50,14 @@ def _fake_download_module(monkeypatch, result="/tmp/copilot", error: Exception |
     module.get_or_download_cli = get_or_download_cli  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "copilot._cli_download", module)
     return module
+
+
+async def _clear_agent_history() -> None:
+    """Empty the agent tables — the temp DB is shared for the whole session."""
+    async with SessionLocal() as session:
+        await session.execute(delete(AgentEventRecord))
+        await session.execute(delete(AgentSession))
+        await session.commit()
 
 
 async def _settle(job: provision.ProvisionJob) -> None:
@@ -88,6 +99,49 @@ def test_runtime_routes_are_reachable_while_agents_are_disabled() -> None:
     with TestClient(app) as client:
         assert client.post("/api/agents", json={"task": "x"}).status_code == 409
         assert client.get("/api/agents/runtime").status_code == 200
+
+
+def test_a_fresh_install_reports_no_archived_timeline() -> None:
+    """Drives whether the retention levers are worth showing with Agents off.
+
+    The sweep is gated on ``scheduler_enabled``, not on Agents mode, so it keeps
+    pruning after the feature is switched off — which is why the levers stay
+    reachable while events exist. With none on disk there is nothing for them to
+    protect, and the panel drops the section instead of explaining a background
+    job that has no work to do.
+    """
+    app = create_app()
+    with TestClient(app) as client:
+        # Isolate from other tests sharing the session-wide temp DB.
+        asyncio.run(_clear_agent_history())
+        assert client.get("/api/agents/runtime").json()["has_archived_events"] is False
+
+
+def test_an_archived_timeline_keeps_the_retention_levers_reachable() -> None:
+    """The dangerous combination this guards against.
+
+    The sweep keeps pruning ``agent_events`` after Agents mode is switched off,
+    so hiding the levers while history exists would leave no way to stop a
+    background job quietly erasing it. Once there are events, the flag is set
+    regardless of whether the feature is on.
+    """
+
+    async def seed() -> None:
+        async with SessionLocal() as session:
+            agent = AgentSession(title="Old run", task_prompt="x", status="completed")
+            session.add(agent)
+            await session.flush()
+            session.add(AgentEventRecord(agent_session_id=agent.id, payload='{"kind":"archived"}'))
+            await session.commit()
+
+    app = create_app()
+    with TestClient(app) as client:
+        asyncio.run(seed())
+        try:
+            assert client.get("/api/agents/runtime").json()["has_archived_events"] is True
+        finally:
+            # The temp DB is shared for the whole session.
+            asyncio.run(_clear_agent_history())
 
 
 def test_old_sdk_line_reports_that_there_is_nothing_to_download(monkeypatch) -> None:

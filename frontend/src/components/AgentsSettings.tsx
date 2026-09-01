@@ -295,10 +295,11 @@ export function AgentsSettings() {
   const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
   const systemPrompt = settings?.agents_system_prompt ?? "";
   const watchdogTimeout = settings?.agents_watchdog_timeout_seconds ?? 600;
-  // Archived-timeline retention. Deliberately readable even when Agents mode is
-  // off: the events outlive the feature toggle, and the sweep keeps running.
+  // Archived-timeline retention. Reachable with Agents mode off, but only when
+  // there is history to protect — see the section's own comment below.
   const eventRetentionDays = settings?.agent_event_retention_days ?? 30;
   const eventMaxPerSession = settings?.agent_event_max_per_session ?? 2000;
+  const hasArchivedEvents = runtime?.has_archived_events ?? false;
 
   const refreshRuntime = useCallback(() => {
     void api.agents.getRuntime()
@@ -585,85 +586,100 @@ export function AgentsSettings() {
         </div>
       )}
 
-      <div className="space-y-2 rounded border border-border bg-surface/50 p-3">
-        <span className="flex items-center gap-1.5 text-sm font-medium">
-          <HardDrive size={14} /> Timeline retention
-        </span>
-        <p className="text-[11px] text-muted">
-          Every event an agent emits is archived so its timeline survives a
-          restart, which makes it the fastest-growing table in a busy install.
-          These two levers bound it. An agent keeps its result, artifacts, state
-          and posted messages either way, and a <em>running</em> agent is never
-          pruned.
-        </p>
-        <div className="flex flex-wrap gap-4">
-          <label className="block space-y-1">
-            <span className="block text-[12px]">Keep events for</span>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                max={3650}
-                step={1}
-                disabled={busy}
-                value={eventRetentionDays}
-                onChange={(e) =>
-                  settingsStore.set({
-                    ...settings!,
-                    agent_event_retention_days: clampInt(e.target.value, 0, 3650),
-                  })
-                }
-                onBlur={(e) =>
-                  void patch({
-                    agent_event_retention_days: clampInt(e.target.value, 0, 3650),
-                  })
-                }
-                className="w-20 rounded border border-border bg-surface px-2 py-1 text-[12px]"
-              />
-              <span className="text-[12px] text-muted">days</span>
-            </div>
-            <span className="block text-[11px] text-muted">
-              0 keeps them forever.
-            </span>
-          </label>
+      {/* Reachable with Agents mode off, but only when there is something to
+          retain. The sweep is gated on `scheduler_enabled`, not on this feature,
+          so it keeps pruning archived events after the toggle goes off — hiding
+          the levers while that runs would leave no way to stop a background job
+          quietly erasing history you may want to keep. With no events on disk
+          there is nothing to protect, so the section is just noise. */}
+      {(enabled || hasArchivedEvents) && (
+        <div className="space-y-2 rounded border border-border bg-surface/50 p-3">
+          <span className="flex items-center gap-1.5 text-sm font-medium">
+            <HardDrive size={14} /> Timeline retention
+          </span>
+          <p className="text-[11px] text-muted">
+            Every event an agent emits is archived so its timeline survives a
+            restart, which makes it the fastest-growing table in a busy install.
+            These two levers bound it. An agent keeps its result, artifacts, state
+            and posted messages either way, and a <em>running</em> agent is never
+            pruned.
+          </p>
+          {!enabled && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              Agents mode is off, but the sweep still runs — these levers keep
+              applying to the timelines already archived. Set the window to 0 to
+              keep them all.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-4">
+            <label className="block space-y-1">
+              <span className="block text-[12px]">Keep events for</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={3650}
+                  step={1}
+                  disabled={busy}
+                  value={eventRetentionDays}
+                  onChange={(e) =>
+                    settingsStore.set({
+                      ...settings!,
+                      agent_event_retention_days: clampInt(e.target.value, 0, 3650),
+                    })
+                  }
+                  onBlur={(e) =>
+                    void patch({
+                      agent_event_retention_days: clampInt(e.target.value, 0, 3650),
+                    })
+                  }
+                  className="w-20 rounded border border-border bg-surface px-2 py-1 text-[12px]"
+                />
+                <span className="text-[12px] text-muted">days</span>
+              </div>
+              <span className="block text-[11px] text-muted">
+                0 keeps them forever.
+              </span>
+            </label>
 
-          <label className="block space-y-1">
-            <span className="block text-[12px]">Max events per agent</span>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                max={1000000}
-                step={100}
-                disabled={busy}
-                value={eventMaxPerSession}
-                onChange={(e) =>
-                  settingsStore.set({
-                    ...settings!,
-                    agent_event_max_per_session: clampInt(e.target.value, 0, 1000000),
-                  })
-                }
-                onBlur={(e) =>
-                  void patch({
-                    agent_event_max_per_session: clampInt(e.target.value, 0, 1000000),
-                  })
-                }
-                className="w-24 rounded border border-border bg-surface px-2 py-1 text-[12px]"
-              />
-              <span className="text-[12px] text-muted">events</span>
-            </div>
-            <span className="block text-[11px] text-muted">
-              Newest kept first; 0 is unlimited.
-            </span>
-          </label>
+            <label className="block space-y-1">
+              <span className="block text-[12px]">Max events per agent</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={1000000}
+                  step={100}
+                  disabled={busy}
+                  value={eventMaxPerSession}
+                  onChange={(e) =>
+                    settingsStore.set({
+                      ...settings!,
+                      agent_event_max_per_session: clampInt(e.target.value, 0, 1000000),
+                    })
+                  }
+                  onBlur={(e) =>
+                    void patch({
+                      agent_event_max_per_session: clampInt(e.target.value, 0, 1000000),
+                    })
+                  }
+                  className="w-24 rounded border border-border bg-surface px-2 py-1 text-[12px]"
+                />
+                <span className="text-[12px] text-muted">events</span>
+              </div>
+              <span className="block text-[11px] text-muted">
+                Newest kept first; 0 is unlimited.
+              </span>
+            </label>
+          </div>
+          <p className="text-[11px] text-muted">
+            Agent traffic is bursty rather than aged, so the per-agent cap is what
+            bounds a single long autonomous run — the window alone wouldn&apos;t
+            reach it for weeks. Settings → Usage stats shows what a sweep would
+            free and runs it on demand.
+          </p>
         </div>
-        <p className="text-[11px] text-muted">
-          Agent traffic is bursty rather than aged, so the per-agent cap is what
-          bounds a single long autonomous run — the window alone wouldn&apos;t
-          reach it for weeks. Settings → Usage stats shows what a sweep would
-          free and runs it on demand.
-        </p>
-      </div>
+      )}
 
       {/* Blueprints instantiate agents, so they are inert with the feature off
           or no runtime behind it. Hidden rather than cleared: the stored

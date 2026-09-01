@@ -56,8 +56,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   for a state the user chose.
 
   Nothing is deleted: the stored values are untouched and reappear exactly as
-  they were. **Timeline retention stays visible** throughout, because archived
-  events outlive the feature toggle and the sweep keeps running either way.
+  they were.
+
+  **Timeline retention** follows a narrower rule than "always visible". Its sweep
+  is gated on `scheduler_enabled`, not on Agents mode, so it keeps pruning
+  archived events after the feature is switched off — hiding the levers while
+  that runs would leave no way to stop a background job quietly erasing history
+  you may want to keep. So they stay reachable when events exist, and say so;
+  with nothing on disk there is nothing to protect and the section goes away with
+  the rest.
 
 - **Settings → Workflows says that workflows need Agents mode.** Every workflow
   step runs an agent, so with Agents off these defaults configure a pipeline that

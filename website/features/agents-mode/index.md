@@ -33,8 +33,16 @@ fails. On success it starts the runtime in place; only if that doesn't take does
 it ask for a restart.
 
 The same rule applies to the switch itself: with Agents mode **off**, the panel is
-just the toggle and timeline retention — no runtime warnings about something you
-deliberately stopped, no blueprints you cannot instantiate.
+just the toggle — no runtime warnings about something you deliberately stopped, no
+blueprints you cannot instantiate.
+
+The one thing that can outlive the switch is
+[timeline retention](/features/storage). Its sweep runs on the scheduler, not on
+Agents mode, so it keeps pruning archived events after you turn the feature off.
+Those levers therefore stay reachable **whenever archived events exist** — hiding
+them would leave no way to stop a background job erasing a history you may want
+to keep. On an install that has never run an agent there is nothing to protect,
+and the section goes away with the rest.
 
 Nothing is destroyed either way — your model, approval policy, system message,
 watchdog and blueprints are hidden, not cleared, and come back exactly as you

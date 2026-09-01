@@ -218,7 +218,7 @@ async def list_agent_models(
 # them on it would make the only way to fix that unreachable.
 
 
-def _runtime_status() -> AgentRuntimeStatus:
+async def _runtime_status(session: AsyncSession) -> AgentRuntimeStatus:
     ok, detail = runtime.agents_available()
     can_install, install_reason = provision.download_supported()
     can_restart, restart_reason = supervisor.restartable()
@@ -233,29 +233,45 @@ def _runtime_status() -> AgentRuntimeStatus:
         install_blocked_reason=None if can_install else install_reason,
         can_restart=can_restart,
         restart_blocked_reason=None if can_restart else restart_reason,
+        has_archived_events=await _has_archived_events(session),
         job=AgentProvisionJob.model_validate(job.as_dict()) if job else None,
     )
 
 
+async def _has_archived_events(session: AsyncSession) -> bool:
+    """Whether any archived agent timeline survives on disk.
+
+    Existence, not a count: ``agent_events`` is the fastest-growing table in a
+    busy install and this is read from a polled endpoint, so ``LIMIT 1`` is the
+    only shape that stays cheap. The caller only needs the boolean anyway —
+    "is there history the retention sweep is still pruning?".
+    """
+    return (await session.execute(select(AgentEventRecord.id).limit(1))).first() is not None
+
+
 @router.get("/runtime", response_model=AgentRuntimeStatus)
-async def get_agent_runtime() -> AgentRuntimeStatus:
+async def get_agent_runtime(
+    session: AsyncSession = Depends(get_session),
+) -> AgentRuntimeStatus:
     """Runtime capability, plus whatever provisioning job is in flight.
 
     One endpoint rather than two because the panel polls this while a download
     runs — folding the job in keeps that a single request.
     """
-    return _runtime_status()
+    return await _runtime_status(session)
 
 
 @router.post("/runtime/cli", response_model=AgentRuntimeStatus)
-async def install_agent_cli() -> AgentRuntimeStatus:
+async def install_agent_cli(
+    session: AsyncSession = Depends(get_session),
+) -> AgentRuntimeStatus:
     """Start downloading the native Copilot CLI (~90 MB).
 
     Returns immediately: the download outlives a request, so progress is read
     back from ``GET /runtime``. Starting twice is a no-op.
     """
     provision.start_download()
-    return _runtime_status()
+    return await _runtime_status(session)
 
 
 @router.post("/runtime/restart", status_code=status.HTTP_202_ACCEPTED)

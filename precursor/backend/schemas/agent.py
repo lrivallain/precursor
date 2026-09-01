@@ -468,6 +468,11 @@ class AgentRuntimeStatus(BaseModel):
     # Whether this instance can restart itself (a `--dev` stack cannot).
     can_restart: bool = False
     restart_blocked_reason: str | None = None
+    # Whether any archived agent timeline survives on disk. Drives whether the
+    # retention levers stay reachable with Agents mode off: the sweep keeps
+    # pruning regardless, so hiding them while events exist would leave no way
+    # to stop a background job quietly erasing that history.
+    has_archived_events: bool = False
     job: AgentProvisionJob | None = None
 
 
