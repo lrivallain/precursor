@@ -28,13 +28,25 @@ Pick one of your GitHub **Projects v2** and Precursor draws it as a board:
   **open/closed** state, the **title**, and its **labels**.
 - **Filter issues** narrows the board as you type.
 
-## Boards beyond your own account
+## Managing which boards appear
 
-By default the picker lists every open project owned by the account behind your
-configured repository. That is a sensible default and a poor ceiling — the board
-you care about often belongs to somebody else.
+Everything about *which* boards you see is managed on the board itself — there is
+no Kanban page in Settings, because it would only be the same list one navigation
+further away.
 
-**Settings → Plugins → Kanban** takes extra sources:
+### A repository is optional
+
+If a GitHub repository is configured (**Settings → GitHub**), the picker lists
+every open project its account owns. That is a convenience, not a requirement:
+the repository is only ever read for its **owner**, so it is just another way of
+saying "list this account's boards".
+
+What the board actually needs is a **token with the `project` scope**. An install
+with no repository at all works fine, driven entirely by the projects you add.
+
+### Adding a project
+
+The **+** next to the Precursor logo opens **Add a project**:
 
 | You type | You get |
 | --- | --- |
@@ -42,13 +54,35 @@ you care about often belongs to somebody else.
 | `acme-corp#4` | Just that one project |
 | `https://github.com/orgs/acme-corp/projects/4` | Just that one project |
 
-Extras are additive and de-duplicated, so re-listing an account you already see
-changes nothing. Once boards come from more than one account the picker labels
-each with its owner, which is what tells two projects called "Roadmap" apart. A
-source you have lost access to is skipped rather than breaking the picker — fix
-or remove it in the same panel.
+Additions are de-duplicated, so naming an account you already see changes
+nothing. Once boards come from more than one account the picker labels each with
+its owner, which is what tells two projects called "Roadmap" apart.
 
-You still need read access to the project, and a token with the `project` scope.
+You need read access to the project, and a token with the `project` scope.
+
+### Removing a project
+
+**Right-click any board** in the picker:
+
+- **Hide from board** takes that one board out of the main list. It works on
+  every row, including the ones a configured repository's owner provides — those
+  have no entry behind them, so hiding is the only way to move them aside.
+- **Stop tracking `<source>`** drops the entry that added the board. It only
+  appears for boards an entry actually produced. Because a source can be a whole
+  *account*, the action says how many boards it will take with it and asks for
+  confirmation first.
+
+### Hidden and unresolved
+
+Two groups sit below the list, so nothing you have configured can become
+invisible *and* unremovable:
+
+- **Hidden (N)** expands to the boards you have hidden. Right-click → **Show on
+  board** puts one back. Hiding never stops a source being tracked, so it is
+  always reversible.
+- **Not resolving** lists sources that currently produce no board — renamed,
+  revoked, made private, or an account with no open projects. Right-click →
+  **Stop tracking** removes the entry.
 
 ## Moving cards
 
@@ -80,10 +114,9 @@ right from the preview.
 
 ## Enabling the board
 
-The Kanban section is **optional**, gated twice over.
-
-First it has to be **installed**. It rides along with the `kanban` extra, which
-the recommended install already includes:
+The Kanban section is **optional**: it exists only if its package is installed.
+It rides along with the `kanban` extra, which the recommended install already
+includes:
 
 ```bash
 uv tool install "precursor-ai[kanban]"
@@ -94,19 +127,19 @@ uv pip install precursor-kanban
 A plain `pip install precursor-ai` gets a core with no board at all — no
 sidebar entry, no route, no `/api/github/projects` endpoints.
 
-Then it has to be **applicable**. Once installed, it appears — as a card on the
-home launcher, an entry in the sidebar rail, and an entry in the **command
-palette** (⌘K / Ctrl-K) — as soon as two conditions are met in **Settings**:
+Once installed it always appears — as a card on the home launcher, an entry in
+the sidebar rail, and an entry in the **command palette** (⌘K / Ctrl-K). It does
+not hide itself when GitHub isn't set up yet: a plugin you installed and enabled
+that is nowhere to be seen is indistinguishable from a broken one, so the board
+explains what is missing instead.
 
-1. a **global GitHub repo** is set (its owner's projects are listed), and
-2. **issue associations** are enabled.
-
-Turn either off and the section quietly withdraws.
-
-It also needs a GitHub token with access to your Projects (the `read:project`
-scope, or a fine-grained token with Projects read). Precursor resolves the token
-from **Settings → GitHub** or your `gh auth login` session — see
+To show anything it needs a GitHub token with access to your Projects (the
+`read:project` scope, or a fine-grained token with Projects read). Precursor
+resolves it from **Settings → GitHub** or your `gh auth login` session — see
 [Configuration](/guide/configuration#github-authentication).
+
+**Issue associations** (Settings → GitHub) remain the master switch for the whole
+GitHub surface: turn them off and the board's endpoints answer 403.
 
 ::: tip Pairs with the scheduler
 Combine the board with [scheduled topics](/features/scheduler) — e.g. a nightly

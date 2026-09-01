@@ -38,8 +38,11 @@ group; no configuration is needed.
 
 ## Requirements
 
-- A GitHub repository configured in **Settings → GitHub**, with issue
-  associations enabled — the section stays hidden otherwise.
+- **Issue associations** enabled in **Settings → GitHub** — the master switch for
+  the whole GitHub surface; the board's endpoints answer 403 without it.
+- A GitHub repository is **optional**. When set it contributes its owner's
+  boards, which is all it is ever read for; otherwise add projects from the
+  board's **+**.
 - A token carrying the `project` scope (a superset of `read:project`), which the
   `repo` scope does **not** imply:
 

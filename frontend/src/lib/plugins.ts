@@ -60,12 +60,6 @@ export const SECTION_SLOT = "app.section";
 export const SETTINGS_PAGE_KIND = "settings-page";
 export const SETTINGS_PAGE_SLOT = "settings.tabs";
 
-/** What a section can inspect to decide whether it should be available. */
-export interface SectionEnabledContext {
-  /** App settings, or `null` while they load. */
-  settings: Settings | null;
-}
-
 /**
  * The host services a section gets. Everything a plugin needs from core goes
  * through here, so the two never reach into each other's internals.
@@ -132,17 +126,6 @@ export interface SectionPlugin {
   /** `--section-accent` in light / dark, injected as a stylesheet on register. */
   accent: { light: string; dark: string };
   /**
-   * Gate the section on app state, and say *why* when it's closed.
-   *
-   * Return `null` when the section applies, or a short sentence explaining what
-   * is missing — kanban, for one, needs a configured GitHub repo. The reason is
-   * shown in Settings → Plugins, because a plugin that is installed and enabled
-   * yet nowhere to be seen is otherwise indistinguishable from a broken one.
-   *
-   * Omit it for a section that always applies.
-   */
-  unavailable?: (ctx: SectionEnabledContext) => string | null;
-  /**
    * Optional wrapper mounted around the whole app shell while the section is
    * active. Sections whose sidebar and main panes share state put their context
    * provider here — the two are rendered into different subtrees.
@@ -183,12 +166,16 @@ export function getSection(id: string): SectionPlugin | undefined {
 
 /**
  * Resolve the descriptors the backend published into registered sections,
- * ordered by the backend's `config.order`. A descriptor with no registration
- * (or whose registration reports itself unavailable) is dropped.
+ * ordered by the backend's `config.order`. A descriptor with no registration is
+ * dropped.
+ *
+ * A registered section always resolves. Sections used to be able to gate
+ * themselves on app state and hide until it was satisfied, which made an
+ * installed, enabled plugin silently absent — the section is a better place to
+ * explain what is missing than the sidebar is to omit it.
  */
 export function resolveSections(
   descriptors: PluginDescriptor[] | null,
-  ctx: SectionEnabledContext,
 ): SectionPlugin[] {
   if (!descriptors) return [];
   return descriptors
@@ -209,7 +196,7 @@ export function resolveSections(
         );
         return false;
       }
-      return sectionUnavailableReason(x.section, ctx) === null;
+      return true;
     })
     .filter(
       (x): x is { descriptor: PluginDescriptor; section: SectionPlugin } =>
@@ -217,19 +204,6 @@ export function resolveSections(
     )
     .sort((a, b) => sectionOrder(a.descriptor) - sectionOrder(b.descriptor))
     .map((x) => x.section);
-}
-
-/**
- * Why `section` isn't currently showing, or `null` when it is.
- *
- * Settings → Plugins uses this to explain an enabled plugin whose section is
- * nowhere to be seen, which otherwise looks exactly like a broken toggle.
- */
-export function sectionUnavailableReason(
-  section: SectionPlugin,
-  ctx: SectionEnabledContext,
-): string | null {
-  return section.unavailable?.(ctx) ?? null;
 }
 
 function sectionOrder(descriptor: PluginDescriptor): number {

@@ -9,7 +9,85 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Changed
+
+- **The kanban board no longer needs a configured GitHub repository.** It was
+  never really used: the repo is only ever read for its *owner* —
+  `list_repo_projects` discards the name — so it was one way of spelling "list
+  this account's boards", equivalent to adding that account as a source. Worse,
+  `GET /projects/{id}/board` and the card-move endpoint demanded a repo and then
+  **discarded it**, because project and item ids are global GitHub node ids.
+  A perfectly workable setup — a token plus an explicitly added project — was
+  blocked on configuration it would never consult.
+
+  A repository is now an optional default that contributes its owner's boards.
+  What the board actually requires is a token with the `project` scope, and the
+  **issue associations** switch, which remains the master control for the GitHub
+  surface.
+
+- **Kanban has no Settings page.** Which boards you track is managed on the
+  board: **+** adds one, right-click removes it. A second surface in Settings was
+  the same list, one navigation further away.
+
+  Two things only that page could reach are now in the picker itself, so nothing
+  you configure can be invisible *and* unremovable: a collapsible **Hidden (N)**
+  group (right-click → *Show on board*), and a **Not resolving** group listing
+  sources that currently produce no board — renamed, revoked, made private, or
+  simply empty — which previously vanished without trace.
+
+  `GET /api/github/projects` returns `{projects, unresolved}` accordingly, and
+  hidden boards are returned flagged rather than dropped.
+
+- **A plugin's section is always visible once enabled.** Sections could gate
+  themselves on app state and hide until it was satisfied — the kanban board
+  disappeared entirely without a configured GitHub repository. That optimised
+  for the wrong thing: an installed, enabled plugin that is nowhere in the
+  sidebar is indistinguishable from a broken one, which is why Settings →
+  Plugins needed a warning strip ("**Kanban** is hidden: No GitHub repository is
+  configured") to explain the absence.
+
+  Enabled now simply means visible. Kanban appears with or without a repository
+  and explains the setup step in the board itself, where the user actually
+  lands, instead of the developer-facing guard error the API returns. The
+  warning strip in Settings → Plugins is gone with the mechanism it described.
+
+  **Breaking for plugin authors** (`HOST_API_VERSION` 1 → 2): `SectionPlugin`
+  drops `unavailable`, and `@precursor/host` no longer exports
+  `sectionUnavailableReason` or the `SectionEnabledContext` type. A section that
+  needs setup should say so from `Main`. The backend's `PLUGIN_API_VERSION` is
+  unchanged.
+
 ### Added
+
+- **The kanban board manages its own projects.** Tracking a board used to mean a
+  trip to Settings → Plugins → Kanban, and *untracking* one meant knowing that
+  the picker's rows and the settings list are not the same thing. Both now happen
+  where the boards are.
+
+  The **+** next to the Precursor logo — core's own header button, which every
+  section shares — opens the board's **Add a project** dialog instead of routing
+  to a settings tab. **Right-clicking a board** in the picker offers to open it
+  on GitHub, **hide** it, or **stop tracking** the source that added it, matching
+  how the navigation panel behaves everywhere else.
+
+  Those two removals are deliberately different, because what the picker shows
+  and what settings store never lined up one-to-one. A *source* adds boards and
+  can name a whole account, so removing one can take several boards with it —
+  the menu says how many and asks first. Hiding always means exactly one board,
+  which is what finally makes the projects owned by your **configured
+  repository's** account removable: no settings entry produced them, so until now
+  nothing could take them out of the picker. Boards therefore report where they
+  came from (`source`, `source_ref` on `GET /api/github/projects`), and a new
+  `hidden_projects` list is applied last, to the merged listing.
+
+  Settings → Plugins → Kanban keeps the full picture and gains a **Hidden
+  projects** list to undo a hide. It stays the place a *broken* source gets
+  fixed: one that has been renamed, revoked or made private resolves to no boards
+  at all, so it has no row in the picker to right-click.
+
+  For plugin authors, `@precursor/host` now also exports `ContextMenu` and
+  `useConfirm`, so a section's list rows behave like core's rather than growing a
+  near-identical menu of their own.
 
 - **Agents mode can be turned on from Precursor.** It was the only capability
   that could not be: everything else — a model provider, an MCP server, a

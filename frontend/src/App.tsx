@@ -551,8 +551,8 @@ export default function App() {
   // and router at once, without reloading the page.
   const pluginDescriptors = usePluginDescriptors();
   const enabledSections = useMemo(
-    () => resolveSections(pluginDescriptors, { settings }),
-    [pluginDescriptors, settings],
+    () => resolveSections(pluginDescriptors),
+    [pluginDescriptors],
   );
   const activeSection = useMemo(
     () => enabledSections.find((sec) => sec.id === sidebarMode) ?? null,

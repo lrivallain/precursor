@@ -2,9 +2,15 @@
 
 Columns are auto-generated from each project's Status single-select field via
 the GraphQL API; moving a card issues an ``updateProjectV2ItemFieldValue``
-mutation. Every endpoint is gated behind the same ``github_repo`` +
-``issue_associations_enabled`` requirements as the rest of the GitHub surface,
-using the host's shared guards.
+mutation.
+
+A configured repository is **not** required. It is only ever read for its owner
+— ``list_repo_projects`` discards the name — so it is one way of saying "list
+this account's boards", equivalent to adding that account as a source. Requiring
+it would block a perfectly workable setup: a token plus an explicitly configured
+project. What every endpoint does need is the GitHub feature switch and a token
+with the ``project`` scope; project and item ids are global GitHub node ids, so
+nothing else here is repo-scoped.
 """
 
 from __future__ import annotations
@@ -19,17 +25,20 @@ from precursor.plugin_api import (
     GitHubInsufficientScopeError,
     GitHubRepoNotAccessibleError,
     get_session,
-    require_github_repo,
     require_github_token,
+    resolve_global_github_repo,
+    resolve_issue_associations_enabled,
 )
 from precursor_kanban.client import ProjectsClient
 from precursor_kanban.schemas import (
     ItemStatusResult,
     ItemStatusUpdate,
     ProjectBoard,
+    ProjectListing,
     ProjectSummary,
+    UnresolvedSource,
 )
-from precursor_kanban.sources import ProjectSource, configured_sources
+from precursor_kanban.sources import ProjectSource, board_config, project_key
 
 logger = logging.getLogger(__name__)
 
@@ -40,46 +49,91 @@ router = APIRouter(prefix="/api/github/projects", tags=["kanban"])
 SECTION_ID = "kanban"
 
 
+async def require_github_enabled(session: AsyncSession) -> None:
+    """Gate on the GitHub feature switch alone.
+
+    The host's ``require_github_repo`` bundles this check with "a repository is
+    configured". The board wants only the first half — see the module docstring
+    — so it asks for it directly rather than demanding a repo it won't use.
+    """
+    if not await resolve_issue_associations_enabled(session):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "GitHub issue associations are disabled. Enable the feature in Settings → GitHub.",
+        )
+
+
 async def _collect_source(client: ProjectsClient, source: ProjectSource) -> list[dict[str, Any]]:
     """Boards for one configured source, or an empty list if unreachable.
 
     A source that has been renamed, made private or revoked must not take the
     whole picker down with it — the other boards are still perfectly usable, and
-    the settings page is where a broken entry gets fixed.
+    the caller reports the entry separately so it stays removable.
+
+    Each board is tagged with the entry that produced it, so the picker can
+    offer to remove that entry and can warn when doing so drops several boards
+    at once.
     """
+    kind = "pinned" if source.number is not None else "account"
     try:
         if source.number is not None:
             project = await client.get_owner_project(source.owner, source.number)
-            return [project] if project else []
-        return await client.list_owner_projects(source.owner)
+            found = [project] if project else []
+        else:
+            found = await client.list_owner_projects(source.owner)
     except GitHubInsufficientScopeError:
         raise
     except Exception:
         logger.warning("Skipping unreachable project source %s", source.label, exc_info=True)
         return []
+    for project in found:
+        project["source"] = kind
+        project["source_ref"] = source.raw or source.label
+    return found
 
 
-@router.get("", response_model=list[ProjectSummary])
+@router.get("", response_model=ProjectListing)
 async def list_projects(
     repo: str | None = None,
     session: AsyncSession = Depends(get_session),
-) -> list[ProjectSummary]:
-    """Boards from the configured repo's owner, plus any extra sources.
+) -> ProjectListing:
+    """Boards from every configured source, plus the repo owner's when there is one.
 
-    The configured owner is the default; extras are additive and de-duplicated
-    by node id, so pinning a project from an account already listed changes
-    nothing rather than showing it twice.
+    The configured repository is an optional default, not a precondition: with
+    none set, the sources stand on their own. Boards are de-duplicated by node
+    id, so naming an account the repo already covers changes nothing rather than
+    listing it twice.
+
+    Hidden boards are returned with ``hidden=True`` rather than dropped — the
+    picker is the only place to unhide one. Sources that produced no boards are
+    reported separately so they stay visible and removable.
     """
-    target = await require_github_repo(repo, session)
+    await require_github_enabled(session)
     token = await require_github_token(session)
+    target = repo or await resolve_global_github_repo(session)
     client = ProjectsClient(token=token)
+    unresolved: list[UnresolvedSource] = []
     try:
         # Inside the guard: this reads user-supplied settings, and nothing about
         # a bad entry there should be able to take the board's own listing down.
-        sources = await configured_sources(SECTION_ID)
-        projects = await client.list_repo_projects(target)
-        for source in sources:
-            projects.extend(await _collect_source(client, source))
+        config = await board_config(SECTION_ID)
+        projects: list[dict[str, Any]] = []
+        if target:
+            projects = await client.list_repo_projects(target)
+            for project in projects:
+                project["source"] = "repo"
+                project["source_ref"] = None
+        for source in config.sources:
+            found = await _collect_source(client, source)
+            if found:
+                projects.extend(found)
+            else:
+                unresolved.append(
+                    UnresolvedSource(
+                        ref=source.raw or source.label,
+                        kind="pinned" if source.number is not None else "account",
+                    )
+                )
     except GitHubInsufficientScopeError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except GitHubRepoNotAccessibleError as exc:
@@ -87,10 +141,20 @@ async def list_projects(
     finally:
         await client.aclose()
 
+    # First occurrence wins, so a board owned by the configured account keeps its
+    # "repo" provenance even when a redundant source also names it.
     unique: dict[str, dict[str, Any]] = {}
     for project in projects:
         unique.setdefault(project["id"], project)
-    return [ProjectSummary.model_validate(p) for p in unique.values()]
+    for project in unique.values():
+        owner = project.get("owner")
+        project["hidden"] = bool(
+            owner is not None and project_key(owner, project["number"]) in config.hidden
+        )
+    return ProjectListing(
+        projects=[ProjectSummary.model_validate(p) for p in unique.values()],
+        unresolved=unresolved,
+    )
 
 
 @router.get("/{project_id}/board", response_model=ProjectBoard)
@@ -98,7 +162,7 @@ async def get_board(
     project_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> ProjectBoard:
-    await require_github_repo(None, session)
+    await require_github_enabled(session)
     token = await require_github_token(session)
     client = ProjectsClient(token=token)
     try:
@@ -119,7 +183,7 @@ async def update_item_status(
     payload: ItemStatusUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> ItemStatusResult:
-    await require_github_repo(None, session)
+    await require_github_enabled(session)
     token = await require_github_token(session)
     client = ProjectsClient(token=token)
     try:

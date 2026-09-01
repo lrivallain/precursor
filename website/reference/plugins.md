@@ -137,8 +137,6 @@ registerSection({
   openLabel: "Open it",
   colors: { /* Tailwind class tokens */ },
   accent: { light: "#0891b2", dark: "#22d3ee" },
-  unavailable: ({ settings }) =>
-    settings?.some_feature_enabled ? null : "Turn the feature on in Settings.",
   Provider: ({ host, children }) => <MyProvider host={host}>{children}</MyProvider>,
   Sidebar: MySidebar,
   Main: MyMain,
@@ -150,12 +148,11 @@ The `id` is also the section's top-level URL segment, so keep it URL-safe. The
 section owns everything under that route: core hands it the remaining segments
 and the hash and stays out of the way.
 
-`unavailable` is a *second* gate — the backend decides whether a section is
-installed, this decides whether it currently applies (kanban needs a configured
-GitHub repo). Return `null` when it applies, or a short sentence saying what is
-missing: **Settings → Plugins** shows that reason, because an enabled plugin
-whose section is nowhere to be seen is otherwise indistinguishable from a broken
-one.
+A registered section always appears. Sections could once gate themselves on app
+state and hide until it was satisfied, which made an installed, enabled plugin
+silently absent — indistinguishable from a broken one. If your section needs
+setup (kanban wants a configured GitHub repository), say so from `Main`, where
+the user actually lands, rather than removing the section from the sidebar.
 
 `Provider` wraps the app shell while the section is active, which is where shared
 state goes: `Sidebar` and `Main` render into different subtrees.
@@ -238,7 +235,10 @@ Every section component receives a `host` — the only thing core promises it:
 The single module a plugin imports from. It re-exports the host's **own** React,
 `react/jsx-runtime`, `react-dom` portals, the plugin registry, the HTTP client
 (`api`, `request`, `apiErrorMessage`) and shared chrome (`Modal`, `Markdown`,
-`EmptyHero`, `IssueLabelChip`, …). `HOST_API_VERSION` mirrors the backend's.
+`EmptyHero`, `IssueLabelChip`, `ContextMenu`, `useConfirm`, …).
+`HOST_API_VERSION` is this contract's version (currently **2**); the backend's
+`PLUGIN_API_VERSION` is the parallel number for the Python contract and moves
+independently.
 
 This matters for one hard reason: **there must be exactly one React on the
 page.** A plugin bundling its own would give the app two dispatchers and every
