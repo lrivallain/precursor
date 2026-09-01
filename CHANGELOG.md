@@ -9,6 +9,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Fixed
+
+- **A built-in plugin now updates with the host.** `precursor-kanban` pinned a
+  static `version = "0.1.0"`, so every build produced a byte-identical wheel
+  name and the nightly manifest advertised an unchanging URL. uv saw the
+  requirement already satisfied, skipped the download, and left a *current* host
+  paired with a plugin frozen at whatever build landed first — an upgrade that
+  visibly did nothing, which is the exact pairing `RELEASING.md` promises never
+  happens.
+
+  Built-in plugins now inherit the host's CalVer from the same git tags, so a
+  plugin wheel carries the commit it was built from. `root = "../.."` is the
+  only line tying one to this repository, so extracting a plugin to its own
+  repository and release cadence stays a one-line change.
+
+  Two consequences of the same bug are fixed with it: the release workflow ran a
+  bare `uv build`, so tagged releases never built the plugin at all and
+  `precursor-ai[kanban]` was unresolvable from PyPI; and a static version made
+  the plugin unpublishable anyway, since PyPI refuses to re-upload one. Releases
+  now build and publish every workspace package, and verify each wheel against
+  the tag.
+
+  Publishing needs a matching PyPI trusted publisher per distribution — see
+  `RELEASING.md`.
+
 ### Changed
 
 - **The kanban board no longer needs a configured GitHub repository.** It was

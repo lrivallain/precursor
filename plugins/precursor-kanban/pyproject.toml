@@ -1,10 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "precursor-kanban"
-version = "0.1.0"
+# Versioned from the host's git tags, exactly like `precursor-ai` — see
+# [tool.hatch.version] at the bottom of this file for why.
+dynamic = ["version"]
 description = "GitHub Projects v2 kanban board for Precursor."
 readme = "README.md"
 license = { text = "MIT" }
@@ -45,3 +47,21 @@ artifacts = ["src/precursor_kanban/web/**"]
 # ships.
 [tool.hatch.build.targets.sdist]
 exclude = ["web/node_modules", "web/dist"]
+
+# CalVer inherited from the host's git tags, so a built-in plugin always ships a
+# version that moves with the commit it was built from.
+#
+# The static `0.1.0` this replaces looked harmless and silently broke updates:
+# the nightly manifest advertised `precursor_kanban-0.1.0-…whl` at a fixed URL
+# on a reused tag, so every build produced a byte-identical requirement. uv saw
+# `precursor-kanban==0.1.0` already installed, satisfied, and skipped the
+# download — leaving a current host paired with a frozen plugin, which is the
+# exact pairing RELEASING.md promises never happens. Publishing was impossible
+# for the same reason: PyPI rejects re-uploading a version.
+#
+# `root` is the only line tying this to the monorepo. Extracting the plugin to
+# its own repository means dropping it (and tagging there instead); everything
+# else here already stands alone.
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../..", version_scheme = "guess-next-dev", local_scheme = "node-and-date", fallback_version = "0.0.0" }

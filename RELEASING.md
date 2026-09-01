@@ -46,10 +46,11 @@ chronologically, and is human-readable. Untagged/dev builds get a suffix, e.g.
 
 5. The **Release** workflow (`.github/workflows/release.yml`) then:
    - builds the frontend and bundles it into the wheel,
-   - runs `uv build` (hatch-vcs stamps the version from the tag),
-   - verifies the built version matches the tag,
-   - creates a GitHub Release with the wheel + sdist and auto-generated notes,
-   - **publishes the wheel + sdist to [PyPI](https://pypi.org/project/precursor-ai/)**
+   - runs `uv build --all-packages` (hatch-vcs stamps the version from the tag),
+     which builds the host **and every built-in plugin**,
+   - verifies every built version matches the tag,
+   - creates a GitHub Release with the wheels + sdists and auto-generated notes,
+   - **publishes them to [PyPI](https://pypi.org/project/precursor-ai/)**
      via [Trusted Publishing](#pypi-trusted-publishing-one-time-setup) (OIDC — no
      API token).
 
@@ -66,7 +67,11 @@ Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishe
    - **Repository**: `precursor`
    - **Workflow name**: `release.yml`
    - **Environment**: `pypi`
-2. In this repo, add a GitHub **Environment** named `pypi`
+2. Repeat step 1 for **every built-in plugin distribution** — currently
+   `precursor-kanban`. The release uploads all of `dist/`, so a distribution
+   without its own publisher fails the whole publish step. Everything except the
+   project name is identical.
+3. In this repo, add a GitHub **Environment** named `pypi`
    (**Settings → Environments → New environment**). Optionally add required
    reviewers so a human approves each publish.
 
@@ -120,6 +125,12 @@ That manifest is what `precursor service check` reads — one request, rather th
 listing release assets and guessing which is the host wheel. `extra_wheel_urls`
 pins the plugin wheels built from the *same commit*, so a nightly host is never
 paired with a months-old plugin resolved from PyPI.
+
+That promise depends on a built-in plugin's version **moving with the commit**,
+which is why they inherit the host's CalVer rather than carrying one of their
+own. A plugin pinned to a static version produces a byte-identical wheel URL on
+every build: uv sees the requirement already satisfied, skips the download, and
+the host advances while the plugin silently stays put.
 
 Two consequences worth knowing:
 
