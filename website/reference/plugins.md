@@ -287,6 +287,66 @@ make plugins-build            # every plugin listed in PLUGINS
 Their sources are type-checked by the host's `npm --prefix frontend run
 typecheck`, via a `paths` mapping for `@precursor/host`.
 
+#### Out of tree: two things the monorepo did for you
+
+A plugin in *this* repository gets its types and its CSS by accident of living
+here. One in its own repository does not, and both failures are silent.
+
+**Declare `@precursor/host` yourself.** Nothing is ever installed for that
+specifier — the import map supplies it at runtime — so TypeScript has nothing to
+resolve. In-repo plugins are covered by a `paths` mapping onto the host's own
+`src/host/runtime.ts`; out of tree, write an ambient declaration for the members
+you import:
+
+```ts
+// types/precursor-host.d.ts
+declare module "@precursor/host" {
+  import type { ComponentType, ReactNode } from "react";
+  export const HOST_API_VERSION: number;
+  export function registerSection(section: SectionPlugin): void;
+  export function request<T>(path: string, init?: RequestInit): Promise<T>;
+  // …only what you actually import: a narrow shim is one you can keep true.
+}
+```
+
+The Python side needs no equivalent: `precursor` ships a `py.typed` marker, so
+`precursor.plugin_api` type-checks against the installed wheel.
+
+**Ship your own Tailwind utilities.** Tailwind scans from the repository root,
+so an in-repo plugin's classes land in the host's stylesheet for free. Yours
+cannot — your sources ship compiled — and the result is a plugin that renders
+correct markup with no styling, only in a real install. Build the utilities into
+your bundle and inject them, mapping the theme tokens onto the host's variables
+so your UI still follows the app's theme and dark mode:
+
+```css
+/* styles.css — no preflight: the host has already applied its own. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@source "./src";
+@custom-variant dark (&:where(.dark, .dark *));
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+}
+```
+
+```ts
+// Injected once, at module scope, before the section registers.
+import css from "./styles.css?inline";
+const style = document.createElement("style");
+style.textContent = css;
+document.head.prepend(style);   // prepend: the host still wins on collisions
+```
+
+[`precursor-kanban`](https://github.com/lrivallain/precursor-kanban) is the
+worked example of both.
+
 ### Bundling into core instead
 
 `frontend/src/plugins/index.ts` still exists for a plugin that lives in this
