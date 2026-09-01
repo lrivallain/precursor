@@ -9,6 +9,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ## [Unreleased]
 
+### Added
+
+- **`precursor` now ships a `py.typed` marker (PEP 561), so the plugin API is a
+  typed contract outside this repository.** Without it, mypy treats every
+  `precursor.*` import in an *installed* environment as untyped and silently
+  degrades the whole surface — `PluginRegistry`, the read models, the GitHub
+  guards — to `Any`. Under `strict` that is the worst outcome available: a
+  plugin author gets no errors *and* no checking of the one boundary most likely
+  to break when Precursor moves.
+
+  In-repo plugins never noticed, because they type-check against this source
+  tree rather than a wheel. Extracting `precursor-kanban` to
+  [its own repository](https://github.com/lrivallain/precursor-kanban) is what
+  surfaced it.
+- **The MCP tool catalogue survives a restart.** Each server's tool list is
+  stored and restored at startup, so **Settings → MCP** renders and the model is
+  offered tools before anything has connected. The live session stays
+  authoritative: a call that finds a tool the server no longer exposes re-lists
+  the catalogue and retries once instead of reporting a tool that isn't there.
+- **Enabled MCP servers are warmed in the background at startup**, one at a time,
+  so the first prompt of a session no longer pays connect + initialize +
+  list_tools for all of them at once (and an `npx` spin-up for the stdio ones).
+  It never blocks startup or a request, and it never starts an interactive
+  sign-in — a server whose credential has lapsed is skipped, so launching the app
+  can't pop a browser window at you. Tunable via `PRECURSOR_MCP_WARMUP_ENABLED`,
+  `PRECURSOR_MCP_WARMUP_DELAY_SECONDS` and `PRECURSOR_MCP_WARMUP_GAP_SECONDS`;
+  each server that resolves publishes an `mcp.server_state` event.
+
 ### Changed
 
 - **One stale credential no longer stalls unrelated work.** The MCP sign-in gate
@@ -26,22 +54,6 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   explicit tool error rather than a confident guess. Unattended runs (the
   scheduler) raise the banner but fail fast, since nobody is there to complete
   a browser flow.
-
-### Added
-
-- **The MCP tool catalogue survives a restart.** Each server's tool list is
-  stored and restored at startup, so **Settings → MCP** renders and the model is
-  offered tools before anything has connected. The live session stays
-  authoritative: a call that finds a tool the server no longer exposes re-lists
-  the catalogue and retries once instead of reporting a tool that isn't there.
-- **Enabled MCP servers are warmed in the background at startup**, one at a time,
-  so the first prompt of a session no longer pays connect + initialize +
-  list_tools for all of them at once (and an `npx` spin-up for the stdio ones).
-  It never blocks startup or a request, and it never starts an interactive
-  sign-in — a server whose credential has lapsed is skipped, so launching the app
-  can't pop a browser window at you. Tunable via `PRECURSOR_MCP_WARMUP_ENABLED`,
-  `PRECURSOR_MCP_WARMUP_DELAY_SECONDS` and `PRECURSOR_MCP_WARMUP_GAP_SECONDS`;
-  each server that resolves publishes an `mcp.server_state` event.
 
 ### Fixed
 
