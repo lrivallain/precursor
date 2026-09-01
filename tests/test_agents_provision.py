@@ -239,7 +239,7 @@ def test_restart_is_refused_when_the_instance_is_not_supervised(monkeypatch) -> 
 
     Better a 409 the panel can explain than a button that appears to work.
     """
-    monkeypatch.setattr(supervisor, "status", lambda: supervisor.Status(running=False, state=None))
+    monkeypatch.setattr(supervisor, "_read_state", lambda: None)
 
     app = create_app()
     with TestClient(app) as client:
@@ -247,6 +247,27 @@ def test_restart_is_refused_when_the_instance_is_not_supervised(monkeypatch) -> 
 
     assert response.status_code == 409
     assert "supervised" in response.json()["detail"]
+
+
+def test_capability_probe_never_evicts_the_runtime_state_file(monkeypatch) -> None:
+    """The panel polls ``GET /runtime``; a poll must not mutate supervisor state.
+
+    ``supervisor.status()`` *deletes* ``runtime.json`` when it judges the
+    recorded pid dead. Reaching for it here would mean a probe — served on a
+    1.5s timer while a download runs — could evict a live instance's own
+    bookkeeping on a single misread, leaving `service status` and the tray
+    reporting "not running" for a server that is plainly serving.
+    """
+    monkeypatch.setattr(
+        supervisor, "status", lambda: pytest.fail("the probe must not call status()")
+    )
+    monkeypatch.setattr(supervisor, "_read_state", lambda: None)
+
+    app = create_app()
+    with TestClient(app) as client:
+        body = client.get("/api/agents/runtime").json()
+
+    assert body["can_restart"] is False
 
 
 def test_restart_hands_off_to_a_detached_child(monkeypatch) -> None:

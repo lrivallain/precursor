@@ -478,8 +478,15 @@ def restartable() -> tuple[bool, str]:
     with ``uv run precursor --dev`` publishes no such state (it is owned by the
     terminal it runs in, and Vite alongside it). Saying so is more useful than a
     button that silently does nothing.
+
+    Deliberately **read-only**, unlike :func:`status`, which deletes the state
+    file when it judges the recorded pid dead. This is a capability probe served
+    from a polled HTTP endpoint, and a probe must not evict a running instance's
+    own bookkeeping — a single misread would leave a live server reporting "not
+    running" to `service status` and the tray.
     """
-    if not status().running:
+    state = _read_state()
+    if state is None or not _pid_alive(state.pid):
         return False, (
             "This instance isn't supervised, so it can't restart itself — "
             "restart it the way you started it."
