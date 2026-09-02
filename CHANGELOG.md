@@ -101,6 +101,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **`precursor service install` no longer uninstalls the login item it was
+  asked to re-install.** `launchctl bootout` signals the job and returns; it
+  does not wait for the process to die. Precursor's shutdown is a graceful
+  uvicorn one and takes several seconds, so bootstrapping the same label
+  immediately afterwards landed while launchd still had the old job and failed
+  with the opaque `Bootstrap failed: 5: Input/output error`. The old job was
+  already booted out by then, so re-running `install` over a *running* login
+  item left nothing registered at all — reproducible on every attempt, on both
+  the app and the tray unit. Unloading now polls `launchctl print` until launchd
+  has actually let go of the label (measured at ~5s for the app) before loading
+  the new job. `stop_unit` and `uninstall` wait too: "stopped" has to mean the
+  port is free, or a stop-then-start hands the new process one the old still
+  owns.
 - **An optional plugin your package index can't serve no longer blocks the whole
   self-update.** `precursor service update` reinstalls the tool with the extras
   it was installed with, so a single unresolvable one — `precursor-kanban`, on a
