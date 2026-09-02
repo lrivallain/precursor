@@ -132,6 +132,27 @@ client's own events are filtered back out.
 `agent_session_id`, so a listener can tell *which* execution of a shared agent
 moved.
 
+### Events raised in a subprocess
+
+The bus is per-process, but several built-in [MCP servers](/features/mcp) —
+`precursor` included — run as stdio subprocesses that share the database and not
+the bus. A write made there (`append_note`, `post_message`, a reminder) would be
+committed and then announced to nobody.
+
+`POST /api/events/publish` is how those children get back on the bus. The app
+exports a loopback URL and a per-run token into the environment it hands each
+child; the child presents the token in `X-Precursor-Event-Token` and the app
+republishes the event to every window. Relayed events are broadcast with an
+empty `client_id`, because the window that needs to re-render is precisely the
+one whose chat turn called the tool.
+
+Only the data-refresh types are accepted (`topic.changed`, `message.changed`,
+`reminder.changed`, `read.changed`, `agent.changed`, `meeting.changed`,
+`workflow.changed`); anything that makes a window act on the payload — such as
+`mcp.auth_url`, which steers a popup — is refused with a `400`, and a missing or
+wrong token is a `403`. The worst a relayed event can do is make a window
+refetch data it already has.
+
 Streamed chat responses are their own SSE stream, delivering text deltas and
 tool-call events for a single turn. A turn that dies (a provider rejection, the
 tool-round cap) emits an `error` event *and* persists an `Error: …` system

@@ -366,6 +366,29 @@ already-written briefing into a topic. `post_message` spends a whole generation
 replying to it, which is what you want for a question and pure overhead for a
 note.
 
+**Both name the topic they wrote to.** Their result carries a `topic` object
+with the **title**, the slug **path** and the in-app **URL**, not just the
+numeric `topic_id` — which is an internal detail the app never shows you, so
+"filed under topic 42" was impossible to check. You get
+`customers/sanofi/avm-alz` and a link you can open, which makes a note filed
+under the wrong topic obvious immediately.
+
+**A write from the server shows up live.** The `precursor` server runs as a
+stdio subprocess: it shares the app's database but not its in-memory event bus,
+so a note filed through it used to land in the database while every open window
+kept rendering the topic as it was, until someone reloaded. Child processes are
+now handed a loopback relay URL plus a per-run token and forward their events to
+the app, which republishes them to every window — including the one whose chat
+turn called the tool. Only data-refresh event types are accepted, and only with
+the token, so the relay can never do more than make a window refetch what it is
+already entitled to.
+
+That covers every server Precursor launches itself, which includes the built-in
+`precursor` entry and the one an [agent](/features/agents-mode) is given. An
+external host that launches `python -m …precursor_server` on its own gets no
+token and so relays nothing; point it at the **HTTP endpoint** below instead,
+which runs inside the app process and therefore updates the UI directly.
+
 **Search spans every surface** — the same ⌘K palette engine — so a host can find
 a topic, chat, agent task or meeting by content and then follow the hit's
 `accessor` hint (`get_chat`, `get_agent`, …) to read the full record. Chat, agent

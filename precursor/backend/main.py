@@ -8,6 +8,7 @@ process; in production a single uvicorn handles everything.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.resources import as_file, files
@@ -285,8 +286,36 @@ def _website_dist_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
+def _install_event_relay(host: str, port: int) -> None:
+    """Make this process the event-bus origin and equip its children to reach it.
+
+    Several built-in MCP servers (``precursor`` above all) run as stdio
+    subprocesses that share the database but not the in-memory event bus, so a
+    write made there — filing a note, posting a message — never reached a
+    browser. Exporting the relay URL + a per-process token into ``os.environ``
+    means every child spawned with a forwarded environment can hand its events
+    back to :mod:`precursor.backend.routers.events`, with no per-spawn wiring.
+
+    The token is minted once per interpreter: re-minting on a second
+    ``create_app()`` (tests build several) would strand children already holding
+    the first one.
+    """
+    from precursor.backend.services import events as events_service
+
+    events_service.mark_app_process()
+    token = os.environ.get(events_service.RELAY_TOKEN_ENV, "").strip()
+    if not token:
+        token = events_service.new_relay_token()
+    os.environ.update(events_service.relay_child_env(host=host, port=port, token=token))
+
+
 def create_app() -> FastAPI:
     cfg = get_settings()
+    # Claim the SSE origin for this interpreter and publish the coordinates a
+    # stdio MCP child needs to relay its events back here. Done before anything
+    # snapshots ``os.environ`` for a subprocess (the MCP client does, at
+    # construction) so every child inherits them.
+    _install_event_relay(cfg.host, cfg.port)
     app = FastAPI(
         title="Precursor",
         version=__version__,
