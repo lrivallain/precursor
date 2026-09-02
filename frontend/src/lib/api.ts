@@ -69,6 +69,7 @@ import type {
   NotesDraft,
   NoteDraftAttachment,
   InstalledPlugin,
+  CatalogPlugin,
   PluginDescriptor,
   PluginEnvironment,
   IssueDetail,
@@ -968,6 +969,8 @@ export const api = {
     list: () => request<PluginDescriptor[]>(`/api/plugins`),
     /** Every installed plugin, enabled or not, for the Settings panel. */
     installed: () => request<InstalledPlugin[]>(`/api/plugins/installed`),
+    /** The curated directory of installable plugins, bundled with Precursor. */
+    catalog: () => request<CatalogPlugin[]>(`/api/plugins/catalog`),
     setEnabled: (id: string, enabled: boolean) =>
       request<{ id: string; enabled: boolean }>(
         `/api/plugins/installed/${encodeURIComponent(id)}`,

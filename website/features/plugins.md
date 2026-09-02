@@ -26,6 +26,29 @@ cadence.
 Install the package, restart, and all three appear. Uninstall it and they all go
 — there is no leftover half-feature in the sidebar.
 
+## Finding one
+
+**Settings → Plugins** opens with an **Available** list: the
+[plugin catalogue](/plugins), a curated directory of plugins we know about, each
+with a one-click **Install**.
+
+<Screenshot src="/screenshots/plugins-catalog.png" alt="The Plugins settings panel showing an Available list with the Kanban board entry, marked Recommended, above the install box" caption="Settings → Plugins: the bundled catalogue. Installing is off here, so the entry offers the command instead — the box below it fills in." />
+
+The catalogue is **bundled with Precursor rather than fetched** — it needs no
+network, adds no failure states, phones nothing home, and every entry was
+reviewed in a pull request before it shipped. The trade is that a newly listed
+plugin arrives with the next release.
+
+An entry only ever supplies a **bare PyPI project name**; anything expressing a
+location (a URL, a path, an `@` requirement) is refused when the catalogue
+loads. That is deliberate: without it, a merged pull request would be code
+execution on every machine that opened the panel. The catalogue is a shortcut to
+a package name, never a second, laxer way to install — the button calls exactly
+the same gated endpoint as typing the name yourself.
+
+Written a plugin? [Get it listed](/plugins/submitting) — it's one file and one
+pull request.
+
 ## Installing one
 
 **Settings → Plugins** lists everything installed, what each contributes, and any
@@ -34,7 +57,9 @@ there.
 
 <Screenshot src="/screenshots/plugins.png" alt="The Plugins settings panel listing precursor-kanban with its sections, API routes and MCP servers" caption="Settings → Plugins: each installed package with the sections, routes and MCP servers it contributes." />
 
-Or from a terminal, into the same environment as Precursor:
+Anything on PyPI can be installed by name, whether or not it is in the
+catalogue — type it into the box. Or do it from a terminal, into the same
+environment as Precursor:
 
 ```bash
 uv pip install precursor-kanban

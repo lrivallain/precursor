@@ -15,7 +15,9 @@ own repository,
 [`precursor-kanban`](https://github.com/lrivallain/precursor-kanban), as its own
 distribution — carrying its own API routes, schemas, tests, **MCP tools** and
 even its **compiled frontend**, none of which live in core. Install or remove
-the package and the whole section appears or disappears.
+the package and the whole section appears or disappears. It is listed in the
+[plugin catalogue](/plugins/kanban), so **Settings → Plugins** can install it in
+a click.
 :::
 
 <Screenshot src="/screenshots/kanban.png" alt="A Kanban board with Todo, In Progress and Done columns of issue cards" caption="A GitHub Project board — columns come from the project's Status field; cards are its issues, with number, open/closed state, and labels." />

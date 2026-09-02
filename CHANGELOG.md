@@ -11,6 +11,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A plugin catalogue, so finding a plugin no longer means already knowing its
+  package name.** **Settings → Plugins** now opens with an **Available** list —
+  a curated directory of plugins with a one-click install — and the docs site
+  publishes the same directory at
+  [`/plugins`](https://precursor.vuptime.io/plugins), one page per plugin.
+
+  The catalogue is **bundled with Precursor rather than fetched**: it works
+  offline, adds no network failure states, phones nothing home, and every entry
+  was reviewed in a pull request before it shipped. The trade — a newly listed
+  plugin arrives with the next release — is the right one for a curated list.
+
+  **One file is one plugin.** An entry is a single markdown page under
+  `website/plugins/`, whose YAML frontmatter is the metadata and whose body is
+  the documentation page, served both on the site and from the app's own offline
+  `/docs`. Submitting a plugin is therefore adding one file and opening a pull
+  request — see [Submitting a plugin](https://precursor.vuptime.io/plugins/submitting).
+
+  An entry may only ever supply a **bare PyPI project name**: anything
+  expressing a location — a URL, a path, an `@` requirement, an extra, a version
+  specifier — is refused when the catalogue loads, and again in CI. Without that
+  the catalogue would make a merged pull request into code execution on every
+  machine that opened the panel. Installing from it calls the same gated
+  endpoint as typing a name by hand, so the existing three gates (loopback bind,
+  a request addressed to it, explicit opt-in) are unchanged; the catalogue is a
+  shortcut to a name, not a second way in.
 - **`precursor` now ships a `py.typed` marker (PEP 561), so the plugin API is a
   typed contract outside this repository.** Without it, mypy treats every
   `precursor.*` import in an *installed* environment as untyped and silently

@@ -235,6 +235,22 @@ user-facing.
 See [docs/plugins.md](docs/plugins.md). Plugins live in their own packages and
 register via `[project.entry-points."precursor.plugins"]`.
 
+### Listing one in the catalogue
+
+The plugin catalogue is `website/plugins/`: **one markdown file per plugin**,
+whose YAML frontmatter is the metadata Precursor reads and whose body is the
+documentation page published at `/plugins/<id>`. Adding an entry is adding that
+one file — the catalogue page, the sidebar and the in-app **Settings → Plugins →
+Available** list are all generated from it, and the build hook ships the
+directory inside the wheel as `precursor/catalog`.
+
+`tests/test_plugin_catalog.py` validates every shipped entry, so a malformed
+submission fails CI. In particular `distribution` must be a **bare PyPI name** —
+it is handed to an installer, so anything expressing a location is refused.
+
+The submitter-facing checklist lives at
+[`website/plugins/submitting.md`](website/plugins/submitting.md).
+
 ## Reporting security issues
 
 Please **don't** open public issues for security reports. Email the maintainers

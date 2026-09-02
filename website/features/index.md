@@ -54,6 +54,9 @@ These work across the sections above:
   database growth, plus an on-demand cleanup cockpit and database compaction.
 - [**Background app**](/features/background-app) — install with one command, run
   it at login, drive it from a menu-bar icon, and update in place.
+- [**Plugins**](/features/plugins) — install a package and it brings a whole
+  section, MCP tools, settings and API routes. Browse the
+  [catalogue](/plugins) for the ones we know about.
 
 ## What's under the hood
 
