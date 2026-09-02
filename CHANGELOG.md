@@ -36,6 +36,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   endpoint as typing a name by hand, so the existing three gates (loopback bind,
   a request addressed to it, explicit opt-in) are unchanged; the catalogue is a
   shortcut to a name, not a second way in.
+- **The menu-bar icon says whether the app is *ready*, not just whether it is
+  up.** Starting, stopping and — above all — *updating* used to render exactly
+  like "running": a fully-coloured icon claiming the app was there and clickable
+  while its own code was being replaced underneath. Those states now draw the
+  mark in grey with an ellipsis in the speech bubble, the universal "working on
+  it". Grey alone would have read as "stopped", so the glyph carries the
+  difference.
+- **The tray menu leads with where the install stands**, on a line above the
+  actions: 🟢 *Up to date*, 🟡 *Update available — 2026.9.1*, 🔴 *Could not
+  check for updates*, ⚪ *Checking…*. The action entry can only describe the next
+  click; this answers the question you opened the menu for. "Couldn't check" and
+  "up to date" are different facts, and conflating them is how an install goes
+  quietly stale.
+- **A new "Open log file" entry in the tray menu**, opening the instance log the
+  supervisor actually recorded (so it follows an instance started against a
+  different data directory) and falling back to the logs folder when there isn't
+  one yet. Like the data folder, it is deliberately *not* gated on a running
+  instance: the log is exactly what you want when it won't start.
+- **The tray now speaks up when a background check finds a new build**, instead
+  of waiting for you to click the icon — with an **Update and restart** button
+  where the desktop can draw one (macOS `osascript`, Linux `notify-send
+  --action`). Anything other than an explicit yes leaves the build waiting in the
+  menu, and each build is announced once, so a poll every half hour doesn't
+  become an interruption every half hour. `PRECURSOR_UPDATE_NOTIFY` turns it down
+  to a plain toast (`notify`) or off.
 - **`precursor` now ships a `py.typed` marker (PEP 561), so the plugin API is a
   typed contract outside this repository.** Without it, mypy treats every
   `precursor.*` import in an *installed* environment as untyped and silently
@@ -63,6 +88,23 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   each server that resolves publishes an `mcp.server_state` event.
 
 ### Changed
+
+- **Installation is one prescriptive path instead of a menu of three.** The guide
+  used to open with "Option A / Option B / Option C" and expect a newcomer to
+  weigh a background install against `uvx` against a source checkout before they
+  had run the app once — with plugin extras, the retired `agents` extra and the
+  Copilot CLI resolution order interleaved into the same page. For an opinionated
+  tool that is the wrong shape: the first page should say what to do, not offer a
+  decision.
+
+  It now reads *install uv → run one command → open the URL*, with everything
+  else demoted to an **Other ways to install** section that names the reason each
+  alternative exists (try it out, no login item, Windows, stable channel,
+  contributing). The Copilot CLI resolution order moved to
+  [agents mode](https://precursor.vuptime.io/features/agents-mode#pointing-at-a-specific-cli),
+  where it belongs, and the dev-stack launch options moved to the contribution
+  guide. The quick start now starts from a *running* app rather than re-teaching
+  how to launch one, and the README leads with the install rather than the stack.
 
 - **The kanban board now ships from
   [its own repository](https://github.com/lrivallain/precursor-kanban).** It was
@@ -116,6 +158,79 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   It now sits at the top of **Settings → Plugins** and stays visible, reflecting
   and toggling the setting in both directions. A permission you can't revoke
   isn't really a permission.
+- **`PRECURSOR_EXTRAS=` now installs the lean core** instead of silently
+  reinstating the default extras. `install.sh` read it with `${…:-default}`,
+  which cannot tell "unset" from "deliberately empty", so the one way to ask for
+  a Precursor without the board and the tray was the one thing it ignored — and
+  had it not, the requirement would have been the invalid `precursor-ai[]`.
+- **`precursor.log` is written again once Precursor runs as a login item.** The
+  file only ever existed because `precursor service start` redirected the child's
+  stdout into it — so the moment a launchd agent or a systemd unit took over the
+  process (which is what `precursor service install` sets up, and what
+  service+tray mode *is*), the service manager captured stdio somewhere of its
+  own and the log froze at the last supervisor-started run. Nothing said so:
+  `service status`, `precursor service logs` and the tray's **Open log file**
+  went on naming a file that had stopped being written days earlier, while the
+  real output piled up unrotated in `launchd.app.err.log` (15 MB in a week on the
+  reported install). The app now configures its **own rotating file handler**, so
+  `precursor.log` is the same file in every mode — terminal, supervised child,
+  launchd, systemd — and is capped by `PRECURSOR_LOG_FILE_MAX_BYTES` /
+  `PRECURSOR_LOG_FILE_BACKUPS` rather than growing forever. Where a service
+  manager already captures stderr, the console handler is dropped so no line is
+  written twice; a supervised child's raw pipe moves to `precursor.out.log`,
+  which now holds only what logging can't catch (an import error, a pre-config
+  traceback) and is trimmed at each start.
+- **The menu-bar icon logs its own failures.** The tray process never configured
+  logging at all, so every `logger.error` in it reached only `logging.lastResort`
+  — which drops INFO entirely and writes the rest, unformatted, to a stderr its
+  login item throws away. It now writes `tray.log` beside the instance log. Its
+  own file, not the app's: "the icon failed" and "the server failed" are
+  different questions, and two processes rotating one file race.
+- **`precursor service start --foreground` no longer swallows its own startup
+  messages.** It is what the login item runs, and it logged before anything had
+  configured logging — including the INFO line explaining that it was exiting
+  cleanly because another instance was already serving, which is precisely the
+  message you go looking for when a login item appears to do nothing.
+- **`precursor service install` no longer uninstalls the login item it was
+  asked to re-install.** `launchctl bootout` signals the job and returns; it
+  does not wait for the process to die. Precursor's shutdown is a graceful
+  uvicorn one and takes several seconds, so bootstrapping the same label
+  immediately afterwards landed while launchd still had the old job and failed
+  with the opaque `Bootstrap failed: 5: Input/output error`. The old job was
+  already booted out by then, so re-running `install` over a *running* login
+  item left nothing registered at all — reproducible on every attempt, on both
+  the app and the tray unit. Unloading now polls `launchctl print` until launchd
+  has actually let go of the label (measured at ~5s for the app) before loading
+  the new job. `stop_unit` and `uninstall` wait too: "stopped" has to mean the
+  port is free, or a stop-then-start hands the new process one the old still
+  owns.
+- **An optional plugin your package index can't serve no longer blocks the whole
+  self-update.** `precursor service update` reinstalls the tool with the extras
+  it was installed with, so a single unresolvable one — `precursor-kanban`, on a
+  restricted mirror that hasn't ingested it — made `uv` fail the resolution and
+  left the host stranded on its old build. Before the plugin moved to its own
+  repository the wheel travelled with the release and the index was never asked,
+  so nothing showed until it did.
+
+  The update now retries once without the extras that only pull a Precursor
+  plugin (recognised from the distribution metadata, so it doesn't hardcode a
+  list), and reports what it gave up: *"Installed 2026.9.0. Skipped kanban — not
+  installable from your index: …"*. A failure that survives dropping them is
+  raised as before, unchanged — degrading must not turn a real breakage into a
+  fake success. Extras that pull libraries the host itself uses (`tray`,
+  `postgres`) are never dropped.
+
+- **A failed update says why.** The error led with the command — an install line
+  carrying a full wheel URL — so the tray notification truncated it and left
+  "updating failed" as the only signal, with `uv`'s actual explanation cut off.
+  The reason now comes first, flattened out of `uv`'s box-drawing tree into one
+  sentence, with the command last and URLs shortened to their filename.
+
+- **`PRECURSOR_UPDATE_EXTRAS` can now drop an extra**, with a `-name` entry
+  (`PRECURSOR_UPDATE_EXTRAS=-kanban`). The setting is unioned with `uv`'s install
+  receipt so an update can't silently uninstall what you have, which also meant
+  an extra recorded there could never be given up — reinstalling the tool by hand
+  was the only way off it.
 
 - **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
   before it dies.** Two thresholds decided "renew this" and they disagreed. The

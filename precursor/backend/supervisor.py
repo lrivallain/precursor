@@ -93,7 +93,45 @@ def _state_path() -> Path:
 
 
 def _log_path() -> Path:
-    return Path(get_settings().logs_dir) / "precursor.log"
+    """The instance log — written by the app process itself, in every mode.
+
+    See :mod:`precursor.backend.logging_config`: the running app owns this file
+    through a rotating handler, so it is the same path whether the process was
+    started here, in a terminal, or by a launchd/systemd login item.
+    """
+    from precursor.backend.logging_config import log_path
+
+    return log_path()
+
+
+def _stdio_capture_path() -> Path:
+    """Where a detached child's raw stdout/stderr is parked.
+
+    Deliberately *not* :func:`_log_path`. The child configures the rotating file
+    handler itself, so piping its stderr into the same file would write every
+    line twice — and the pipe, unlike the handler, is never rotated. What lands
+    here is only what logging can't catch: an import error, a traceback from
+    before ``configure_logging`` ran, a native crash. The launchd/systemd
+    equivalents (``launchd.app.err.log``, the journal) play the same role.
+    """
+    return Path(get_settings().logs_dir) / "precursor.out.log"
+
+
+# Nothing prunes a pipe, and we only ever hold this one between starts, so a
+# start is the one safe moment to cap it. Small on purpose: it holds crash
+# output, not a log.
+_CAPTURE_MAX_BYTES = 1024 * 1024
+
+
+def _trim_capture(path: Path) -> None:
+    """Drop an oversized stdio capture before handing it to a new child.
+
+    Only ever called with no supervised child running (``start`` returns early
+    otherwise), so truncating cannot pull the file out from under a live writer.
+    """
+    with contextlib.suppress(OSError):
+        if path.is_file() and path.stat().st_size > _CAPTURE_MAX_BYTES:
+            path.unlink()
 
 
 def working_dir() -> Path:
@@ -453,8 +491,10 @@ def start(
         port = bumped
 
     log_file = _log_path()
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    handle = log_file.open("ab")
+    capture = _stdio_capture_path()
+    capture.parent.mkdir(parents=True, exist_ok=True)
+    _trim_capture(capture)
+    handle = capture.open("ab")
     try:
         handle.write(
             f"\n--- precursor service start {datetime.now(UTC).isoformat()} ---\n".encode()
@@ -475,8 +515,10 @@ def start(
     deadline = time.monotonic() + _START_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if proc.poll() is not None:
+            # The capture, not the log: a process that died this early usually
+            # never got as far as configuring the file handler.
             raise SupervisorError(
-                f"Precursor exited immediately (code {proc.returncode}). See {log_file}."
+                f"Precursor exited immediately (code {proc.returncode}). See {capture}."
             )
         if _port_responds(connect_host, port):
             break
@@ -676,6 +718,18 @@ def run_foreground(
     # imports nothing from here, so this keeps the dependency one-directional.
     from precursor import __version__
     from precursor.backend.__main__ import _loopback, _resolve_port, _run_prod
+    from precursor.backend.logging_config import configure_logging
+
+    # Before anything worth reporting. A login item runs this function directly,
+    # so without it the checks below would log through `logging.lastResort` —
+    # which drops INFO entirely and sends the rest, unformatted, to a stderr the
+    # service manager owns.
+    #
+    # Console only: `_run_prod` opens the rotating file once this process has
+    # committed to *being* the instance. Opening it here would give the file two
+    # writers in the one case that matters — the branch below, where an instance
+    # is already running and already holds it.
+    configure_logging(get_settings().log_level)
 
     # A login item and a manual `service start` can both fire — on install, the
     # launchd/systemd unit starts at load while the user may already have one

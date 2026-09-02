@@ -187,11 +187,9 @@ def _cmd_data_dir(args: argparse.Namespace) -> int:
 
 
 def _cmd_logs(args: argparse.Namespace) -> int:
-    from pathlib import Path
+    from precursor.backend.logging_config import log_path
 
-    from precursor.backend.config import get_settings
-
-    log_file = Path(get_settings().logs_dir) / "precursor.log"
+    log_file = log_path()
     if not log_file.is_file():
         print(f"No log file yet at {log_file}.")
         return 1

@@ -1,9 +1,10 @@
-"""Hand a path to the desktop's file manager.
+"""Hand a path to the desktop's file manager (or its default application).
 
 Small and platform-shaped on purpose: "show me where that lives" is a question
 the background app answers twice — once from the tray menu, once from
 ``precursor service data-dir --reveal`` — and neither should carry its own copy
-of the platform quirks.
+of the platform quirks. :func:`open_file` is the same hand-off for a *file*
+rather than a directory, which is how the tray reaches the instance log.
 """
 
 from __future__ import annotations
@@ -40,16 +41,32 @@ def reveal(path: Path) -> None:
     first, so on a fresh install it may not exist yet — and "nothing happened"
     is a worse answer than an empty folder.
     """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RevealError(f"Could not create {path}: {exc}") from exc
+
+    _launch(path)
+
+
+def open_file(path: Path) -> None:
+    """Open ``path`` with whatever the desktop registers for that file type.
+
+    Same hand-off as :func:`reveal`, minus the "create it" step: a log file that
+    doesn't exist yet is a fact worth reporting, not something to conjure — an
+    empty window would only look like the app logs nothing.
+    """
+    if not path.is_file():
+        raise RevealError(f"There is no file at {path} yet.")
+    _launch(path)
+
+
+def _launch(path: Path) -> None:
     opener = _opener()
     if opener is None:
         raise RevealError(
             f"No file manager integration is available on {sys.platform}. The path is: {path}"
         )
-
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise RevealError(f"Could not create {path}: {exc}") from exc
 
     try:
         result = subprocess.run(

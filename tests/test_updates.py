@@ -7,6 +7,7 @@ can share a base version), so they compare by commit.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -216,3 +217,129 @@ def test_a_corrupt_receipt_is_not_fatal(monkeypatch: pytest.MonkeyPatch, tmp_pat
     (tmp_path / "uv-receipt.toml").write_text("this is not toml [[[", encoding="utf-8")
     monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
     assert updates.installed_extras() == ()
+
+
+def test_the_setting_can_drop_an_extra_the_receipt_records(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The escape hatch: an index that will never carry a plugin must be
+    survivable without reinstalling the tool by hand."""
+    _write_receipt(tmp_path, ["tray", "kanban"])
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    monkeypatch.setenv("PRECURSOR_UPDATE_EXTRAS", "-kanban")
+    config.get_settings.cache_clear()
+    assert updates._requirement() == "precursor-ai[tray]"
+
+
+def test_an_extra_pulling_only_a_precursor_plugin_is_optional() -> None:
+    """`kanban` pulls `precursor-kanban` (a separate distribution); `tray` pulls
+    third-party libraries the host itself uses."""
+    assert updates.plugin_extras(["kanban", "tray", "postgres"]) == ("kanban",)
+
+
+def _uv_resolution_failure() -> updates.UpdateError:
+    return updates.UpdateError(
+        "No solution found when resolving dependencies: Because precursor-kanban "
+        "was not found in the package registry […]"
+    )
+
+
+def _record_installs(monkeypatch: pytest.MonkeyPatch, *, fails: str | None) -> list[list[str]]:
+    """Capture the install commands, failing the ones that ask for ``fails``."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, cwd: Path | None = None) -> str:
+        calls.append(cmd)
+        if fails is not None and any(fails in arg for arg in cmd):
+            raise _uv_resolution_failure()
+        return ""
+
+    monkeypatch.setattr(updates, "_run", fake_run)
+    monkeypatch.setattr(updates.shutil, "which", lambda _name: "/usr/bin/uv")
+    monkeypatch.setattr(
+        updates,
+        "_extra_requirements",
+        lambda: {"kanban": ("precursor-kanban",), "tray": ("pystray", "pillow")},
+    )
+    return calls
+
+
+def _uv_tool_info() -> updates.UpdateInfo:
+    return updates.UpdateInfo(
+        current_version="2026.7.1",
+        current_commit=None,
+        latest_version="2026.8.0",
+        latest_commit=None,
+        update_available=True,
+        channel="stable",
+        install_mode="uv-tool",
+    )
+
+
+def _install_extras(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extras: list[str]) -> None:
+    _write_receipt(tmp_path, extras)
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    monkeypatch.setenv("PRECURSOR_UPDATE_EXTRAS", "")
+    config.get_settings.cache_clear()
+
+
+def test_an_unresolvable_plugin_does_not_block_the_host_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The bug this guards: an index missing one optional plugin stranded the
+    whole install on its old build."""
+    _install_extras(monkeypatch, tmp_path, ["tray", "kanban"])
+    calls = _record_installs(monkeypatch, fails="kanban")
+
+    summary = updates.apply(_uv_tool_info())
+
+    assert len(calls) == 2
+    # The retry keeps everything the host itself needs …
+    assert "precursor-ai[tray]" in calls[1]
+    # … and the result says what was given up, rather than claiming success.
+    assert "2026.8.0" in summary
+    assert "kanban" in summary
+    assert "precursor-kanban was not found" in summary
+
+
+def test_a_failure_unrelated_to_the_plugin_still_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dropping the plugin must not turn a real breakage into a fake success."""
+    _install_extras(monkeypatch, tmp_path, ["tray", "kanban"])
+    calls = _record_installs(monkeypatch, fails="precursor-ai")
+
+    with pytest.raises(updates.UpdateError, match="precursor-kanban was not found"):
+        updates.apply(_uv_tool_info())
+    assert len(calls) == 2  # tried, then gave up
+
+
+def test_nothing_is_retried_when_no_extra_is_droppable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_extras(monkeypatch, tmp_path, ["tray"])
+    calls = _record_installs(monkeypatch, fails="precursor-ai")
+
+    with pytest.raises(updates.UpdateError):
+        updates.apply(_uv_tool_info())
+    assert len(calls) == 1
+
+
+def test_a_failed_command_leads_with_the_reason_not_the_command() -> None:
+    """A tray notification truncates, so the command must not come first — that
+    is what left "updating failed" as the only visible signal."""
+    script = (
+        "import sys; sys.stderr.write("
+        "'\\u00d7 No solution found:\\n\\u2570\\u2500\\u25b6 Because precursor-kanban\\n"
+        "    was not found in the registry.\\n'); sys.exit(1)"
+    )
+    url = "https://github.com/o/r/releases/download/nightly/precursor_ai-1-py3-none-any.whl"
+
+    with pytest.raises(updates.UpdateError) as caught:
+        updates._run([sys.executable, "-c", script, f"precursor-ai[kanban] @ {url}"])
+
+    message = str(caught.value)
+    assert message.startswith("No solution found: Because precursor-kanban was not found")
+    # The command is still there, but with the URL collapsed to its filename.
+    assert "…/precursor_ai-1-py3-none-any.whl" in message
+    assert "exited 1" in message

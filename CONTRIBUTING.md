@@ -5,6 +5,11 @@ opinionated — issues and small focused PRs are the easiest way to land changes
 
 ## Getting set up
 
+> Only want to *use* Precursor? The
+> [one-command install](https://precursor.vuptime.io/guide/installation) is much
+> shorter — a source checkout is the contributor path and additionally needs
+> Node.js for the frontend toolchain.
+
 Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
 (env, run, build, release). Install it once, then:
 

@@ -29,7 +29,9 @@ import sys
 import threading
 import time
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
 
@@ -289,11 +291,35 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> str:
         timeout=900,
     )
     if result.returncode != 0:
+        # Reason first, command last: this ends up in a tray notification, which
+        # truncates — and the command is the half that explains nothing. The
+        # install line carries a full wheel URL, so leading with it used to eat
+        # the whole toast and leave "updating failed" as the only signal.
         raise UpdateError(
-            f"`{' '.join(cmd)}` failed ({result.returncode}): "
-            f"{(result.stderr or result.stdout).strip()[-800:]}"
+            f"{_detail(result.stderr or result.stdout) or 'no output'} "
+            f"(`{_describe(cmd)}` exited {result.returncode})"
         )
     return result.stdout
+
+
+# uv reports resolution failures as a box-drawing tree wrapped at ~80 columns,
+# which reads as noise once it reaches a notification or a toast. The ranges are
+# the multiplication sign uv heads an error with, plus Box Drawing and Geometric
+# Shapes — the glyphs it draws the tree itself with.
+_UV_BOX = re.compile(r"^[\s\u00d7\u2500-\u257f\u25a0-\u25ff]+")
+_URL = re.compile(r"https?://\S*/")
+
+
+def _detail(text: str) -> str:
+    """Flatten a command's error output into a single readable sentence."""
+    lines = (_UV_BOX.sub("", line).strip() for line in text.strip().splitlines())
+    detail = " ".join(line for line in lines if line)
+    return f"{detail[:600]}…" if len(detail) > 600 else detail
+
+
+def _describe(cmd: Sequence[str]) -> str:
+    """The command with URLs reduced to their filename, so it stays readable."""
+    return " ".join(_URL.sub("…/", arg) for arg in cmd)
 
 
 def installed_extras() -> tuple[str, ...]:
@@ -321,16 +347,80 @@ def installed_extras() -> tuple[str, ...]:
     return ()
 
 
-def _requirement() -> str:
-    # The receipt wins when there is one; the setting remains the way to add an
-    # extra the current install doesn't have yet, and the fallback for installs
-    # uv didn't make.
+def _extras() -> tuple[str, ...]:
+    """The extras to reinstall with.
+
+    The receipt wins when there is one; the setting remains the way to add an
+    extra the current install doesn't have yet, and the fallback for installs uv
+    didn't make. A ``-name`` entry *removes* one — without it there is no
+    supported way to stop asking for an extra the local index cannot serve, and
+    reinstalling by hand is the only escape.
+    """
     extras = list(installed_extras())
     for part in get_settings().update_extras.split(","):
         name = part.strip()
-        if name and name not in extras:
+        if name.startswith("-"):
+            dropped = name[1:].strip()
+            if dropped in extras:
+                extras.remove(dropped)
+        elif name and name not in extras:
             extras.append(name)
-    return f"precursor-ai[{','.join(extras)}]" if extras else "precursor-ai"
+    return tuple(extras)
+
+
+def _requirement(extras: Sequence[str] | None = None) -> str:
+    names = _extras() if extras is None else tuple(extras)
+    return f"precursor-ai[{','.join(names)}]" if names else "precursor-ai"
+
+
+# A Precursor plugin ships as its own distribution, named `precursor-<plugin>`.
+# That naming is what tells an "optional plugin" extra apart from one that only
+# pulls third-party libraries the host itself uses.
+_PLUGIN_DIST = "precursor-"
+_EXTRA_MARKER = re.compile(r"""extra\s*==\s*['"]([^'"]+)['"]""")
+_DIST_NAME = re.compile(r"^[A-Za-z0-9._-]+")
+
+
+def _extra_requirements() -> dict[str, tuple[str, ...]]:
+    """Map each extra of the running distribution to the distributions it pulls."""
+    try:
+        requires = metadata.metadata("precursor-ai").get_all("Requires-Dist") or []
+    except metadata.PackageNotFoundError:
+        return {}
+    mapping: dict[str, list[str]] = {}
+    for raw in requires:
+        requirement, _, marker = str(raw).partition(";")
+        extra = _EXTRA_MARKER.search(marker)
+        dist = _DIST_NAME.match(requirement.strip())
+        if extra and dist:
+            mapping.setdefault(extra.group(1), []).append(dist.group().replace("_", "-").lower())
+    return {extra: tuple(dists) for extra, dists in mapping.items()}
+
+
+def plugin_extras(extras: Sequence[str]) -> tuple[str, ...]:
+    """The subset of ``extras`` that only pull a separate Precursor plugin.
+
+    Those are optional by construction — the host runs fine without them — so an
+    index that cannot serve one must not be able to take the whole update down
+    with it.
+    """
+    requirements = _extra_requirements()
+    return tuple(
+        extra
+        for extra in extras
+        if (dists := requirements.get(extra)) and all(d.startswith(_PLUGIN_DIST) for d in dists)
+    )
+
+
+def _install_cmd(uv: str, info: UpdateInfo, extras: Sequence[str]) -> list[str]:
+    requirement = _requirement(extras)
+    target = f"{requirement} @ {info.wheel_url}" if info.channel == "nightly" else requirement
+    cmd = [uv, "tool", "install", "--force", target]
+    for extra in info.extra_wheel_urls:
+        # Pin the companion wheels built from the same commit, so a nightly host
+        # isn't paired with something months old resolved from PyPI.
+        cmd += ["--with", extra]
+    return cmd
 
 
 def apply(info: UpdateInfo | None = None) -> str:
@@ -362,18 +452,30 @@ def apply(info: UpdateInfo | None = None) -> str:
     if uv is None:
         raise UpdateError("`uv` is not on PATH, so the wheel cannot be reinstalled.")
 
-    if info.channel == "nightly":
-        if not info.wheel_url:
-            raise UpdateError("The nightly release did not advertise a wheel to install.")
-        target = f"{_requirement()} @ {info.wheel_url}"
-    else:
-        target = _requirement()
+    if info.channel == "nightly" and not info.wheel_url:
+        raise UpdateError("The nightly release did not advertise a wheel to install.")
 
-    cmd = [uv, "tool", "install", "--force", target]
-    for extra in info.extra_wheel_urls:
-        # Pin the companion wheels built from the same commit, so a nightly host
-        # isn't paired with something months old resolved from PyPI.
-        cmd += ["--with", extra]
-    _run(cmd)
+    extras = _extras()
+    summary = f"Installed {info.latest_version or 'the latest build'}."
+    try:
+        _run(_install_cmd(uv, info, extras))
+    except UpdateError as exc:
+        # A plugin the configured index doesn't carry (a restricted mirror, a
+        # release it hasn't ingested yet) used to strand the host on its old
+        # build. Retry without the optional plugins and say so: an updated host
+        # missing one board beats no update at all.
+        optional = plugin_extras(extras)
+        if not optional:
+            raise
+        try:
+            _run(_install_cmd(uv, info, [e for e in extras if e not in optional]))
+        except UpdateError:
+            # Dropping them didn't help, so they were never the problem — the
+            # first failure is the honest one to report.
+            raise exc from None
+        logger.warning("Updated without the %s extra(s): %s", ", ".join(optional), exc)
+        invalidate()
+        return f"{summary} Skipped {', '.join(optional)} — not installable from your index: {exc}"
+
     invalidate()
-    return f"Installed {info.latest_version or 'the latest build'}."
+    return summary

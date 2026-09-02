@@ -446,3 +446,67 @@ def test_start_bumps_a_busy_default_port(monkeypatch: pytest.MonkeyPatch, _insta
     assert spawned["port"] > port
     assert status.state is not None
     assert status.state.port == spawned["port"]
+
+
+# --- the log file vs the stdio capture ----------------------------------------
+#
+# `precursor.log` is written by the *child*, through a rotating handler it
+# configures itself (see logging_config). That is what makes it the same file
+# under launchd and systemd, which own their process's stdio and would otherwise
+# leave it stale. The consequence here: the supervisor must not also redirect the
+# pipe into it, or every line lands twice — once rotated, once not.
+
+
+def _stub_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    spawned: dict[str, object] = {}
+
+    class _Proc:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None
+
+    def _fake_popen(_cmd: list[str], **kwargs: object) -> _Proc:
+        stdout = kwargs.get("stdout")
+        spawned["stdout_name"] = getattr(stdout, "name", None)
+        return _Proc()
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(supervisor, "_port_responds", lambda *_a, **_k: True)
+    monkeypatch.setattr(supervisor, "managed_unit", lambda: None)
+    return spawned
+
+
+def test_the_child_pipe_does_not_go_into_the_instance_log(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    spawned = _stub_spawn(monkeypatch)
+    supervisor.start()
+    assert spawned["stdout_name"] == str(supervisor._stdio_capture_path())
+    assert spawned["stdout_name"] != str(supervisor._log_path())
+
+
+def test_the_recorded_log_file_is_the_one_the_app_writes(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    """`runtime.json` is what the tray's "Open log file" and `service status`
+    read, so it has to name the file the running process actually appends to."""
+    from precursor.backend.logging_config import log_path
+
+    _stub_spawn(monkeypatch)
+    status = supervisor.start()
+    assert status.state is not None
+    assert status.state.log_file == str(log_path())
+
+
+def test_an_oversized_capture_is_dropped_before_a_new_start(
+    monkeypatch: pytest.MonkeyPatch, _instance_dir: Path
+) -> None:
+    """Nothing rotates a pipe, and a start is the one moment nobody holds it."""
+    capture = supervisor._stdio_capture_path()
+    capture.parent.mkdir(parents=True, exist_ok=True)
+    capture.write_bytes(b"x" * (supervisor._CAPTURE_MAX_BYTES + 1))
+
+    _stub_spawn(monkeypatch)
+    supervisor.start()
+    assert capture.stat().st_size < supervisor._CAPTURE_MAX_BYTES

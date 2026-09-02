@@ -9,10 +9,17 @@ opinionated — issues and small, focused PRs are the easiest way to land change
 
 ## Getting set up
 
+A source checkout is the **contributor** path — if you only want to *use*
+Precursor, the [one-command install](/guide/installation) is a lot shorter.
+
 Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
-(env, run, build, release). Install it once, then:
+(env, run, build, release) and **Node.js** for the frontend toolchain. Install
+both once, then:
 
 ```bash
+git clone https://github.com/lrivallain/precursor.git
+cd precursor
+
 make sync                 # uv sync + npm --prefix frontend install
 cp .env.example .env
 ```
@@ -35,7 +42,37 @@ make dev
 # or:  uv run precursor --dev
 ```
 
-See the [installation guide](/guide/installation) for all the launch options.
+In `--dev`, the port you pass is the **UI** (Vite), and Vite proxies `/api` to
+the backend on a hidden port (`--port` + 1 by default). A busy port bumps to the
+next free one, so several checkouts can run side by side.
+
+Other launch options:
+
+```bash
+uv run precursor --dev --port 9000     # open :9000 (UI); API on :9001 behind it
+uv run precursor --dev --no-frontend   # backend only (uvicorn --reload)
+npm --prefix frontend run dev          # Vite only
+```
+
+For a one-process production run, build the SPA first so FastAPI can serve it:
+
+```bash
+make build                # npm --prefix frontend run build → frontend/dist
+uv run precursor          # serves API + SPA on :8000
+```
+
+::: tip Upgrades are automatic
+After a `git pull`, the next `uv run precursor` rebuilds the frontend if
+`frontend/dist` is stale and runs Alembic `upgrade head` on the database — no
+manual build or migration step.
+:::
+
+Plugins are separate distributions with their own release cadence, so a source
+checkout starts without them. Add one the way an end user would:
+
+```bash
+uv pip install precursor-kanban
+```
 
 ## Quality gates
 

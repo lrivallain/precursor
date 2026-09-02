@@ -24,6 +24,8 @@ Copy `.env.example` to `.env` and uncomment only what you want to override.
 | `PRECURSOR_HOST` | `127.0.0.1` | Bind address. Keep it on loopback unless you front the app with your own auth. |
 | `PRECURSOR_PORT` | `8000` | The URL you open. In `--dev`, the Vite UI runs here and the backend moves to `PORT + 1`. A busy port auto-bumps to the next free one — and `precursor service install` writes the port it settled on back to the [instance `.env`](/features/background-app#picking-a-port) so it stays put. |
 | `PRECURSOR_LOG_LEVEL` | `info` | uvicorn/app log level. |
+| `PRECURSOR_LOG_FILE_MAX_BYTES` | `5242880` | Size at which `logs/precursor.log` rotates. The app writes [its own log file](/features/background-app#reading-the-log), so this is what caps it — nothing else prunes it. |
+| `PRECURSOR_LOG_FILE_BACKUPS` | `3` | How many rotated generations (`precursor.log.1`, …) to keep. |
 | `PRECURSOR_SHUTDOWN_GRACE_SECONDS` | `3` | Seconds to wait for in-flight requests (e.g. SSE streams) before force-closing on Ctrl-C, so the port is released promptly. |
 | `PRECURSOR_CORS_ORIGINS` | *(empty)* | Comma-separated list of extra allowed origins. Empty means same-origin only, which is what a local-first single-user app wants. |
 
@@ -69,8 +71,9 @@ menu-bar tray, and the in-place updater.
 | --- | --- | --- |
 | `PRECURSOR_UPDATE_REPO` | `lrivallain/precursor` | Repository the update check reads releases from. Point it at a fork to track your own builds. |
 | `PRECURSOR_UPDATE_CHANNEL` | *(empty)* | `stable` (tagged releases) or `nightly` (rolling build of `main`). Empty means "match the running build": a dev version follows nightly, a tagged one follows stable. |
-| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. |
+| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. This is *unioned* with `uv`'s install receipt; prefix a name with `-` (`-kanban`) to drop one instead. |
 | `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | How long an update-check result is cached before GitHub is asked again. |
+| `PRECURSOR_UPDATE_NOTIFY` | `prompt` | What the tray does when a *background* check finds a new build. `prompt` raises a notification with an **Update and restart** button (macOS `osascript`, Linux `notify-send --action`); `notify` is a plain toast; `off` stays quiet and leaves it to the menu's status line. Anything else is read as `prompt`. |
 
 ## Diagram editor
 
@@ -161,7 +164,7 @@ process-level knobs:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `COPILOT_CLI_PATH` | *(empty)* | Read by the Copilot SDK, and the first thing Precursor's runtime probe checks. Point it at a `copilot` binary to pin the runtime; otherwise Precursor falls back to the SDK's download cache and then to `copilot` on `PATH`. The probe never downloads — see [installation](/guide/installation#pointing-at-a-specific-cli). |
+| `COPILOT_CLI_PATH` | *(empty)* | Read by the Copilot SDK, and the first thing Precursor's runtime probe checks. Point it at a `copilot` binary to pin the runtime; otherwise Precursor falls back to the SDK's download cache and then to `copilot` on `PATH`. The probe never downloads — see [agents mode](/features/agents-mode#pointing-at-a-specific-cli). |
 | `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode/orchestration#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
 | `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
 

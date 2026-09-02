@@ -45,7 +45,7 @@ precursor service status      # is it running, on which port, since when
 precursor service start       # start a detached instance
 precursor service stop        # stop it
 precursor service restart     # bounce it (keeps the port it was on)
-precursor service logs -n 100 # tail the instance log
+precursor service logs -n 100 # tail the instance log (see Reading the log)
 precursor service data-dir    # print the data directory (--reveal opens it)
 precursor service install     # run at login (app + tray) and start now
 precursor service uninstall   # remove the login items
@@ -99,14 +99,45 @@ instances fighting over one database.
 precursor tray
 ```
 
-The icon is Precursor's own mark, in **brand colour when the instance is
-running** and **grey when it is stopped** — the shape stays the same either way,
-so it never looks like a different app. The menu offers:
+The icon is Precursor's own mark, and it says what the instance is doing:
+
+| Icon | Means |
+| --- | --- |
+| **Brand colour** | the instance is running |
+| **Grey** | it is stopped |
+| **Grey, with an ellipsis in the bubble** | busy — starting, stopping, or *updating* |
+
+Running and stopped are the same silhouette in different colours, so the icon
+never looks like a different app. Busy is the one state that changes the glyph:
+grey alone would read as "stopped", and mid-update the app may still be
+answering on its old port — an icon that looks ready while its own code is being
+replaced is a lie worth avoiding.
+
+The menu leads with two lines you can't click: what the instance is doing, and
+where this install stands.
+
+```
+Precursor — running on :8000
+🟢 Up to date — 2026.9.0
+```
+
+| Bullet | Status line |
+| --- | --- |
+| 🟢 | *Up to date* — the last check found nothing newer |
+| 🟡 | *Update available* — with the version waiting |
+| 🔴 | *Could not check for updates* — offline, rate limited |
+| ⚪ | *Checking…*, or *Update checks are off* (`--no-update-check`) |
+
+"Couldn't check" and "up to date" are different facts, and conflating them is
+how an install goes quietly stale — so they get different colours.
+
+Then the actions:
 
 | Entry | Does |
 | --- | --- |
 | **Open Precursor** | opens the running instance in your browser |
 | **Reveal data folder in Finder**¹ | opens the [data directory](#where-the-data-lives) in your file manager |
+| **Open log file** | opens the instance log — falls back to the logs folder when there isn't one yet |
 | **Start** / **Stop** / **Restart** | the supervisor actions above |
 | **Check for updates** | becomes *"Update to … and restart"* once a newer build exists |
 | **Quit tray** | closes the icon only — Precursor keeps running |
@@ -128,6 +159,31 @@ update` — a manual `uv tool install --force`, say — where nothing would
 otherwise have told the icon to restart.
 :::
 
+### Being told about a new build
+
+The tray checks for updates in the background, and a check nobody asked for is
+exactly the one worth speaking up about — otherwise the menu sits there knowing
+about a new build until you next happen to click the icon.
+
+So when a background check finds one, Precursor raises a notification with an
+**Update and restart** button: taking the update is one click, from wherever you
+were. Anything else — *Later*, dismissing it, or letting it time out — leaves the
+build waiting in the menu; only an explicit yes restarts anything.
+
+Each build is announced **once**. A poll every half hour must not become an
+interruption every half hour.
+
+| `PRECURSOR_UPDATE_NOTIFY` | Behaviour |
+| --- | --- |
+| `prompt` *(default)* | a notification with buttons, where the desktop supports them |
+| `notify` | a plain toast — no buttons, nothing to dismiss |
+| `off` | say nothing; the menu's status line still shows 🟡 |
+
+Buttons need something on the desktop that can draw them: macOS uses
+`osascript`, Linux uses `notify-send --action` (libnotify 0.8+). Where neither
+is available — Windows, a bare session — the announcement degrades to a plain
+toast rather than disappearing.
+
 The data-folder entry is deliberately **not** disabled while the instance is
 stopped: the database and the logs are exactly what you want to reach when it
 *won't* start. It also creates the directory if a fresh install hasn't written
@@ -138,6 +194,7 @@ shell:
 precursor service data-dir            # print the path
 precursor service data-dir --reveal   # open it in the file manager
 cd "$(precursor service data-dir)"    # it composes
+precursor service logs -n 100         # what "Open log file" opens
 ```
 
 The tray needs the `tray` extra (`pystray` + `Pillow`), which the install script
@@ -187,6 +244,69 @@ A nightly build isn't ordered — two branches can share a base version — so t
 nightly channel compares the **commit** rather than the version number, and a
 nightly host is installed together with the plugin wheels built from the same
 commit instead of whatever is on PyPI.
+
+### Extras, and what happens when one can't be resolved
+
+A `uv tool` install is reinstalled with the extras it already has — read from
+uv's install receipt rather than from configuration, so an update can't quietly
+uninstall the menu-bar icon you asked for. `PRECURSOR_UPDATE_EXTRAS` adds to
+that list; a `-name` entry removes from it.
+
+An extra can fail to resolve — a plugin published an hour ago that your index
+hasn't ingested, or a mirror that doesn't carry it at all. When it does, the
+update **retries once without the extras that only pull a Precursor plugin**,
+and tells you:
+
+```
+Installed 2026.9.0. Skipped kanban — not installable from your index: …
+```
+
+A plugin is optional by construction, so it shouldn't be able to hold the host
+on an old build. Extras that pull libraries the app itself uses (`tray`,
+`postgres`) are never dropped, and a failure that survives the retry is reported
+as a failure. The next update tries the plugin again; use
+`PRECURSOR_UPDATE_EXTRAS=-kanban` to stop asking for good.
+
+## Reading the log
+
+`precursor.log`, in `logs/` under the [data directory](#where-the-data-lives),
+is written by the running app itself — through a size-rotating handler it
+configures at startup, not by whoever happens to own the process's stdio.
+
+That distinction is the whole point. Precursor runs under three different
+owners: a terminal, its own supervisor (`precursor service start`), and a
+launchd agent or systemd user unit. Only the middle one has Precursor holding
+the pipe. So a log written *by the pipe* would go stale the moment you ran
+`precursor service install` — which is exactly what used to happen, silently,
+while `service status` went on advertising the file.
+
+```bash
+precursor service logs -n 100   # the same file the tray's "Open log file" opens
+```
+
+Rotation matters for the same reason: a service manager's own capture is
+unbounded, and nothing ever prunes it. `PRECURSOR_LOG_FILE_MAX_BYTES` (5 MB) and
+`PRECURSOR_LOG_FILE_BACKUPS` (3) cap it here instead.
+
+::: details The other files in `logs/`
+`precursor.log` is the log. The rest are raw stdio nets, holding only what
+logging can't catch — an import error, a traceback from before logging was
+configured, a native crash:
+
+| File | Written by |
+| --- | --- |
+| `precursor.log` | the app (rotating; `precursor.log.1`, … are its generations) |
+| `tray.log` | the menu-bar icon, which is a separate process with its own failures |
+| `precursor.out.log` | the raw pipe of a supervisor-started child, capped at each start |
+| `launchd.app.err.log`, `launchd.tray.err.log` | launchd, for the login items (macOS) |
+
+On Linux the launchd files have no equivalent: systemd captures stderr to the
+journal (`journalctl --user -u precursor`).
+
+When the app is started by a service manager its stderr is *already* being
+captured, so the console handler is dropped — otherwise every line would be
+written twice, and only one of the two copies would ever be rotated.
+:::
 
 ## Where the data lives
 
