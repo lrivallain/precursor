@@ -188,6 +188,28 @@ nightly channel compares the **commit** rather than the version number, and a
 nightly host is installed together with the plugin wheels built from the same
 commit instead of whatever is on PyPI.
 
+### Extras, and what happens when one can't be resolved
+
+A `uv tool` install is reinstalled with the extras it already has — read from
+uv's install receipt rather than from configuration, so an update can't quietly
+uninstall the menu-bar icon you asked for. `PRECURSOR_UPDATE_EXTRAS` adds to
+that list; a `-name` entry removes from it.
+
+An extra can fail to resolve — a plugin published an hour ago that your index
+hasn't ingested, or a mirror that doesn't carry it at all. When it does, the
+update **retries once without the extras that only pull a Precursor plugin**,
+and tells you:
+
+```
+Installed 2026.9.0. Skipped kanban — not installable from your index: …
+```
+
+A plugin is optional by construction, so it shouldn't be able to hold the host
+on an old build. Extras that pull libraries the app itself uses (`tray`,
+`postgres`) are never dropped, and a failure that survives the retry is reported
+as a failure. The next update tries the plugin again; use
+`PRECURSOR_UPDATE_EXTRAS=-kanban` to stop asking for good.
+
 ## Where the data lives
 
 This is the part that makes a launcher-started app work at all. A login item

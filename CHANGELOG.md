@@ -76,6 +76,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **An optional plugin your package index can't serve no longer blocks the whole
+  self-update.** `precursor service update` reinstalls the tool with the extras
+  it was installed with, so a single unresolvable one — `precursor-kanban`, on a
+  restricted mirror that hasn't ingested it — made `uv` fail the resolution and
+  left the host stranded on its old build. Before the plugin moved to its own
+  repository the wheel travelled with the release and the index was never asked,
+  so nothing showed until it did.
+
+  The update now retries once without the extras that only pull a Precursor
+  plugin (recognised from the distribution metadata, so it doesn't hardcode a
+  list), and reports what it gave up: *"Installed 2026.9.0. Skipped kanban — not
+  installable from your index: …"*. A failure that survives dropping them is
+  raised as before, unchanged — degrading must not turn a real breakage into a
+  fake success. Extras that pull libraries the host itself uses (`tray`,
+  `postgres`) are never dropped.
+
+- **A failed update says why.** The error led with the command — an install line
+  carrying a full wheel URL — so the tray notification truncated it and left
+  "updating failed" as the only signal, with `uv`'s actual explanation cut off.
+  The reason now comes first, flattened out of `uv`'s box-drawing tree into one
+  sentence, with the command last and URLs shortened to their filename.
+
+- **`PRECURSOR_UPDATE_EXTRAS` can now drop an extra**, with a `-name` entry
+  (`PRECURSOR_UPDATE_EXTRAS=-kanban`). The setting is unioned with `uv`'s install
+  receipt so an update can't silently uninstall what you have, which also meant
+  an extra recorded there could never be given up — reinstalling the tool by hand
+  was the only way off it.
+
 - **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
   before it dies.** Two thresholds decided "renew this" and they disagreed. The
   keep-alive opened a session once a token was within five minutes of expiring;

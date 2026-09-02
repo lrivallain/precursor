@@ -69,7 +69,7 @@ menu-bar tray, and the in-place updater.
 | --- | --- | --- |
 | `PRECURSOR_UPDATE_REPO` | `lrivallain/precursor` | Repository the update check reads releases from. Point it at a fork to track your own builds. |
 | `PRECURSOR_UPDATE_CHANNEL` | *(empty)* | `stable` (tagged releases) or `nightly` (rolling build of `main`). Empty means "match the running build": a dev version follows nightly, a tagged one follows stable. |
-| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. |
+| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. This is *unioned* with `uv`'s install receipt; prefix a name with `-` (`-kanban`) to drop one instead. |
 | `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | How long an update-check result is cached before GitHub is asked again. |
 
 ## Diagram editor
