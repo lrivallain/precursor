@@ -59,7 +59,9 @@ from precursor.backend.services.mcp.client import (
     AUTH_PAUSE_TIMEOUT_SECONDS,
     MCPToolAuthRequired,
     MCPToolDef,
+    describe_transport_failure,
     get_mcp_client_manager,
+    is_transport_failure,
 )
 from precursor.backend.services.mcp.workspace_links import link_from_result
 from precursor.backend.services.meeting_analysis import live_chat_grounding
@@ -531,6 +533,28 @@ async def call_tool_with_auth_retry(
             )
             return
         except Exception as exc:
+            if is_transport_failure(exc):
+                # Already retried once on a fresh session inside ``call_tool``,
+                # so the endpoint really is down. Say so in terms the model can
+                # act on: the bare SDK text ("Session terminated") reads like a
+                # local session/auth lapse, which sends it re-planning the call
+                # with smaller arguments or telling the user to sign in again —
+                # neither of which can help with a remote fault.
+                reason = describe_transport_failure(exc)
+                logger.warning("MCP call %s(%s) failed: %s", tool_name, args, reason)
+                yield ToolCallOutcome(
+                    result_text=(
+                        f"Tool '{tool_name}' could not reach {server}: {reason}. "
+                        "This is a fault on the remote server — not a problem with "
+                        "the arguments, and not an expired sign-in. Precursor already "
+                        "retried on a fresh session. Do not retry with different "
+                        "arguments and do not suggest re-authenticating; tell the user "
+                        "the service is unavailable right now, and do not guess the "
+                        "answer."
+                    ),
+                    is_error=True,
+                )
+                return
             logger.warning("MCP call %s(%s) failed: %s", tool_name, args, exc)
             yield ToolCallOutcome(result_text=f"Tool call failed: {exc}", is_error=True)
             return
