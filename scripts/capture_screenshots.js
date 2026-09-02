@@ -204,6 +204,26 @@ const scenes = {
     },
   },
 
+  // The same panel, framed on the bundled catalogue — the "Available" list you
+  // install from. Its content depends on what the demo environment already has:
+  // an entry disappears from Available once its package is installed, so run
+  // this one against an instance *without* the catalogued plugins. The shot
+  // reveals one entry's install command, since that is the state a reader
+  // without the in-app installer enabled will actually meet.
+  "plugins-catalog": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Plugins");
+      const command = page.getByRole("button", { name: "Install command" }).first();
+      if (await command.count()) {
+        await command.click();
+        await sleep(600);
+      }
+      return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
   // Settings → System, where the command-runner sandbox is configured.
   "command-runner": {
     viewport: { width: 1440, height: 1000 },

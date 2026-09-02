@@ -76,7 +76,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `refine` | One-shot text rephrasing for the notes panel and composer. |
 | `stats` | Token-usage rollups and the system footprint for **Settings → Usage stats**, plus the [storage cleanup](/features/storage) cockpit: `GET /api/stats/cleanup` previews what each retention sweep would free (a dry run — nothing is deleted), `POST /api/stats/cleanup/{key}` runs one on demand, and `POST /api/stats/compact` `VACUUM`s the database so freed pages return to the filesystem. |
 | `transfer` | [YAML export/import](/features/transfer) of agents and workflows: `GET /workflows/{id}` and `GET /agents/{id}` download a definition; `POST /preview` reports name conflicts without writing; `POST /import` applies them with a per-agent `replace` / `create` / `link` resolution. |
-| `plugins` | Descriptors for frontend extensions contributed by plugins. |
+| `plugins` | Descriptors for frontend extensions contributed by plugins, and the [plugin catalogue](/plugins): `GET /api/plugins/catalog` returns the bundled directory of installable plugins, each annotated with whether this instance already has it. Reading it executes nothing and is ungated; installing from it goes through the same three-gate `POST /api/plugins/install` as any other package. |
 | `drawio` | Status and on-demand install of the self-hosted [draw.io editor](/features/workspaces#editing-diagrams) (`GET /api/drawio/status`, `POST /api/drawio/install`). |
 
 Health and version:

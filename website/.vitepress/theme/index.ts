@@ -5,6 +5,7 @@ import mediumZoom from "medium-zoom";
 import type { Zoom } from "medium-zoom";
 import Layout from "./Layout.vue";
 import Screenshot from "./Screenshot.vue";
+import PluginCatalog from "./PluginCatalog.vue";
 import "./custom.css";
 
 export default {
@@ -14,6 +15,8 @@ export default {
     // Global so any markdown page can use <Screenshot src="…" alt="…" /> without
     // a per-page <script setup> import.
     app.component("Screenshot", Screenshot);
+    // Renders the plugin catalogue grid on /plugins/, fed by the data loader.
+    app.component("PluginCatalog", PluginCatalog);
   },
   setup() {
     // Click-to-zoom on doc + hero screenshots. Re-attach on every route change

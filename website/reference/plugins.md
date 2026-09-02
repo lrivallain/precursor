@@ -374,11 +374,73 @@ whoever runs Precursor, and Precursor has no authentication of its own. So the
    boundary: a page on an attacker's domain that DNS-rebinds to `127.0.0.1` is
    same-origin to the browser, so no CORS preflight ever runs;
 3. the user must switch **Settings → Plugins → "Let Precursor install packages
-   for me"** on. It is off by default.
+   for me"** on. It is off by default, sits at the top of the panel, and stays
+   visible once granted so it can be withdrawn as easily as it was given.
 
 Reading which plugins exist, and enabling or disabling them, is not gated — none
 of that executes anyone's code. With the installer off, the panel still shows the
 exact command to run by hand, which is the zero-risk path and always available.
+
+## The catalogue
+
+The **Available** list in Settings → Plugins is the catalogue: a curated
+directory of installable plugins, served from `GET /api/plugins/catalog`.
+
+It is **bundled with Precursor, not fetched**. That works offline, adds no
+network failure states, phones nothing home, and means every entry was reviewed
+in a pull request before it shipped — at the cost of a newly listed plugin
+arriving with the next release. For a catalogue of a handful of curated entries
+that is the right side of the trade.
+
+### One file is one plugin
+
+Each entry is a markdown page under `website/plugins/`: its **YAML frontmatter is
+the metadata**, its **body is the documentation** published at `/plugins/<id>`
+and bundled into the app's own `/docs`. A page counts as an entry if — and only
+if — its frontmatter carries `distribution`, so the catalogue's own index and
+submission guide sit in the same folder as ordinary pages.
+
+```yaml
+---
+title: My plugin              # display name (required)
+description: Does a thing.    # one-line summary (required)
+plugin: my-plugin             # entry-point name; must equal the file name
+distribution: precursor-my-plugin  # PyPI project name (required)
+homepage: https://github.com/you/precursor-my-plugin
+author: you
+license: MIT
+tags: [github, notes]
+contributes: [section, settings, mcp, api]
+recommended: false            # maintainers set this
+---
+```
+
+The build hook relocates that directory to `precursor/catalog` inside the wheel;
+a source checkout falls back to `website/plugins`, exactly as the SPA and docs
+bundles do.
+
+### `distribution` is a bare name, and it is enforced
+
+It is the only value ever handed to an installer, so it is validated against PEP
+508's name grammar: no URL, no path, no `@ …` requirement, no extra, no version
+specifier. A catalogue able to say `pkg @ https://example.invalid/evil.whl` would
+turn a merged pull request into code execution on every machine that opened the
+panel.
+
+The check runs at load time *and* in `tests/test_plugin_catalog.py`, so a
+malformed entry fails CI rather than shipping. At runtime an invalid entry is
+logged and skipped — one bad file must never take the panel down.
+
+Installing from the catalogue calls the same gated endpoint as typing a package
+name by hand. The catalogue is a shortcut to a name, not a second way in. With
+the in-app installer off, an entry's button reveals the exact command for this
+environment on the card itself, and copies it, so the zero-risk path is one
+click rather than a hunt.
+
+### Getting listed
+
+Add the file, open a pull request. The full checklist is in
+[Submitting a plugin](/plugins/submitting).
 
 ## Versioning a plugin
 

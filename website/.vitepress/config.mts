@@ -50,6 +50,7 @@ export default withMermaid(
       { text: "Home", link: "/" },
       { text: "Guide", link: "/guide/introduction" },
       { text: "Features", link: "/features/" },
+      { text: "Plugins", link: "/plugins/" },
       { text: "Reference", link: "/reference/architecture" },
       { text: "Contributing", link: "/contributing/" },
       {
@@ -154,6 +155,27 @@ export default withMermaid(
             { text: "Contribution guide", link: "/contributing/" },
             { text: "Development workflow", link: "/contributing/workflow" },
             { text: "Releasing", link: "/contributing/releasing" },
+          ],
+        },
+      ],
+
+      // The catalogue and its entries. Each entry page is generated from the
+      // markdown file that *is* its catalogue record (see plugins/catalog.data.mts),
+      // so this sidebar deliberately lists only the two fixed pages — a new
+      // plugin doesn't need a config change to be published.
+      "/plugins/": [
+        {
+          text: "Plugin catalogue",
+          items: [
+            { text: "Browse plugins", link: "/plugins/" },
+            { text: "Submitting a plugin", link: "/plugins/submitting" },
+          ],
+        },
+        {
+          text: "Building one",
+          items: [
+            { text: "Plugins overview", link: "/features/plugins" },
+            { text: "Plugin reference", link: "/reference/plugins" },
           ],
         },
       ],

@@ -11,6 +11,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A plugin catalogue, so finding a plugin no longer means already knowing its
+  package name.** **Settings → Plugins** now opens with an **Available** list —
+  a curated directory of plugins with a one-click install — and the docs site
+  publishes the same directory at
+  [`/plugins`](https://precursor.vuptime.io/plugins), one page per plugin.
+
+  The catalogue is **bundled with Precursor rather than fetched**: it works
+  offline, adds no network failure states, phones nothing home, and every entry
+  was reviewed in a pull request before it shipped. The trade — a newly listed
+  plugin arrives with the next release — is the right one for a curated list.
+
+  **One file is one plugin.** An entry is a single markdown page under
+  `website/plugins/`, whose YAML frontmatter is the metadata and whose body is
+  the documentation page, served both on the site and from the app's own offline
+  `/docs`. Submitting a plugin is therefore adding one file and opening a pull
+  request — see [Submitting a plugin](https://precursor.vuptime.io/plugins/submitting).
+
+  An entry may only ever supply a **bare PyPI project name**: anything
+  expressing a location — a URL, a path, an `@` requirement, an extra, a version
+  specifier — is refused when the catalogue loads, and again in CI. Without that
+  the catalogue would make a merged pull request into code execution on every
+  machine that opened the panel. Installing from it calls the same gated
+  endpoint as typing a name by hand, so the existing three gates (loopback bind,
+  a request addressed to it, explicit opt-in) are unchanged; the catalogue is a
+  shortcut to a name, not a second way in.
 - **The menu-bar icon says whether the app is *ready*, not just whether it is
   up.** Starting, stopping and — above all — *updating* used to render exactly
   like "running": a fully-coloured icon claiming the app was there and clickable
@@ -118,6 +143,21 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A catalogue entry's install command is now shown where you're looking.**
+  When the in-app installer is off, the entry's button was labelled "Show
+  command" but only wrote the package name into the free-form box further down
+  the panel — so the visible result was a text input quietly gaining a word,
+  while the command itself stayed small, muted and elsewhere. The button is now
+  "Install command", reveals the exact command for this environment on the card
+  itself, and copies it to the clipboard in the same click.
+
+- **The in-app installer's consent could be granted but never withdrawn.** The
+  "Let Precursor install packages for me" checkbox lived inside the install box
+  and was rendered *only while the permission was off*, so ticking it made it
+  disappear — leaving no way to turn it back off short of editing the database.
+  It now sits at the top of **Settings → Plugins** and stays visible, reflecting
+  and toggling the setting in both directions. A permission you can't revoke
+  isn't really a permission.
 - **Edits to a Live meeting summary are no longer lost on reload.** The recap
   was persisted only when it was *generated* or *posted to a topic*, so the one
   thing the tab invites you to do — tune the draft by hand — was the one thing

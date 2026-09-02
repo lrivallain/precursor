@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  BookOpen,
+  Check,
+  Copy,
   Download,
   ExternalLink,
   LayoutGrid,
@@ -8,12 +11,13 @@ import {
   Puzzle,
   RefreshCw,
   Route as RouteIcon,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { api, apiErrorMessage } from "../lib/api";
 import { getSection, getSettingsPage } from "../lib/plugins";
 import { pluginStore } from "../lib/pluginStore";
-import type { InstalledPlugin, PluginEnvironment } from "../lib/types";
+import type { CatalogPlugin, InstalledPlugin, PluginEnvironment } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 
 /**
@@ -26,11 +30,13 @@ import { useConfirm } from "./ConfirmDialog";
 export function PluginsSettings() {
   const confirmAction = useConfirm();
   const [plugins, setPlugins] = useState<InstalledPlugin[] | null>(null);
+  const [catalog, setCatalog] = useState<CatalogPlugin[]>([]);
   const [env, setEnv] = useState<PluginEnvironment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [pkg, setPkg] = useState("");
-  const [installing, setInstalling] = useState(false);
+  /** The package currently being installed, so only its button shows a spinner. */
+  const [installing, setInstalling] = useState<string | null>(null);
   // Set once something has changed on disk: discovery only runs at startup, so
   // an install is inert until the process restarts.
   const [restartNeeded, setRestartNeeded] = useState(false);
@@ -38,7 +44,15 @@ export function PluginsSettings() {
 
   const load = useCallback(async () => {
     try {
-      setPlugins(await api.plugins.installed());
+      const [installed, entries] = await Promise.all([
+        api.plugins.installed(),
+        // The catalogue is bundled, so this can't fail for network reasons —
+        // but an empty one is a perfectly valid state, not an error worth
+        // taking the whole panel down for.
+        api.plugins.catalog().catch(() => [] as CatalogPlugin[]),
+      ]);
+      setPlugins(installed);
+      setCatalog(entries);
       setError(null);
     } catch (e) {
       setPlugins([]);
@@ -55,35 +69,44 @@ export function PluginsSettings() {
   }, [load]);
 
   /**
-   * Turn the in-app installer on.
+   * Turn the in-app installer on or off.
    *
    * Off by default because installing a package runs its code with Precursor's
    * privileges and the app has no authentication of its own — so this is an
-   * explicit, deliberate act rather than something a stray request can do.
+   * explicit, deliberate act rather than something a stray request can do. It
+   * is also revocable: the consent lives at the top of the panel and stays
+   * visible once granted, because permission you can grant but not withdraw is
+   * not really permission.
    */
-  async function enableInstalling() {
+  async function setInstallPermission(enabled: boolean) {
     try {
-      await api.settings.update({ plugin_install_enabled: true });
+      await api.settings.update({ plugin_install_enabled: enabled });
       setEnv(await api.plugins.environment());
     } catch (e) {
-      setError(apiErrorMessage(e, "Could not enable in-app installing"));
+      setError(apiErrorMessage(e, "Could not change the install permission"));
     }
   }
 
-  async function install() {
-    const target = pkg.trim();
+  /**
+   * Install one package and mark the instance as needing a restart.
+   *
+   * Shared by the free-form box and the catalogue, so both go through exactly
+   * the same gated endpoint — the catalogue is a shortcut to a package name,
+   * never a second, laxer way in.
+   */
+  async function installPackage(target: string, clearBox: boolean) {
     if (!target) return;
-    setInstalling(true);
+    setInstalling(target);
     setError(null);
     try {
       await api.plugins.install(target);
-      setPkg("");
+      if (clearBox) setPkg("");
       setRestartNeeded(true);
       await load();
     } catch (e) {
       setError(apiErrorMessage(e, "Install failed"));
     } finally {
-      setInstalling(false);
+      setInstalling(null);
     }
   }
 
@@ -155,6 +178,18 @@ export function PluginsSettings() {
     }
   }
 
+  /** Catalogue entries this instance doesn't already have — what's left to add. */
+  const available = useMemo(() => catalog.filter((e) => !e.installed), [catalog]);
+
+  /**
+   * Documentation page per catalogue entry, keyed by plugin id, so an *installed*
+   * plugin can still link to the write-up that convinced you to install it.
+   */
+  const docsById = useMemo(
+    () => new Map(catalog.map((e) => [e.id, e.docs_path])),
+    [catalog],
+  );
+
   if (plugins === null) {
     return <div className="text-sm text-muted">Loading plugins…</div>;
   }
@@ -164,18 +199,14 @@ export function PluginsSettings() {
       <div className="flex flex-col gap-1">
         <h3 className="text-sm font-semibold">Plugins</h3>
         <p className="text-xs text-muted">
-          Installed Python packages that extend Precursor — with their own sections,
-          API routes and MCP tools.
+          Python packages that extend Precursor — with their own sections, API
+          routes and MCP tools.
         </p>
       </div>
 
-      <InstallBox
+      <InstallPermission
         env={env}
-        pkg={pkg}
-        onPkgChange={setPkg}
-        installing={installing}
-        onInstall={() => void install()}
-        onEnableInstalling={() => void enableInstalling()}
+        onChange={(enabled) => void setInstallPermission(enabled)}
       />
 
       {restartNeeded && (
@@ -205,12 +236,36 @@ export function PluginsSettings() {
         </div>
       )}
 
+      {available.length > 0 && (
+        <Catalog
+          entries={available}
+          canInstall={env?.can_install === true}
+          commandTemplate={env?.command_template ?? null}
+          installing={installing}
+          onInstall={(distribution) => void installPackage(distribution, false)}
+        />
+      )}
+
+      {/* Below the catalogue: this is the escape hatch for a package that
+          isn't listed, so it shouldn't outrank the curated entries. */}
+      <InstallBox
+        env={env}
+        pkg={pkg}
+        onPkgChange={setPkg}
+        installing={installing !== null}
+        onInstall={() => void installPackage(pkg.trim(), true)}
+      />
+
       {plugins.length === 0 ? (
         <div className="rounded border border-border bg-surface/60 px-3 py-6 text-center text-sm text-muted">
           No plugins installed.
         </div>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Installed
+          </h4>
+          <ul className="flex flex-col gap-3">
           {plugins.map((plugin) => (
             <li
               key={plugin.id}
@@ -240,6 +295,18 @@ export function PluginsSettings() {
                         data-tooltip="Homepage"
                       >
                         <ExternalLink size={13} />
+                      </a>
+                    )}
+                    {docsById.has(plugin.id) && (
+                      <a
+                        href={docsById.get(plugin.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 text-muted hover:text-accent"
+                        aria-label="Open the plugin's documentation"
+                        data-tooltip="Documentation"
+                      >
+                        <BookOpen size={13} />
                       </a>
                     )}
                   </div>
@@ -287,9 +354,203 @@ export function PluginsSettings() {
               )}
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The bundled catalogue: plugins you could add, with a one-click install.
+ *
+ * It is a *shortcut to a package name*, not a second install path — the button
+ * calls the same gated endpoint the free-form box does. When the app isn't
+ * allowed to install (not opted in, not on loopback), the entry still earns its
+ * place: it loads the name into the box above so the copyable command is right.
+ */
+/**
+ * The bundled catalogue: plugins you could add, with a one-click install.
+ *
+ * Installing from here is a *shortcut to a package name*, not a second install
+ * path — the button calls the same gated endpoint the free-form box does. When
+ * the app isn't allowed to install (not opted in, not on loopback), the entry
+ * still earns its place: it shows the exact command for this environment, right
+ * on the card, ready to copy.
+ */
+function Catalog({
+  entries,
+  canInstall,
+  commandTemplate,
+  installing,
+  onInstall,
+}: {
+  entries: CatalogPlugin[];
+  canInstall: boolean;
+  /** Environment-specific install command, with a `<package>` placeholder. */
+  commandTemplate: string | null;
+  installing: string | null;
+  onInstall: (distribution: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-0.5">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Available
+        </h4>
+        <p className="text-[11px] text-muted">
+          Plugins available in the catalogue.
+        </p>
+      </div>
+      <ul className="flex flex-col gap-3">
+        {entries.map((entry) => (
+          <CatalogCard
+            key={entry.id}
+            entry={entry}
+            canInstall={canInstall}
+            commandTemplate={commandTemplate}
+            installing={installing}
+            onInstall={onInstall}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One catalogue entry.
+ *
+ * Its own component because each card owns a little state — whether its install
+ * command is revealed, and whether it was just copied — which shouldn't be
+ * hoisted into a map keyed by plugin id.
+ */
+function CatalogCard({
+  entry,
+  canInstall,
+  commandTemplate,
+  installing,
+  onInstall,
+}: {
+  entry: CatalogPlugin;
+  canInstall: boolean;
+  commandTemplate: string | null;
+  installing: string | null;
+  onInstall: (distribution: string) => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const command = (commandTemplate ?? "uv pip install <package>").replace(
+    "<package>",
+    entry.distribution,
+  );
+
+  /**
+   * Reveal the command *and* put it on the clipboard in one go.
+   *
+   * The reveal is what the label promises; the copy is what the user was going
+   * to do next anyway. Copying can fail (no clipboard permission, insecure
+   * context), so it must not gate showing the command — that would leave the
+   * button looking broken when the useful half still worked.
+   */
+  async function showCommand() {
+    setRevealed(true);
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — the command is on screen either way */
+    }
+  }
+
+  return (
+    <li className="flex flex-col gap-3 rounded-lg border border-border bg-surface/60 p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+          <Puzzle size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-medium">{entry.title}</span>
+            {entry.recommended && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent"
+                data-tooltip="Maintained or vetted by the Precursor project"
+              >
+                <Sparkles size={10} />
+                Recommended
+              </span>
+            )}
+            <a
+              href={entry.docs_path}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-muted hover:text-accent"
+              aria-label={`Read the ${entry.title} documentation`}
+              data-tooltip="Documentation"
+            >
+              <BookOpen size={13} />
+            </a>
+            {entry.homepage && (
+              <a
+                href={entry.homepage}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-muted hover:text-accent"
+                aria-label={`Open the ${entry.title} homepage`}
+                data-tooltip="Homepage"
+              >
+                <ExternalLink size={13} />
+              </a>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-muted">{entry.summary}</p>
+          <p className="mt-1 font-mono text-[11px] text-muted">
+            {entry.distribution}
+            {entry.tags.length > 0 && (
+              <span className="font-sans"> · {entry.tags.join(" · ")}</span>
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={installing !== null}
+          onClick={() =>
+            canInstall ? onInstall(entry.distribution) : void showCommand()
+          }
+          className="shrink-0 rounded border border-accent/30 bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+        >
+          {installing === entry.distribution
+            ? "Installing…"
+            : canInstall
+              ? "Install"
+              : "Install command"}
+        </button>
+      </div>
+
+      {/* The command itself, in place. It was previously loaded into the
+          free-form box further down the panel, which read as the button having
+          done nothing: the label promised a command and the eye had to hunt
+          for it. */}
+      {!canInstall && revealed && (
+        <div className="flex items-center gap-2 rounded border border-border bg-bg px-2.5 py-2">
+          <code className="min-w-0 flex-1 select-all break-all font-mono text-[11px]">
+            {command}
+          </code>
+          <button
+            type="button"
+            onClick={() => void showCommand()}
+            className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-accent"
+            aria-label="Copy the install command"
+            data-tooltip={copied ? "Copied" : "Copy"}
+          >
+            {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+          </button>
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -342,14 +603,12 @@ function InstallBox({
   onPkgChange,
   installing,
   onInstall,
-  onEnableInstalling,
 }: {
   env: PluginEnvironment | null;
   pkg: string;
   onPkgChange: (v: string) => void;
   installing: boolean;
   onInstall: () => void;
-  onEnableInstalling: () => void;
 }) {
   if (env === null) return null;
 
@@ -391,22 +650,47 @@ function InstallBox({
             : "Run it yourself, in Precursor's own environment:"}{" "}
         <code className="rounded bg-surface px-1 py-0.5">{command}</code>
       </p>
-      {!env.can_install && env.installable_here && (
-        <label className="flex cursor-pointer items-start gap-2 text-[11px] text-muted">
-          <input
-            type="checkbox"
-            checked={false}
-            onChange={() => onEnableInstalling()}
-            className="mt-0.5 accent-accent"
-          />
-          <span>
-            Let Precursor install packages for me. Installing runs the package's
-            own code with Precursor's privileges, so this stays off unless you
-            ask for it.
-          </span>
-        </label>
-      )}
     </div>
+  );
+}
+
+/**
+ * The standing permission for Precursor to run an installer on your behalf.
+ *
+ * Deliberately at the top of the panel and always visible once it applies,
+ * rather than tucked inside the install box and rendered only while off.
+ * Installing runs a package's own code with Precursor's privileges, so the
+ * consent it represents has to be as easy to withdraw as it was to give — a
+ * switch that only appears when it is off can be turned on and never off again.
+ */
+function InstallPermission({
+  env,
+  onChange,
+}: {
+  env: PluginEnvironment | null;
+  onChange: (enabled: boolean) => void;
+}) {
+  // Nothing to consent to where the app could never install anyway (not on
+  // loopback, or no installer present) — the panel explains that in context.
+  if (env === null || !env.installable_here) return null;
+
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface/60 p-3">
+      <input
+        type="checkbox"
+        checked={env.can_install}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 shrink-0 accent-accent"
+      />
+      <span className="min-w-0 flex flex-col gap-0.5">
+        <span className="text-xs font-medium">Let Precursor install packages for me</span>
+        <span className="text-[11px] text-muted">
+          Installing runs the package's own code with Precursor's privileges, so
+          this stays off unless you ask for it. Turn it off at any time — the
+          commands to install by hand are still shown.
+        </span>
+      </span>
+    </label>
   );
 }
 

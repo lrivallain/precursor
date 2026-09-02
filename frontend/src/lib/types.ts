@@ -1397,6 +1397,35 @@ export interface InstalledPlugin {
   mcp_servers: Array<{ name: string; title: string }>;
 }
 
+/**
+ * An entry in the plugin catalogue (`GET /api/plugins/catalog`).
+ *
+ * The catalogue is bundled with Precursor rather than fetched, so it works
+ * offline and every entry was reviewed before it shipped. `distribution` is
+ * validated server-side to be a bare PyPI name — it is the only value ever
+ * handed to an installer.
+ */
+export interface CatalogPlugin {
+  /** Entry-point name; matches `InstalledPlugin.id` once installed. */
+  id: string;
+  distribution: string;
+  title: string;
+  summary: string;
+  homepage: string | null;
+  author: string | null;
+  license: string | null;
+  tags: string[];
+  /** Which of "section" | "settings" | "mcp" | "api" the plugin brings. */
+  contributes: string[];
+  /** Featured entries lead the list. */
+  recommended: boolean;
+  /** Path to this entry's page in the bundled docs site. */
+  docs_path: string;
+  installed: boolean;
+  enabled: boolean;
+  installed_version: string | null;
+}
+
 export interface GitHubIdentity {
   login: string;
   name: string | null;

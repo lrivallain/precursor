@@ -20,6 +20,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.plugins import get_registry
 from precursor.backend.plugins.assets import media_type, plugin_entry_url, resolve_asset
+from precursor.backend.plugins.catalog import load_catalog, normalize_distribution
 from precursor.backend.plugins.install import (
     detect_environment,
     install_command,
@@ -191,6 +192,39 @@ async def list_installed() -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/catalog")
+async def list_catalog() -> list[dict[str, Any]]:
+    """The curated directory of plugins that can be installed.
+
+    Bundled with Precursor rather than fetched, so it works offline and every
+    entry was reviewed before it shipped — see ``plugins/catalog.py``. Each one
+    is annotated with what this instance already has, so the panel can offer
+    "Install" or "Installed" without the client re-deriving it.
+    """
+    installed = get_registry().plugins
+    by_distribution = {
+        normalize_distribution(p.distribution): p for p in installed.values() if p.distribution
+    }
+    off = disabled_ids()
+    out: list[dict[str, Any]] = []
+    for entry in load_catalog():
+        # Match on the distribution first: that is what an install actually
+        # puts on disk, and it stays true even if a plugin's entry-point name
+        # changes underneath the catalogue.
+        plugin = by_distribution.get(normalize_distribution(entry.distribution)) or installed.get(
+            entry.id
+        )
+        out.append(
+            {
+                **entry.as_dict(),
+                "installed": plugin is not None,
+                "enabled": plugin is not None and plugin.id not in off,
+                "installed_version": plugin.version if plugin else None,
+            }
+        )
+    return out
+
+
 @router.put("/installed/{plugin_id}")
 async def toggle_plugin(
     plugin_id: str,
@@ -290,7 +324,10 @@ async def plugin_environment(
             if not env.can_install
             else None
             if local and opted_in
-            else "Installing from inside the app is off (Settings → Plugins)."
+            # Deliberately doesn't name Settings → Plugins: this string is
+            # rendered *in* that panel, directly below the switch it would be
+            # pointing at.
+            else "Installing from inside the app is off."
             if local
             else "Only available from Precursor's own localhost address."
         ),
