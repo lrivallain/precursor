@@ -1812,6 +1812,7 @@ export interface MeetingSessionUpdate {
   role_id?: number | null;
   status?: MeetingStatus;
   notes?: string | null;
+  summary?: string | null;
   features?: string[];
 }
 

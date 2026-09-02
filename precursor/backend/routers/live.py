@@ -208,6 +208,11 @@ async def update_session_endpoint(
         data["language"] = (data["language"] or "").strip() or None
     if "notes" in data and data["notes"] is None:
         data["notes"] = ""
+    # An emptied recap clears the column so the "Summary ●" marker and the
+    # "fresh session" heuristic keep treating it as absent. The text is stored
+    # verbatim otherwise, so the autosave baseline matches what the editor holds.
+    if "summary" in data and not (data["summary"] or "").strip():
+        data["summary"] = None
     if "features" in data:
         feats = data.pop("features") or []
         cleaned = [f for f in dict.fromkeys(feats) if f in VALID_FEATURES]

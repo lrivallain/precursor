@@ -27,6 +27,10 @@ interface Props {
   canSummarizeFromTranscript: boolean;
   onSummarizeFromTranscript: () => void;
   transcriptScraping: boolean;
+  /** True while a debounced autosave of the recap is in flight. */
+  saving: boolean;
+  /** True once the latest recap edits have been persisted. */
+  saved: boolean;
 }
 
 /**
@@ -49,6 +53,8 @@ export function SummarySection({
   canSummarizeFromTranscript,
   onSummarizeFromTranscript,
   transcriptScraping,
+  saving,
+  saved,
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [newAttendee, setNewAttendee] = useState("");
@@ -227,6 +233,19 @@ export function SummarySection({
             <Eye size={11} /> Preview
           </button>
         </div>
+        {(saving || saved) && (
+          <div className="flex items-center gap-1 text-[11px] text-muted">
+            {saving ? (
+              <>
+                <Loader2 size={11} className="animate-spin" /> Saving…
+              </>
+            ) : (
+              <>
+                <Check size={11} /> Saved
+              </>
+            )}
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {postedAt && (
             <span

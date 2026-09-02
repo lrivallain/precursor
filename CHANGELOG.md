@@ -118,6 +118,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Edits to a Live meeting summary are no longer lost on reload.** The recap
+  was persisted only when it was *generated* or *posted to a topic*, so the one
+  thing the tab invites you to do — tune the draft by hand — was the one thing
+  it didn't keep: reopen the session, or reload with no topic attached, and your
+  wording was replaced by the last text the server had seen. The Summary tab now
+  **autosaves like the Notes tab** (debounced while you type, with a "Saving… /
+  Saved" marker), and also flushes when the session ends or you navigate away, so
+  an unposted recap survives.
 - **`PRECURSOR_EXTRAS=` now installs the lean core** instead of silently
   reinstating the default extras. `install.sh` read it with `${…:-default}`,
   which cannot tell "unset" from "deliberately empty", so the one way to ask for

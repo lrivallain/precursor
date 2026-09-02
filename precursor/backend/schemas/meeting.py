@@ -33,6 +33,9 @@ class MeetingSessionUpdate(BaseModel):
     role_id: int | None = None
     status: MeetingStatus | None = None
     notes: str | None = Field(default=None, max_length=100000)
+    # Hand-edits to the generated recap, autosaved from the Summary tab so they
+    # survive a reload even when the recap is never posted to a topic.
+    summary: str | None = Field(default=None, max_length=100000)
     features: list[str] | None = None
 
 
