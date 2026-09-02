@@ -23,6 +23,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,16 @@ from precursor.backend.supervisor import working_dir
 
 LAUNCHD_LABEL = "io.github.lrivallain.precursor"
 SYSTEMD_UNIT = "precursor.service"
+
+# `launchctl bootout` signals the job and returns; it does not wait for the
+# process to die. Precursor's own shutdown is a graceful uvicorn one and takes a
+# couple of seconds, so bootstrapping the same label immediately afterwards
+# lands while launchd still has the old job — which it reports as the opaque
+# "Bootstrap failed: 5: Input/output error", *and* leaves nothing registered.
+# Re-running `precursor service install` over a running login item therefore
+# used to uninstall it. So: wait for launchd to forget the label first.
+_UNLOAD_TIMEOUT_SECONDS = 20.0
+_UNLOAD_POLL_SECONDS = 0.25
 
 
 class AutostartError(RuntimeError):
@@ -228,6 +239,42 @@ def _write_windows(unit: Unit, path: Path) -> None:  # pragma: no cover - Window
     path.write_text(f'@echo off\r\nstart "" /b {argv}\r\n', encoding="utf-8")
 
 
+def _macos_loaded(label: str) -> bool:
+    """Whether launchd still knows the label in the user's GUI domain."""
+    return (
+        subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            check=False,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def _macos_bootout(unit: Unit, *, timeout: float | None = None) -> None:
+    """Unload the job, then wait for launchd to actually let go of the label.
+
+    `bootout` returns once it has *asked* the job to stop, which for a graceful
+    uvicorn shutdown is seconds before the process is gone. Anything that
+    bootstraps the same label in that window gets EIO, so the wait is what makes
+    unload-then-load safe.
+
+    A job that outlives the timeout is left to `bootstrap` to complain about:
+    guessing at a failure here would replace launchd's own diagnosis with ours.
+    """
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{unit.label}"],
+        check=False,
+        capture_output=True,
+    )
+    # Read at call time rather than as a default, so the budget stays one
+    # patchable number instead of a value frozen at import.
+    budget = _UNLOAD_TIMEOUT_SECONDS if timeout is None else timeout
+    deadline = time.monotonic() + budget
+    while _macos_loaded(unit.label) and time.monotonic() < deadline:
+        time.sleep(_UNLOAD_POLL_SECONDS)
+
+
 def install(unit: Unit = APP) -> AutostartInfo:
     """Register one login item for the current user."""
     path = _target_path(unit)
@@ -236,12 +283,8 @@ def install(unit: Unit = APP) -> AutostartInfo:
     if sys.platform == "darwin":
         _write_launchd(unit, path)
         # `bootstrap` is idempotent-hostile: it errors if already loaded, so
-        # unload first and ignore the "not loaded" case.
-        subprocess.run(
-            ["launchctl", "bootout", f"gui/{os.getuid()}/{unit.label}"],
-            check=False,
-            capture_output=True,
-        )
+        # unload first — and wait for it, or the two race (see _macos_bootout).
+        _macos_bootout(unit)
         result = subprocess.run(
             ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)],
             check=False,
@@ -278,11 +321,10 @@ def uninstall(unit: Unit = APP) -> AutostartInfo:
     if path is None:
         raise AutostartError(f"Autostart is not supported on {sys.platform}.")
     if sys.platform == "darwin":
-        subprocess.run(
-            ["launchctl", "bootout", f"gui/{os.getuid()}/{unit.label}"],
-            check=False,
-            capture_output=True,
-        )
+        # Waited on, so the plist is only removed once the job behind it is
+        # really gone — otherwise an uninstall-then-install leaves the same race
+        # as a bare re-install.
+        _macos_bootout(unit)
     elif os.name != "nt" and path.is_file():
         subprocess.run(
             ["systemctl", "--user", "disable", "--now", unit.systemd_name],
@@ -347,13 +389,13 @@ def stop_unit(unit: Unit = APP) -> None:
     On launchd that means booting the job out rather than signalling it: a
     plain kill is exactly what KeepAlive exists to undo. The plist stays on
     disk, so it is loaded again at the next login.
+
+    Waited on, so "stopped" means the port is actually free — a caller that
+    stops and then starts (``supervisor.restart``) would otherwise hand the new
+    process a port the old one has not released.
     """
     if sys.platform == "darwin":
-        subprocess.run(
-            ["launchctl", "bootout", f"gui/{os.getuid()}/{unit.label}"],
-            check=False,
-            capture_output=True,
-        )
+        _macos_bootout(unit)
     elif os.name != "nt":
         subprocess.run(
             ["systemctl", "--user", "stop", unit.systemd_name], check=False, capture_output=True

@@ -9,6 +9,7 @@ tray are separate processes — two units that never collide.
 from __future__ import annotations
 
 import plistlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -178,3 +179,132 @@ def test_service_subcommand_does_not_shadow_the_normal_parser() -> None:
     from precursor.backend.__main__ import main as launcher_main
 
     assert callable(launcher_main)
+
+
+# --- unload-then-load must not race (Bootstrap failed: 5) ---------------------
+#
+# `launchctl bootout` signals the job and returns; it does not wait for the
+# process to die. Precursor's own shutdown is a graceful uvicorn one taking a
+# couple of seconds, so `install()` used to bootstrap the same label while
+# launchd still had the old job — reported as the opaque "Bootstrap failed: 5:
+# Input/output error". The damage wasn't the message: the old job was already
+# booted out, so re-running `precursor service install` over a *running* login
+# item uninstalled it.
+
+
+class _FakeLaunchctl:
+    """A launchd that keeps a job alive for ``linger`` polls after bootout.
+
+    ``linger=None`` means it never lets go, which is how the timeout path is
+    exercised without a real wait.
+    """
+
+    def __init__(self, *, loaded: bool = True, linger: int | None = 0) -> None:
+        self.loaded = loaded
+        self._linger = linger
+        self.calls: list[str] = []
+        self.bootstrapped_while_loaded = False
+
+    def run(self, cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        verb = cmd[1] if cmd[:1] == ["launchctl"] else cmd[0]
+        self.calls.append(verb)
+        if verb == "bootout":
+            # Asks the job to stop, and returns before it has.
+            return subprocess.CompletedProcess(cmd, 0 if self.loaded else 3, stdout="", stderr="")
+        if verb == "print":
+            if not self.loaded:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+            if self._linger is None or self._linger > 0:
+                if self._linger is not None:
+                    self._linger -= 1
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            self.loaded = False
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+        if verb == "bootstrap":
+            if self.loaded:
+                self.bootstrapped_while_loaded = True
+                return subprocess.CompletedProcess(
+                    cmd, 5, stdout="", stderr="Bootstrap failed: 5: Input/output error"
+                )
+            self.loaded = True
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+
+@pytest.fixture
+def _darwin(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(autostart.sys, "platform", "darwin")
+    monkeypatch.setattr(autostart.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
+
+
+def test_install_waits_for_the_old_job_before_loading_the_new_one(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None
+) -> None:
+    """The regression: re-installing over a running login item must not fail —
+    and above all must not leave the unit unregistered."""
+    fake = _FakeLaunchctl(loaded=True, linger=8)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+
+    autostart.install(autostart.APP)
+
+    assert fake.bootstrapped_while_loaded is False, fake.calls
+    assert fake.loaded is True
+    # It polled rather than guessing at a fixed sleep.
+    assert fake.calls.count("print") >= 8
+
+
+def test_install_over_nothing_does_not_wait(monkeypatch: pytest.MonkeyPatch, _darwin: None) -> None:
+    """A first install has no job to outlive; one probe settles it."""
+    fake = _FakeLaunchctl(loaded=False)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+
+    autostart.install(autostart.APP)
+
+    assert fake.calls.count("print") == 1
+    assert fake.calls[-1] == "bootstrap"
+
+
+def test_a_job_that_never_unloads_still_reports_launchds_own_error(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None
+) -> None:
+    """Guessing at a failure here would replace launchd's diagnosis with ours."""
+    fake = _FakeLaunchctl(loaded=True, linger=None)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+    monkeypatch.setattr(autostart, "_UNLOAD_TIMEOUT_SECONDS", 0.0)
+
+    with pytest.raises(autostart.AutostartError, match="Bootstrap failed: 5"):
+        autostart.install(autostart.APP)
+
+    assert fake.bootstrapped_while_loaded is True
+
+
+def test_stopping_a_unit_waits_for_it_to_be_gone(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None
+) -> None:
+    """`supervisor.restart` stops then starts; "stopped" has to mean the port is
+    actually free, or the new process inherits a busy one."""
+    fake = _FakeLaunchctl(loaded=True, linger=3)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+
+    autostart.stop_unit(autostart.APP)
+
+    assert fake.loaded is False
+    assert fake.calls[0] == "bootout"
+    assert "print" in fake.calls
+
+
+def test_uninstall_removes_the_plist_only_once_the_job_is_gone(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None
+) -> None:
+    fake = _FakeLaunchctl(loaded=True, linger=2)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+    path = autostart._target_path(autostart.APP)
+    assert path is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<plist/>")
+
+    autostart.uninstall(autostart.APP)
+
+    assert fake.loaded is False
+    assert not path.exists()
