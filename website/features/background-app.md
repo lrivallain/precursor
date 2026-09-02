@@ -99,14 +99,45 @@ instances fighting over one database.
 precursor tray
 ```
 
-The icon is Precursor's own mark, in **brand colour when the instance is
-running** and **grey when it is stopped** — the shape stays the same either way,
-so it never looks like a different app. The menu offers:
+The icon is Precursor's own mark, and it says what the instance is doing:
+
+| Icon | Means |
+| --- | --- |
+| **Brand colour** | the instance is running |
+| **Grey** | it is stopped |
+| **Grey, with an ellipsis in the bubble** | busy — starting, stopping, or *updating* |
+
+Running and stopped are the same silhouette in different colours, so the icon
+never looks like a different app. Busy is the one state that changes the glyph:
+grey alone would read as "stopped", and mid-update the app may still be
+answering on its old port — an icon that looks ready while its own code is being
+replaced is a lie worth avoiding.
+
+The menu leads with two lines you can't click: what the instance is doing, and
+where this install stands.
+
+```
+Precursor — running on :8000
+🟢 Up to date — 2026.9.0
+```
+
+| Bullet | Status line |
+| --- | --- |
+| 🟢 | *Up to date* — the last check found nothing newer |
+| 🟡 | *Update available* — with the version waiting |
+| 🔴 | *Could not check for updates* — offline, rate limited |
+| ⚪ | *Checking…*, or *Update checks are off* (`--no-update-check`) |
+
+"Couldn't check" and "up to date" are different facts, and conflating them is
+how an install goes quietly stale — so they get different colours.
+
+Then the actions:
 
 | Entry | Does |
 | --- | --- |
 | **Open Precursor** | opens the running instance in your browser |
 | **Reveal data folder in Finder**¹ | opens the [data directory](#where-the-data-lives) in your file manager |
+| **Open log file** | opens the instance log — falls back to the logs folder when there isn't one yet |
 | **Start** / **Stop** / **Restart** | the supervisor actions above |
 | **Check for updates** | becomes *"Update to … and restart"* once a newer build exists |
 | **Quit tray** | closes the icon only — Precursor keeps running |
@@ -128,6 +159,31 @@ update` — a manual `uv tool install --force`, say — where nothing would
 otherwise have told the icon to restart.
 :::
 
+### Being told about a new build
+
+The tray checks for updates in the background, and a check nobody asked for is
+exactly the one worth speaking up about — otherwise the menu sits there knowing
+about a new build until you next happen to click the icon.
+
+So when a background check finds one, Precursor raises a notification with an
+**Update and restart** button: taking the update is one click, from wherever you
+were. Anything else — *Later*, dismissing it, or letting it time out — leaves the
+build waiting in the menu; only an explicit yes restarts anything.
+
+Each build is announced **once**. A poll every half hour must not become an
+interruption every half hour.
+
+| `PRECURSOR_UPDATE_NOTIFY` | Behaviour |
+| --- | --- |
+| `prompt` *(default)* | a notification with buttons, where the desktop supports them |
+| `notify` | a plain toast — no buttons, nothing to dismiss |
+| `off` | say nothing; the menu's status line still shows 🟡 |
+
+Buttons need something on the desktop that can draw them: macOS uses
+`osascript`, Linux uses `notify-send --action` (libnotify 0.8+). Where neither
+is available — Windows, a bare session — the announcement degrades to a plain
+toast rather than disappearing.
+
 The data-folder entry is deliberately **not** disabled while the instance is
 stopped: the database and the logs are exactly what you want to reach when it
 *won't* start. It also creates the directory if a fresh install hasn't written
@@ -138,6 +194,7 @@ shell:
 precursor service data-dir            # print the path
 precursor service data-dir --reveal   # open it in the file manager
 cd "$(precursor service data-dir)"    # it composes
+precursor service logs -n 100         # what "Open log file" opens
 ```
 
 The tray needs the `tray` extra (`pystray` + `Pillow`), which the install script

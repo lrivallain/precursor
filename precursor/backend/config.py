@@ -355,6 +355,12 @@ class Settings(BaseSettings):
     # silently drop the kanban plugin (or Agents mode) the user installed with.
     update_extras: str = "kanban"
     update_check_ttl_seconds: int = 900
+    # What the tray does when a *background* check finds a new build.
+    # "prompt" raises an actionable notification with an "Update and restart"
+    # button; "notify" is a plain toast; "off" leaves the menu to say it. A
+    # dialog you didn't ask for is intrusive by nature, so it has to be
+    # refusable without turning update checks off altogether.
+    update_notify: str = "prompt"
 
     @cached_property
     def logs_dir(self) -> str:

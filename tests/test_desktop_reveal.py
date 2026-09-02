@@ -107,3 +107,41 @@ def test_service_cli_exposes_the_same_action() -> None:
     args = build_parser().parse_args(["data-dir", "--reveal"])
     assert args.reveal is True
     assert build_parser().parse_args(["data-dir"]).reveal is False
+
+
+# --- opening a file rather than a folder --------------------------------------
+#
+# The tray's "Open log file" entry: same hand-off, minus the "create it" step,
+# because conjuring an empty log would look like the app records nothing.
+
+
+def test_open_file_hands_the_path_to_the_platform_opener(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(desktop, "_opener", lambda: ["open"])
+    seen = _record(monkeypatch)
+    log = tmp_path / "precursor.log"
+    log.write_text("hello", encoding="utf-8")
+    desktop.open_file(log)
+    assert seen == [["open", str(log)]]
+
+
+def test_open_file_refuses_to_invent_a_missing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(desktop, "_opener", lambda: ["open"])
+    _record(monkeypatch)
+    missing = tmp_path / "nope.log"
+    with pytest.raises(desktop.RevealError, match=str(missing)):
+        desktop.open_file(missing)
+    assert not missing.exists()
+
+
+def test_open_file_will_not_open_a_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`reveal` is the entry point for those, and it creates them."""
+    monkeypatch.setattr(desktop, "_opener", lambda: ["open"])
+    _record(monkeypatch)
+    with pytest.raises(desktop.RevealError):
+        desktop.open_file(tmp_path)
