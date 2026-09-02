@@ -101,6 +101,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A catalogue entry's install command is now shown where you're looking.**
+  When the in-app installer is off, the entry's button was labelled "Show
+  command" but only wrote the package name into the free-form box further down
+  the panel — so the visible result was a text input quietly gaining a word,
+  while the command itself stayed small, muted and elsewhere. The button is now
+  "Install command", reveals the exact command for this environment on the card
+  itself, and copies it to the clipboard in the same click.
+
 - **The in-app installer's consent could be granted but never withdrawn.** The
   "Let Precursor install packages for me" checkbox lived inside the install box
   and was rendered *only while the permission was off*, so ticking it made it

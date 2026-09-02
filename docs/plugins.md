@@ -418,7 +418,10 @@ bundles do.
 > file must never take the panel down.
 
 Installing from the catalogue calls the same gated endpoint as typing a package
-name by hand. The catalogue is a shortcut to a name, not a second way in.
+name by hand. The catalogue is a shortcut to a name, not a second way in. With
+the in-app installer off, an entry's button reveals the exact command for this
+environment on the card itself, and copies it, so the zero-risk path is one
+click rather than a hunt.
 
 To get a plugin listed, add the file and open a pull request — the checklist is
 `website/plugins/submitting.md`.

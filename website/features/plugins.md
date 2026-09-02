@@ -32,7 +32,7 @@ Install the package, restart, and all three appear. Uninstall it and they all go
 [plugin catalogue](/plugins), a curated directory of plugins we know about, each
 with a one-click **Install**.
 
-<Screenshot src="/screenshots/plugins-catalog.png" alt="The Plugins settings panel showing an Available list with the Kanban board entry, marked Recommended, above the install box" caption="Settings → Plugins: the bundled catalogue. Installing is off here, so the entry offers the command instead — the box below it fills in." />
+<Screenshot src="/screenshots/plugins-catalog.png" alt="The Plugins settings panel showing an Available list with the Kanban board entry, marked Recommended, its install command revealed below it" caption="Settings → Plugins: the bundled catalogue. Installing is off here, so the entry reveals the exact command for this environment — copied to the clipboard at the same time." />
 
 The catalogue is **bundled with Precursor rather than fetched** — it needs no
 network, adds no failure states, phones nothing home, and every entry was

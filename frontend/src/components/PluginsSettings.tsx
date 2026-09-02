@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
+  Check,
+  Copy,
   Download,
   ExternalLink,
   LayoutGrid,
@@ -238,9 +240,9 @@ export function PluginsSettings() {
         <Catalog
           entries={available}
           canInstall={env?.can_install === true}
+          commandTemplate={env?.command_template ?? null}
           installing={installing}
           onInstall={(distribution) => void installPackage(distribution, false)}
-          onPrepare={setPkg}
         />
       )}
 
@@ -367,18 +369,28 @@ export function PluginsSettings() {
  * allowed to install (not opted in, not on loopback), the entry still earns its
  * place: it loads the name into the box above so the copyable command is right.
  */
+/**
+ * The bundled catalogue: plugins you could add, with a one-click install.
+ *
+ * Installing from here is a *shortcut to a package name*, not a second install
+ * path — the button calls the same gated endpoint the free-form box does. When
+ * the app isn't allowed to install (not opted in, not on loopback), the entry
+ * still earns its place: it shows the exact command for this environment, right
+ * on the card, ready to copy.
+ */
 function Catalog({
   entries,
   canInstall,
+  commandTemplate,
   installing,
   onInstall,
-  onPrepare,
 }: {
   entries: CatalogPlugin[];
   canInstall: boolean;
+  /** Environment-specific install command, with a `<package>` placeholder. */
+  commandTemplate: string | null;
   installing: string | null;
   onInstall: (distribution: string) => void;
-  onPrepare: (distribution: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -392,76 +404,153 @@ function Catalog({
       </div>
       <ul className="flex flex-col gap-3">
         {entries.map((entry) => (
-          <li
+          <CatalogCard
             key={entry.id}
-            className="flex flex-col gap-3 rounded-lg border border-border bg-surface/60 p-4"
-          >
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                <Puzzle size={16} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate font-medium">{entry.title}</span>
-                  {entry.recommended && (
-                    <span
-                      className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent"
-                      data-tooltip="Maintained or vetted by the Precursor project"
-                    >
-                      <Sparkles size={10} />
-                      Recommended
-                    </span>
-                  )}
-                  <a
-                    href={entry.docs_path}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 text-muted hover:text-accent"
-                    aria-label={`Read the ${entry.title} documentation`}
-                    data-tooltip="Documentation"
-                  >
-                    <BookOpen size={13} />
-                  </a>
-                  {entry.homepage && (
-                    <a
-                      href={entry.homepage}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 text-muted hover:text-accent"
-                      aria-label={`Open the ${entry.title} homepage`}
-                      data-tooltip="Homepage"
-                    >
-                      <ExternalLink size={13} />
-                    </a>
-                  )}
-                </div>
-                <p className="mt-0.5 text-xs text-muted">{entry.summary}</p>
-                <p className="mt-1 font-mono text-[11px] text-muted">
-                  {entry.distribution}
-                  {entry.tags.length > 0 && (
-                    <span className="font-sans"> · {entry.tags.join(" · ")}</span>
-                  )}
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={installing !== null}
-                onClick={() =>
-                  canInstall ? onInstall(entry.distribution) : onPrepare(entry.distribution)
-                }
-                className="shrink-0 rounded border border-accent/30 bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
-              >
-                {installing === entry.distribution
-                  ? "Installing…"
-                  : canInstall
-                    ? "Install"
-                    : "Show command"}
-              </button>
-            </div>
-          </li>
+            entry={entry}
+            canInstall={canInstall}
+            commandTemplate={commandTemplate}
+            installing={installing}
+            onInstall={onInstall}
+          />
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * One catalogue entry.
+ *
+ * Its own component because each card owns a little state — whether its install
+ * command is revealed, and whether it was just copied — which shouldn't be
+ * hoisted into a map keyed by plugin id.
+ */
+function CatalogCard({
+  entry,
+  canInstall,
+  commandTemplate,
+  installing,
+  onInstall,
+}: {
+  entry: CatalogPlugin;
+  canInstall: boolean;
+  commandTemplate: string | null;
+  installing: string | null;
+  onInstall: (distribution: string) => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const command = (commandTemplate ?? "uv pip install <package>").replace(
+    "<package>",
+    entry.distribution,
+  );
+
+  /**
+   * Reveal the command *and* put it on the clipboard in one go.
+   *
+   * The reveal is what the label promises; the copy is what the user was going
+   * to do next anyway. Copying can fail (no clipboard permission, insecure
+   * context), so it must not gate showing the command — that would leave the
+   * button looking broken when the useful half still worked.
+   */
+  async function showCommand() {
+    setRevealed(true);
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — the command is on screen either way */
+    }
+  }
+
+  return (
+    <li className="flex flex-col gap-3 rounded-lg border border-border bg-surface/60 p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+          <Puzzle size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-medium">{entry.title}</span>
+            {entry.recommended && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-accent"
+                data-tooltip="Maintained or vetted by the Precursor project"
+              >
+                <Sparkles size={10} />
+                Recommended
+              </span>
+            )}
+            <a
+              href={entry.docs_path}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-muted hover:text-accent"
+              aria-label={`Read the ${entry.title} documentation`}
+              data-tooltip="Documentation"
+            >
+              <BookOpen size={13} />
+            </a>
+            {entry.homepage && (
+              <a
+                href={entry.homepage}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-muted hover:text-accent"
+                aria-label={`Open the ${entry.title} homepage`}
+                data-tooltip="Homepage"
+              >
+                <ExternalLink size={13} />
+              </a>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-muted">{entry.summary}</p>
+          <p className="mt-1 font-mono text-[11px] text-muted">
+            {entry.distribution}
+            {entry.tags.length > 0 && (
+              <span className="font-sans"> · {entry.tags.join(" · ")}</span>
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={installing !== null}
+          onClick={() =>
+            canInstall ? onInstall(entry.distribution) : void showCommand()
+          }
+          className="shrink-0 rounded border border-accent/30 bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+        >
+          {installing === entry.distribution
+            ? "Installing…"
+            : canInstall
+              ? "Install"
+              : "Install command"}
+        </button>
+      </div>
+
+      {/* The command itself, in place. It was previously loaded into the
+          free-form box further down the panel, which read as the button having
+          done nothing: the label promised a command and the eye had to hunt
+          for it. */}
+      {!canInstall && revealed && (
+        <div className="flex items-center gap-2 rounded border border-border bg-bg px-2.5 py-2">
+          <code className="min-w-0 flex-1 select-all break-all font-mono text-[11px]">
+            {command}
+          </code>
+          <button
+            type="button"
+            onClick={() => void showCommand()}
+            className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-accent"
+            aria-label="Copy the install command"
+            data-tooltip={copied ? "Copied" : "Copy"}
+          >
+            {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+          </button>
+        </div>
+      )}
+    </li>
   );
 }
 

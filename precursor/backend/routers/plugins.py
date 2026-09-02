@@ -324,7 +324,10 @@ async def plugin_environment(
             if not env.can_install
             else None
             if local and opted_in
-            else "Installing from inside the app is off (Settings → Plugins)."
+            # Deliberately doesn't name Settings → Plugins: this string is
+            # rendered *in* that panel, directly below the switch it would be
+            # pointing at.
+            else "Installing from inside the app is off."
             if local
             else "Only available from Precursor's own localhost address."
         ),
