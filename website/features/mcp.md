@@ -217,6 +217,14 @@ hands-free where the browser still holds a live session, and when several server
 go stale at once you get **one prompt, not one per credential**. The banner is
 the last resort, not the first move.
 
+**A sign-in counts for every server on that credential.** Several built-ins share
+one Entra token — the five Agent 365 endpoints are a single sign-in between them
+— so when one completes, the rest are re-pointed at the fresh token and
+reconnected on the spot instead of being left showing a sign-in they already
+have. **Settings → MCP** matches that: the button belongs to the *credential*,
+so the servers sharing it read `signs in with WorkIQ Teams` rather than offering
+a redundant prompt of their own.
+
 Idle credentials are allowed to go quiet — a server you enabled months ago and
 never call stops being refreshed, and stops nagging — but a genuine lapse is
 surfaced proactively rather than discovered as a stalled request.
@@ -348,9 +356,11 @@ Precursor ships the five that one sign-in reaches:
 
 **One sign-in covers all five.** They authenticate as the same Entra client
 against the same resource, so Precursor caches a single Agent 365 credential —
-sign in from any of them and the rest come up. The WorkIQ preview is a
-*different* client and resource, so it keeps its own token; signing in to Teams
-never disturbs it.
+sign in from any of them and the other four are re-pointed at that token and
+reconnected immediately, with no second prompt. In **Settings → MCP** only the
+first of them carries a sign-in button; the rest read `signs in with WorkIQ
+Teams`. The WorkIQ preview is a *different* client and resource, so it keeps its
+own token; signing in to Teams never disturbs it.
 
 ::: tip Why not `workiq-productivity` (or `-mail`, `-files`, `-sharepoint`)?
 Agent 365 hosts those too, but they sit behind a **second** Entra resource — the

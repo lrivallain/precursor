@@ -161,6 +161,20 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Signing in to one WorkIQ server now counts for every server sharing that
+  credential.** The Agent 365 endpoints authenticate with a single Entra token,
+  but only the server you clicked was re-pointed at the fresh one — its siblings
+  stayed parked in `needs_auth`, each showing an amber **Sign in** for a
+  credential they already had. Clicking through them ran a full
+  clear-and-regrant per server, so six built-ins meant six browser sign-ins for
+  the two credentials Precursor actually holds.
+
+  A completed sign-in now adopts the whole credential: every server on it is
+  re-pointed at the new token, reconnected, and broadcast as resolved so other
+  windows drop their banner too. **Settings → MCP** stops inviting the mistake as
+  well — the sign-in button belongs to the *credential*, so the servers sharing
+  one read `signs in with WorkIQ Teams` instead of offering a redundant prompt.
+
 - **A custom MCP server could shadow the built-in `drawio`.** The list of names
   reserved for built-in servers was maintained by hand and had drifted from the
   catalogue, so adding your own server called `drawio` was accepted instead of

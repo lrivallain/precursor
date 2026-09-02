@@ -28,6 +28,7 @@ import {
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
 import { mcpAuthStore } from "../lib/mcpAuth";
+import { mcpAuthFamily, mcpServerLabel } from "../lib/mcpServers";
 import { signInWorkiq } from "../lib/workiqSignIn";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { modelsStore } from "../lib/modelsStore";
@@ -270,6 +271,20 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [mcpEditing, setMcpEditing] = useState<MCPServerStatus | "new" | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  // One sign-in control per *credential*, not per server. The Agent 365
+  // endpoints share a single Entra token, so a button on each row invited six
+  // sign-ins for the two credentials Precursor actually holds. The first server
+  // of each auth family owns the button; its siblings say who they sign in with.
+  const signInOwner = useMemo(() => {
+    const owner = new Map<string, string>();
+    for (const server of mcp) {
+      if (!server.oauth) continue;
+      const family = mcpAuthFamily(server.name);
+      if (!owner.has(family)) owner.set(family, server.name);
+    }
+    return owner;
+  }, [mcp]);
 
   async function refreshMcp(): Promise<void> {
     setMcpLoading(true);
@@ -629,6 +644,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       // Clear just this credential's notice; the store spends the fresh SSO
       // cookie on a hands-free pass for any sibling that is still stale.
       mcpAuthStore.resolve(name);
+      // The backend adopted every server sharing this credential, so re-read the
+      // list — otherwise the siblings keep showing the sign-in they just got.
+      void refreshMcp();
     } catch (err) {
       setMcp((prev) =>
         prev.map((s) =>
@@ -1261,8 +1279,17 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                             : undefined
                         }
                         onReauthenticate={
-                          s.oauth
+                          s.oauth &&
+                          signInOwner.get(mcpAuthFamily(s.name)) === s.name
                             ? () => void reauthenticateWorkiq(s.name)
+                            : undefined
+                        }
+                        sharedSignInWith={
+                          s.oauth &&
+                          signInOwner.get(mcpAuthFamily(s.name)) !== s.name
+                            ? mcpServerLabel(
+                                signInOwner.get(mcpAuthFamily(s.name)) ?? "",
+                              )
                             : undefined
                         }
                         onEdit={() => setMcpEditing(s)}
@@ -2109,6 +2136,7 @@ function McpServerCard({
   onReload,
   onTogglePreview,
   onReauthenticate,
+  sharedSignInWith,
   onEdit,
   onDelete,
 }: {
@@ -2117,6 +2145,11 @@ function McpServerCard({
   onReload?: () => void;
   onTogglePreview?: () => void;
   onReauthenticate?: () => void;
+  /**
+   * Label of the server this one signs in with, when it shares a credential and
+   * so carries no button of its own (see {@link mcpAuthFamily}).
+   */
+  sharedSignInWith?: string;
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
@@ -2194,6 +2227,14 @@ function McpServerCard({
             <LogIn size={12} />
             {server.state === "needs_auth" ? "Sign in" : "Re-authenticate"}
           </button>
+        )}
+        {!onReauthenticate && server.oauth && sharedSignInWith && (
+          <span
+            className="text-[11px] text-muted whitespace-nowrap"
+            data-tooltip={`One Entra credential covers both, so signing in to ${sharedSignInWith} authenticates this server too.`}
+          >
+            signs in with {sharedSignInWith}
+          </span>
         )}
         {onReload && (
           <button
