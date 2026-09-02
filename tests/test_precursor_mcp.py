@@ -494,6 +494,48 @@ async def test_append_note_rejects_empty_and_missing_topic() -> None:
     assert "not found" in missing["error"]
 
 
+async def test_append_note_reports_the_topic_it_wrote_to() -> None:
+    """A bare id can't be checked by the person reading the answer.
+
+    ``append_note`` used to return only ``topic_id``, so "filed under topic 42"
+    was unverifiable — the UI never shows ids. Echo the title, the slug path and
+    the in-app URL so a mis-targeted note is obvious at a glance.
+    """
+    await _set_expose('{"notes": true}')
+    parent_id = await _make_topic("Sanofi")
+    topic_id = await _make_topic("AVM ALZ", parent_id=parent_id)
+    collection = await _collection_slug(topic_id)
+
+    result = await ps.append_note(topic_id, "Landing zone review notes")
+
+    ref = result["topic"]
+    assert ref["id"] == topic_id
+    assert ref["title"] == "AVM ALZ"
+    assert ref["path"] == f"{collection}/sanofi/avm-alz"
+    # Pasteable straight into the browser — the same shape the SPA routes on.
+    assert ref["url"] is not None
+    assert ref["url"].endswith(f"/topics/{collection}/sanofi/avm-alz")
+
+
+async def test_append_note_topic_ref_survives_a_spaced_slug() -> None:
+    """Percent-encoding, so a path segment needing it still yields a valid URL."""
+    await _set_expose('{"notes": true}')
+    topic_id = await _make_topic("Quarterly review")
+    result = await ps.append_note(topic_id, "text")
+    url = result["topic"]["url"]
+    assert url is not None and " " not in url
+
+
+def test_app_base_url_maps_a_wildcard_bind_to_localhost(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """0.0.0.0 is a bind, not something a browser can open."""
+    from precursor.backend.config import get_settings as _get_settings
+
+    cfg = _get_settings()
+    monkeypatch.setattr(cfg, "host", "0.0.0.0", raising=False)
+    monkeypatch.setattr(cfg, "port", 9000, raising=False)
+    assert ps.app_base_url() == "http://localhost:9000"
+
+
 async def test_create_schedule_homes_its_topic_in_a_collection() -> None:
     """A null membership matches no sidebar filter, so the topic would vanish."""
     from precursor.backend.models import Collection, Topic

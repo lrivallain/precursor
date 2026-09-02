@@ -42,6 +42,7 @@ import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypeVar
+from urllib.parse import quote
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -247,6 +248,26 @@ async def _topic_paths(session: AsyncSession) -> dict[int, str]:
         prefix = collection_slugs.get(cid) if cid is not None else None
         paths[tid] = "/".join([prefix, *chain]) if prefix else "/".join(chain)
     return paths
+
+
+async def _topic_ref(session: AsyncSession, topic: Topic) -> dict[str, Any]:
+    """Human-readable identity for a topic a write tool just targeted.
+
+    A bare numeric ``topic_id`` is meaningless to the person reading the answer —
+    ids are an internal detail the UI never shows — so "I filed your note under
+    topic 42" is unverifiable: right topic, or a neighbour? Echoing the title,
+    the slug path and the in-app URL makes the destination checkable at a glance
+    (and pasteable into the browser).
+    """
+    paths = await _topic_paths(session)
+    path = paths.get(topic.id) or topic.slug
+    return {
+        "id": topic.id,
+        "title": topic.title,
+        # ``quote`` leaves "/" alone, so the joined segments stay a path.
+        "url": f"{app_base_url()}/topics/{quote(path)}",
+        "path": path,
+    }
 
 
 def _message_dict(m: Message) -> dict[str, Any]:
@@ -1120,6 +1141,10 @@ async def append_note(topic_id: int, text: str) -> dict[str, Any]:
 
     Identical in effect to the app's "append notes" command, so the note lands
     in the topic exactly as the UI would write it.
+
+    The result echoes the destination under ``topic`` (``title``, slug ``path``
+    and in-app ``url``). Report *those* back to the user rather than the numeric
+    id, which is an internal detail they never see and cannot check.
     """
     if not await _section_enabled("notes"):
         return {"error": _GATED.format(section="notes")}
@@ -1130,8 +1155,10 @@ async def append_note(topic_id: int, text: str) -> dict[str, Any]:
     from precursor.backend.services import notes as notes_service
 
     async with SessionLocal() as session:
-        if await session.get(Topic, topic_id) is None:
+        topic = await session.get(Topic, topic_id)
+        if topic is None:
             return {"error": f"Topic {topic_id} not found"}
+        ref = await _topic_ref(session, topic)
 
     result = await notes_service.append_notes(
         kind="topic",
@@ -1139,7 +1166,12 @@ async def append_note(topic_id: int, text: str) -> dict[str, Any]:
         text=text,
         attachment_ids=[],
     )
-    return {"topic_id": topic_id, "message_id": result.message.id, "posted": True}
+    return {
+        "topic_id": topic_id,
+        "topic": ref,
+        "message_id": result.message.id,
+        "posted": True,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1153,6 +1185,10 @@ async def post_message(topic_id: int, content: str) -> dict[str, Any]:
     like the chat UI, then returns the assistant's response. The nested turn
     does NOT re-expose Precursor's own MCP tools, so it can't recursively call
     ``post_message``.
+
+    The result echoes the destination under ``topic`` (``title``, slug ``path``
+    and in-app ``url``). Report *those* back to the user rather than the numeric
+    id, which is an internal detail they never see and cannot check.
     """
     if not await _section_enabled("post_message"):
         return {"error": _GATED.format(section="post_message")}
@@ -1165,6 +1201,7 @@ async def post_message(topic_id: int, content: str) -> dict[str, Any]:
         topic = await session.get(Topic, topic_id)
         if topic is None:
             return {"error": f"Topic {topic_id} not found"}
+        ref = await _topic_ref(session, topic)
         timeout = await resolve_scheduled_run_timeout_seconds(session)
 
     try:
@@ -1187,8 +1224,13 @@ async def post_message(topic_id: int, content: str) -> dict[str, Any]:
             .first()
         )
     if latest is None:
-        return {"topic_id": topic_id, "reply": None, "note": "No assistant reply produced"}
-    return {"topic_id": topic_id, "reply": latest.content, "message_id": latest.id}
+        return {
+            "topic_id": topic_id,
+            "topic": ref,
+            "reply": None,
+            "note": "No assistant reply produced",
+        }
+    return {"topic_id": topic_id, "topic": ref, "reply": latest.content, "message_id": latest.id}
 
 
 # --------------------------------------------------------------------------
@@ -1484,6 +1526,19 @@ def http_endpoint_url() -> str | None:
     if not is_loopback_host(cfg.host):
         return None
     return f"http://{cfg.host}:{cfg.port}/mcp"
+
+
+def app_base_url() -> str:
+    """Origin of the running SPA, so a tool result can link to what it changed.
+
+    Uses the configured bind, mapping a wildcard to ``localhost`` because
+    ``0.0.0.0`` is not something a browser can open. Best-effort: the value is
+    only ever pasted into a human-readable result.
+    """
+    cfg = get_settings()
+    host = {"0.0.0.0": "localhost", "": "localhost", "::": "localhost"}.get(cfg.host, cfg.host)
+    authority = f"[{host}]:{cfg.port}" if ":" in host else f"{host}:{cfg.port}"
+    return f"http://{authority}"
 
 
 # Concrete FastMCP instance for the stdio entrypoint. The HTTP transport builds

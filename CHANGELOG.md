@@ -143,7 +143,30 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
-- **A catalogue entry's install command is now shown where you're looking.**
+- **A note filed from the MCP server now appears in the UI, and the tool says
+  which topic it landed in.** Asking the assistant to append a note wrote it to
+  the database and then showed you nothing: the browser kept rendering the topic
+  as it was before, and the only confirmation was a tool result naming an
+  internal `topic_id` — a number the app never displays — so there was no way to
+  tell a silent failure from a note filed under the wrong topic.
+
+  Two causes, both fixed. The built-in `precursor` server runs as a **stdio
+  subprocess**, sharing the app's database but not its in-memory event bus, so
+  the `message.changed` event announcing the write was published onto that
+  child's own empty bus and reached no window. Children are now handed a
+  loopback relay URL and a per-run token, and forward their events to the app
+  process (`POST /api/events/publish`), which republishes them onto the real bus
+  — so the write shows up live, in every window, including the one whose chat
+  turn triggered the tool. The endpoint accepts only data-refresh event types
+  and only with the token, so the worst it can ever do is make a window refetch
+  data it already has.
+
+  `append_note` and `post_message` now also return the destination as `topic`:
+  its **title**, its slug **path**, and the in-app **URL** — pasteable straight
+  into the browser — so "filed under `customers/sanofi/avm-alz`" replaces "filed
+  under topic 42" and a mis-targeted note is obvious at a glance.
+
+
   When the in-app installer is off, the entry's button was labelled "Show
   command" but only wrote the package name into the free-form box further down
   the panel — so the visible result was a text input quietly gaining a word,
