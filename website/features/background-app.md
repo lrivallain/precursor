@@ -45,7 +45,7 @@ precursor service status      # is it running, on which port, since when
 precursor service start       # start a detached instance
 precursor service stop        # stop it
 precursor service restart     # bounce it (keeps the port it was on)
-precursor service logs -n 100 # tail the instance log
+precursor service logs -n 100 # tail the instance log (see Reading the log)
 precursor service data-dir    # print the data directory (--reveal opens it)
 precursor service install     # run at login (app + tray) and start now
 precursor service uninstall   # remove the login items
@@ -266,6 +266,47 @@ on an old build. Extras that pull libraries the app itself uses (`tray`,
 `postgres`) are never dropped, and a failure that survives the retry is reported
 as a failure. The next update tries the plugin again; use
 `PRECURSOR_UPDATE_EXTRAS=-kanban` to stop asking for good.
+
+## Reading the log
+
+`precursor.log`, in `logs/` under the [data directory](#where-the-data-lives),
+is written by the running app itself — through a size-rotating handler it
+configures at startup, not by whoever happens to own the process's stdio.
+
+That distinction is the whole point. Precursor runs under three different
+owners: a terminal, its own supervisor (`precursor service start`), and a
+launchd agent or systemd user unit. Only the middle one has Precursor holding
+the pipe. So a log written *by the pipe* would go stale the moment you ran
+`precursor service install` — which is exactly what used to happen, silently,
+while `service status` went on advertising the file.
+
+```bash
+precursor service logs -n 100   # the same file the tray's "Open log file" opens
+```
+
+Rotation matters for the same reason: a service manager's own capture is
+unbounded, and nothing ever prunes it. `PRECURSOR_LOG_FILE_MAX_BYTES` (5 MB) and
+`PRECURSOR_LOG_FILE_BACKUPS` (3) cap it here instead.
+
+::: details The other files in `logs/`
+`precursor.log` is the log. The rest are raw stdio nets, holding only what
+logging can't catch — an import error, a traceback from before logging was
+configured, a native crash:
+
+| File | Written by |
+| --- | --- |
+| `precursor.log` | the app (rotating; `precursor.log.1`, … are its generations) |
+| `tray.log` | the menu-bar icon, which is a separate process with its own failures |
+| `precursor.out.log` | the raw pipe of a supervisor-started child, capped at each start |
+| `launchd.app.err.log`, `launchd.tray.err.log` | launchd, for the login items (macOS) |
+
+On Linux the launchd files have no equivalent: systemd captures stderr to the
+journal (`journalctl --user -u precursor`).
+
+When the app is started by a service manager its stderr is *already* being
+captured, so the console handler is dropped — otherwise every line would be
+written twice, and only one of the two copies would ever be rotated.
+:::
 
 ## Where the data lives
 

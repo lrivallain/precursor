@@ -35,6 +35,7 @@ from typing import Any, Literal
 from precursor import __version__ as _OWN_VERSION
 from precursor.backend import desktop, notifications, supervisor
 from precursor.backend.config import get_settings
+from precursor.backend.logging_config import TRAY_LOG_FILENAME, configure_logging, log_path
 from precursor.backend.services import updates
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ class TrayApp:
         # would never point at.
         if state is not None and state.log_file:
             return Path(state.log_file)
-        return Path(get_settings().logs_dir) / "precursor.log"
+        return log_path()
 
     # --- actions ---------------------------------------------------------
 
@@ -611,6 +612,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Never contact GitHub to look for newer builds.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
+
+    # The tray is a long-lived process of its own, and until now it configured
+    # no logging at all: every `logger.error` in this module reached only
+    # `logging.lastResort`, i.e. an unformatted line on a stderr that a login
+    # item throws away. Its own file, not the app's — two processes rotating one
+    # file race, and "the icon failed" is a different question from "the server
+    # failed" anyway.
+    configure_logging(get_settings().log_level, log_file=log_path(TRAY_LOG_FILENAME))
 
     if not gui_available():
         print(_missing_deps_message(), file=sys.stderr)

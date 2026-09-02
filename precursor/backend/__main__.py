@@ -44,7 +44,7 @@ import uvicorn
 
 from precursor.backend import banner
 from precursor.backend.config import get_settings
-from precursor.backend.logging_config import configure_logging
+from precursor.backend.logging_config import configure_logging, log_path
 
 logger = logging.getLogger(__name__)
 
@@ -339,9 +339,46 @@ def _announce_when_ready(
     return thread
 
 
+def _owned_log_file() -> Path | None:
+    """`precursor.log`, unless another live instance already owns it.
+
+    A rotating handler assumes one writer: on rollover it renames the file out
+    from under anyone else's open descriptor, so a second writer keeps appending
+    into a generation that is then shifted away. Two instances on one data
+    directory is already a misuse (they share the database too), but a busy port
+    auto-bumps rather than refusing, so it is reachable — and it must not cost
+    the *real* instance its log.
+
+    The supervised child and `run_foreground` both pass this check: the former
+    starts before its parent records any state, the latter writes `runtime.json`
+    with its own pid first.
+    """
+    from precursor.backend import supervisor
+
+    current = supervisor.status()
+    if current.running and current.state is not None and current.state.pid != os.getpid():
+        logger.warning(
+            "Another Precursor instance (pid %s) owns %s — logging to the console only.",
+            current.state.pid,
+            log_path(),
+        )
+        return None
+    return log_path()
+
+
 def _run_prod(
     host: str, port: int, log_level: str, *, strict_port: bool, open_browser: bool
 ) -> None:
+    # First, like `_run_dev`: everything below — the frontend build, the port
+    # resolution, the readiness announcement — logs, and until this runs those
+    # records go through `logging.lastResort`, which drops INFO entirely.
+    #
+    # Only the production path names a file. It is the one that runs unattended
+    # (login item, supervised child) and therefore the one whose output has
+    # nowhere else to go, whereas `--dev` reloads — and a second process
+    # rotating the same file is a race for no benefit when a terminal is right
+    # there.
+    log_config = configure_logging(log_level, log_file=_owned_log_file())
     _ensure_frontend_built(rebuild_if_stale=True)
     resolved = _resolve_port(host, port, strict=strict_port)
     connect_host = _loopback(host)
@@ -362,7 +399,7 @@ def _run_prod(
             host=host,
             port=resolved,
             log_level=log_level,
-            log_config=configure_logging(log_level),
+            log_config=log_config,
             reload=False,
             timeout_graceful_shutdown=get_settings().shutdown_grace_seconds,
         )
