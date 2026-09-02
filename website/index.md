@@ -122,19 +122,17 @@ Precursor is an AI assistant, built with an opinionated approach to
 tracking work-in-progress conversations alongside the GitHub issues they may
 belong to.
 
-```bash
-# Run the latest published build with zero setup:
-uvx precursor-ai
-```
-
-Prefer to hack on it? The whole dev stack — backend hot-reload plus Vite HMR —
-starts with one command:
+Installing it is one command — it sets Precursor up, starts it, and brings it
+back after every reboot:
 
 ```bash
-uv run precursor --dev
+curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
 
-Head to the [installation guide](/guide/installation) to get set up, or browse
+Then open the URL it prints. That's the whole setup: no clone, no build step, no
+database to create.
+
+Head to the [installation guide](/guide/installation) for the details, or browse
 the [feature guides](/features/) to see everything Precursor can do.
 
 </div>

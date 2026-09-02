@@ -11,7 +11,7 @@
 #
 # Environment overrides:
 #   PRECURSOR_CHANNEL   nightly (default) | stable
-#   PRECURSOR_EXTRAS    comma-separated extras (default: kanban,tray)
+#   PRECURSOR_EXTRAS    comma-separated extras (default: kanban,tray; empty = none)
 #   PRECURSOR_REPO      owner/repo to install from (default: lrivallain/precursor)
 #   PRECURSOR_NO_START  set to 1 to install without registering/starting it
 
@@ -19,7 +19,9 @@ set -eu
 
 REPO="${PRECURSOR_REPO:-lrivallain/precursor}"
 CHANNEL="${PRECURSOR_CHANNEL:-nightly}"
-EXTRAS="${PRECURSOR_EXTRAS:-kanban,tray}"
+# `-` rather than `:-`: an explicitly empty PRECURSOR_EXTRAS means "install the
+# lean core", which is a different intent from not naming the variable at all.
+EXTRAS="${PRECURSOR_EXTRAS-kanban,tray}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$1"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -28,7 +30,11 @@ command -v uv >/dev/null 2>&1 || die \
   "uv is required. Install it first: https://docs.astral.sh/uv/getting-started/installation/"
 command -v curl >/dev/null 2>&1 || die "curl is required."
 
-REQUIREMENT="precursor-ai[${EXTRAS}]"
+if [ -n "$EXTRAS" ]; then
+  REQUIREMENT="precursor-ai[${EXTRAS}]"
+else
+  REQUIREMENT="precursor-ai"
+fi
 
 if [ "$CHANNEL" = "stable" ]; then
   say "Installing ${REQUIREMENT} from PyPI"

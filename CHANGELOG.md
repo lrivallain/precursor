@@ -64,6 +64,23 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **Installation is one prescriptive path instead of a menu of three.** The guide
+  used to open with "Option A / Option B / Option C" and expect a newcomer to
+  weigh a background install against `uvx` against a source checkout before they
+  had run the app once — with plugin extras, the retired `agents` extra and the
+  Copilot CLI resolution order interleaved into the same page. For an opinionated
+  tool that is the wrong shape: the first page should say what to do, not offer a
+  decision.
+
+  It now reads *install uv → run one command → open the URL*, with everything
+  else demoted to an **Other ways to install** section that names the reason each
+  alternative exists (try it out, no login item, Windows, stable channel,
+  contributing). The Copilot CLI resolution order moved to
+  [agents mode](https://precursor.vuptime.io/features/agents-mode#pointing-at-a-specific-cli),
+  where it belongs, and the dev-stack launch options moved to the contribution
+  guide. The quick start now starts from a *running* app rather than re-teaching
+  how to launch one, and the README leads with the install rather than the stack.
+
 - **The kanban board now ships from
   [its own repository](https://github.com/lrivallain/precursor-kanban).** It was
   the last in-repo plugin, and being in-repo was doing it no favours: it built
@@ -100,6 +117,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   a browser flow.
 
 ### Fixed
+
+- **`PRECURSOR_EXTRAS=` now installs the lean core** instead of silently
+  reinstating the default extras. `install.sh` read it with `${…:-default}`,
+  which cannot tell "unset" from "deliberately empty", so the one way to ask for
+  a Precursor without the board and the tray was the one thing it ignored — and
+  had it not, the requirement would have been the invalid `precursor-ai[]`.
 
 - **`precursor service install` no longer uninstalls the login item it was
   asked to re-install.** `launchctl bootout` signals the job and returns; it
