@@ -36,41 +36,26 @@ jobs:
           npm ci
           npm run build
 
-      # Each in-repo plugin's UI is built into its own Python package, so it
-      # ships inside that plugin's wheel and Precursor can serve it. Without
-      # this a released plugin would have a backend but no interface.
-      - name: Build plugin frontends
-        run: make plugins-build
-
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - name: Build wheel + sdist
-        # `--all-packages`, not a bare `uv build`: the workspace also holds the
-        # built-in plugins, and a release that ships the host without them
-        # leaves `precursor-ai[kanban]` unresolvable on PyPI.
-        run: uv build --all-packages
+        run: uv build
 
-      - name: Verify built versions match the tag
+      - name: Verify the built version matches the tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          # Built-in plugins inherit the host's CalVer from the same git tag, so
-          # every wheel in dist/ must carry it — a mismatch means one of them
-          # resolved its version from somewhere else.
-          status=0
-          for whl in dist/*.whl; do
-            name=$(basename "$whl")
-            built=$(echo "$name" | sed -E 's#^[^-]+-([^-]+)-.*#\1#')
-            echo "$name -> $built"
-            # Normalise PEP 440 (CalVer maps 1:1, so they should match exactly).
-            if [ "$tag" != "$built" ]; then
-              echo "::error::$name does not match the tag ($tag)"
-              status=1
-            fi
-          done
-          exit $status
+          whl=$(ls dist/*.whl)
+          name=$(basename "$whl")
+          built=$(echo "$name" | sed -E 's#^[^-]+-([^-]+)-.*#\1#')
+          echo "$name -> $built"
+          # Normalise PEP 440 (CalVer maps 1:1, so they should match exactly).
+          if [ "$tag" != "$built" ]; then
+            echo "::error::$name does not match the tag ($tag)"
+            exit 1
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
@@ -110,10 +95,9 @@ jobs:
     # required reviewers) to releases. Configure the matching publisher on PyPI:
     # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
     #
-    # This step uploads every wheel in dist/, which now includes the built-in
-    # plugins — so PyPI needs a trusted publisher for **each** distribution
-    # (`precursor-ai` and `precursor-kanban`), pointing at this same workflow.
-    # Without the second one the upload fails on the plugin.
+    # One distribution, one publisher: this repository publishes `precursor-ai`
+    # only. Plugins — `precursor-kanban` included — live in their own
+    # repositories and publish from their own workflows.
     environment:
       name: pypi
       url: https://pypi.org/p/precursor-ai

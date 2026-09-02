@@ -414,11 +414,11 @@ function InstallBox({
  * A plugin that publishes UI but whose bundle never arrived.
  *
  * A plugin's frontend is a build product shipped inside its wheel. If it is
- * missing — a source checkout that hasn't run `make plugins-build`, or a wheel
- * built without it — the backend still advertises the section, the SPA has
- * nothing to import, `registerSection` never runs, and the section is dropped.
- * Everything else looks healthy: installed, enabled, no error. Without this
- * notice the only symptom is a section that silently isn't there.
+ * missing — a package built without it — the backend still advertises the
+ * section, the SPA has nothing to import, `registerSection` never runs, and the
+ * section is dropped. Everything else looks healthy: installed, enabled, no
+ * error. Without this notice the only symptom is a section that silently isn't
+ * there.
  */
 function MissingFrontend({ plugin }: { plugin: InstalledPlugin }) {
   // A plugin bundled into core's own build also has no `entry`, but it *is*
@@ -440,9 +440,8 @@ function MissingFrontend({ plugin }: { plugin: InstalledPlugin }) {
       <AlertTriangle size={13} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
       <span className="min-w-0">
         Its interface is missing, so nothing it contributes to the UI will appear.
-        A plugin's frontend is built into its package — from a source checkout run{" "}
-        <code className="rounded bg-surface px-1 py-0.5">make plugins-build</code>;
-        otherwise reinstall the package.
+        A plugin's frontend is built into its package — reinstall or upgrade the
+        package to get one that carries it.
       </span>
     </div>
   );

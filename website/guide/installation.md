@@ -88,8 +88,13 @@ make sync                      # uv sync + npm --prefix frontend install
 cp .env.example .env
 ```
 
-`uv sync` installs the in-repo plugins under `plugins/` as workspace members, so
-a source checkout has the kanban board wired in from the start.
+Plugins are separate distributions with their own release cadence, so a source
+checkout starts without them. Add the kanban board — or any other plugin — the
+way an end user would:
+
+```bash
+uv pip install precursor-kanban
+```
 
 <details>
 <summary>Without <code>make</code></summary>

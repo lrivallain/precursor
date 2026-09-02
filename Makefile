@@ -1,4 +1,4 @@
-.PHONY: help hooks sync dev backend frontend docs build plugins-build wheel check lockcheck test migration migrate
+.PHONY: help hooks sync dev backend frontend docs build wheel check lockcheck test migration migrate
 
 # Lockfiles are resolved by CI, never locally: a corporate package mirror
 # rewrites artifact URLs and weakens their integrity metadata. UV_FROZEN keeps
@@ -18,20 +18,19 @@ hooks:  ## Install the git hooks (blocks proxy-polluted lockfiles)
 # The `dev` dependency group is included by uv automatically, so `uv sync` /
 # `uv run` always carry the tooling (ruff/pytest/mypy) — no `--extra dev`.
 # `npm ci` (not `install`) installs *from* the lockfile without rewriting it.
-sync: ## Install/refresh the dev environment (uv + npm + plugin UIs)
+sync: ## Install/refresh the dev environment (uv + npm)
 	uv sync
 	npm --prefix frontend ci
 	npm --prefix website ci
-	$(MAKE) plugins-build
 
 # Full dev stack: uvicorn --reload + Vite HMR (Ctrl-C stops both). The Copilot
 # SDK is a normal dependency now, so Agents mode needs no extra here — only the
 # native CLI it drives, which Settings → Agents provisions on demand.
-dev: plugins-build  ## Run the full dev stack (API + Vite HMR)
+dev:  ## Run the full dev stack (API + Vite HMR)
 	uv run precursor --dev
 
 # Backend only (uvicorn --reload, no Vite).
-backend: plugins-build  ## Run the backend only (uvicorn --reload)
+backend:  ## Run the backend only (uvicorn --reload)
 	uv run precursor --dev --no-frontend
 
 # Vite dev server only.
@@ -39,41 +38,26 @@ frontend:  ## Run the Vite dev server only
 	npm --prefix frontend run dev
 
 # Build the SPA so a plain `uv run precursor` can serve it on one port.
-build: plugins-build  ## Build the SPA into frontend/dist (+ in-repo plugin UIs)
+build:  ## Build the SPA into frontend/dist
 	npm --prefix frontend run build
-
-# In-repo plugin frontends. Each builds with the host's toolchain into its own
-# Python package (plugins/<dist>/src/<module>/web), so it rides along in the
-# wheel and Precursor serves it at /api/plugins/<id>/assets/*. Add a plugin by
-# adding its distribution name here.
-PLUGINS ?= precursor-kanban
-
-plugins-build:  ## Build every in-repo plugin's frontend into its package
-	@for p in $(PLUGINS); do \
-		echo "building $$p frontend"; \
-		PRECURSOR_PLUGIN=$$p npm --prefix frontend exec -- vite build \
-			--config frontend/vite.plugin.config.ts || exit 1; \
-	done
 
 # Build the docs with base /docs/ so the app serves them in-app at /docs/.
 # (GitHub Pages builds the same source with the default base "/" separately.)
 docs:  ## Build the VitePress docs for in-app serving (base /docs/)
 	DOCS_BASE=/docs/ npm --prefix website run docs:build
 
-# Build the self-contained wheel + sdist (SPA + docs bundled inside the package),
-# plus a wheel per in-repo plugin (each carrying its own built frontend).
-wheel: build docs  ## Build the distributable wheels + sdists (uv, all packages)
-	uv build --all-packages
+# Build the self-contained wheel + sdist (SPA + docs bundled inside the package).
+wheel: build docs  ## Build the distributable wheel + sdist (uv)
+	uv build
 
 # Quality gates — mirrors CI (.github/workflows/ci.yml).
 check: lockcheck  ## Run all backend + frontend quality gates
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy precursor plugins/precursor-kanban/src
+	uv run mypy precursor
 	uv run pytest -q
 	npm --prefix frontend run typecheck
 	npm --prefix frontend run build
-	$(MAKE) plugins-build
 
 lockcheck:  ## Verify lockfiles pin public artifacts with strong hashes
 	python3 scripts/check_lockfiles.py

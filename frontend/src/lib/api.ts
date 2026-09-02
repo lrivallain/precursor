@@ -121,9 +121,9 @@ import type {
 import { CLIENT_ID } from "./clientId";
 
 /**
- * Issue a JSON API request with the shared headers + error unwrapping. Exported
- * so plugin bundles (`src/plugins/*`) can call their own backend routes without
- * re-implementing the transport — see `plugins/kanban/api.ts`.
+ * Issue a JSON API request with the shared headers + error unwrapping. Re-exported
+ * through `@precursor/host` so plugin bundles can call their own backend routes
+ * without re-implementing the transport.
  */
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {

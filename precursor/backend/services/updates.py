@@ -60,8 +60,9 @@ class UpdateInfo:
     channel: Channel
     install_mode: InstallMode
     wheel_url: str | None = None
-    # Plugin wheels published alongside the host, so a nightly install gets
-    # nightly plugins instead of whatever version is on PyPI.
+    # Wheels published alongside the host on the same nightly release, installed
+    # with it so a nightly gets same-commit companions instead of whatever is on
+    # PyPI. Normally empty: plugins release from their own repositories.
     extra_wheel_urls: tuple[str, ...] = ()
     release_url: str | None = None
     # Populated when the check itself failed (offline, rate limited, …) so the
@@ -344,12 +345,9 @@ def apply(info: UpdateInfo | None = None) -> str:
     if mode == "source":
         root = repo_root()
         _run(["git", "pull", "--ff-only"], cwd=root)
-        # A checkout ships no built plugin UI, so refresh it; the SPA itself is
-        # rebuilt automatically on the next start when it is stale.
-        if shutil.which("make"):
-            _run(["make", "plugins-build"], cwd=root)
-        else:
-            logger.warning("make not found — skipping plugin frontend rebuild.")
+        # The SPA is rebuilt automatically on the next start when it is stale,
+        # and a plugin's UI ships inside its own package — so there is nothing
+        # else to build here.
         invalidate()
         return f"Updated the checkout at {root}."
 
@@ -373,8 +371,8 @@ def apply(info: UpdateInfo | None = None) -> str:
 
     cmd = [uv, "tool", "install", "--force", target]
     for extra in info.extra_wheel_urls:
-        # Pin the plugin wheels built from the same commit, so a nightly host
-        # isn't paired with a months-old plugin resolved from PyPI.
+        # Pin the companion wheels built from the same commit, so a nightly host
+        # isn't paired with something months old resolved from PyPI.
         cmd += ["--with", extra]
     _run(cmd)
     invalidate()

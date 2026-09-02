@@ -1148,8 +1148,8 @@ export interface GitHubIssue {
 }
 
 // The GitHub issue read models below mirror precursor.backend.schemas.issues.
-// The Projects v2 board models live with the kanban plugin
-// (frontend/src/plugins/kanban/types.ts).
+// The Projects v2 board models live with the kanban plugin, in its own
+// repository (github.com/lrivallain/precursor-kanban).
 
 export interface IssueComment {
   id: number;
