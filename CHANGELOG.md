@@ -11,6 +11,31 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **The menu-bar icon says whether the app is *ready*, not just whether it is
+  up.** Starting, stopping and — above all — *updating* used to render exactly
+  like "running": a fully-coloured icon claiming the app was there and clickable
+  while its own code was being replaced underneath. Those states now draw the
+  mark in grey with an ellipsis in the speech bubble, the universal "working on
+  it". Grey alone would have read as "stopped", so the glyph carries the
+  difference.
+- **The tray menu leads with where the install stands**, on a line above the
+  actions: 🟢 *Up to date*, 🟡 *Update available — 2026.9.1*, 🔴 *Could not
+  check for updates*, ⚪ *Checking…*. The action entry can only describe the next
+  click; this answers the question you opened the menu for. "Couldn't check" and
+  "up to date" are different facts, and conflating them is how an install goes
+  quietly stale.
+- **A new "Open log file" entry in the tray menu**, opening the instance log the
+  supervisor actually recorded (so it follows an instance started against a
+  different data directory) and falling back to the logs folder when there isn't
+  one yet. Like the data folder, it is deliberately *not* gated on a running
+  instance: the log is exactly what you want when it won't start.
+- **The tray now speaks up when a background check finds a new build**, instead
+  of waiting for you to click the icon — with an **Update and restart** button
+  where the desktop can draw one (macOS `osascript`, Linux `notify-send
+  --action`). Anything other than an explicit yes leaves the build waiting in the
+  menu, and each build is announced once, so a poll every half hour doesn't
+  become an interruption every half hour. `PRECURSOR_UPDATE_NOTIFY` turns it down
+  to a plain toast (`notify`) or off.
 - **`precursor` now ships a `py.typed` marker (PEP 561), so the plugin API is a
   typed contract outside this repository.** Without it, mypy treats every
   `precursor.*` import in an *installed* environment as untyped and silently
