@@ -123,7 +123,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   which cannot tell "unset" from "deliberately empty", so the one way to ask for
   a Precursor without the board and the tray was the one thing it ignored — and
   had it not, the requirement would have been the invalid `precursor-ai[]`.
-
+- **`precursor.log` is written again once Precursor runs as a login item.** The
+  file only ever existed because `precursor service start` redirected the child's
+  stdout into it — so the moment a launchd agent or a systemd unit took over the
+  process (which is what `precursor service install` sets up, and what
+  service+tray mode *is*), the service manager captured stdio somewhere of its
+  own and the log froze at the last supervisor-started run. Nothing said so:
+  `service status`, `precursor service logs` and the tray's **Open log file**
+  went on naming a file that had stopped being written days earlier, while the
+  real output piled up unrotated in `launchd.app.err.log` (15 MB in a week on the
+  reported install). The app now configures its **own rotating file handler**, so
+  `precursor.log` is the same file in every mode — terminal, supervised child,
+  launchd, systemd — and is capped by `PRECURSOR_LOG_FILE_MAX_BYTES` /
+  `PRECURSOR_LOG_FILE_BACKUPS` rather than growing forever. Where a service
+  manager already captures stderr, the console handler is dropped so no line is
+  written twice; a supervised child's raw pipe moves to `precursor.out.log`,
+  which now holds only what logging can't catch (an import error, a pre-config
+  traceback) and is trimmed at each start.
+- **The menu-bar icon logs its own failures.** The tray process never configured
+  logging at all, so every `logger.error` in it reached only `logging.lastResort`
+  — which drops INFO entirely and writes the rest, unformatted, to a stderr its
+  login item throws away. It now writes `tray.log` beside the instance log. Its
+  own file, not the app's: "the icon failed" and "the server failed" are
+  different questions, and two processes rotating one file race.
+- **`precursor service start --foreground` no longer swallows its own startup
+  messages.** It is what the login item runs, and it logged before anything had
+  configured logging — including the INFO line explaining that it was exiting
+  cleanly because another instance was already serving, which is precisely the
+  message you go looking for when a login item appears to do nothing.
 - **`precursor service install` no longer uninstalls the login item it was
   asked to re-install.** `launchctl bootout` signals the job and returns; it
   does not wait for the process to die. Precursor's shutdown is a graceful

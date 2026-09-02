@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "info"
+    # The app writes `<logs_dir>/precursor.log` itself, so the file is the same
+    # one whether the process was started in a terminal, by the supervisor, or
+    # by a launchd/systemd login item. It is size-rotated because nothing else
+    # will ever prune it — a service manager's own stdio capture is unbounded,
+    # which is how those files reach tens of megabytes.
+    log_file_max_bytes: int = 5 * 1024 * 1024
+    log_file_backups: int = 3
     # Seconds uvicorn waits for in-flight requests (e.g. long-lived SSE chat
     # streams) to finish on shutdown before force-closing them. Kept small so
     # Ctrl-C releases the listening port promptly instead of hanging on an open
