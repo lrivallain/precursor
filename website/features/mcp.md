@@ -30,6 +30,9 @@ Built-in servers ship in-tree:
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
 | `workiq-teams` | Microsoft Teams via [Agent 365](#agent-365-workiq-teams-and-workiq-user) — chats, channels, messages, presence. |
 | `workiq-user` | Directory and people lookups via Agent 365 — profiles, managers, direct reports. |
+| `workiq-planner` | Planner via Agent 365 — plans, tasks and goals. |
+| `workiq-word` | Word via Agent 365 — create a document, read its content, comment on it. |
+| `workiq-excel` | Excel via Agent 365 — create a workbook, read its content, comment on it. |
 | `precursor` | Precursor's *own* data (see below). |
 
 You can also add **your own** servers (stdio or streamable-HTTP). A
@@ -214,6 +217,14 @@ hands-free where the browser still holds a live session, and when several server
 go stale at once you get **one prompt, not one per credential**. The banner is
 the last resort, not the first move.
 
+**A sign-in counts for every server on that credential.** Several built-ins share
+one Entra token — the five Agent 365 endpoints are a single sign-in between them
+— so when one completes, the rest are re-pointed at the fresh token and
+reconnected on the spot instead of being left showing a sign-in they already
+have. **Settings → MCP** matches that: the button belongs to the *credential*,
+so the servers sharing it read `signs in with WorkIQ Teams` rather than offering
+a redundant prompt of their own.
+
 Idle credentials are allowed to go quiet — a server you enabled months ago and
 never call stops being refreshed, and stops nagging — but a genuine lapse is
 surfaced proactively rather than discovered as a stalled request.
@@ -328,27 +339,47 @@ doomed refresh later. An explicit **Sign in** still clears outright — you're
 right there, and a stale token must not shadow the new grant.
 :::
 
-### Agent 365: `workiq-teams` and `workiq-user`
+<!-- The anchor is pinned: it predates the Planner/Word/Excel servers and is
+     linked from the changelog and released docs. -->
+### Agent 365: the hosted `workiq-*` servers {#agent-365-workiq-teams-and-workiq-user}
 
-Microsoft's **Agent 365** platform exposes two more hosted MCP endpoints, and
-Precursor ships both as built-ins:
+Microsoft's **Agent 365** platform exposes more hosted MCP endpoints, and
+Precursor ships the five that one sign-in reaches:
 
 | Server | Covers |
 | --- | --- |
 | `workiq-teams` | Teams: list/send chat and channel messages, members, presence, files. |
 | `workiq-user` | Directory: your profile, other users, managers, direct reports. |
+| `workiq-planner` | Planner: create and query plans, tasks and goals. |
+| `workiq-word` | Word: create a document, read its content, add and reply to comments. |
+| `workiq-excel` | Excel: create a workbook, read its content, add and reply to comments. |
 
-**One sign-in covers both.** They authenticate as the same Entra client against
-the same resource, so Precursor caches a single Agent 365 credential — sign in
-from either and both come up. The WorkIQ preview is a *different* client and
-resource, so it keeps its own token; signing in to Teams never disturbs it.
+**One sign-in covers all five.** They authenticate as the same Entra client
+against the same resource, so Precursor caches a single Agent 365 credential —
+sign in from any of them and the other four are re-pointed at that token and
+reconnected immediately, with no second prompt. In **Settings → MCP** only the
+first of them carries a sign-in button; the rest read `signs in with WorkIQ
+Teams`. The WorkIQ preview is a *different* client and resource, so it keeps its
+own token; signing in to Teams never disturbs it.
+
+::: tip Why not `workiq-productivity` (or `-mail`, `-files`, `-sharepoint`)?
+Agent 365 hosts those too, but they sit behind a **second** Entra resource — the
+shared credential is rejected there with `invalid_audience`, so each would cost
+another consent and another sign-in. Their ground is already covered by the
+hosted `workiq` preview server, which reaches mail, calendar and files through
+Graph paths on the credential you have.
+
+Note also that Microsoft's **`workiq-productivity`** *plugin* is a different kind
+of thing entirely: a bundle of read-only prompt **skills** that drive the
+`workiq` tools you already have — not a server to add here.
+:::
 
 **They need your Microsoft tenant.** The endpoint URL embeds a tenant **GUID**,
 and Entra rejects the `common` / `organizations` aliases there. Precursor
 resolves one in order: **Settings → MCP → "Microsoft 365 tenant"**, then
 `PRECURSOR_WORKIQ_TENANT_ID`, then **auto-discovery** from a token you already
 hold via a hosted WorkIQ sign-in. In practice, if you've signed in to the WorkIQ
-preview the two servers configure themselves with nothing to fill in. Until a
+preview the servers configure themselves with nothing to fill in. Until a
 tenant is known the entries stay unconfigured and say so.
 
 ## As a server — exposing your conversations

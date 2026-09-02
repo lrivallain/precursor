@@ -56,7 +56,7 @@ class SettingsPayload(BaseModel):
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
     mcp_http_enabled: bool | None = None
     plugin_install_enabled: bool | None = None
-    # Entra tenant GUID for the Agent 365 MCP servers (workiq-teams / workiq-user).
+    # Entra tenant GUID for the Agent 365 MCP servers (the workiq-* family).
     workiq_tenant_id: str | None = None
     # Browser channel the built-in 'playwright' server drives (--browser).
     # "default" omits the flag entirely (escape hatch for builds without it).

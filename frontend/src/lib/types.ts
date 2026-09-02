@@ -1007,7 +1007,7 @@ export interface Settings {
   plugin_install_enabled: boolean;
   mcp_http_url: string | null;
   mcp_http_loopback_ok: boolean;
-  // Tenant GUID used by the Agent 365 servers (workiq-teams / workiq-user).
+  // Tenant GUID used by the Agent 365 servers (the workiq-* family).
   workiq_tenant_id: string;
   // True when the tenant above was read off a stored token rather than typed.
   workiq_tenant_discovered: boolean;

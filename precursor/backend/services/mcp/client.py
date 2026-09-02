@@ -355,12 +355,16 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
     # interactive auth on first run.
     _BuiltinSpec("workiq", "stdio", command=_WORKIQ_STDIO_COMMAND, args=_WORKIQ_STDIO_ARGS),
     # Microsoft Agent 365 MCP — hosted, per-tenant streamable-HTTP endpoints
-    # behind Entra OAuth. The URL embeds a tenant GUID that isn't known until the
-    # setting is read (or discovered from a WorkIQ token), so both entries start
-    # url-less and are pointed at the tenant by ``configure_agent365`` on startup
-    # and whenever the tenant setting changes.
+    # behind Entra OAuth, all sharing a single credential. The URL embeds a
+    # tenant GUID that isn't known until the setting is read (or discovered from
+    # a WorkIQ token), so these entries start url-less and are pointed at the
+    # tenant by ``configure_agent365`` on startup and whenever the tenant setting
+    # changes.
     _BuiltinSpec("workiq-teams", "streamable_http"),
     _BuiltinSpec("workiq-user", "streamable_http"),
+    _BuiltinSpec("workiq-planner", "streamable_http"),
+    _BuiltinSpec("workiq-word", "streamable_http"),
+    _BuiltinSpec("workiq-excel", "streamable_http"),
     # Playwright MCP — Microsoft's official ``@playwright/mcp`` via npx (like
     # workiq). Drives a real browser (Microsoft Edge by default, for corporate
     # SSO) with a persistent profile so an interactive Entra/SSO sign-in survives

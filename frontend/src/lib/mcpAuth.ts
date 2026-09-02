@@ -18,9 +18,9 @@ import { authLog, authLogEnd, authLogStart } from "./workiqAuthLog";
  * even that can't complete (auto re-auth off, port busy, declined).
  *
  * State is keyed by *auth family* (see {@link mcpAuthFamily}), not by server:
- * ``workiq-teams`` and ``workiq-user`` share one credential, so one sign-in
- * covers both, while the hosted WorkIQ preview is a separate Entra client that
- * genuinely needs its own. Tracking families independently is what lets the
+ * the Agent 365 ``workiq-*`` servers share one credential, so one sign-in
+ * covers all of them, while the hosted WorkIQ preview is a separate Entra client
+ * that genuinely needs its own. Tracking families independently is what lets the
  * second credential still get its hands-free pass instead of falling straight
  * through to a manual banner click.
  */

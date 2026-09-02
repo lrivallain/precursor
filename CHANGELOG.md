@@ -11,6 +11,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Three more Agent 365 MCP servers — `workiq-planner`, `workiq-word` and
+  `workiq-excel` — on the sign-in you already have.** Precursor shipped two of
+  Microsoft's hosted [Agent 365](https://precursor.vuptime.io/features/mcp.html#agent-365-workiq-teams-and-workiq-user)
+  endpoints; it now ships the five that a single credential reaches. `workiq-planner`
+  covers plans, tasks and goals; `workiq-word` and `workiq-excel` create a
+  document or workbook, read its content, and add or reply to comments.
+
+  **They cost no extra sign-in.** All five authenticate as the same Entra client
+  against the same resource, so the shared Agent 365 token is accepted verbatim —
+  if Teams or User already works, the three new servers do too, with nothing to
+  configure. Enable them in **Settings → MCP** like any other built-in.
+
+  Agent 365's *other* endpoints (`mcp_ProductivityServer`, `mcp_MailServer`,
+  `mcp_FilesServer`, …) are deliberately not included: they sit behind a second
+  Entra resource and reject the shared token with `invalid_audience`, so each
+  would cost another consent and another sign-in — for ground the hosted `workiq`
+  preview already covers over Graph paths.
+
 - **A plugin catalogue, so finding a plugin no longer means already knowing its
   package name.** **Settings → Plugins** now opens with an **Available** list —
   a curated directory of plugins with a one-click install — and the docs site
@@ -142,6 +160,26 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   a browser flow.
 
 ### Fixed
+
+- **Signing in to one WorkIQ server now counts for every server sharing that
+  credential.** The Agent 365 endpoints authenticate with a single Entra token,
+  but only the server you clicked was re-pointed at the fresh one — its siblings
+  stayed parked in `needs_auth`, each showing an amber **Sign in** for a
+  credential they already had. Clicking through them ran a full
+  clear-and-regrant per server, so six built-ins meant six browser sign-ins for
+  the two credentials Precursor actually holds.
+
+  A completed sign-in now adopts the whole credential: every server on it is
+  re-pointed at the new token, reconnected, and broadcast as resolved so other
+  windows drop their banner too. **Settings → MCP** stops inviting the mistake as
+  well — the sign-in button belongs to the *credential*, so the servers sharing
+  one read `signs in with WorkIQ Teams` instead of offering a redundant prompt.
+
+- **A custom MCP server could shadow the built-in `drawio`.** The list of names
+  reserved for built-in servers was maintained by hand and had drifted from the
+  catalogue, so adding your own server called `drawio` was accepted instead of
+  rejected. The list is now derived from the built-in catalogue, which also
+  closes the drift for every server added from here on.
 
 - **A note filed from the MCP server now appears in the UI, and the tool says
   which topic it landed in.** Asking the assistant to append a note wrote it to

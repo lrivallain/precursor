@@ -23,7 +23,7 @@ from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting, MCPServer
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.mcp.client import get_mcp_client_manager
+from precursor.backend.services.mcp.client import BUILTIN_CATALOG, get_mcp_client_manager
 from precursor.backend.services.mcp.server import get_mcp_server
 from precursor.backend.services.mcp.user_servers import (
     apply_to_manager,
@@ -36,17 +36,10 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-_RESERVED_NAMES = {
-    "github",
-    "workiq",
-    "workiq-teams",
-    "workiq-user",
-    "fetch",
-    "workspace-fs",
-    "cmd-runner",
-    "precursor",
-    "playwright",
-}
+# Derived rather than listed: a hand-maintained copy drifts from the catalogue
+# the moment a built-in is added (it had already lost ``drawio``), and the drift
+# is silent — a user server shadows the built-in name instead of being rejected.
+_RESERVED_NAMES = frozenset(spec.name for spec in BUILTIN_CATALOG)
 
 
 async def _load_enabled(session: AsyncSession) -> dict[str, bool]:
@@ -294,6 +287,54 @@ async def set_workiq_preview_mode(
     return _enrich_with_user_meta(base, None)
 
 
+async def _adopt_shared_credential(
+    signed_in: Any,
+    manager: Any,
+    enabled: dict[str, bool],
+    github_token: str | None,
+) -> list[str]:
+    """Point every *other* server on the just-signed-in credential at the token.
+
+    Siblings sharing a credential are authenticated the moment one of them signs
+    in — but nothing had re-probed them, so they stayed parked in ``needs_auth``
+    with an amber "Sign in" of their own. The user then clicked through a full
+    clear-and-regrant per server: six sign-ins for the two credentials Precursor
+    actually holds.
+
+    Re-pointing them at a provider that reads the freshly persisted token and
+    re-probing is enough to flip them green with no second grant. Distinct from
+    :func:`_renew_stale_sibling_credentials`, which handles the *other*
+    credentials — the ones that genuinely do need their own sign-in.
+
+    Returns the servers that were adopted, for the trace.
+    """
+    from precursor.backend.services.events import publish_mcp_auth_resolved
+    from precursor.backend.services.mcp.agent365 import is_agent365_server
+    from precursor.backend.services.mcp.oauth_registry import active_profiles
+    from precursor.backend.services.mcp.workiq_preview import build_oauth_provider
+
+    adopted: list[str] = []
+    for sibling in await active_profiles():
+        if sibling.server == signed_in.server or sibling.auth_family != signed_in.auth_family:
+            continue
+        # Only the Agent 365 endpoints ever share a credential; the preview is
+        # alone in its family, so it can only be the server we just signed in.
+        if manager.get(sibling.server) is None or not is_agent365_server(sibling.server):
+            continue
+        manager.configure_agent365(
+            sibling.server,
+            url=sibling.url,
+            auth_provider=build_oauth_provider(profile=sibling),
+        )
+        await manager.retire_worker(sibling.server)
+        if enabled.get(sibling.server, False):
+            await manager.probe(sibling.server, github_token=github_token)
+        # Clear any banner other windows are showing for a sign-in it now has.
+        await publish_mcp_auth_resolved(sibling.server)
+        adopted.append(sibling.server)
+    return adopted
+
+
 async def _renew_stale_sibling_credentials(
     signed_in: Any,
     manager: Any,
@@ -360,7 +401,7 @@ async def reauthenticate_workiq_server(
     """Restart an OAuth-protected server's browser sign-in on an explicit action.
 
     Serves the hosted WorkIQ preview (``workiq``) and the Agent 365 servers
-    (``workiq-teams`` / ``workiq-user``) — everything that authenticates through
+    (the ``workiq-*`` family) — everything that authenticates through
     Precursor's loopback authorization-code flow.
 
     Background connects never pop a browser (they surface ``needs_auth``); this
@@ -510,8 +551,20 @@ async def reauthenticate_workiq_server(
         manager.configure_workiq_preview(True, auth_provider=build_oauth_provider())
     await manager.retire_worker(name)
 
+    github_token = await resolve_github_token(session)
     if is_enabled:
-        await manager.probe(name, github_token=await resolve_github_token(session))
+        await manager.probe(name, github_token=github_token)
+
+    # The token just persisted authenticates every server on this credential, so
+    # adopt them here instead of leaving them showing a sign-in they already
+    # have. One click clears the whole Agent 365 family.
+    adopted = await _adopt_shared_credential(profile, manager, enabled, github_token)
+    if adopted:
+        from precursor.backend.services.mcp import auth_trace
+
+        auth_trace.record(
+            name, "adopted the siblings sharing this credential", siblings=", ".join(adopted)
+        )
 
     entry = manager.get(name)
     assert entry is not None

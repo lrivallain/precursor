@@ -124,12 +124,12 @@ def test_auth_blocked_servers_filters_needs_auth() -> None:
 def test_auth_blocked_servers_collapses_shared_credentials() -> None:
     """Servers behind one credential produce one prompt, not one each.
 
-    The Agent 365 pair authenticates with a single token, so blocking on both
-    used to ask the user to sign in twice for the same sign-in.
+    The Agent 365 servers authenticate with a single token, so blocking on two
+    of them used to ask the user to sign in twice for the same sign-in.
     """
     from precursor.backend.services.mcp import agent365
 
-    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS)
+    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS[:2])
     manager = MCPClientManager()
     manager._servers[teams] = _entry(teams, "needs_auth")
     manager._servers[user] = _entry(user, "needs_auth")
@@ -171,9 +171,10 @@ def test_signal_with_no_waiters_is_noop() -> None:
 
 
 def _agent365_names() -> tuple[str, str]:
+    """Two Agent 365 servers that share one credential."""
     from precursor.backend.services.mcp import agent365
 
-    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS)
+    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS[:2])
     return teams, user
 
 

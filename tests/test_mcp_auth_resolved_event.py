@@ -74,6 +74,120 @@ async def test_renew_stale_sibling_credentials_chains_the_other_entra_client(
     assert evt["server"] == "workiq-teams"
 
 
+async def test_adopt_shared_credential_flips_every_server_on_that_token(
+    monkeypatch,
+) -> None:
+    """One sign-in clears the whole Agent 365 family.
+
+    The endpoints share a single Entra token, so a sibling left parked in
+    ``needs_auth`` was asking for a sign-in it already had — the trap that turned
+    six servers into six sign-ins for two credentials.
+    """
+    import types
+
+    from precursor.backend.routers import mcp as mcp_router
+    from precursor.backend.services.mcp.agent365 import AGENT365_SERVERS, build_profile
+
+    tenant = "00000000-0000-0000-0000-000000000000"
+    family = [spec.name for spec in AGENT365_SERVERS]
+
+    async def _profile_for(name: str):
+        return build_profile(name, tenant) if name in family else None
+
+    async def _preview_on() -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "precursor.backend.services.mcp.agent365.profile_for", _profile_for, raising=False
+    )
+    monkeypatch.setattr(
+        "precursor.backend.services.mcp.workiq_preview.resolve_workiq_preview",
+        _preview_on,
+        raising=False,
+    )
+
+    configured: list[str] = []
+    retired: list[str] = []
+    probed: list[str] = []
+
+    class _Manager:
+        def get(self, name: str) -> object:
+            return types.SimpleNamespace(state="needs_auth")
+
+        def configure_agent365(self, name: str, *, url: str, auth_provider: object) -> None:
+            configured.append(name)
+
+        async def retire_worker(self, name: str) -> None:
+            retired.append(name)
+
+        async def probe(self, name: str, *, github_token: str | None) -> None:
+            probed.append(name)
+
+    signed_in = build_profile("workiq-teams", tenant)
+    # One sibling is disabled: adopt the credential for it, but don't connect it.
+    enabled = {name: name != "workiq-word" for name in family}
+
+    adopted = await mcp_router._adopt_shared_credential(signed_in, _Manager(), enabled, None)
+
+    siblings = [name for name in family if name != "workiq-teams"]
+    assert siblings  # the family is more than one server, or this proves nothing
+    # The server that just signed in is not re-done, and every other one is.
+    assert adopted == siblings
+    assert configured == siblings
+    assert retired == siblings
+    assert probed == [name for name in siblings if name != "workiq-word"]
+
+
+async def test_adopt_shared_credential_leaves_the_other_entra_client_alone(
+    monkeypatch,
+) -> None:
+    """The WorkIQ preview is alone on its credential, so it adopts nothing.
+
+    Its token is a different Entra client against a different resource — quietly
+    marking it authenticated off an Agent 365 sign-in would be a lie.
+    """
+    import types
+
+    from precursor.backend.routers import mcp as mcp_router
+    from precursor.backend.services.mcp.agent365 import build_profile
+    from precursor.backend.services.mcp.workiq_preview import PREVIEW_PROFILE
+
+    async def _profile_for(name: str):
+        return build_profile(name, "00000000-0000-0000-0000-000000000000")
+
+    async def _preview_on() -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "precursor.backend.services.mcp.agent365.profile_for", _profile_for, raising=False
+    )
+    monkeypatch.setattr(
+        "precursor.backend.services.mcp.workiq_preview.resolve_workiq_preview",
+        _preview_on,
+        raising=False,
+    )
+
+    touched: list[str] = []
+
+    class _Manager:
+        def get(self, name: str) -> object:
+            return types.SimpleNamespace(state="needs_auth")
+
+        def configure_agent365(self, name: str, *, url: str, auth_provider: object) -> None:
+            touched.append(name)
+
+        async def retire_worker(self, name: str) -> None: ...
+
+        async def probe(self, name: str, *, github_token: str | None) -> None: ...
+
+    adopted = await mcp_router._adopt_shared_credential(
+        PREVIEW_PROFILE, _Manager(), {"workiq": True}, None
+    )
+
+    assert adopted == []
+    assert touched == []
+
+
 async def test_renew_stale_sibling_credentials_skips_healthy_and_same_credential(
     monkeypatch,
 ) -> None:

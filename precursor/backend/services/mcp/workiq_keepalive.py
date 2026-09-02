@@ -23,10 +23,11 @@ Access "sign-in frequency" policy is an absolute window no keep-alive can defeat
 in that case this simply surfaces the re-auth prompt promptly.
 
 The same treatment applies to every OAuth profile Precursor holds tokens for —
-the hosted WorkIQ preview plus the Agent 365 servers (``workiq-teams`` /
-``workiq-user``) — each *credential* tracked independently so one expired session
-doesn't mask another. The Agent 365 pair shares a token, so it's kept warm once
-per tick rather than once per server.
+the hosted WorkIQ preview plus the Agent 365 servers (the ``workiq-teams`` /
+``workiq-user`` / ``workiq-planner`` / ``workiq-word`` / ``workiq-excel`` set) —
+each *credential* tracked independently so one expired session doesn't mask
+another. The Agent 365 servers share a token, so it's kept warm once per tick
+rather than once per server.
 """
 
 from __future__ import annotations

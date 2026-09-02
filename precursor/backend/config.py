@@ -244,8 +244,8 @@ class Settings(BaseSettings):
     workiq_auth_log_level: str = "debug"
 
     # Microsoft Agent 365 tenant (services/mcp/agent365.py). The hosted
-    # ``workiq-teams`` / ``workiq-user`` MCP endpoints embed a tenant GUID in
-    # their URL — Entra rejects the ``common``/``organizations`` aliases there.
+    # ``workiq-*`` MCP endpoints embed a tenant GUID in their URL — Entra
+    # rejects the ``common``/``organizations`` aliases there.
     # Leave blank to let Precursor discover it from the ``tid`` claim of the
     # WorkIQ preview token the user already signed in with; set it explicitly
     # (or from Settings) to pin a specific tenant.

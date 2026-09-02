@@ -1,8 +1,8 @@
 """Registry of the MCP servers that sign in through Precursor's browser OAuth.
 
 Precursor holds more than one Entra credential: the hosted WorkIQ preview
-authenticates as its own public client, and the Agent 365 servers
-(``workiq-teams`` / ``workiq-user``) authenticate as another one against a
+authenticates as its own public client, and the Agent 365 servers (the
+``workiq-*`` family) authenticate as another one against a
 different resource. Nothing can collapse those into a single sign-in without
 tenant-admin consent, so the code has to treat "which credential does this
 server use" as a first-class question.
@@ -16,7 +16,7 @@ place that knows:
   call from sync code and from modules that must not import the OAuth stack.
 * :func:`credential_key` — which *credential* a server signs in with. Servers
   sharing a key are one sign-in, so prompting for both is pure noise. Static on
-  purpose: the Agent 365 pair shares a token by construction, so this answer
+  purpose: the Agent 365 servers share a token by construction, so this answer
   never needs the tenant, the DB or an ``await``.
 * :func:`profile_for_server` / :func:`active_profiles` / :func:`unique_credentials`
   — the live :class:`WorkIQOAuthProfile` objects, which *do* need configuration
