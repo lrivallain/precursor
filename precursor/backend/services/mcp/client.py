@@ -789,6 +789,20 @@ class MCPClientManager:
         if worker is not None:
             await worker.aclose()
 
+    async def recycle_worker(self, name: str, worker: _ServerWorker) -> None:
+        """Bin one specific worker whose session died at the transport level.
+
+        Unlike :meth:`retire_worker` this only unpools ``worker`` when it is
+        *still* the pooled one for ``name``: a concurrent turn may already have
+        replaced it with a healthy session, and closing that would break the
+        other turn for no reason. The worker is closed either way, since the
+        caller is abandoning it.
+        """
+        async with self._pool_lock:
+            if self._workers.get(name) is worker:
+                del self._workers[name]
+        await worker.aclose()
+
     @asynccontextmanager
     async def open_session(
         self, name: str, *, github_token: str = ""
@@ -1287,6 +1301,58 @@ def _looks_like_unknown_tool(exc: BaseException) -> bool:
     return any(marker in text for marker in _UNKNOWN_TOOL_MARKERS)
 
 
+_DEAD_SESSION_MARKERS = (
+    # The SDK synthesises this JSON-RPC error when the endpoint answers a POST
+    # with HTTP 404, i.e. it no longer recognises our ``Mcp-Session-Id``. The
+    # wording reads like a local lapse, which is why it has to be matched here
+    # rather than left to leak to the model as-is.
+    "session terminated",
+    # Our own ``_ServerWorker`` reporting that its session task has gone.
+    "session is not running",
+    "session closed",
+    # httpx/anyio transport teardown against a flapping endpoint.
+    "server disconnected",
+    "peer closed connection",
+    "connection reset",
+    "remote protocol error",
+    "all connection attempts failed",
+)
+
+
+def _http_status_in(exc: BaseException) -> int | None:
+    """The HTTP status behind ``exc``, when it wraps an httpx response error."""
+    import httpx
+
+    hit = _find_in_exception(exc, httpx.HTTPStatusError)
+    return hit.response.status_code if isinstance(hit, httpx.HTTPStatusError) else None
+
+
+def is_transport_failure(exc: BaseException) -> bool:
+    """Whether ``exc`` means "the session died", not "the call was wrong".
+
+    Covers a remote 404 (the endpoint forgot our session), any 5xx, and the
+    socket-level teardowns that a flapping endpoint produces. None of these say
+    anything about the *arguments*, so the caller should recycle the session and
+    retry rather than let the model re-plan around a phantom problem.
+    """
+    status = _http_status_in(exc)
+    if status is not None and (status == 404 or status >= 500):
+        return True
+    text = _describe_exception(exc).lower()
+    return any(marker in text for marker in _DEAD_SESSION_MARKERS)
+
+
+def describe_transport_failure(exc: BaseException) -> str:
+    """A plain-English reason for a transport failure, safe to show the model."""
+    status = _http_status_in(exc)
+    if status is not None:
+        return f"the remote MCP endpoint returned HTTP {status}"
+    text = _describe_exception(exc)
+    if "session terminated" in text.lower():
+        return "the remote MCP endpoint no longer recognises our session (HTTP 404)"
+    return f"the MCP session dropped ({text})"
+
+
 @dataclass(slots=True)
 class ActiveTools:
     """Aggregated, ready-to-use tools backed by warm sessions for one turn."""
@@ -1340,6 +1406,21 @@ class ActiveTools:
         try:
             return await worker.call(raw_name, args)
         except Exception as exc:
+            if is_transport_failure(exc):
+                # The session died under us — the remote dropped it, or the
+                # endpoint blipped. Nothing about *this call* is wrong, so bin
+                # the poisoned session and try once on a fresh one instead of
+                # failing every remaining call in the turn against a socket that
+                # can no longer recover.
+                logger.warning(
+                    "MCP session for %s died mid-call (%s); retrying on a fresh session",
+                    server,
+                    describe_transport_failure(exc),
+                )
+                await self.manager.recycle_worker(server, worker)
+                self.workers.pop(server, None)
+                retried = await self.ensure_server(server)
+                return await retried.call(raw_name, args)
             if not _looks_like_unknown_tool(exc):
                 raise
             # The catalogue we routed from is stale (most likely restored from

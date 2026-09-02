@@ -68,6 +68,34 @@ Two things remove that cost, both of them invisible:
 Both are tunable — see `PRECURSOR_MCP_WARMUP_*` in the
 [configuration reference](/reference/configuration#mcp-tool-servers).
 
+### When a remote server drops mid-turn
+
+A hosted endpoint can go away underneath a live session — a rolling deploy, a
+gateway blip, or the server simply forgetting the session id it issued. The MCP
+SDK reports all of that as the single phrase **`Session terminated`**, which
+reads like a local problem and is anything but: it is emitted only when the
+remote answers with **HTTP 404**.
+
+Left alone that wording is actively harmful. A warm session is reused across
+turns, so a dropped one stays poisoned and *every* later call fails the same
+way; and the model, told only "session terminated", re-plans the call with
+smaller arguments and then tells you to sign in again — neither of which can fix
+a fault on the other end.
+
+So Precursor treats a dead session as a **transport** failure rather than a bad
+call: a remote 404, any 5xx, or a socket teardown **recycles the session and
+retries the call once**, which is enough to ride out a blip. If the second
+attempt fails too it stops there — a downed endpoint should not be hammered for
+the rest of the turn — and the model is told what actually happened, that the
+arguments and the sign-in are not at fault, and to report the outage instead of
+guessing an answer.
+
+::: tip Re-authenticating will not help here
+The **Re-authenticate** button swaps a *credential*. When the endpoint is
+returning 404s or 502s the credential is fine, and a fresh token changes
+nothing — the tool error now says so explicitly.
+:::
+
 ### Playwright — authenticated scraping
 
 `playwright` wraps Microsoft's official
