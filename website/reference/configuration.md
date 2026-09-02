@@ -162,7 +162,7 @@ process-level knobs:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `COPILOT_CLI_PATH` | *(empty)* | Read by the Copilot SDK, and the first thing Precursor's runtime probe checks. Point it at a `copilot` binary to pin the runtime; otherwise Precursor falls back to the SDK's download cache and then to `copilot` on `PATH`. The probe never downloads — see [installation](/guide/installation#pointing-at-a-specific-cli). |
+| `COPILOT_CLI_PATH` | *(empty)* | Read by the Copilot SDK, and the first thing Precursor's runtime probe checks. Point it at a `copilot` binary to pin the runtime; otherwise Precursor falls back to the SDK's download cache and then to `copilot` on `PATH`. The probe never downloads — see [agents mode](/features/agents-mode#pointing-at-a-specific-cli). |
 | `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode/orchestration#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
 | `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
 

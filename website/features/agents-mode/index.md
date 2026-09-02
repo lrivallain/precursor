@@ -61,10 +61,23 @@ and never downloads — it runs on every Settings render, and pulling 90 MB to d
 a toggle would be indefensible.
 
 A system-wide `copilot` (Homebrew, npm, the official installer) is a perfectly
-good runtime and is adopted as-is. See
-[installation](/guide/installation#pointing-at-a-specific-cli) for the resolution
-order and `COPILOT_CLI_PATH`.
+good runtime and is adopted as-is — see below for the resolution order.
 :::
+
+### Pointing at a specific CLI
+
+Precursor resolves the runtime **read-only**, so rendering Settings never pulls a
+binary. It takes the first of:
+
+1. `COPILOT_CLI_PATH`, if it points at an existing file.
+2. The SDK's own download cache (`~/Library/Caches/github-copilot-sdk` on macOS,
+   `~/.cache/github-copilot-sdk` on Linux).
+3. A `copilot` executable on `PATH` — a Homebrew, npm or installer-provisioned
+   CLI counts.
+
+Whatever it finds is handed to the SDK, so the runtime always drives the binary
+**Settings → Agents** reports. If none resolve, install the
+[Copilot CLI](https://github.com/github/copilot-cli) or set `COPILOT_CLI_PATH`.
 
 ## The agent dashboard
 

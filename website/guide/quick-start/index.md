@@ -5,20 +5,17 @@ title: Quick start
 # Quick start
 
 This walkthrough gets you from a fresh install to your first conversation in a
-couple of minutes. If you haven't installed Precursor yet, see the
-[installation guide](/guide/installation).
+couple of minutes. If you haven't installed Precursor yet, that's
+[one command](/guide/installation).
 
-## 1. Start the app
+## 1. Open the app
 
-```bash
-uv run precursor --dev        # dev stack (hot reload + Vite HMR)
-# or, from a published build:
-uvx "precursor-ai[kanban]"    # single-process, zero setup
-```
+Precursor is already running — the installer started it and registered it to
+start at login. Open the URL it printed (<http://localhost:8000> by default);
+`precursor service status` reports it again at any time.
 
-Open the URL printed in the startup banner. You'll land on the **home** launcher:
-a greeting and a grid of section cards (Topics, Chats, Live, Agents, Workflows,
-Files, and — when configured — Kanban).
+You'll land on the **home** launcher: a greeting and a grid of section cards
+(Topics, Chats, Live, Agents, Workflows, Files, and — when configured — Kanban).
 
 <Screenshot src="/screenshots/home.png" alt="The Precursor home launcher with section cards" />
 
@@ -59,7 +56,7 @@ own — and in three cases a prerequisite:
 
 | Section | Quick start | Needs first |
 | --- | --- | --- |
-| 🤖 **Agents** | [Run a task in the background](/guide/quick-start/agents) | the `agents` extra |
+| 🤖 **Agents** | [Run a task in the background](/guide/quick-start/agents) | the Copilot CLI (one click in Settings) |
 | 🎙️ **Live sessions** | [Record and summarise a meeting](/guide/quick-start/live-sessions) | Azure Speech credentials |
 | 🔗 **Workflows** | [Chain agents into a pipeline](/guide/quick-start/workflows) | agents enabled |
 | 📋 **Kanban** | [Put your issues on a board](/guide/quick-start/kanban) | a global repo + `read:project` |

@@ -9,6 +9,44 @@ scoped to a
 the issue body, comments, and labels as live context so newer updates outweigh
 older ones.
 
+## Quick start
+
+**One prerequisite, one command.** [uv](https://docs.astral.sh/uv/) brings its
+own Python, so it's the only thing to install first
+([instructions](https://docs.astral.sh/uv/getting-started/installation/)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
+```
+
+That installs Precursor, registers it to **start when you log in**, and starts it
+now. No clone, no Node.js, no build step, no database to create — the published
+package already carries the interface, and the schema is created on first start.
+Open the URL it prints (<http://localhost:8000> by default) and you're in.
+
+From then on it's managed rather than launched:
+
+```bash
+precursor service status    # is it up, and on which port
+precursor service update    # newest build + restart
+precursor tray              # menu-bar control
+```
+
+See [Installation](https://precursor.vuptime.io/guide/installation) for the other
+ways to install (try it with `uvx`, no login item, Windows, stable channel) and
+[Background app](https://precursor.vuptime.io/features/background-app) for the
+whole service surface.
+
+**GitHub credentials (optional).** Precursor resolves a GitHub token in this
+order: (1) a token saved in **Settings → GitHub**, then (2) your **GitHub CLI**
+session (`gh auth token`) if you're signed in via `gh auth login`. So if you
+already use `gh`, you don't need to set anything. If several accounts are signed
+in, set `PRECURSOR_GITHUB_CLI_USER=<login>` so the token doesn't depend on
+whoever last ran `gh auth switch`. A token needs the `models:read` fine-grained
+permission (or Copilot access) for real model responses. With **no** token at
+all, Precursor falls back to the `MockProvider` so the chat flow stays usable
+offline.
+
 ## Highlights
 
 - Collapsible, searchable, **tree-organized** topic sidebar
@@ -19,9 +57,8 @@ older ones.
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
 - **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
-  SDK agent attached to a topic/chat, followed in a workflow-style tab. Needs
-  the `agents` extra, and turns itself on once that resolves — with a switch in
-  **Settings → Agents** (see [Optional: Agents mode](#optional-agents-mode))
+  SDK agent attached to a topic/chat, followed in a workflow-style tab. Nothing
+  to install — the native runtime it drives is one click in **Settings → Agents**
 - **Workflows** (opt-in): chain agents into a reusable, named pipeline that a
   coordinator runs unattended — with quality gates, human approval checkpoints,
   and schedule/webhook triggers
@@ -44,123 +81,21 @@ older ones.
 | Frontend | Vite + React 19 + TypeScript, Tailwind CSS 3, Lucide React            |
 | DB       | SQLite for dev (`aiosqlite`), PostgreSQL for prod (`asyncpg`, extra)  |
 
-## Quick start
+## Working on Precursor
 
-Precursor uses **[uv](https://docs.astral.sh/uv/)** for everything Python —
-environment, running, building, and releasing. Install it once
-([instructions](https://docs.astral.sh/uv/getting-started/installation/)).
-
-**Just want to use it?** One command installs Precursor, registers it to start
-at login, and starts it now:
+A source checkout is the **contributor** path — it additionally needs Node.js for
+the frontend toolchain:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
-```
-
-It is then managed rather than launched — `precursor service status`,
-`precursor service update`, `precursor tray`. See
-[Background app](https://lrivallain.github.io/precursor/features/background-app)
-for the whole surface.
-
-**Want to hack on it?** Clone the repo and set up both halves of the stack:
-
-```bash
-uv sync                       # backend: .venv + Python deps (uv manages the interpreter)
-npm --prefix frontend install # frontend: Vite + React toolchain (needs Node.js)
+git clone https://github.com/lrivallain/precursor.git && cd precursor
+make sync                     # uv sync + npm --prefix frontend install
 cp .env.example .env
-```
-
-> [!NOTE]
-> The dev server (`precursor --dev`) and the SPA build (`make build`) need
-> **Node.js + npm**; the production runtime does not. `make sync` runs both
-> install steps (`uv sync` + `npm install`) in one go.
-
-**GitHub credentials (optional).** Precursor resolves a GitHub token in this
-order: (1) a token saved in **Settings → GitHub**, then (2) your **GitHub
-CLI** session (`gh auth token`) if you're signed in via `gh auth login`. So if
-you already use `gh`, you don't need to set anything. If several accounts are
-signed in, set `PRECURSOR_GITHUB_CLI_USER=<login>` so the token doesn't depend
-on whoever last ran `gh auth switch`. A token needs the
-`models:read` fine-grained permission (or Copilot access) for real model
-responses. With **no** token at all, Precursor falls back to the `MockProvider`
-so the chat flow stays usable offline.
-
-### Optional: Agents mode
-
-**Agents mode** needs no extra install step. `github-copilot-sdk` is a normal
-dependency, so the `uv sync` above already brings it in — the wheel is ~0.5 MB
-and downloads nothing on its own.
-
-What it *drives* is a **native Copilot CLI** (~90 MB, ~145 MB on disk), and that
-stays opt-in. Install it in one click from **Settings → Agents**, or bring your
-own: Precursor resolves, in order, `COPILOT_CLI_PATH`, the SDK's download cache,
-then `copilot` on your `PATH`. The probe is read-only — rendering Settings never
-downloads anything.
-
-Agents mode follows the runtime: with no stored preference it comes on as soon as
-a CLI resolves, and **Settings → Agents** is the switch on top of that.
-
-### Run it (one command)
-
-```bash
 uv run precursor --dev        # uvicorn --reload + Vite HMR (Ctrl-C stops both)
-# or:  make dev
 ```
 
-On startup Precursor prints a banner with the URL to open. `--port` is always
-the URL you open in your browser — in `--dev` the UI runs there and Vite proxies
-`/api` to the backend (which sits on a hidden port, by default `--port` + 1):
-
-```bash
-uv run precursor --dev --port 9000   # open :9000 (UI); API on :9001 behind it
-uv run precursor --port 8100 --open  # prod-style, opens the browser when ready
-```
-
-**Running several instances at once?** Just pick a different `--port` per
-instance — or don't: a busy port automatically bumps to the next free one (pass
-`--strict-port` to fail instead, or `--port 0` to grab any free port). The
-banner always tells you where the UI landed.
-
-`uv run` resolves the project's environment on the fly — no manual activation.
-Other entry points:
-
-```bash
-uv run precursor                     # single process: API + pre-built SPA on one port
-uv run precursor --dev --no-frontend # backend only (uvicorn --reload)
-npm --prefix frontend run dev        # Vite only
-```
-
-### Frontend prod build (served by FastAPI)
-
-```bash
-make build                    # npm --prefix frontend run build → frontend/dist
-uv run precursor              # serves API + SPA on :8000
-```
-
-The single-process run needs the SPA pre-built; `uv run precursor` then serves
-it from `frontend/dist`. The SPA is also bundled **inside the wheel**, so an
-installed build is self-contained:
-
-```bash
-uvx "precursor-ai[kanban]"    # run the latest published wheel, zero setup
-# or pin it:  uv tool install "precursor-ai[kanban]" && precursor-ai
-```
-
-### Automatic upgrades on startup
-
-When you pull new code or upgrade Precursor, both the **frontend** and
-**database** are automatically upgraded when the app starts — no manual build
-or migration steps needed:
-
-- **Frontend**: Built automatically if `frontend/dist` is missing or stale
-- **Database**: Migrations applied during app startup via Alembic
-
-Just start Precursor and it handles the rest:
-
-```bash
-git pull
-uv run precursor              # frontend built + DB migrated automatically
-```
+After a `git pull`, the next start rebuilds a stale frontend and runs the Alembic
+migrations on its own. See [CONTRIBUTING.md](CONTRIBUTING.md) for the quality
+gates and the rest of the dev stack.
 
 ## Project layout
 
