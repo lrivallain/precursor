@@ -246,8 +246,8 @@ export function PluginsSettings() {
         />
       )}
 
-      {/* Below the catalogue on purpose: "Show command" loads a package name
-          into this box, so it has to be the next thing the eye lands on. */}
+      {/* Below the catalogue: this is the escape hatch for a package that
+          isn't listed, so it shouldn't outrank the curated entries. */}
       <InstallBox
         env={env}
         pkg={pkg}
