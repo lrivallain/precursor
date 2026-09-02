@@ -58,17 +58,18 @@ def _run_manifest_step(
 
 
 HOST = "precursor_ai-2026.7.1.dev229+gabcdef123-py3-none-any.whl"
-# Built-in plugins inherit the host's CalVer, so a plugin wheel carries the same
-# commit-bearing version. It used to be a static `0.1.0`, which made the
-# manifest advertise an identical URL on every build and left clients unable to
-# tell one nightly's plugin from the next.
-PLUGIN = "precursor_kanban-2026.7.1.dev229+gabcdef123-py3-none-any.whl"
+# Any wheel built alongside the host is advertised to clients as a companion to
+# install with it. This repository builds only the host — plugins release from
+# their own repositories — so the list is empty in practice; the mechanism is
+# kept under test because the manifest still declares it, and a build that ever
+# emits a second wheel must not silently drop it.
+COMPANION = "some_companion-2026.7.1.dev229+gabcdef123-py3-none-any.whl"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the step is bash")
 def test_the_workflow_manifest_is_read_back_by_the_update_check(tmp_path: pathlib.Path) -> None:
     """The whole point: producer and consumer agree on every field."""
-    result = _run_manifest_step(tmp_path, [HOST, PLUGIN])
+    result = _run_manifest_step(tmp_path, [HOST, COMPANION])
     assert result.returncode == 0, result.stderr
 
     payload = json.loads((tmp_path / "dist" / "version.json").read_text(encoding="utf-8"))
@@ -81,12 +82,12 @@ def test_the_workflow_manifest_is_read_back_by_the_update_check(tmp_path: pathli
     assert version == "2026.7.1.dev229+gabcdef123"
     assert commit == "012345678"  # first 9 of GITHUB_SHA
     assert wheel_url is not None and wheel_url.endswith(HOST)
-    assert extras == (f"https://github.com/owner/repo/releases/download/nightly/{PLUGIN}",)
+    assert extras == (f"https://github.com/owner/repo/releases/download/nightly/{COMPANION}",)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the step is bash")
 def test_the_manifest_is_valid_json_and_exports_the_version(tmp_path: pathlib.Path) -> None:
-    result = _run_manifest_step(tmp_path, [HOST, PLUGIN])
+    result = _run_manifest_step(tmp_path, [HOST, COMPANION])
     assert result.returncode == 0, result.stderr
 
     payload = json.loads((tmp_path / "dist" / "version.json").read_text(encoding="utf-8"))
@@ -97,7 +98,7 @@ def test_the_manifest_is_valid_json_and_exports_the_version(tmp_path: pathlib.Pa
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the step is bash")
-def test_a_build_with_no_plugins_still_produces_a_valid_manifest(tmp_path: pathlib.Path) -> None:
+def test_a_build_with_no_companions_still_produces_a_valid_manifest(tmp_path: pathlib.Path) -> None:
     result = _run_manifest_step(tmp_path, [HOST])
     assert result.returncode == 0, result.stderr
     payload = json.loads((tmp_path / "dist" / "version.json").read_text(encoding="utf-8"))
@@ -108,6 +109,8 @@ def test_a_build_with_no_plugins_still_produces_a_valid_manifest(tmp_path: pathl
 def test_two_host_wheels_fail_the_step(tmp_path: pathlib.Path) -> None:
     """Publishing a manifest that points at the wrong build is worse than not
     publishing: clients would install it and never notice."""
-    result = _run_manifest_step(tmp_path, [HOST, "precursor_ai-9999.1.0-py3-none-any.whl", PLUGIN])
+    result = _run_manifest_step(
+        tmp_path, [HOST, "precursor_ai-9999.1.0-py3-none-any.whl", COMPANION]
+    )
     assert result.returncode != 0
     assert "Expected exactly 1 host wheel" in result.stderr

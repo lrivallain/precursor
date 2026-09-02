@@ -2,10 +2,10 @@ name: Nightly
 
 # Publish a rolling build of `main` so an installed Precursor can track the
 # development line without a source checkout — no `git pull`, no Node.js, no
-# plugin frontend build on the user's machine.
+# frontend build on the user's machine.
 #
 # The artifacts land on a single, permanently-named `nightly` prerelease that is
-# replaced on every push. Alongside the wheels it carries `version.json`, a tiny
+# replaced on every push. Alongside the wheel it carries `version.json`, a tiny
 # manifest the app reads to answer "is there something newer than me?" in one
 # request (see precursor/backend/services/updates.py).
 
@@ -47,16 +47,13 @@ jobs:
           npm ci
           npm run build
 
-      - name: Build plugin frontends
-        run: make plugins-build
-
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
-      - name: Build wheels + sdists
-        run: uv build --all-packages
+      - name: Build wheel + sdist
+        run: uv build
 
       - name: Write the version manifest
         id: manifest
@@ -93,9 +90,11 @@ jobs:
                       "%Y-%m-%dT%H:%M:%SZ"
                   ),
                   "wheel_url": f"{base}/{host.name}",
-                  # Plugin wheels ride along so a nightly install gets nightly
-                  # plugins rather than whatever is on PyPI (see `--with` in
-                  # services/updates.py).
+                  # Any wheel built alongside the host rides along, so a nightly
+                  # install gets same-commit companions rather than whatever is
+                  # on PyPI (see `--with` in services/updates.py). This repo
+                  # builds only the host today — plugins release from their own
+                  # repositories — so the list is normally empty.
                   "extra_wheel_urls": [f"{base}/{w.name}" for w in wheels if w != host],
               },
               sys.stdout,

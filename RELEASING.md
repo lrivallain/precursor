@@ -46,10 +46,9 @@ chronologically, and is human-readable. Untagged/dev builds get a suffix, e.g.
 
 5. The **Release** workflow (`.github/workflows/release.yml`) then:
    - builds the frontend and bundles it into the wheel,
-   - runs `uv build --all-packages` (hatch-vcs stamps the version from the tag),
-     which builds the host **and every built-in plugin**,
-   - verifies every built version matches the tag,
-   - creates a GitHub Release with the wheels + sdists and auto-generated notes,
+   - runs `uv build` (hatch-vcs stamps the version from the tag),
+   - verifies the built version matches the tag,
+   - creates a GitHub Release with the wheel + sdist and auto-generated notes,
    - **publishes them to [PyPI](https://pypi.org/project/precursor-ai/)**
      via [Trusted Publishing](#pypi-trusted-publishing-one-time-setup) (OIDC — no
      API token).
@@ -67,13 +66,13 @@ Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishe
    - **Repository**: `precursor`
    - **Workflow name**: `release.yml`
    - **Environment**: `pypi`
-2. Repeat step 1 for **every built-in plugin distribution** — currently
-   `precursor-kanban`. The release uploads all of `dist/`, so a distribution
-   without its own publisher fails the whole publish step. Everything except the
-   project name is identical.
-3. In this repo, add a GitHub **Environment** named `pypi`
+2. In this repo, add a GitHub **Environment** named `pypi`
    (**Settings → Environments → New environment**). Optionally add required
    reviewers so a human approves each publish.
+
+This repository publishes one distribution, `precursor-ai`. Plugins —
+`precursor-kanban` included — live in their own repositories and set up their
+own publisher there.
 
 The `pypi-publish` job requests an `id-token` and runs in the `pypi` environment;
 those two values must match the publisher configured on PyPI.
@@ -101,13 +100,12 @@ uv tool install precursor-ai  # or install the `precursor-ai` command
 ## The nightly channel
 
 Tagged releases are the *stable* channel. Alongside them, `nightly.yml`
-publishes a **rolling prerelease of `main` on every push** — the same wheels and
-sdists, attached to a permanently-named `nightly` tag that is replaced each run.
+publishes a **rolling prerelease of `main` on every push** — the same wheel and
+sdist, attached to a permanently-named `nightly` tag that is replaced each run.
 
 It exists to remove the last reason to run Precursor from a source checkout: the
-published wheel already carries the SPA, the in-app docs and every plugin
-frontend, so following `main` needs no clone, no Node.js and no
-`make plugins-build`.
+published wheel already carries the SPA and the in-app docs, so following `main`
+needs no clone and no Node.js.
 
 Alongside the artifacts it uploads a small `version.json`:
 
@@ -117,20 +115,17 @@ Alongside the artifacts it uploads a small `version.json`:
   "version": "2026.7.1.dev229",
   "commit": "679a4fe6e",
   "wheel_url": "https://github.com/…/precursor_ai-….whl",
-  "extra_wheel_urls": ["https://github.com/…/precursor_kanban-….whl"]
+  "extra_wheel_urls": []
 }
 ```
 
 That manifest is what `precursor service check` reads — one request, rather than
 listing release assets and guessing which is the host wheel. `extra_wheel_urls`
-pins the plugin wheels built from the *same commit*, so a nightly host is never
-paired with a months-old plugin resolved from PyPI.
-
-That promise depends on a built-in plugin's version **moving with the commit**,
-which is why they inherit the host's CalVer rather than carrying one of their
-own. A plugin pinned to a static version produces a byte-identical wheel URL on
-every build: uv sees the requirement already satisfied, skips the download, and
-the host advances while the plugin silently stays put.
+carries any companion wheel built alongside the host on the same run, pinned to
+that commit so a nightly is never paired with something stale from PyPI. This
+repository builds only the host — plugins release from their own repositories —
+so the list is empty today; the field stays because the manifest declares it and
+a client must keep honouring it.
 
 Two consequences worth knowing:
 

@@ -9,9 +9,10 @@ GitHub" is meant to live in a **plugin** — and a plugin is just one Python
 package you install.
 
 The [Kanban board](/features/kanban) is the first official one and the reference
-implementation: it lives in the repository as its own distribution
-(`precursor-kanban`) with its own routes, schemas, MCP tools, frontend and
-release cadence.
+implementation: it ships from its own repository,
+[`precursor-kanban`](https://github.com/lrivallain/precursor-kanban), as its own
+distribution with its own routes, schemas, MCP tools, frontend and release
+cadence.
 
 ## What a plugin can bring
 

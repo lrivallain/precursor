@@ -2,10 +2,17 @@
 
 These cover the host side of the plugin seam — discovery, descriptor exposure
 and router mounting — independently of any particular plugin.
+
+Nothing here installs one. Every plugin Precursor ships with, ``precursor-kanban``
+included, lives in its own repository, so the suite would otherwise be asserting
+against whatever happened to be in the environment. The contributions below are
+registered through the same API a real ``register(registry)`` uses, which keeps
+attribution, namespacing and mounting under test with nothing to install.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +31,64 @@ from precursor.backend.plugins import (
     section_extension,
     settings_page_extension,
 )
+
+STUB_ID = "stub"
+STUB_PREFIX = f"/api/{STUB_ID}"
+
+
+class _FakeEntryPoint:
+    """Minimal stand-in for an ``importlib.metadata.EntryPoint``.
+
+    ``discover`` only needs ``name``, ``value`` and ``load()``; ``dist`` stays
+    ``None`` so provenance falls through to the module-path lookup, exactly as it
+    does for a real plugin whose entry points came from ``entry_points(group=…)``.
+    """
+
+    dist = None
+
+    def __init__(self, name: str, value: str, register: Any) -> None:
+        self.name = name
+        self.value = value
+        self._register = register
+
+    def load(self) -> Any:
+        return self._register
+
+
+def _contribute(registry: PluginRegistry) -> None:
+    """A plugin's ``register`` — one of each kind of contribution."""
+    router = APIRouter(prefix=STUB_PREFIX)
+
+    @router.get("/ping")
+    async def ping() -> dict[str, Any]:
+        return {"ok": True}
+
+    registry.add_router(router)
+    registry.add_section(id=STUB_ID, title="Stub")
+    registry.add_mcp_server(name="tools", title="Stub tools", module="stub.mcp_server")
+
+
+@pytest.fixture()
+def stub_plugin() -> Iterator[LoadedPlugin]:
+    """Register a plugin the way ``discover`` does, then take it back out.
+
+    Injected rather than discovered because ``discover`` loads entry points once
+    per process: by the time any test runs, that has already happened.
+    """
+    from precursor.backend.plugins import registry as registry_module
+
+    reg = registry_module.get_registry()
+    plugin = LoadedPlugin(id=STUB_ID, package=STUB_ID, distribution="stub-plugin", version="1.0")
+    reg.plugins[STUB_ID] = plugin
+    reg._current = STUB_ID
+    try:
+        _contribute(reg)
+    finally:
+        reg._current = None
+    try:
+        yield plugin
+    finally:
+        del reg.plugins[STUB_ID]
 
 
 def test_section_extension_shape() -> None:
@@ -46,23 +111,38 @@ def test_add_section_accepts_an_order_and_extra_config() -> None:
     assert ext.config == {"order": 10, "x": 1}
 
 
-def test_plugins_endpoint_never_duplicates_descriptors() -> None:
+def test_plugins_endpoint_never_duplicates_descriptors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Building several apps must not re-run every plugin's ``register``.
 
     ``get_registry`` is process-wide, so a non-idempotent ``discover`` would
     append each plugin's routers and descriptors again per app — and the SPA
     would then render one section per app ever created in the process.
+
+    Driven through a fake entry point, and with ``_loaded`` reset so discovery
+    genuinely re-runs: no plugin distribution is installed here, so relying on
+    whatever the environment provides would make this assert nothing.
     """
-    with TestClient(create_app()) as client:
-        first = client.get("/api/plugins").json()
-    with TestClient(create_app()) as client:
-        second = client.get("/api/plugins").json()
-    assert first == second
-    # An id is unique *per kind*, not globally: a plugin's section and its
-    # settings page share the plugin's id by design, and each is looked up in
-    # its own frontend registry.
-    keys = [(e["id"], e["kind"]) for e in second]
-    assert len(keys) == len(set(keys))
+    from precursor.backend.plugins import registry as registry_module
+
+    ep = _FakeEntryPoint(STUB_ID, f"{STUB_ID}.plugin:register", _contribute)
+    monkeypatch.setattr(registry_module, "entry_points", lambda **_: [ep])
+    monkeypatch.setattr(registry_module, "_loaded", False)
+
+    reg = registry_module.get_registry()
+    try:
+        with TestClient(create_app()) as client:
+            first = client.get("/api/plugins").json()
+        with TestClient(create_app()) as client:
+            second = client.get("/api/plugins").json()
+        assert first == second
+        assert [e["id"] for e in second] == [STUB_ID]
+        # An id is unique *per kind*, not globally: a plugin's section and its
+        # settings page share the plugin's id by design, and each is looked up in
+        # its own frontend registry.
+        keys = [(e["id"], e["kind"]) for e in second]
+        assert len(keys) == len(set(keys))
+    finally:
+        reg.plugins.pop(STUB_ID, None)
 
 
 def test_plugin_routers_are_reachable_past_the_spa_fallback() -> None:
@@ -92,49 +172,67 @@ def test_plugin_routers_are_reachable_past_the_spa_fallback() -> None:
         del reg.plugins["probe-plugin"]
 
 
-def test_installed_reports_distribution_metadata() -> None:
-    """The Settings panel needs provenance, not just a descriptor."""
+def test_installed_reports_a_plugins_contributions(stub_plugin: LoadedPlugin) -> None:
+    """The Settings panel needs provenance and a contribution inventory."""
     app = create_app()
     with TestClient(app) as client:
         installed = client.get("/api/plugins/installed").json()
-    kanban = next(p for p in installed if p["id"] == "kanban")
-    assert kanban["distribution"] == "precursor-kanban"
-    assert kanban["version"]
-    assert kanban["error"] is None
-    assert kanban["enabled"] is True
-    assert "/api/github/projects" in kanban["routes"]
-    assert [s["name"] for s in kanban["mcp_servers"]] == ["kanban.board"]
+    entry = next(p for p in installed if p["id"] == STUB_ID)
+    assert entry["distribution"] == "stub-plugin"
+    assert entry["version"] == "1.0"
+    assert entry["error"] is None
+    assert entry["enabled"] is True
+    assert STUB_PREFIX in entry["routes"]
+    assert [s["name"] for s in entry["mcp_servers"]] == [f"{STUB_ID}.tools"]
 
 
-def test_disabling_a_plugin_removes_its_ui_api_and_tools() -> None:
+def test_distribution_metadata_is_resolved_from_the_module_path() -> None:
+    """Provenance must survive an ``EntryPoint`` that carries no ``dist``.
+
+    ``EntryPoint.dist`` is only populated on entry points obtained *from* a
+    distribution, so the registry falls back to mapping the entry point's
+    top-level module onto the distribution that installed it. Asserted against
+    ``fastapi``: a hard dependency, so it is always present, and always a regular
+    wheel install — an *editable* one (which is how this project installs itself)
+    ships no file list to map back from.
+    """
+    from precursor.backend.plugins.registry import _describe
+
+    meta = _describe(_FakeEntryPoint("probe", "fastapi:register", None))
+    assert meta["distribution"] == "fastapi"
+    assert meta["version"]
+
+
+def test_disabling_a_plugin_removes_its_ui_api_and_tools(stub_plugin: LoadedPlugin) -> None:
     """A toggle has to be total, not just cosmetic."""
     from precursor.backend.services.mcp.client import get_mcp_client_manager
 
+    server = f"{STUB_ID}.tools"
     app = create_app()
     with TestClient(app) as client:
-        assert client.get("/api/github/projects").status_code != 404
-        assert "kanban.board" in get_mcp_client_manager().plugin_entry_names()
+        assert client.get(f"{STUB_PREFIX}/ping").status_code == 200
+        assert server in get_mcp_client_manager().plugin_entry_names()
 
-        client.put("/api/plugins/installed/kanban", json={"enabled": False})
+        client.put(f"/api/plugins/installed/{STUB_ID}", json={"enabled": False})
         try:
             assert client.get("/api/plugins").json() == []
-            assert client.get("/api/github/projects").status_code == 404
-            assert "kanban.board" not in get_mcp_client_manager().plugin_entry_names()
+            assert client.get(f"{STUB_PREFIX}/ping").status_code == 404
+            assert server not in get_mcp_client_manager().plugin_entry_names()
         finally:
-            client.put("/api/plugins/installed/kanban", json={"enabled": True})
+            client.put(f"/api/plugins/installed/{STUB_ID}", json={"enabled": True})
 
-        assert client.get("/api/github/projects").status_code != 404
-        assert "kanban.board" in get_mcp_client_manager().plugin_entry_names()
+        assert client.get(f"{STUB_PREFIX}/ping").status_code == 200
+        assert server in get_mcp_client_manager().plugin_entry_names()
 
 
-def test_plugin_mcp_servers_are_namespaced_and_attributed() -> None:
+def test_plugin_mcp_servers_are_namespaced_and_attributed(stub_plugin: LoadedPlugin) -> None:
     app = create_app()
     with TestClient(app) as client:
         servers = client.get("/api/mcp/servers?probe=false").json()
-    entry = next(s for s in servers if s["name"] == "kanban.board")
+    entry = next(s for s in servers if s["name"] == f"{STUB_ID}.tools")
     # Namespaced by plugin id, so two plugins can't collide, and attributed so
     # the UI can say where it came from. Not user-editable.
-    assert entry["plugin_id"] == "kanban"
+    assert entry["plugin_id"] == STUB_ID
     assert entry["builtin"] is True
 
 
@@ -229,7 +327,7 @@ def test_installer_refuses_a_foreign_host_header(
             r = client.post(path, headers={"Host": host}, **kwargs)  # type: ignore[arg-type]
             assert r.status_code == 403, f"{path} accepted Host: {host}"
         assert (
-            client.delete("/api/plugins/installed/kanban", headers={"Host": host}).status_code
+            client.delete(f"/api/plugins/installed/{STUB_ID}", headers={"Host": host}).status_code
             == 403
         )
     assert _no_real_installer == []
@@ -303,24 +401,25 @@ def test_add_settings_page_defaults_to_the_plugin_id() -> None:
     assert ext.id == "my-plugin"
 
 
-def test_plugin_settings_round_trip_and_are_namespaced() -> None:
+def test_plugin_settings_round_trip_and_are_namespaced(stub_plugin: LoadedPlugin) -> None:
     """Each plugin owns one opaque blob; core never interprets it."""
     from precursor.backend.plugins.settings import settings_key
 
-    assert settings_key("kanban") == "plugin.kanban"
+    assert settings_key(STUB_ID) == f"plugin.{STUB_ID}"
 
+    base = f"/api/plugins/installed/{STUB_ID}/settings"
     app = create_app()
     with TestClient(app) as client:
         # Start from a known state rather than assuming nothing else has written
         # here — the test database is shared across the whole session.
-        assert client.put("/api/plugins/installed/kanban/settings", json={}).json() == {}
-        assert client.get("/api/plugins/installed/kanban/settings").json() == {}
+        assert client.put(base, json={}).json() == {}
+        assert client.get(base).json() == {}
         stored = {"project_sources": ["acme"], "anything": {"nested": True}}
-        assert client.put("/api/plugins/installed/kanban/settings", json=stored).json() == stored
-        assert client.get("/api/plugins/installed/kanban/settings").json() == stored
+        assert client.put(base, json=stored).json() == stored
+        assert client.get(base).json() == stored
         # Whole-document, so a plugin can remove its own keys.
-        assert client.put("/api/plugins/installed/kanban/settings", json={}).json() == {}
-        assert client.get("/api/plugins/installed/kanban/settings").json() == {}
+        assert client.put(base, json={}).json() == {}
+        assert client.get(base).json() == {}
 
 
 def test_settings_are_refused_for_an_unknown_plugin() -> None:
@@ -342,7 +441,7 @@ async def test_unreadable_stored_settings_degrade_to_empty() -> None:
     # This test touches the database directly rather than through the app, so it
     # has to run the migrations the lifespan would normally have run.
     await init_db()
-    key = settings_key("kanban")
+    key = settings_key(STUB_ID)
     try:
         async with SessionLocal() as session:
             # merge, not add: an earlier test in this module may have left a row
@@ -350,14 +449,14 @@ async def test_unreadable_stored_settings_degrade_to_empty() -> None:
             await session.merge(AppSetting(key=key, value="{not json"))
             await session.commit()
         async with SessionLocal() as session:
-            assert await read_settings(session, "kanban") == {}
+            assert await read_settings(session, STUB_ID) == {}
             # A valid JSON *scalar* is just as unusable as broken JSON.
             row = await session.get(AppSetting, key)
             assert row is not None
             row.value = json.dumps(["a", "list"])
             await session.commit()
         async with SessionLocal() as session:
-            assert await read_settings(session, "kanban") == {}
+            assert await read_settings(session, STUB_ID) == {}
     finally:
         async with SessionLocal() as session:
             row = await session.get(AppSetting, key)

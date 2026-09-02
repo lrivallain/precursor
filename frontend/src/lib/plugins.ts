@@ -7,8 +7,9 @@
  * - **Sections** (`kind: "section"`) — a plugin owns a whole surface: an entry
  *   in the sidebar rail, a card on the home screen, a command-palette entry and
  *   a top-level route. Core renders the section's own components and knows
- *   nothing else about it. `frontend/src/plugins/kanban` is the reference
- *   implementation.
+ *   nothing else about it.
+ *   [`precursor-kanban`](https://github.com/lrivallain/precursor-kanban) is the
+ *   reference implementation.
  * - **Extensions** (any other `kind`) — a component mounted into a named slot.
  *
  * A descriptor and a registration must agree on `id`: the backend decides
@@ -191,8 +192,7 @@ export function resolveSections(
           x.descriptor.id,
           `Precursor: plugin "${x.descriptor.plugin_id}" advertises the section ` +
             `"${x.descriptor.id}" but no implementation is registered. Its frontend ` +
-            `bundle is probably missing (build it with \`make plugins-build\`, or ` +
-            `reinstall the package).`,
+            `bundle is probably missing from its package (reinstall or upgrade it).`,
         );
         return false;
       }

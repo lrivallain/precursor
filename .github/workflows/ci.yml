@@ -53,7 +53,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Mypy
-        run: uv run mypy precursor plugins/precursor-kanban/src
+        run: uv run mypy precursor
 
       - name: Pytest
         run: uv run pytest -q
@@ -82,13 +82,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      # In-repo plugin frontends build with the host's toolchain into their own
-      # Python package. A broken plugin bundle is a broken release, and the app
-      # build above would never notice.
-      - name: Build plugin frontends
-        working-directory: .
-        run: make plugins-build
 
   docs:
     name: Docs site (build)

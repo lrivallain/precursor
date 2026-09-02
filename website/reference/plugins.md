@@ -21,7 +21,8 @@ A plugin is **one Python package** that can bring three things:
 
 Install the package, restart, and all three appear. Uninstall it and they all
 go. The [kanban board](/features/kanban) is the reference implementation — it
-lives in the repository at `plugins/precursor-kanban/`.
+ships from its own repository,
+[`precursor-kanban`](https://github.com/lrivallain/precursor-kanban).
 
 ## Anatomy
 
@@ -269,34 +270,21 @@ build: {
 
 Match the host's React **major**; the instance you get at runtime is the host's.
 ::: warning A plugin's frontend is a build product
-`<package>/web/` is generated, not committed. From a source checkout it exists
-only after `make plugins-build` (which `make sync`, `make dev` and `make build`
-now run for you). Without it the backend still advertises the section, the SPA
-has nothing to import, and the section silently doesn't appear — Settings →
-Plugins says so when it detects that state.
+`<package>/web/` is generated, not committed — your build writes it into the
+Python package so it ships in the wheel. Without it the backend still advertises
+the section, the SPA has nothing to import, and the section silently doesn't
+appear — Settings → Plugins says so when it detects that state.
 :::
 
 
-**In-repo plugins** skip the separate npm project entirely and build with the
-host's toolchain, which guarantees that match:
+#### Two things a host repository would have done for you
 
-```bash
-make plugins-build            # every plugin listed in PLUGINS
-```
-
-Their sources are type-checked by the host's `npm --prefix frontend run
-typecheck`, via a `paths` mapping for `@precursor/host`.
-
-#### Out of tree: two things the monorepo did for you
-
-A plugin in *this* repository gets its types and its CSS by accident of living
-here. One in its own repository does not, and both failures are silent.
+Nothing is installed for `@precursor/host`, and nothing scans your sources for
+Tailwind classes. Both failures are silent.
 
 **Declare `@precursor/host` yourself.** Nothing is ever installed for that
 specifier — the import map supplies it at runtime — so TypeScript has nothing to
-resolve. In-repo plugins are covered by a `paths` mapping onto the host's own
-`src/host/runtime.ts`; out of tree, write an ambient declaration for the members
-you import:
+resolve. Write an ambient declaration for the members you import:
 
 ```ts
 // types/precursor-host.d.ts
@@ -312,12 +300,12 @@ declare module "@precursor/host" {
 The Python side needs no equivalent: `precursor` ships a `py.typed` marker, so
 `precursor.plugin_api` type-checks against the installed wheel.
 
-**Ship your own Tailwind utilities.** Tailwind scans from the repository root,
-so an in-repo plugin's classes land in the host's stylesheet for free. Yours
-cannot — your sources ship compiled — and the result is a plugin that renders
-correct markup with no styling, only in a real install. Build the utilities into
-your bundle and inject them, mapping the theme tokens onto the host's variables
-so your UI still follows the app's theme and dark mode:
+**Ship your own Tailwind utilities.** Tailwind scans the sources it is pointed
+at, and yours ship compiled — so nothing generates your classes and the result
+is a plugin that renders correct markup with no styling, only in a real install.
+Build the utilities into your bundle and inject them, mapping the theme tokens
+onto the host's variables so your UI still follows the app's theme and dark
+mode:
 
 ```css
 /* styles.css — no preflight: the host has already applied its own. */
@@ -392,10 +380,11 @@ Reading which plugins exist, and enabling or disabling them, is not gated — no
 of that executes anyone's code. With the installer off, the panel still shows the
 exact command to run by hand, which is the zero-risk path and always available.
 
-## Versioning a built-in plugin
+## Versioning a plugin
 
-A plugin that lives in this repository **inherits the host's CalVer** from the
-same git tags, rather than carrying a version of its own:
+A plugin versions **independently of the host**. Precursor is CalVer
+(`YYYY.M.MICRO`) from its own git tags, and a plugin is free to do the same from
+its own — releasing when it has something to release, not when core does:
 
 ```toml
 [build-system]
@@ -406,18 +395,19 @@ dynamic = ["version"]
 
 [tool.hatch.version]
 source = "vcs"
-raw-options = { root = "../..", version_scheme = "guess-next-dev", local_scheme = "node-and-date", fallback_version = "0.0.0" }
 ```
 
-This is not cosmetic. A static version produces a byte-identical wheel filename
-on every build, so the nightly manifest advertises an unchanging URL, uv finds
-the requirement already satisfied and skips the download — the host advances
-while the plugin silently stays frozen. It also makes the plugin unpublishable,
-since PyPI rejects re-uploading a version.
+Avoid a static version. It produces a byte-identical wheel filename on every
+build, so any channel that advertises a URL rather than a version — the nightly
+manifest, say — leaves uv finding the requirement already satisfied and skipping
+the download. It also makes the plugin unpublishable, since PyPI rejects
+re-uploading a version.
 
-`root = "../.."` is the only line tying a plugin to the monorepo. Extracting one
-to its own repository means dropping that option and tagging there instead;
-nothing else about the package assumes it is a workspace member.
+What a plugin *does* depend on is the host API it targets. `precursor` ships a
+`py.typed` marker, so `precursor.plugin_api` type-checks against whatever
+version is installed; state the minimum host you support in your README, and
+don't depend on `precursor-ai` from your `[project] dependencies` — the host
+imports you, and `precursor-ai[<your-extra>]` would become a cycle.
 
 ## Stability
 

@@ -39,6 +39,25 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Changed
 
+- **The kanban board now ships from
+  [its own repository](https://github.com/lrivallain/precursor-kanban).** It was
+  the last in-repo plugin, and being in-repo was doing it no favours: it built
+  with the host's Vite config, borrowed the host's TypeScript `paths` for
+  `@precursor/host`, and — because Tailwind scans from the git root — had its
+  utilities land in the host's stylesheet, so a *real* install would have
+  rendered the board unstyled. Out of tree it builds and injects its own.
+
+  Nothing changes for users: `precursor-ai[kanban]` still installs it, now
+  resolved from PyPI (`precursor-kanban>=2026.9`) instead of a workspace member,
+  and the board keeps its own release cadence rather than inheriting the host's
+  CalVer. `precursor.plugin_api` and the `py.typed` marker are what make that
+  work.
+
+  For this repository it means no `plugins/` tree, no `uv` workspace, no
+  `make plugins-build`, and a release that builds one distribution again.
+  `tests/test_plugins.py` covers the plugin seam with a stub, so the suite no
+  longer needs a plugin installed to test the host side of it.
+
 - **One stale credential no longer stalls unrelated work.** The MCP sign-in gate
   ran *before* the model: if any enabled server was parked in `needs_auth`, the
   turn waited on that sign-in for up to five minutes before generating a single
