@@ -126,6 +126,26 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   Publishing needs a matching PyPI trusted publisher per distribution — see
   `RELEASING.md`.
 
+- **A compaction test no longer fails on the residue of the suite that ran
+  before it.** `test_compact_reports_a_size_delta` asserted that `VACUUM` never
+  grows the file — but against the *shared* scratch database every test writes
+  to, so the assertion was evaluated on whatever a thousand preceding tests
+  happened to leave behind. `VACUUM` is under no obligation to shrink a file
+  whose free-page layout is already compact, so it tripped in roughly half of
+  full-suite runs while passing every time the file was run alone.
+
+  The behaviour is worth guarding — a `VACUUM` in WAL mode once *grew* the
+  database, because the WAL was checkpointed on only one side of the rebuild —
+  so the assertion is not relaxed, it is moved somewhere it means something.
+  Compaction is now measured on a database the test owns: a WAL-mode temporary
+  file filled with ~8 MB and then mostly, deliberately not entirely, emptied.
+  Keeping rows alive is what makes the check bite, since VACUUM rewrites the
+  surviving database through the WAL — restore the old bug and this fixture goes
+  from 8.3 MB to 11.6 MB, where a fully emptied one would have shrunk anyway and
+  said nothing. Owning the churn also makes the assertion strict: compaction has
+  to actually reclaim, and the WAL has to be empty afterwards. The endpoint keeps
+  its own test for the shape of what it returns.
+
 ### Changed
 
 - **The kanban board no longer needs a configured GitHub repository.** It was
