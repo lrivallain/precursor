@@ -18,6 +18,7 @@ import type {
   MeetingInsightKind,
   MeetingSegment,
   MeetingSession,
+  MeetingSessionUpdate,
   TopicNode,
 } from "../lib/types";
 import { api } from "../lib/api";
@@ -202,6 +203,14 @@ export function LiveView({
   const [summaryText, setSummaryText] = useState(session.summary ?? "");
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summarySaving, setSummarySaving] = useState(false);
+  const [summarySaved, setSummarySaved] = useState(false);
+  // Last text known to be persisted server-side. Generation and posting also
+  // write the recap, so we re-seed this from the session (below) to keep those
+  // paths from tripping a redundant autosave.
+  const savedSummaryRef = useRef(session.summary ?? "");
+  const summaryRef = useRef(summaryText);
+  summaryRef.current = summaryText;
   // Scraping + summarizing the linked Teams meeting transcript (WorkIQ path).
   const [transcriptScraping, setTranscriptScraping] = useState(false);
   // Ask the panel to surface a tab (bump the nonce). Used after generating the
@@ -460,6 +469,7 @@ export function LiveView({
     // Must not clear it: this effect re-runs on every open/remount, so blanking
     // here would drop a stored summary when returning to the session.
     setSummaryText(session.summary ?? "");
+    savedSummaryRef.current = session.summary ?? "";
     setSummaryError(null);
     setRecordingBoundaries([]);
     prevListeningRef.current = false;
@@ -649,13 +659,15 @@ export function LiveView({
     if (next === "ended" && transcriber.listening) transcriber.stop();
     setBusy(true);
     try {
-      // Persist any in-progress notes together with the status change on end.
-      const payload =
-        next === "ended" && notesRef.current !== savedNotesRef.current
-          ? { status: next, notes: notesRef.current }
-          : { status: next };
+      // Persist any in-progress notes and recap edits with the status change.
+      const payload: MeetingSessionUpdate = { status: next };
+      if (next === "ended" && notesRef.current !== savedNotesRef.current)
+        payload.notes = notesRef.current;
+      if (next === "ended" && summaryRef.current !== savedSummaryRef.current)
+        payload.summary = summaryRef.current;
       const updated = await api.meetings.updateSession(session.id, payload);
       savedNotesRef.current = notesRef.current;
+      savedSummaryRef.current = summaryRef.current;
       onUpdated(updated);
       // Auto-draft a summary when the meeting ends — but only if none exists
       // yet. Once generated (or drafted), it's never auto-regenerated: the user
@@ -692,6 +704,54 @@ export function LiveView({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notes, session.id]);
+
+  // Debounced autosave of the recap while the user edits it. Without this an
+  // edited summary only reached the server when it was posted to a topic, so
+  // hand-edits on an unposted (or topic-less) session were lost on reload.
+  useEffect(() => {
+    if (summaryText === savedSummaryRef.current) return;
+    setSummarySaved(false);
+    const t = setTimeout(() => {
+      // The baseline may have caught up in the meantime (a generation or a post
+      // persists the same text), so re-check before spending a request.
+      if (summaryText === savedSummaryRef.current) {
+        setSummarySaved(true);
+        return;
+      }
+      setSummarySaving(true);
+      void api.meetings.updateSession(session.id, { summary: summaryText })
+        .then((updated) => {
+          savedSummaryRef.current = summaryText;
+          onUpdated(updated);
+          setSummarySaved(true);
+        })
+        .catch(() => {
+          /* non-fatal — will retry on the next edit, on end, or on unmount */
+        })
+        .finally(() => setSummarySaving(false));
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryText, session.id]);
+
+  // Generating the recap and posting it to a topic both persist it server-side.
+  // Track whatever the session carries as the autosave baseline so those paths
+  // don't leave the debounce thinking there are unsaved edits.
+  useEffect(() => {
+    savedSummaryRef.current = session.summary ?? "";
+  }, [session.summary]);
+
+  // An edit made inside the debounce window would otherwise be dropped when the
+  // user switches session or leaves Live, so flush it on unmount. LiveView is
+  // keyed by session.id, so the captured id is the one being left.
+  useEffect(() => {
+    const id = session.id;
+    return () => {
+      if (summaryRef.current === savedSummaryRef.current) return;
+      void api.meetings.updateSession(id, { summary: summaryRef.current }).catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function remove(): Promise<void> {
     const ok = await confirmAction({
@@ -1207,6 +1267,8 @@ export function LiveView({
       canSummarizeFromTranscript={canSummarizeFromTranscript}
       onSummarizeFromTranscript={() => void generateFromTranscript()}
       transcriptScraping={transcriptScraping}
+      saving={summarySaving}
+      saved={summarySaved}
     />
   );
 

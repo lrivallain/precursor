@@ -70,7 +70,9 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   handy for correcting a misheard word before it feeds the insights and summary.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
-  **post into the linked topic** as a message.
+  **post into the linked topic** as a message. Your edits **autosave** as you
+  type (and when you end the session or leave it), so a hand-tuned recap survives
+  a reload even if you never post it anywhere.
 - **Context** — an AI summary of the attached topic, and — via the
   [WorkIQ MCP](/features/mcp) (Microsoft 365) — the ability to **link a meeting
   from your agenda** so its invitees flow into the summary's attendees. The
