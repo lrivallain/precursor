@@ -166,7 +166,28 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   into the browser — so "filed under `customers/sanofi/avm-alz`" replaces "filed
   under topic 42" and a mis-targeted note is obvious at a glance.
 
+- **A remote MCP server that drops mid-turn no longer burns the rest of the
+  turn.** When a hosted endpoint went away under a live session — a rolling
+  deploy, a gateway blip, or the server forgetting the session id it issued —
+  the MCP SDK reported it as the bare phrase `Session terminated`, which is
+  emitted only on an **HTTP 404** from the remote. Because sessions are kept
+  warm and reused, the dropped one stayed poisoned: every subsequent call failed
+  identically until something happened to retire the worker.
 
+  A dead session is now classified as a **transport** failure rather than a bad
+  call — a remote 404, any 5xx, or a socket teardown recycles the session and
+  **retries the call once**, which rides out a blip. A second failure stops
+  there rather than hammering a downed endpoint.
+
+  The wording mattered as much as the retry. Told only "session terminated", the
+  model read it as its own fault and re-planned the call with smaller arguments,
+  then advised re-authenticating — while the credential was valid the whole
+  time, so a fresh token could not have helped. The tool error now names the
+  server and the real status, states that neither the arguments nor the sign-in
+  are at fault, and asks for the outage to be reported rather than an answer
+  guessed.
+
+- **A catalogue entry's install command is now shown where you're looking.**
   When the in-app installer is off, the entry's button was labelled "Show
   command" but only wrote the package name into the free-form box further down
   the panel — so the visible result was a text input quietly gaining a word,
