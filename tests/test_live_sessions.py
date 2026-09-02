@@ -928,6 +928,28 @@ def test_notes_persist_via_update() -> None:
         assert r.json()["notes"] == "final notes"
 
 
+def test_summary_autosaves_via_update() -> None:
+    """Hand-edits to the recap persist without posting it to a topic."""
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "S"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["summary"] is None
+
+        r = client.patch(f"/api/live/{sid}", json={"summary": "## Recap\n- decided X"})
+        assert r.status_code == 200
+        assert r.json()["summary"] == "## Recap\n- decided X"
+        # Survives a fresh read (the reload case that used to drop the edit).
+        assert client.get(f"/api/live/{sid}").json()["summary"] == "## Recap\n- decided X"
+
+        # Ending the session can carry a final recap payload.
+        r = client.patch(f"/api/live/{sid}", json={"status": "ended", "summary": "final recap"})
+        assert r.json()["status"] == "ended"
+        assert r.json()["summary"] == "final recap"
+
+        # Clearing the editor nulls the column so the "no summary" state returns.
+        assert client.patch(f"/api/live/{sid}", json={"summary": "   "}).json()["summary"] is None
+
+
 def test_context_notes_add_remove_and_read() -> None:
     app = create_app()
     with TestClient(app) as client:
