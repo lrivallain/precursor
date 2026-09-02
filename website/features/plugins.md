@@ -81,8 +81,9 @@ Disabling, by contrast, is instant.
 Installing a package runs its code with Precursor's privileges, and the app has
 no authentication of its own — so the in-app installer is **off by default**, only
 answers requests addressed to Precursor's own localhost address, and has to be
-switched on in the panel. Listing and toggling plugins is always available; so is
-running the command yourself.
+switched on at the top of the panel. That switch stays visible once granted, so
+you can withdraw the permission as easily as you gave it. Listing and toggling
+plugins is always available; so is running the command yourself.
 :::
 
 ## How the UI works

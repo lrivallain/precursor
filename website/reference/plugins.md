@@ -374,7 +374,8 @@ whoever runs Precursor, and Precursor has no authentication of its own. So the
    boundary: a page on an attacker's domain that DNS-rebinds to `127.0.0.1` is
    same-origin to the browser, so no CORS preflight ever runs;
 3. the user must switch **Settings → Plugins → "Let Precursor install packages
-   for me"** on. It is off by default.
+   for me"** on. It is off by default, sits at the top of the panel, and stays
+   visible once granted so it can be withdrawn as easily as it was given.
 
 Reading which plugins exist, and enabling or disabling them, is not gated — none
 of that executes anyone's code. With the installer off, the panel still shows the

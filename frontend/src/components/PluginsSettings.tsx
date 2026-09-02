@@ -67,18 +67,21 @@ export function PluginsSettings() {
   }, [load]);
 
   /**
-   * Turn the in-app installer on.
+   * Turn the in-app installer on or off.
    *
    * Off by default because installing a package runs its code with Precursor's
    * privileges and the app has no authentication of its own — so this is an
-   * explicit, deliberate act rather than something a stray request can do.
+   * explicit, deliberate act rather than something a stray request can do. It
+   * is also revocable: the consent lives at the top of the panel and stays
+   * visible once granted, because permission you can grant but not withdraw is
+   * not really permission.
    */
-  async function enableInstalling() {
+  async function setInstallPermission(enabled: boolean) {
     try {
-      await api.settings.update({ plugin_install_enabled: true });
+      await api.settings.update({ plugin_install_enabled: enabled });
       setEnv(await api.plugins.environment());
     } catch (e) {
-      setError(apiErrorMessage(e, "Could not enable in-app installing"));
+      setError(apiErrorMessage(e, "Could not change the install permission"));
     }
   }
 
@@ -199,6 +202,11 @@ export function PluginsSettings() {
         </p>
       </div>
 
+      <InstallPermission
+        env={env}
+        onChange={(enabled) => void setInstallPermission(enabled)}
+      />
+
       {restartNeeded && (
         <div className="flex items-center gap-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2">
           <RefreshCw
@@ -244,7 +252,6 @@ export function PluginsSettings() {
         onPkgChange={setPkg}
         installing={installing !== null}
         onInstall={() => void installPackage(pkg.trim(), true)}
-        onEnableInstalling={() => void enableInstalling()}
       />
 
       {plugins.length === 0 ? (
@@ -380,7 +387,7 @@ function Catalog({
           Available
         </h4>
         <p className="text-[11px] text-muted">
-          Plugins we know about, shipped with Precursor — no network involved.
+          Plugins available in the catalogue.
         </p>
       </div>
       <ul className="flex flex-col gap-3">
@@ -507,14 +514,12 @@ function InstallBox({
   onPkgChange,
   installing,
   onInstall,
-  onEnableInstalling,
 }: {
   env: PluginEnvironment | null;
   pkg: string;
   onPkgChange: (v: string) => void;
   installing: boolean;
   onInstall: () => void;
-  onEnableInstalling: () => void;
 }) {
   if (env === null) return null;
 
@@ -556,22 +561,47 @@ function InstallBox({
             : "Run it yourself, in Precursor's own environment:"}{" "}
         <code className="rounded bg-surface px-1 py-0.5">{command}</code>
       </p>
-      {!env.can_install && env.installable_here && (
-        <label className="flex cursor-pointer items-start gap-2 text-[11px] text-muted">
-          <input
-            type="checkbox"
-            checked={false}
-            onChange={() => onEnableInstalling()}
-            className="mt-0.5 accent-accent"
-          />
-          <span>
-            Let Precursor install packages for me. Installing runs the package's
-            own code with Precursor's privileges, so this stays off unless you
-            ask for it.
-          </span>
-        </label>
-      )}
     </div>
+  );
+}
+
+/**
+ * The standing permission for Precursor to run an installer on your behalf.
+ *
+ * Deliberately at the top of the panel and always visible once it applies,
+ * rather than tucked inside the install box and rendered only while off.
+ * Installing runs a package's own code with Precursor's privileges, so the
+ * consent it represents has to be as easy to withdraw as it was to give — a
+ * switch that only appears when it is off can be turned on and never off again.
+ */
+function InstallPermission({
+  env,
+  onChange,
+}: {
+  env: PluginEnvironment | null;
+  onChange: (enabled: boolean) => void;
+}) {
+  // Nothing to consent to where the app could never install anyway (not on
+  // loopback, or no installer present) — the panel explains that in context.
+  if (env === null || !env.installable_here) return null;
+
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface/60 p-3">
+      <input
+        type="checkbox"
+        checked={env.can_install}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 shrink-0 accent-accent"
+      />
+      <span className="min-w-0 flex flex-col gap-0.5">
+        <span className="text-xs font-medium">Let Precursor install packages for me</span>
+        <span className="text-[11px] text-muted">
+          Installing runs the package's own code with Precursor's privileges, so
+          this stays off unless you ask for it. Turn it off at any time — the
+          commands to install by hand are still shown.
+        </span>
+      </span>
+    </label>
   );
 }
 

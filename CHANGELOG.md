@@ -101,6 +101,14 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **The in-app installer's consent could be granted but never withdrawn.** The
+  "Let Precursor install packages for me" checkbox lived inside the install box
+  and was rendered *only while the permission was off*, so ticking it made it
+  disappear — leaving no way to turn it back off short of editing the database.
+  It now sits at the top of **Settings → Plugins** and stays visible, reflecting
+  and toggling the setting in both directions. A permission you can't revoke
+  isn't really a permission.
+
 - **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
   before it dies.** Two thresholds decided "renew this" and they disagreed. The
   keep-alive opened a session once a token was within five minutes of expiring;
