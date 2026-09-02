@@ -11,6 +11,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Three more Agent 365 MCP servers — `workiq-planner`, `workiq-word` and
+  `workiq-excel` — on the sign-in you already have.** Precursor shipped two of
+  Microsoft's hosted [Agent 365](https://precursor.vuptime.io/features/mcp.html#agent-365-workiq-teams-and-workiq-user)
+  endpoints; it now ships the five that a single credential reaches. `workiq-planner`
+  covers plans, tasks and goals; `workiq-word` and `workiq-excel` create a
+  document or workbook, read its content, and add or reply to comments.
+
+  **They cost no extra sign-in.** All five authenticate as the same Entra client
+  against the same resource, so the shared Agent 365 token is accepted verbatim —
+  if Teams or User already works, the three new servers do too, with nothing to
+  configure. Enable them in **Settings → MCP** like any other built-in.
+
+  Agent 365's *other* endpoints (`mcp_ProductivityServer`, `mcp_MailServer`,
+  `mcp_FilesServer`, …) are deliberately not included: they sit behind a second
+  Entra resource and reject the shared token with `invalid_audience`, so each
+  would cost another consent and another sign-in — for ground the hosted `workiq`
+  preview already covers over Graph paths.
+
 - **A plugin catalogue, so finding a plugin no longer means already knowing its
   package name.** **Settings → Plugins** now opens with an **Available** list —
   a curated directory of plugins with a one-click install — and the docs site
@@ -142,6 +160,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   a browser flow.
 
 ### Fixed
+
+- **A custom MCP server could shadow the built-in `drawio`.** The list of names
+  reserved for built-in servers was maintained by hand and had drifted from the
+  catalogue, so adding your own server called `drawio` was accepted instead of
+  rejected. The list is now derived from the built-in catalogue, which also
+  closes the drift for every server added from here on.
 
 - **A note filed from the MCP server now appears in the UI, and the tool says
   which topic it landed in.** Asking the assistant to append a note wrote it to

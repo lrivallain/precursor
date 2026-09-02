@@ -1836,10 +1836,9 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Tenant for the Agent 365 hosted MCP servers (``workiq-teams`` /
-// ``workiq-user``): their URL embeds a tenant GUID, so without one they stay
-// unconfigured. Left blank, Precursor reads the tenant off an existing WorkIQ
-// sign-in.
+// Tenant for the Agent 365 hosted MCP servers (the ``workiq-*`` family): their
+// URL embeds a tenant GUID, so without one they stay unconfigured. Left blank,
+// Precursor reads the tenant off an existing WorkIQ sign-in.
 function Agent365Card({
   tenant,
   setTenant,
@@ -1862,7 +1861,7 @@ function Agent365Card({
       >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <span className="text-sm flex-1">
-          Microsoft 365 tenant (WorkIQ Teams / User)
+          Microsoft 365 tenant (Agent 365 servers)
         </span>
         <span className="text-[11px] text-muted">
           {effective ? (typed ? "set" : "discovered") : "not set"}
@@ -1871,8 +1870,11 @@ function Agent365Card({
       {open && (
         <div className="border-t border-border px-3 py-2 space-y-2">
           <p className="text-[11px] text-muted">
-            The hosted <span className="font-mono">workiq-teams</span> and{" "}
-            <span className="font-mono">workiq-user</span> servers address your
+            The hosted <span className="font-mono">workiq-teams</span>,{" "}
+            <span className="font-mono">workiq-user</span>,{" "}
+            <span className="font-mono">workiq-planner</span>,{" "}
+            <span className="font-mono">workiq-word</span> and{" "}
+            <span className="font-mono">workiq-excel</span> servers address your
             tenant by GUID. Leave this blank to reuse the tenant of an existing
             WorkIQ sign-in.
           </p>

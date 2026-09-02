@@ -33,11 +33,11 @@ def test_registry_covers_every_oauth_server() -> None:
     assert not is_oauth_server("github")
 
 
-def test_agent365_pair_shares_one_credential() -> None:
-    """The Teams/User pair authenticates once; the preview stays separate."""
-    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS)
-    assert credential_key(teams) == credential_key(user)
-    assert credential_key("workiq") != credential_key(teams)
+def test_agent365_servers_share_one_credential() -> None:
+    """The whole Agent 365 family authenticates once; the preview stays separate."""
+    names = [spec.name for spec in agent365.AGENT365_SERVERS]
+    assert len({credential_key(name) for name in names}) == 1
+    assert credential_key("workiq") != credential_key(names[0])
     # Non-OAuth servers are their own credential, so they never collapse together.
     assert credential_key("github") == "github"
     assert credential_key("my-http") == "my-http"
@@ -45,7 +45,7 @@ def test_agent365_pair_shares_one_credential() -> None:
 
 def test_collapse_by_credential_keeps_one_name_per_sign_in() -> None:
     """Two servers behind one credential yield one prompt, in first-seen order."""
-    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS)
+    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS[:2])
     assert collapse_by_credential([teams, user]) == [teams]
     assert collapse_by_credential([user, teams]) == [user]
     # Distinct credentials all survive, and order is preserved.
@@ -68,7 +68,7 @@ def test_server_label_is_human_readable() -> None:
 def test_usage_starts_warm_and_marks_per_credential() -> None:
     """A fresh process is warm, and using either sibling keeps the pair warm."""
     reset_usage()
-    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS)
+    teams, user = (spec.name for spec in agent365.AGENT365_SERVERS[:2])
     shared = credential_key(teams)
 
     # Seeded from process start, so a restart doesn't leave every server cold.

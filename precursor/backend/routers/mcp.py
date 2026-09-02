@@ -23,7 +23,7 @@ from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting, MCPServer
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.mcp.client import get_mcp_client_manager
+from precursor.backend.services.mcp.client import BUILTIN_CATALOG, get_mcp_client_manager
 from precursor.backend.services.mcp.server import get_mcp_server
 from precursor.backend.services.mcp.user_servers import (
     apply_to_manager,
@@ -36,17 +36,10 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-_RESERVED_NAMES = {
-    "github",
-    "workiq",
-    "workiq-teams",
-    "workiq-user",
-    "fetch",
-    "workspace-fs",
-    "cmd-runner",
-    "precursor",
-    "playwright",
-}
+# Derived rather than listed: a hand-maintained copy drifts from the catalogue
+# the moment a built-in is added (it had already lost ``drawio``), and the drift
+# is silent — a user server shadows the built-in name instead of being rejected.
+_RESERVED_NAMES = frozenset(spec.name for spec in BUILTIN_CATALOG)
 
 
 async def _load_enabled(session: AsyncSession) -> dict[str, bool]:
@@ -360,7 +353,7 @@ async def reauthenticate_workiq_server(
     """Restart an OAuth-protected server's browser sign-in on an explicit action.
 
     Serves the hosted WorkIQ preview (``workiq``) and the Agent 365 servers
-    (``workiq-teams`` / ``workiq-user``) — everything that authenticates through
+    (the ``workiq-*`` family) — everything that authenticates through
     Precursor's loopback authorization-code flow.
 
     Background connects never pop a browser (they surface ``needs_auth``); this

@@ -1,4 +1,4 @@
-"""Tests for the Agent 365 hosted MCP servers (``workiq-teams`` / ``workiq-user``)."""
+"""Tests for the Agent 365 hosted MCP servers (the ``workiq-*`` family)."""
 
 from __future__ import annotations
 
@@ -62,7 +62,13 @@ def test_valid_tenant_accepts_a_guid_and_trims() -> None:
 def test_is_agent365_server() -> None:
     assert agent365.is_agent365_server("workiq-teams")
     assert agent365.is_agent365_server("workiq-user")
+    assert agent365.is_agent365_server("workiq-planner")
+    assert agent365.is_agent365_server("workiq-word")
+    assert agent365.is_agent365_server("workiq-excel")
     assert not agent365.is_agent365_server("workiq")
+    # A different Entra resource: the shared credential is rejected there with
+    # ``invalid_audience``, so it isn't one of ours.
+    assert not agent365.is_agent365_server("workiq-productivity")
 
 
 def test_server_url_embeds_the_tenant() -> None:
@@ -70,38 +76,45 @@ def test_server_url_embeds_the_tenant() -> None:
         f"https://agent365.svc.cloud.microsoft/agents/tenants/{TENANT}/servers/mcp_TeamsServer"
     )
     assert agent365.server_url("workiq-user", TENANT).endswith("/servers/mcp_MeServer")
+    assert agent365.server_url("workiq-planner", TENANT).endswith("/servers/mcp_PlannerServer")
+    assert agent365.server_url("workiq-word", TENANT).endswith("/servers/mcp_WordServer")
+    assert agent365.server_url("workiq-excel", TENANT).endswith("/servers/mcp_ExcelServer")
 
 
-def test_build_profile_shares_one_credential_across_the_pair() -> None:
-    teams = agent365.build_profile("workiq-teams", TENANT)
-    user = agent365.build_profile("workiq-user", TENANT)
+def test_build_profile_shares_one_credential_across_the_family() -> None:
+    profiles = [agent365.build_profile(spec.name, TENANT) for spec in agent365.AGENT365_SERVERS]
+    assert len(profiles) == 5
 
-    assert teams.client_id == user.client_id == agent365.AGENT365_CLIENT_ID
     # Same Entra client, same resource, and a scope set spanning every
-    # ``McpServers.*`` permission — one token is accepted by both endpoints, so
-    # they share a credential and the user signs in once, not twice.
-    assert teams.tokens_key == user.tokens_key == agent365.AGENT365_TOKENS_KEY
-    assert teams.issued_at_key == user.issued_at_key == agent365.AGENT365_ISSUED_AT_KEY
-    assert teams.auth_family == user.auth_family
+    # ``McpServers.*`` permission — one token is accepted by every endpoint, so
+    # they share a credential and the user signs in once, not five times.
+    assert {p.client_id for p in profiles} == {agent365.AGENT365_CLIENT_ID}
+    assert {p.tokens_key for p in profiles} == {agent365.AGENT365_TOKENS_KEY}
+    assert {p.issued_at_key for p in profiles} == {agent365.AGENT365_ISSUED_AT_KEY}
+    assert len({p.auth_family for p in profiles}) == 1
     # ...but not with the WorkIQ preview, which is a different client *and* a
     # different resource.
-    assert teams.tokens_key != workiq_preview.PREVIEW_PROFILE.tokens_key
-    # Distinct loopback ports so a stray concurrent sign-in can't fight for one.
-    assert teams.redirect_port != user.redirect_port
-    assert teams.redirect_port not in (12798,)  # reserved for the WorkIQ preview
+    assert workiq_preview.PREVIEW_PROFILE.tokens_key != agent365.AGENT365_TOKENS_KEY
+    # Distinct loopback ports so a stray concurrent sign-in can't fight for one,
+    # and none of them collides with the WorkIQ preview's.
+    ports = [p.redirect_port for p in profiles]
+    assert len(set(ports)) == len(ports)
+    assert 12798 not in ports  # reserved for the WorkIQ preview
     # Entra ignores the *port* of a public client's loopback redirect but matches
     # host and path exactly — the Agent 365 client registered a bare ``localhost``
     # root, so ``127.0.0.1`` or a ``/callback`` path is rejected (AADSTS50011).
-    assert teams.redirect_uri == f"http://localhost:{teams.redirect_port}/"
+    for profile in profiles:
+        assert profile.redirect_uri == f"http://localhost:{profile.redirect_port}/"
 
 
 def test_build_profile_shares_the_login_hint_with_the_workiq_family() -> None:
     # Same Microsoft identity everywhere: sharing the hint lets a server that has
     # never signed in reuse the known account instead of tripping AADSTS16000.
-    teams = agent365.build_profile("workiq-teams", TENANT)
-    user = agent365.build_profile("workiq-user", TENANT)
-
-    assert teams.login_hint_key == user.login_hint_key == workiq_preview.OAUTH_LOGIN_HINT_KEY
+    hints = {
+        agent365.build_profile(spec.name, TENANT).login_hint_key
+        for spec in agent365.AGENT365_SERVERS
+    }
+    assert hints == {workiq_preview.OAUTH_LOGIN_HINT_KEY}
 
 
 async def test_discover_tenant_id_reads_the_tid_claim() -> None:
@@ -191,7 +204,7 @@ async def test_configure_agent365_servers_without_a_tenant(
 
     monkeypatch.setattr(agent365, "resolve_tenant_id", _none)
     await agent365.configure_agent365_servers()
-    assert calls == [("workiq-teams", None), ("workiq-user", None)]
+    assert calls == [(spec.name, None) for spec in agent365.AGENT365_SERVERS]
 
 
 async def test_configure_agent365_servers_points_at_the_tenant(
@@ -215,8 +228,7 @@ async def test_configure_agent365_servers_points_at_the_tenant(
     monkeypatch.setattr(agent365, "resolve_tenant_id", _tenant)
     await agent365.configure_agent365_servers()
     assert calls == [
-        ("workiq-teams", agent365.server_url("workiq-teams", TENANT)),
-        ("workiq-user", agent365.server_url("workiq-user", TENANT)),
+        (spec.name, agent365.server_url(spec.name, TENANT)) for spec in agent365.AGENT365_SERVERS
     ]
 
 

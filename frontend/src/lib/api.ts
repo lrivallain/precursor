@@ -878,7 +878,7 @@ export const api = {
         body: JSON.stringify({ enabled }),
       }),
     // Drive the browser sign-in for an OAuth-protected server: the hosted
-    // WorkIQ preview, or the Agent 365 workiq-teams / workiq-user endpoints.
+    // WorkIQ preview, or any of the Agent 365 workiq-* endpoints.
     reauthenticateWorkiq: (
       name = "workiq",
       opts?: { usePopup?: boolean; silentOnly?: boolean; auto?: boolean },

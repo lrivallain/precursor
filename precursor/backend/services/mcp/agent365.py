@@ -1,20 +1,29 @@
-"""Microsoft Agent 365 hosted MCP servers (``workiq-teams`` / ``workiq-user``).
+"""Microsoft Agent 365 hosted MCP servers (the ``workiq-*`` family).
 
 Agent 365 exposes per-tenant, OAuth-protected streamable-HTTP MCP endpoints::
 
     https://agent365.svc.cloud.microsoft/agents/tenants/{tenant}/servers/{server}
 
-``mcp_TeamsServer`` covers Microsoft Teams (chats, channels, messages, presence)
-and ``mcp_MeServer`` covers directory/people lookups. Both sit behind Entra with
-RFC 9728 protected-resource metadata pointing at
+Precursor ships the five that one credential reaches: ``mcp_TeamsServer`` (Teams
+chats, channels, messages, presence), ``mcp_MeServer`` (directory/people
+lookups), ``mcp_PlannerServer`` (plans, tasks and goals) and ``mcp_WordServer`` /
+``mcp_ExcelServer`` (create a document, read its content, comment on it). All sit
+behind Entra with RFC 9728 protected-resource metadata pointing at
 ``login.microsoftonline.com/organizations/v2.0``, so we reuse the whole browser
 sign-in stack in :mod:`workiq_preview` via a :class:`WorkIQOAuthProfile`.
 
-The pair **shares one credential**: they authenticate as the same Entra client
-against the same resource, and the consented scope set spans every
-``McpServers.*`` permission — a token minted for one is accepted verbatim by the
-other. So one sign-in covers both, while the WorkIQ preview session (a different
-client *and* a different resource) keeps its own separate tokens.
+They **share one credential**: they authenticate as the same Entra client against
+the same resource, and the consented scope set spans every ``McpServers.*``
+permission — a token minted for one is accepted verbatim by the others. So one
+sign-in covers all five, while the WorkIQ preview session (a different client
+*and* a different resource) keeps its own separate tokens.
+
+**Not every Agent 365 endpoint is in that audience.** ``mcp_ProductivityServer``,
+``mcp_MailServer``, ``mcp_FilesServer``, ``mcp_SharePointServer`` and friends
+reject the shared token with ``invalid_audience`` — they are a second Entra
+resource, so adding one would mean a second credential and a second sign-in
+rather than a new entry below. Their ground is covered by the hosted ``workiq``
+preview server anyway, which reaches mail, calendar and files over Graph paths.
 
 Two wrinkles drive the design:
 
@@ -67,7 +76,7 @@ class _Agent365Spec:
 
 # Fixed loopback ports, one per server, so two sign-ins never contend for the
 # same socket (12798 belongs to the WorkIQ preview flow). Contention is now rare
-# — the pair shares one credential, so only one of them ever signs in — but the
+# — the family shares one credential, so only one of them ever signs in — but the
 # ports stay distinct as a cheap guard. The Agent 365 client is registered as a
 # public client with the loopback redirect ``http://localhost``, for which Entra
 # ignores the port — but *not* the host or the path, so the redirect URI below
@@ -78,6 +87,9 @@ class _Agent365Spec:
 AGENT365_SERVERS: Final[tuple[_Agent365Spec, ...]] = (
     _Agent365Spec("workiq-teams", "WorkIQ Teams", "mcp_TeamsServer", 12799),
     _Agent365Spec("workiq-user", "WorkIQ User", "mcp_MeServer", 12800),
+    _Agent365Spec("workiq-planner", "WorkIQ Planner", "mcp_PlannerServer", 12801),
+    _Agent365Spec("workiq-word", "WorkIQ Word", "mcp_WordServer", 12802),
+    _Agent365Spec("workiq-excel", "WorkIQ Excel", "mcp_ExcelServer", 12803),
 )
 
 _SPECS_BY_NAME: Final = {spec.name: spec for spec in AGENT365_SERVERS}
@@ -94,11 +106,12 @@ def server_url(spec_or_name: _Agent365Spec | str, tenant_id: str) -> str:
     return f"{AGENT365_BASE_URL}/{tenant_id}/servers/{spec.server_id}"
 
 
-# Both Agent 365 servers authenticate as the same Entra client against the same
+# Every server above authenticates as the same Entra client against the same
 # resource, and the granted scope set covers every ``McpServers.*`` permission —
-# verified: a token minted for ``mcp_TeamsServer`` is accepted by ``mcp_MeServer``
-# with an identical ``aud`` and ``scp``. So they share one credential: signing in
-# to either authenticates both.
+# verified: a token minted for ``mcp_TeamsServer`` is accepted verbatim by
+# ``mcp_MeServer``, ``mcp_PlannerServer``, ``mcp_WordServer`` and
+# ``mcp_ExcelServer``. So they share one credential: signing in to any of them
+# authenticates all of them.
 AGENT365_TOKENS_KEY: Final = "agent365_oauth_tokens"
 AGENT365_ISSUED_AT_KEY: Final = "agent365_oauth_issued_at"
 
@@ -148,7 +161,8 @@ async def resolve_tenant_id() -> str:
 
     Settings (DB) → ``PRECURSOR_WORKIQ_TENANT_ID`` → the ``tid`` claim of the
     stored WorkIQ preview access token. The last hop means a user who already
-    signed in to hosted WorkIQ gets Teams/User working with no extra config.
+    signed in to hosted WorkIQ gets the Agent 365 servers working with no extra
+    config.
     """
     async with SessionLocal() as session:
         configured = _valid_tenant(await resolve_workiq_tenant_id(session))
@@ -185,7 +199,7 @@ async def discover_tenant_id() -> str:
 async def _adopt_legacy_tokens() -> None:
     """Migrate a pre-shared-credential sign-in onto the shared token keys.
 
-    Earlier builds stored a token per Agent 365 server. Both are interchangeable,
+    Earlier builds stored a token per Agent 365 server. They are interchangeable,
     so promote whichever survives rather than making the user sign in again, then
     drop the stale rows. No-op once the shared keys exist. Best effort: this is a
     convenience, so a DB hiccup must never keep the servers from being configured.
