@@ -455,7 +455,7 @@ export function AgentsSettings() {
               type="text"
               value={defaultModel}
               disabled={busy}
-              placeholder="e.g. claude-sonnet-4.5"
+              placeholder="e.g. auto"
               onChange={(e) =>
                 settingsStore.set({
                   ...settings!,

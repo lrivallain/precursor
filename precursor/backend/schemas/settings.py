@@ -111,7 +111,9 @@ class SettingsPayload(BaseModel):
 
 class SettingsRead(BaseModel):
     theme: Theme = "system"
-    llm_model: str = "claude-sonnet-4.5"
+    # "" until resolved against the provider catalogue — no id is pinned here
+    # because a literal is only correct until the provider retires it.
+    llm_model: str = ""
     # "" => auto/off (no reasoning_effort sent); otherwise low|medium|high.
     llm_reasoning_effort: str = ""
     github_repo: str = ""
@@ -190,7 +192,9 @@ class SettingsRead(BaseModel):
     # driven until the process is restarted.
     agents_runtime_started: bool = False
     agents_unavailable_reason: str | None = None
-    agents_default_model: str = "claude-sonnet-4.5"
+    # "auto" lets the agent runtime pick a current model, matching
+    # DEFAULT_AGENTS_MODEL — a pinned id would fail once the SDK rotates it out.
+    agents_default_model: str = "auto"
     # Reasoning effort + context tier applied to new agent sessions. "" effort
     # and "default" tier leave the SDK defaults unchanged.
     agents_reasoning_effort: str = ""

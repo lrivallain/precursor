@@ -21,7 +21,6 @@ from precursor.backend.services.app_settings import (
     DEFAULT_GITHUB_REPO,
     DEFAULT_ISSUE_ASSOCIATIONS_ENABLED,
     DEFAULT_ISSUE_CONTEXT_TTL_MINUTES,
-    DEFAULT_LLM_MODEL,
     DEFAULT_LLM_REASONING_EFFORT,
     DEFAULT_MAX_TOOL_ROUNDS,
     MAX_TOOL_ROUNDS_CEILING,
@@ -36,6 +35,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
+    resolve_llm_model,
     resolve_llm_provider,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
@@ -52,6 +52,7 @@ from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
 )
+from precursor.backend.services.model_catalog import invalidate_model_catalog
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -86,11 +87,15 @@ async def _upsert(session: AsyncSession, key: str, value: Any) -> None:
         existing.value = encoded
 
 
-def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> SettingsRead:
+def _as_read(
+    data: dict[str, Any], system: dict[str, Any], docker_ok: bool, llm_model: str
+) -> SettingsRead:
     api_keys = data.get("api_keys") or {}
     return SettingsRead(
         theme=data.get("theme", "system"),
-        llm_model=data.get("llm_model", DEFAULT_LLM_MODEL),
+        # Resolved, not raw: nothing is stored on a fresh install and a stored
+        # id may have been retired, so this is what a turn would actually use.
+        llm_model=llm_model,
         llm_reasoning_effort=data.get("llm_reasoning_effort", DEFAULT_LLM_REASONING_EFFORT),
         github_repo=data.get("github_repo", DEFAULT_GITHUB_REPO),
         issue_context_ttl_minutes=data.get(
@@ -194,7 +199,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system.update(await _llm_block(session, data))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
-    return _as_read(data, system, docker_available()[0])
+    return _as_read(data, system, docker_available()[0], await resolve_llm_model(session))
 
 
 @router.put("", response_model=SettingsRead)
@@ -212,6 +217,9 @@ async def update_settings(
         # Clearing the saved token falls back to the CLI: re-read it rather than
         # serving whatever was cached before.
         invalidate_gh_cli_token()
+        # A tokenless provider resolves to the mock, whose one-entry catalogue
+        # must not outlive the credential that was just added or removed.
+        invalidate_model_catalog()
 
     # Deep-merge llm_providers per provider so a partial update (e.g. one field)
     # doesn't drop the rest; an empty-string value clears a field.
@@ -230,6 +238,12 @@ async def update_settings(
                     existing[key] = value
             merged_providers[provider_id] = existing
         data["llm_providers"] = merged_providers
+        # Credentials moved: whatever catalogue that provider served is stale.
+        invalidate_model_catalog()
+
+    # Switching provider changes which catalogue is authoritative.
+    if "llm_provider" in data:
+        invalidate_model_catalog()
 
     for key, value in data.items():
         await _upsert(session, key, value)
@@ -299,7 +313,7 @@ async def update_settings(
     system.update(await _llm_block(session, refreshed))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
-    return _as_read(refreshed, system, docker_available()[0])
+    return _as_read(refreshed, system, docker_available()[0], await resolve_llm_model(session))
 
 
 @router.post("/backup/run")

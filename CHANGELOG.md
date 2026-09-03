@@ -252,6 +252,27 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A fresh install couldn't chat until you picked a model.** The factory
+  default chat model was the hardcoded literal `claude-sonnet-4.5`, which GitHub
+  Copilot has since retired. Nothing validated it, so `resolve_llm_model` handed
+  the dead id straight to the provider and every turn failed — on a new install,
+  and on any existing one that had never opened **Settings → Model**.
+
+  No model id is pinned any more. The chat model is reconciled against the
+  catalogue the active provider advertises: an unset choice uses the first model
+  offered, a stored choice is honoured while it still exists, and one that has
+  been retired falls back to a working model with a logged warning instead of
+  failing every turn. If the catalogue can't be fetched, the stored value is
+  trusted unchanged — an unreachable network shouldn't override the user. The
+  catalogue is cached with a short TTL behind a lock, so this costs no
+  per-turn round-trip, and is invalidated when credentials or the provider
+  change. **Settings → Model** now shows the *effective* model rather than a raw
+  stored value.
+
+  Agents were already immune (they default to `auto`, which the SDK resolves at
+  runtime) — but `SettingsRead.agents_default_model` still declared the same
+  retired literal, contradicting `DEFAULT_AGENTS_MODEL`; it now says `auto`.
+
 - **A long collapsed prompt preview stretched the whole conversation pane.** The
   truncated one-line preview on a scheduled topic's `Prompt` bubble sat in a
   flex chain with no `min-width: 0`, so it could not shrink and forced the
