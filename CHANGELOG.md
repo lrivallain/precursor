@@ -11,6 +11,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A workflow authoring spec, so a coding assistant can generate a pipeline
+  without reading the source.** The docs site publishes
+  [`/reference/workflow-authoring`](https://precursor.vuptime.io/reference/workflow-authoring):
+  a machine-oriented specification of the workflow engine aimed at external
+  coding AI agents. It carries the exact field tables for the workflow, step and
+  agent objects, the placeholder grammar (including the literal `(unset)` render
+  and the `|` fallback rules), the kickoff composition order, the gate verdict
+  vocabulary and its fail-open tie-breaking, the state key/value caps, the
+  tri-state `mcp_servers` allowlist, and every validation error the API raises.
+
+  It documents the behaviours a generator gets wrong from the prose pages alone:
+  that `context_sources` is **sorted**, so the hand-off is the highest-numbered
+  position rather than the last one typed; that the state key index — and the
+  `workflow_state_*` tools with it — is suppressed for a step whose allowlist
+  omits `precursor`; and that a gate's PASS reason mentioning an opposite-verdict
+  word like "unsafe" trips the FAIL pattern. Ends with an authoring checklist and
+  a worked stateful example.
+
 - **Three more Agent 365 MCP servers — `workiq-planner`, `workiq-word` and
   `workiq-excel` — on the sign-in you already have.** Precursor shipped two of
   Microsoft's hosted [Agent 365](https://precursor.vuptime.io/features/mcp.html#agent-365-workiq-teams-and-workiq-user)
@@ -180,6 +198,45 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   one. The docs say plainly that the placeholder is for values of that size and
   that **artifacts + `context_mode`** are the uncapped channel for a substantial
   payload. ([#304](https://github.com/lrivallain/precursor/issues/304))
+
+- **A workflow step whose model stream dropped mid-turn was recorded as
+  `completed`, so its failure policy never engaged.** A dropped stream ends the
+  turn without a completion or any usage event, so the agent just fell quiet —
+  which the coordinator read as a job well done. The step was traced `completed`
+  with an empty output and zero tokens, and the run advanced on nothing, with
+  `on_error: fail` never stopping it and `max_retries` never retrying it. That
+  put the textbook transient fault out of reach of the very machinery meant to
+  absorb it, and left the trace reading green throughout.
+
+  A turn that ends with **no output and no recorded spend** is now failed instead
+  and put through the step's own `on_error` policy, so a dropped stream can stop
+  the run or — far more usefully — be retried. Both halves of that test are
+  required and each covers the other's false positive: a step that legitimately
+  answers nothing still burns tokens getting there, so a silent-but-paid turn
+  still completes as before. Gate steps get the same treatment, where it matters
+  more still: the verdict grammar is deliberately fail-*open*, so a silent gate
+  used to be read as `PASS` and wave its deliverable through.
+
+- **A workflow step that produces no output no longer hands the next step the
+  *previous run's* output.** When a step wrote nothing this run — a turn that
+  ended without speaking — the hand-off widened from "this step's run" to "this
+  agent, ever" and forwarded whatever it had said last, from an earlier run,
+  with nothing marking it stale. The same widening applied to its result
+  summary.
+
+  For a read-only pipeline that was confusing. For one that acts on the world it
+  was a correctness and safety bug: a mail-triage run was observed issuing
+  Microsoft Graph decline and move calls using message and event ids from a
+  previous run, for an item that did not exist in the run at all. Every call
+  happened to `404` because those ids were already consumed — luck, not a
+  safeguard.
+
+  The hand-off body and the step summary are now **strictly scoped to the
+  current run**, and a step whose predecessor produced nothing is told so
+  explicitly ("produced no output in this run") instead of being handed older
+  data or left in silence it might fill in. Keeping the artifact board
+  cumulative across runs — the *Clear each step's artifacts* option — remains
+  available and no longer drags the hand-off body along with it.
 
 - **Signing in to one WorkIQ server now counts for every server sharing that
   credential.** The Agent 365 endpoints authenticate with a single Entra token,

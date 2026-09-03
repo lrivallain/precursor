@@ -145,11 +145,25 @@ wiring. In a long pipeline that gets expensive, so each step can choose:
 | Context | The step receives |
 | --- | --- |
 | **Previous step** (default) | The last real producer's output + every earlier step's artifacts. |
-| **Pick steps** | Only the earlier steps you name. The last one named is the hand-off; the rest form its reference board. |
+| **Pick steps** | Only the earlier steps you name. The **highest-numbered** one you name is the hand-off; the rest form its reference board. |
 | **None** | Nothing upstream — the step runs on its own objective and the run brief alone. |
 
 The run brief, reviewer directives and the step's own instructions are *always*
 delivered; this setting governs the **material**, not the intent.
+
+Whatever the setting, the hand-off is **scoped to the current run**. If the
+previous step produced nothing this time — a turn that ended without speaking —
+the next step is told exactly that ("produced no output in this run") rather
+than being handed an earlier run's output with nothing marking it stale. It
+matters most for pipelines that act on the world: a step should decline a
+meeting it scored *this* run, not one it scored yesterday.
+
+::: tip Cumulative boards are the one exception — deliberately
+Unticking *Clear each step's artifacts at the start of every run* (a workflow
+option, set when [building](/features/workflows/building) it) keeps the
+**artifact board** spanning runs on purpose. Even then the immediate hand-off
+body stays scoped to this run.
+:::
 
 ## What each step may use
 

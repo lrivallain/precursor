@@ -22,6 +22,7 @@ separate switch, so enabling agents is what turns them on.
 | **[Configuring a step](/features/workflows/steps)** | Instructions, placeholders, pipeline state, and narrowing what a step is fed and may use. |
 | **[Running a pipeline](/features/workflows/running)** | Triggers, the run brief, the run trace, failures, cost, and notifications. |
 | **[Reference](/features/workflows/reference)** | The `/api/workflows` surface and sharing a workflow as YAML. |
+| **[Authoring spec](/reference/workflow-authoring)** | A precise, machine-oriented specification — hand it to a coding assistant that must generate a workflow. |
 
 ## What the workflow owns
 
