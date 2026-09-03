@@ -1552,6 +1552,20 @@ export default function App() {
             }
           })();
         }
+      } else if (event.type === "chat.changed") {
+        // A chat's own metadata moved — most often auto-naming replacing the
+        // placeholder title. Refresh the list, and the open chat if it's this one.
+        setChatListReloadKey((k) => k + 1);
+        const active = activeChatRef.current;
+        if (active && (event.chat_id == null || event.chat_id === active.id)) {
+          void (async () => {
+            try {
+              setActiveChat(await api.chats.get(active.id));
+            } catch {
+              // chat may have been deleted in another window; ignore
+            }
+          })();
+        }
       } else if (event.type === "message.changed") {
         if (event.chat_id != null) {
           const chatId = event.chat_id;
@@ -1902,11 +1916,13 @@ export default function App() {
 
   // Start hero: create a fresh chat and immediately send the user's first
   // prompt. Streaming is kicked off through the global store so it survives the
-  // switch to the newly-mounted ChatSessionPanel.
+  // switch to the newly-mounted ChatSessionPanel. `autoname` marks the title as
+  // a placeholder, so the backend replaces it with one derived from this prompt
+  // while the answer is still streaming.
   async function handleStartChat(prompt: string): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
-    const chat = await api.chats.create({ title: "New chat" });
+    const chat = await api.chats.create({ title: "New chat", autoname: true });
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
     void streamStore.start(convKey("chat", chat.id), text);

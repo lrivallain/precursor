@@ -46,6 +46,16 @@ class Chat(Base, TimestampMixin):
     # section at the top of the chat list.
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
+    # Set when the chat was created with a placeholder title ("New chat") and
+    # the server should derive a real one from the first user message. Cleared
+    # once naming has run — or as soon as the user renames the chat themselves,
+    # so a hand-written title is never overwritten. An explicit flag rather than
+    # a comparison against the placeholder string, which the user can also type
+    # and which changes with the UI's language.
+    autoname_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+
     # When non-null, the chat is archived: hidden from the main list but kept
     # intact (messages, metadata) so it can be restored later.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

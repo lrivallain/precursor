@@ -18,6 +18,10 @@ class ChatBase(BaseModel):
 class ChatCreate(ChatBase):
     # Optional explicit slug. If omitted, the server derives one from the title.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
+    # Set by the client when ``title`` is a placeholder it picked ("New chat")
+    # rather than something the user typed, licensing the server to replace it
+    # with one derived from the first message.
+    autoname: bool = False
 
 
 class ChatUpdate(BaseModel):

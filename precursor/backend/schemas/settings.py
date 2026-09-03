@@ -51,6 +51,10 @@ class SettingsPayload(BaseModel):
     live_enabled: bool | None = None
     live_fast_model: str | None = None
     live_reasoning_effort: str | None = None
+    # Auto-naming a placeholder-titled chat from its first message, and the
+    # model that does it ("" falls back to the chat model).
+    chat_autoname_enabled: bool | None = None
+    chat_autoname_model: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
     mcp_expose: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
@@ -138,6 +142,10 @@ class SettingsRead(BaseModel):
     live_enabled: bool = True
     live_fast_model: str = ""
     live_reasoning_effort: str = ""
+    # Auto-naming a placeholder-titled chat from its first message. Empty model
+    # resolves to the default chat model.
+    chat_autoname_enabled: bool = True
+    chat_autoname_model: str = ""
     # Which Precursor capability sections the built-in MCP server exposes.
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
     # HTTP transport for the built-in 'precursor' MCP server.

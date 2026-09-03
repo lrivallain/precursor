@@ -31,6 +31,10 @@ Right-click any topic in the sidebar to act on it without opening it: rename,
 pin, set a reminder, move it to another [collection](/features/collections), or
 archive.
 
+Not sure what to call one? `/suggest-name` reads the conversation so far and
+renames the topic for you — the same naming pass that
+[names new chats](/features/chats#chats-name-themselves).
+
 Over [MCP](/features/mcp), a topic's place in that tree comes back already
 resolved as a `path` — the collection slug followed by the ancestor chain
 (`client-a/csu/capacity-review`) — so an agent never has to walk `parent_id`

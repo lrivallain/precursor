@@ -17,6 +17,7 @@ from precursor.backend.schemas import SettingsPayload, SettingsRead
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
+    DEFAULT_CHAT_AUTONAME_ENABLED,
     DEFAULT_GITHUB_REPO,
     DEFAULT_ISSUE_ASSOCIATIONS_ENABLED,
     DEFAULT_ISSUE_CONTEXT_TTL_MINUTES,
@@ -109,6 +110,10 @@ def _as_read(data: dict[str, Any], system: dict[str, Any], docker_ok: bool) -> S
         live_fast_model=str(data.get("live_fast_model", "") or ""),
         live_reasoning_effort=str(data.get("live_reasoning_effort", "") or ""),
         live_enabled=bool(data.get("live_enabled", True)),
+        chat_autoname_enabled=bool(
+            data.get("chat_autoname_enabled", DEFAULT_CHAT_AUTONAME_ENABLED)
+        ),
+        chat_autoname_model=str(data.get("chat_autoname_model", "") or ""),
         docker_available=docker_ok,
         **system,
     )

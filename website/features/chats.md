@@ -41,6 +41,45 @@ Chats share the same conversation experience as topics:
   prompt that failed — see
   [when a turn fails](/features/topics#when-a-turn-fails).
 
+## Chats name themselves
+
+A new chat starts as **"New chat"** — which, after a busy afternoon, leaves a
+sidebar full of rows you can't tell apart. So Precursor names it for you: as soon
+as you send the first message, a short side request derives a title from what you
+asked and renames the chat in place.
+
+It runs **alongside** the answer rather than after it, so the name usually lands
+while the reply is still streaming — you never wait on it. If the model is
+unreachable or returns something unusable, the placeholder simply stays; naming
+never delays or fails the turn it rides along with.
+
+A title **you** set always wins. Rename a chat — from the sidebar's right-click
+menu, the header, or `/rename` — and auto-naming steps aside for good, even if a
+naming request was already in flight.
+
+Only the title changes. Chats are addressed by a stable id in their URL, so a
+rename never breaks a link you've already opened or shared.
+
+### `/suggest-name`
+
+To re-name a conversation later — the opening question turned out not to be the
+point, or you want a tidier title before archiving — run:
+
+```
+/suggest-name
+```
+
+It reads the conversation so far and renames it. Available in both **chats** and
+**[topics](/features/topics)** (topic slugs are left untouched too, so existing
+links keep resolving).
+
+### Turning it off
+
+**Settings → Chat → Auto-naming** disables it, and lets you point naming at a
+specific model. Naming is a one-line request, so a small fast model is usually
+the better choice; leave it on *Use default chat model* to reuse your main one.
+`/suggest-name` keeps working either way.
+
 ## Unread badges & notifications
 
 Chats — like topics and agents — track unread activity. When a reply arrives

@@ -69,6 +69,7 @@ from precursor.backend.schemas.message import (
     NotesRephraseRequest,
     NotesRephraseResponse,
     StoppedTurn,
+    SuggestNameResponse,
 )
 from precursor.backend.schemas.role import (
     RoleCreate,
@@ -178,6 +179,7 @@ __all__ = [
     "SkillUpdate",
     "SpeakerRenameRequest",
     "StoppedTurn",
+    "SuggestNameResponse",
     "TopicCreate",
     "TopicNode",
     "TopicRead",

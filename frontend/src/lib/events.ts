@@ -14,6 +14,7 @@ import { emitWorkiqAuthUrl } from "./workiqSignIn";
 
 export type BusEvent =
   | { type: "topic.changed"; topic_id: number | null; chat_id?: number | null }
+  | { type: "chat.changed"; chat_id?: number | null }
   | { type: "message.changed"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.started"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.ended"; topic_id?: number | null; chat_id?: number | null }
@@ -87,6 +88,9 @@ function connect(): void {
   source = new EventSource("/api/events");
   source.addEventListener("topic.changed", (e) =>
     dispatch("topic.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("chat.changed", (e) =>
+    dispatch("chat.changed", (e as MessageEvent).data),
   );
   source.addEventListener("message.changed", (e) =>
     dispatch("message.changed", (e as MessageEvent).data),

@@ -51,6 +51,7 @@ RELAY_TOKEN_HEADER = "X-Precursor-Event-Token"
 RELAYABLE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "topic.changed",
+        "chat.changed",
         "message.changed",
         "reminder.changed",
         "read.changed",
@@ -229,6 +230,30 @@ async def publish_topic_changed(topic_id: int | None = None) -> None:
 
 async def publish_message_changed(topic_id: int) -> None:
     await _bus.publish({"type": "message.changed", "topic_id": topic_id})
+
+
+async def publish_chat_changed(chat_id: int | None = None, *, broadcast: bool = False) -> None:
+    """Signal that a chat's own metadata changed (title, most notably).
+
+    The chat counterpart to ``topic.changed``: ``message.changed`` already covers
+    the transcript, but a rename touches no message and would otherwise stay
+    invisible in other windows until a reload.
+
+    ``broadcast`` opts out of the usual echo filtering. Publishes are normally
+    tagged with the originating client id so the window that made the change
+    ignores its own event and keeps its optimistic update. Auto-naming inverts
+    that: it runs in a detached task that inherited the request's client id, yet
+    the window that started the chat made no optimistic update and is precisely
+    the one that must hear about the new title.
+    """
+    if broadcast:
+        token = _current_client_id.set(None)
+        try:
+            await _bus.publish({"type": "chat.changed", "chat_id": chat_id})
+        finally:
+            _current_client_id.reset(token)
+        return
+    await _bus.publish({"type": "chat.changed", "chat_id": chat_id})
 
 
 async def publish_mcp_auth_required(
