@@ -326,6 +326,20 @@ material. Order your intent by position number, not by list order.
 If `selected` resolves to nothing (all chunks invalid), the step receives no
 upstream material — the same as `none`.
 
+::: warning The hand-off is scoped to the current run
+Whatever the mode, a step only ever inherits what the source step produced in
+**this** run. If that step produced nothing this time, the receiving step is
+told exactly that ("produced no output in this run") rather than being handed an
+earlier run's output. Write objectives that can report the gap instead of
+assuming input always arrives — the same reflex the
+<code v-pre>{{step.N.output | (the previous step produced nothing — say so)}}</code>
+default encodes.
+
+Unticking *Clear each step's artifacts at the start of every run* keeps the
+**artifact board** cumulative across runs on purpose; the hand-off body stays
+run-scoped regardless.
+:::
+
 The efficient pattern is `context_mode: none` plus an explicit
 <code v-pre>{{step.N.output}}</code> placeholder: the step names the one thing it needs instead of
 inheriting a whole transcript.
