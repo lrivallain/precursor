@@ -161,6 +161,27 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A workflow step that produces no output no longer hands the next step the
+  *previous run's* output.** When a step wrote nothing this run — a model call
+  that dropped mid-stream, or a turn that simply ended without speaking — the
+  hand-off widened from "this step's run" to "this agent, ever" and forwarded
+  whatever it had said last, from an earlier run, with nothing marking it stale.
+  The same widening applied to its result summary.
+
+  For a read-only pipeline that was confusing. For one that acts on the world it
+  was a correctness and safety bug: a mail-triage run was observed issuing
+  Microsoft Graph decline and move calls using message and event ids from a
+  previous run, for an item that did not exist in the run at all. Every call
+  happened to `404` because those ids were already consumed — luck, not a
+  safeguard.
+
+  The hand-off body and the step summary are now **strictly scoped to the
+  current run**, and a step whose predecessor produced nothing is told so
+  explicitly ("produced no output in this run") instead of being handed older
+  data or left in silence it might fill in. Keeping the artifact board
+  cumulative across runs — the *Clear each step's artifacts* option — remains
+  available and no longer drags the hand-off body along with it.
+
 - **Signing in to one WorkIQ server now counts for every server sharing that
   credential.** The Agent 365 endpoints authenticate with a single Entra token,
   but only the server you clicked was re-pointed at the fresh one — its siblings

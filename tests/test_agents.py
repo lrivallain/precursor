@@ -3807,13 +3807,16 @@ async def test_approval_note_is_forwarded_to_later_steps() -> None:
 
     await _ensure_schema()
     wf_id, agents = await _seed_linear_workflow(kinds=["task", "approval", "task"])
-    await _open_run_for(wf_id)
+    run_id = await _open_run_for(wf_id)
 
     # Give the producer a deliverable so we can prove content still flows too.
+    # It lands on the producer's *run* (as the manager writes it) — the hand-off
+    # is scoped to this workflow run, so an agent-only mirror wouldn't count.
     async with SessionLocal() as session:
         producer = await session.get(AgentSession, agents[0])
         assert producer is not None
         producer.result_summary = "Perche i programmatori preferiscono la modalita scura?"
+        await _seed_agent_run(session, agents[0], run_id)
         await session.commit()
 
     mgr = _FakeWorkflowManager()
@@ -7032,6 +7035,181 @@ async def test_step_handoff_body_comes_from_the_previous_steps_own_run() -> None
 
     assert "the chapter you asked for" in context
     assert "someone else's chapter" not in context
+
+
+@pytest.mark.asyncio
+async def test_step_with_no_output_this_run_does_not_inherit_the_previous_runs() -> None:
+    """A silent step hands the next one an explicit absence, not an older run.
+
+    Re-running a pipeline whose step A produces nothing this time (a dropped
+    model call, or a turn that simply ends without speaking) used to fall back to
+    an agent-wide read and hand step B run 1's output, unlabelled. For a pipeline
+    that takes irreversible external action that is a safety bug: B acts on ids
+    nobody produced or reviewed in this run.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer = AgentSession(title="Scorer", task_prompt="score", status="idle")
+        wf = Workflow(name="Triage", status="running")
+        session.add_all([producer, wf])
+        await session.commit()
+        await session.refresh(producer)
+        await session.refresh(wf)
+
+        first = WorkflowRun(workflow_id=wf.id, run_number=1, status="completed", trigger="manual")
+        second = WorkflowRun(workflow_id=wf.id, run_number=2, status="running", trigger="manual")
+        session.add_all([first, second])
+        await session.commit()
+        await session.refresh(first)
+        await session.refresh(second)
+
+        # Run 1 scored three invitations. Run 2's scorer never spoke: it opened a
+        # run and summarised nothing, so both of the old fallbacks would fire.
+        first_run = await _seed_agent_run(session, producer.id, first.id)
+        first_run.result_summary = "Scored 3 invitations."
+        session.add(
+            AgentEventRecord(
+                agent_session_id=producer.id,
+                agent_run_id=first_run.id,
+                payload=json.dumps(
+                    {"kind": "assistant_message", "text": "Item 3: decline, id AAMkAD-stale"}
+                ),
+            )
+        )
+        second_run = await _seed_agent_run(session, producer.id, second.id)
+        second_run.result_summary = None
+        # The agent row still mirrors run 1 — that mirror is the stale fallback.
+        producer.result_summary = "Scored 3 invitations."
+        await session.commit()
+
+        context = await collect_step_context(session, producer.id, workflow_run_id=second.id)
+
+    assert "AAMkAD-stale" not in context
+    assert "Scored 3 invitations." not in context
+    # …and the absence is stated rather than left as silence the step can fill in.
+    assert "no output in this run" in context
+    assert "Scorer" in context
+
+
+@pytest.mark.asyncio
+async def test_step_that_never_ran_this_run_yields_no_stale_output() -> None:
+    """No run at all this time is also "nothing", not an agent-wide read.
+
+    ``_current_run_for`` returns ``None`` both for "never started here" and for a
+    workflow with no run in hand; only the latter may widen to the agent.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer = AgentSession(title="Collector", task_prompt="collect", status="idle")
+        wf = Workflow(name="Triage", status="running")
+        session.add_all([producer, wf])
+        await session.commit()
+        await session.refresh(producer)
+        await session.refresh(wf)
+
+        first = WorkflowRun(workflow_id=wf.id, run_number=1, status="completed", trigger="manual")
+        second = WorkflowRun(workflow_id=wf.id, run_number=2, status="running", trigger="manual")
+        session.add_all([first, second])
+        await session.commit()
+        await session.refresh(first)
+        await session.refresh(second)
+
+        first_run = await _seed_agent_run(session, producer.id, first.id)
+        session.add(
+            AgentEventRecord(
+                agent_session_id=producer.id,
+                agent_run_id=first_run.id,
+                payload=json.dumps(
+                    {"kind": "assistant_message", "text": "yesterday's invitations"}
+                ),
+            )
+        )
+        await session.commit()
+
+        scoped = await collect_step_context(session, producer.id, workflow_run_id=second.id)
+        # No run in hand (a legacy workflow, or a manual call): the agent-wide
+        # read stays available and stays silent about staleness.
+        unscoped = await collect_step_context(session, producer.id)
+
+    assert "yesterday's invitations" not in scoped
+    assert "no output in this run" in scoped
+    assert "yesterday's invitations" in unscoped
+
+
+@pytest.mark.asyncio
+async def test_cumulative_board_still_scopes_the_handoff_body_to_this_run() -> None:
+    """``clear_artifacts`` unset keeps the *board* cumulative, not the hand-off.
+
+    Opting into a blackboard that spans runs is a deliberate choice about
+    artifacts. It must not also re-open the immediate hand-off body to earlier
+    runs, which is the very leak this scoping exists to close.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentArtifact, AgentEventRecord, AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer = AgentSession(title="Researcher", task_prompt="research", status="idle")
+        wf = Workflow(name="Board", status="running", clear_artifacts=False)
+        session.add_all([producer, wf])
+        await session.commit()
+        await session.refresh(producer)
+        await session.refresh(wf)
+
+        first = WorkflowRun(workflow_id=wf.id, run_number=1, status="completed", trigger="manual")
+        second = WorkflowRun(workflow_id=wf.id, run_number=2, status="running", trigger="manual")
+        session.add_all([first, second])
+        await session.commit()
+        await session.refresh(first)
+        await session.refresh(second)
+
+        first_run = await _seed_agent_run(session, producer.id, first.id)
+        session.add_all(
+            [
+                AgentEventRecord(
+                    agent_session_id=producer.id,
+                    agent_run_id=first_run.id,
+                    payload=json.dumps({"kind": "assistant_message", "text": "last run's prose"}),
+                ),
+                AgentArtifact(
+                    agent_id=producer.id,
+                    agent_run_id=first_run.id,
+                    title="Inventory",
+                    content="the shared board entry",
+                ),
+            ]
+        )
+        await session.commit()
+        await _seed_agent_run(session, producer.id, second.id)
+        await session.commit()
+
+        context = await collect_step_context(
+            session,
+            producer.id,
+            workflow_run_id=second.id,
+            artifacts_run_id=None,  # the cumulative board `_build_context` passes
+        )
+
+    assert "the shared board entry" in context
+    assert "last run's prose" not in context
 
 
 @pytest.mark.asyncio

@@ -136,6 +136,21 @@ wiring. In a long pipeline that gets expensive, so each step can choose:
 The run brief, reviewer directives and the step's own instructions are *always*
 delivered; this setting governs the **material**, not the intent.
 
+Whatever the setting, the hand-off is **scoped to the current run**. If the
+previous step produced nothing this time — an interrupted model call, or a turn
+that simply ended without speaking — the next step is told exactly that
+("produced no output in this run") rather than being handed an earlier run's
+output with nothing marking it stale. It matters most for pipelines that act on
+the world: a step should decline a meeting it scored *this* run, not one it
+scored yesterday.
+
+::: tip Cumulative boards are the one exception — deliberately
+Unticking *Clear each step's artifacts at the start of every run* (a workflow
+option, set when [building](/features/workflows/building) it) keeps the
+**artifact board** spanning runs on purpose. Even then the immediate hand-off
+body stays scoped to this run.
+:::
+
 ## What each step may use
 
 A step can also narrow what its agent draws on. Each toggle is tri-state —

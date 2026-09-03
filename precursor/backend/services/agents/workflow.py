@@ -307,6 +307,12 @@ async def _last_assistant_message(
     return None
 
 
+# Sentinel for ``collect_step_context(artifacts_run_id=…)`` meaning "mirror
+# ``workflow_run_id``". Distinct from an explicit ``None``, which means "read the
+# blackboard agent-wide" — the cumulative-board option a workflow opts into.
+_MIRROR_RUN_SCOPE: Any = object()
+
+
 async def _run_scoped_artifacts(
     session: AsyncSession,
     agent_id: int,
@@ -335,39 +341,76 @@ async def collect_step_context(
     prev_agent_id: int,
     *,
     workflow_run_id: int | None = None,
+    artifacts_run_id: Any = _MIRROR_RUN_SCOPE,
 ) -> str:
     """Format the previous step's output + artifacts as a kickoff preamble.
 
     Workflow-specific (no agent-deps): the next step is fed *only* the immediately
     preceding step's output, mirroring a linear pipeline hand-off. Prefers the
     full assistant message (survives ``OBJECTIVE_COMPLETE`` folding) and falls
-    back to ``result_summary``. Returns an empty string when nothing was produced.
+    back to ``result_summary``.
+
+    The hand-off body is **strictly scoped to ``workflow_run_id``**. If the
+    previous step opened no run here, or spoke and summarised nothing in the one
+    it did open, this run simply has no output for it — and we say so rather than
+    widening the read to the agent, which would forward an *earlier* run's output
+    with nothing marking it stale. A step that then acts on it (declining a
+    meeting, filing a ticket) acts on data nobody produced or reviewed in this
+    run. The agent-wide read survives only for callers with no run in hand.
+
+    ``artifacts_run_id`` scopes the blackboard separately and mirrors
+    ``workflow_run_id`` unless given: a workflow may deliberately accumulate
+    artifacts across runs (``clear_artifacts`` unset) without that also
+    re-opening the hand-off body to earlier runs.
     """
     agent = await session.get(AgentSession, prev_agent_id)
     if agent is None:
         return ""
+    board_run_id: int | None = (
+        workflow_run_id if artifacts_run_id is _MIRROR_RUN_SCOPE else artifacts_run_id
+    )
     parts: list[str] = []
     prev_run = await _current_run_for(session, prev_agent_id, workflow_run_id)
-    body = await _last_assistant_message(
-        session, prev_agent_id, prev_run.id if prev_run is not None else None
-    )
-    if body:
-        body = _DIRECTIVE_LINE_RE.sub("", body).strip()
-    if not body:
-        summary = await _prev_step_summary(session, prev_agent_id, workflow_run_id)
-        if summary:
-            body = summary.strip()
-    if body:
-        parts.append(body)
-    for art in await _run_scoped_artifacts(session, prev_agent_id, workflow_run_id):
+    if workflow_run_id is None or prev_run is not None:
+        body = await _last_assistant_message(
+            session, prev_agent_id, prev_run.id if prev_run is not None else None
+        )
+        if body:
+            body = _DIRECTIVE_LINE_RE.sub("", body).strip()
+        if not body:
+            summary = await _prev_step_summary(session, prev_agent_id, workflow_run_id)
+            if summary:
+                body = summary.strip()
+        if body:
+            parts.append(body)
+    for art in await _run_scoped_artifacts(session, prev_agent_id, board_run_id):
         parts.append(f"[{art.title}]\n{art.content}".strip())
-    if not parts:
-        return ""
     label = agent.title or f"Step agent {prev_agent_id}"
+    if not parts:
+        # No run scope means no run to be absent from — keep the legacy silence.
+        return "" if workflow_run_id is None else _no_previous_output_preamble(label)
     return (
         "You are one step in a workflow. Here is the output of the previous step. "
         "Use it as the input for your objective.\n\n"
         f"### From previous step: {label}\n" + "\n\n".join(parts)
+    )
+
+
+def _no_previous_output_preamble(label: str) -> str:
+    """Say plainly that the previous step produced nothing *in this run*.
+
+    An explicit absence, not silence: a step told nothing at all is free to
+    assume its input arrived some other way, and one told nothing about the
+    absence may reach for whatever it last saw. Naming it lets the step reason
+    about it and report the gap instead of inventing or reusing input.
+    """
+    return (
+        "You are one step in a workflow. The previous step produced no output in this run.\n\n"
+        f"### From previous step: {label}\n"
+        "(no output this run)\n\n"
+        "There is nothing to hand you: treat this as a real absence. Do not reuse anything "
+        "from an earlier run of this workflow. Do whatever part of your objective stands "
+        "without that input, and state plainly what you could not do and why."
     )
 
 
@@ -376,10 +419,13 @@ async def _prev_step_summary(
     agent_id: int,
     workflow_run_id: int | None,
 ) -> str | None:
-    """The previous step's result summary, read from its run when we can.
+    """The previous step's result summary, scoped to its run when we have one.
 
-    The agent's own ``result_summary`` is a mirror of whatever ran last on it,
-    which for a shared agent may be another workflow's turn entirely.
+    The agent's own ``result_summary`` is a mirror of whatever ran last on it —
+    another workflow's turn for a shared agent, or simply this workflow's
+    *previous* run. Falling back to it when the current run summarised nothing is
+    how a step with no output silently inherits an older one's, so the agent-wide
+    read is reserved for callers with no run in hand.
     """
     if workflow_run_id is not None:
         result = await session.execute(
@@ -391,9 +437,7 @@ async def _prev_step_summary(
             .order_by(AgentRun.id.desc())
             .limit(1)
         )
-        summary = result.scalar_one_or_none()
-        if summary:
-            return summary
+        return result.scalar_one_or_none()
     agent = await session.get(AgentSession, agent_id)
     return agent.result_summary if agent else None
 
@@ -619,14 +663,23 @@ async def _build_context(
         parts.append(_rejection_preamble(human_feedback))
     if fail_reason:
         parts.append(_fail_preamble(fail_reason))
-    # ``clear_artifacts`` decides the blackboard's lifetime. Set (the default),
-    # each run starts clean, so we narrow the reads to this workflow run — which
-    # is also what stops a concurrent workflow driving the same agent from
+    # ``clear_artifacts`` decides the **blackboard's** lifetime. Set (the default),
+    # each run starts clean, so we narrow the artifact reads to this workflow run
+    # — which is also what stops a concurrent workflow driving the same agent from
     # leaking its deliverables in here. Unset, the board is deliberately
     # cumulative across runs, so we read agent-wide as before runs existed.
+    #
+    # The immediate hand-off *body* is not part of that bargain: it is always
+    # scoped to this run, so opting into a cumulative board never means a step
+    # silently inherits an earlier run's output.
     board_run_id = workflow_run_id if workflow.clear_artifacts else None
     if prev_agent_id is not None:
-        ctx = await collect_step_context(session, prev_agent_id, workflow_run_id=board_run_id)
+        ctx = await collect_step_context(
+            session,
+            prev_agent_id,
+            workflow_run_id=workflow_run_id,
+            artifacts_run_id=board_run_id,
+        )
         if ctx:
             parts.append(ctx)
     if earlier_agent_ids:
