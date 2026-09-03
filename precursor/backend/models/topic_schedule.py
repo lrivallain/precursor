@@ -1,10 +1,14 @@
 """TopicSchedule — recurrence config and run state for a scheduled topic.
 
 A scheduled topic (``Topic.kind == "scheduled"``) has exactly one schedule row
-holding *when* it runs (interval-based recurrence) and the last-known run state.
-The background scheduler (``services/scheduler.py``) polls due rows, claims them
-via the ``status``/``lease_until`` lease, runs the turn, then advances
-``next_run_at``.
+holding *when* it runs (one or more recurrence rules) and the last-known run
+state. The background scheduler (``services/scheduler.py``) polls due rows,
+claims them via the ``status``/``lease_until`` lease, runs the turn, then
+advances ``next_run_at``.
+
+The first recurrence rule lives in this row's own columns; additional rules
+("every day at 07:00" *and* "every weekday at 12:00") are JSON-encoded into
+``RecurrenceMixin.extra_rules`` and the row fires at the earliest of them.
 """
 
 from __future__ import annotations
@@ -23,12 +27,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
+from precursor.backend.models.recurrence import RecurrenceMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.topic import Topic
 
 
-class TopicSchedule(Base, TimestampMixin):
+class TopicSchedule(Base, TimestampMixin, RecurrenceMixin):
     __tablename__ = "topic_schedule"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -49,7 +54,8 @@ class TopicSchedule(Base, TimestampMixin):
     # The prompt sent as the user turn on each run.
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     # Interval-based recurrence: run every N seconds. The UI exposes this as a
-    # value + unit (minutes / hours / days).
+    # value + unit (minutes / hours / days). This is the schedule's *primary*
+    # rule; extras live in ``RecurrenceMixin.extra_rules``.
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     # Daily-at-time recurrence: when set, the schedule runs once per allowed
     # day at this minute-of-day (0..1439) in ``timezone`` instead of using

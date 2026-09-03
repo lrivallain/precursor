@@ -47,7 +47,7 @@ Workflows live under `/api/workflows`:
 | `POST /api/workflows/{id}/run-steps/{stepRunId}/replay` | [Replay](/features/workflows/running#replaying-a-single-step) one attempt on its recorded input, advancing nothing (409 while the run is in flight) |
 | `POST /api/workflows/{id}/approve` \| `/reject` | Clear or bounce a human approval checkpoint (`{ "note": "…", "action": "rework\|stop\|skip" }`) |
 | `POST /api/workflows/{id}/archive` \| `/unarchive` | Archive toggle |
-| `PUT /api/workflows/{id}/schedule` | Configure the schedule |
+| `PUT /api/workflows/{id}/schedule` | Configure the schedule. Accepts either the flat recurrence fields or a `rules` array for [several cadences at once](/features/scheduler#several-cadences-on-one-item) |
 | `GET /api/workflows/{id}/state` | List the pipeline's [saved state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) |
 | `PUT /api/workflows/{id}/state` | Upsert one value (`{ "key": "…", "value": "…" }`) |
 | `DELETE /api/workflows/{id}/state/{key}` \| `/state` | Drop one key, or reset the lot |

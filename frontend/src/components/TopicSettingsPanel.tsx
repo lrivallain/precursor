@@ -26,9 +26,9 @@ import { RefineTextarea } from "./RefineTextarea";
 import { Markdown } from "./Markdown";
 import {
   defaultRecurrence,
-  recurrenceFromSchedule,
-  recurrenceToPayload,
-  RecurrenceEditor,
+  recurrenceListFromSchedule,
+  recurrenceListToPayload,
+  RecurrenceListEditor,
   type RecurrenceValue,
 } from "./RecurrenceEditor";
 
@@ -84,7 +84,7 @@ export function TopicSettingsPanel({
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [scheduleOn, setScheduleOn] = useState(topic.schedule?.enabled ?? false);
   const [prompt, setPrompt] = useState("");
-  const [recurrence, setRecurrence] = useState<RecurrenceValue>(defaultRecurrence);
+  const [recurrence, setRecurrence] = useState<RecurrenceValue[]>(() => [defaultRecurrence()]);
   const [clearContext, setClearContext] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
   const hasSchedule = topic.schedule !== null || schedule !== null;
@@ -96,7 +96,7 @@ export function TopicSettingsPanel({
         const s = await api.topics.getSchedule(topic.id);
         setSchedule(s);
         setPrompt(s.prompt);
-        setRecurrence(recurrenceFromSchedule(s));
+        setRecurrence(recurrenceListFromSchedule(s));
         setClearContext(s.clear_context);
         setScheduleOn(s.enabled);
       } catch {
@@ -173,7 +173,7 @@ export function TopicSettingsPanel({
     if (scheduleOn) {
       const payload = {
         prompt: prompt.trim(),
-        ...recurrenceToPayload(recurrence),
+        ...recurrenceListToPayload(recurrence),
         clear_context: clearContext,
         enabled: true,
       };
@@ -470,7 +470,7 @@ export function TopicSettingsPanel({
                       </p>
                     </div>
 
-                    <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+                    <RecurrenceListEditor value={recurrence} onChange={setRecurrence} />
 
                     <label className="flex items-start gap-2.5 cursor-pointer">
                       <input

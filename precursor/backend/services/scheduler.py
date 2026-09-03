@@ -37,7 +37,7 @@ from precursor.backend.services.app_settings import (
     resolve_scheduled_run_timeout_seconds,
 )
 from precursor.backend.services.events import publish_agent_changed, publish_topic_changed
-from precursor.backend.services.schedule_timing import compute_next_run
+from precursor.backend.services.schedule_timing import compute_next_run_multi
 from precursor.backend.services.scheduled_commands import run_scheduled_prompt_with_timeout
 
 if TYPE_CHECKING:  # circular at runtime: the manager imports the scheduler
@@ -222,13 +222,7 @@ class Scheduler:
                 if workflow is None:
                     continue
                 # Re-anchor the next run first so a start failure still reschedules.
-                workflow.next_run_at = compute_next_run(
-                    now,
-                    workflow.interval_seconds or 86400,
-                    workflow.days_of_week,
-                    workflow.run_at_minute,
-                    workflow.timezone,
-                )
+                workflow.next_run_at = workflow.next_run_after(now)
                 await session.commit()
             async with SessionLocal() as session:
                 try:
@@ -363,10 +357,9 @@ class Scheduler:
             if schedule is None or not schedule.enabled:
                 return
             prompt = schedule.prompt
-            interval = schedule.interval_seconds
-            days_mask = schedule.days_of_week
-            run_at_minute = schedule.run_at_minute
-            tz_name = schedule.timezone
+            # Snapshot the rule set now so the run's own duration doesn't shift
+            # the anchor, matching the previous single-rule behaviour.
+            rules = schedule.recurrence_rules
             clear_context = schedule.clear_context
             run_timeout = await resolve_scheduled_run_timeout_seconds(session)
 
@@ -400,7 +393,7 @@ class Scheduler:
                     status=status,
                     last_error=error,
                     last_run_at=now,
-                    next_run_at=compute_next_run(now, interval, days_mask, run_at_minute, tz_name),
+                    next_run_at=compute_next_run_multi(now, rules),
                     lease_until=None,
                 )
             )
@@ -416,10 +409,7 @@ class Scheduler:
             schedule = result.scalar_one_or_none()
             if schedule is None or not schedule.enabled:
                 return
-            interval = schedule.interval_seconds
-            days_mask = schedule.days_of_week
-            run_at_minute = schedule.run_at_minute
-            tz_name = schedule.timezone
+            rules = schedule.recurrence_rules
             clear_context = schedule.clear_context
 
         status = "ok"
@@ -444,7 +434,7 @@ class Scheduler:
                     status=status,
                     last_error=error,
                     last_run_at=now,
-                    next_run_at=compute_next_run(now, interval, days_mask, run_at_minute, tz_name),
+                    next_run_at=compute_next_run_multi(now, rules),
                     lease_until=None,
                 )
             )

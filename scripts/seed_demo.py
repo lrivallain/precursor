@@ -56,6 +56,7 @@ from precursor.backend.models.workflow import (  # noqa: E402
     WorkflowStep,
 )
 from precursor.backend.models.workflow_state import WorkflowState  # noqa: E402
+from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
 
 NOW = datetime.now(UTC)
 
@@ -188,25 +189,38 @@ async def seed() -> None:
         )
 
         # ---------------- a scheduled topic ----------------
-        s.add(
-            TopicSchedule(
-                topic_id=t_digest.id,
-                enabled=True,
-                clear_context=True,
-                prompt=(
-                    "Summarise what changed in the platform this week: merged pull "
-                    "requests, closed issues, and anything still blocked. Lead with the "
-                    "things a reader has to act on."
-                ),
-                interval_seconds=604_800,
-                run_at_minute=9 * 60,
-                timezone="Europe/Paris",
-                days_of_week=1,  # Monday
-                next_run_at=NOW + timedelta(days=2, hours=3),
-                last_run_at=ago(days=5),
-                status="idle",
-            )
+        # Two recurrence rules, so the screenshot shows a schedule that combines
+        # cadences: the Monday morning digest plus a Friday wrap-up.
+        digest_schedule = TopicSchedule(
+            topic_id=t_digest.id,
+            enabled=True,
+            clear_context=True,
+            prompt=(
+                "Summarise what changed in the platform this week: merged pull "
+                "requests, closed issues, and anything still blocked. Lead with the "
+                "things a reader has to act on."
+            ),
+            next_run_at=NOW + timedelta(days=2, hours=3),
+            last_run_at=ago(days=5),
+            status="idle",
         )
+        digest_schedule.set_recurrence_rules(
+            [
+                RecurrenceRule(
+                    interval_seconds=604_800,
+                    run_at_minute=9 * 60,
+                    timezone="Europe/Paris",
+                    days_of_week=1,  # Monday
+                ),
+                RecurrenceRule(
+                    interval_seconds=604_800,
+                    run_at_minute=17 * 60,
+                    timezone="Europe/Paris",
+                    days_of_week=1 << 4,  # Friday
+                ),
+            ]
+        )
+        s.add(digest_schedule)
 
         # ---------------- messages ----------------
         s.add_all(

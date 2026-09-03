@@ -31,9 +31,9 @@ import { Select } from "./Select";
 import { APPROVAL_POLICIES } from "./AgentsSettings";
 import {
   defaultRecurrence,
-  recurrenceFromSchedule,
-  recurrenceToPayload,
-  RecurrenceEditor,
+  recurrenceListFromSchedule,
+  recurrenceListToPayload,
+  RecurrenceListEditor,
   type RecurrenceValue,
 } from "./RecurrenceEditor";
 
@@ -114,8 +114,8 @@ export function AgentSettingsPanel({
   // summary so reopening shows the live config.
   const hasSchedule = agent.schedule !== null;
   const [scheduleOn, setScheduleOn] = useState<boolean>(agent.schedule?.enabled ?? false);
-  const [recurrence, setRecurrence] = useState<RecurrenceValue>(
-    agent.schedule ? recurrenceFromSchedule(agent.schedule) : defaultRecurrence(),
+  const [recurrence, setRecurrence] = useState<RecurrenceValue[]>(
+    agent.schedule ? recurrenceListFromSchedule(agent.schedule) : [defaultRecurrence()],
   );
   const [clearContext, setClearContext] = useState<boolean>(
     agent.schedule?.clear_context ?? true,
@@ -212,7 +212,7 @@ export function AgentSettingsPanel({
   // Apply the schedule edits as part of Save. Creating the first schedule, then
   // toggling its enabled flag, or updating the cadence/clear-context.
   async function persistSchedule(): Promise<void> {
-    const recur = recurrenceToPayload(recurrence);
+    const recur = recurrenceListToPayload(recurrence);
     if (scheduleOn) {
       const payload = { ...recur, clear_context: clearContext, enabled: true };
       if (hasSchedule) {
@@ -490,7 +490,7 @@ export function AgentSettingsPanel({
 
               {scheduleOn && (
                 <div className="ml-1.5 space-y-4 border-l border-border pl-4">
-                  <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+                  <RecurrenceListEditor value={recurrence} onChange={setRecurrence} />
 
                   <label className="flex items-start gap-2.5 cursor-pointer">
                     <input

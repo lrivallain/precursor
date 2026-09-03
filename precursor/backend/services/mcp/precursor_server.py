@@ -46,6 +46,7 @@ from urllib.parse import quote
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +68,7 @@ from precursor.backend.models import (
     Workflow,
     WorkflowStep,
 )
+from precursor.backend.schemas.schedule import RecurrenceRule
 from precursor.backend.services.app_settings import (
     MCP_EXPOSE_SECTIONS,
     resolve_mcp_expose,
@@ -76,7 +78,6 @@ from precursor.backend.services.collections import (
     resolve_collection_default_role_id,
     resolve_collection_id,
 )
-from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
 # Decorated tool functions are returned unchanged, so the registrar's decorator
@@ -343,6 +344,9 @@ def _schedule_dict(s: TopicSchedule) -> dict[str, Any]:
         "days_of_week": s.days_of_week,
         "run_at_minute": s.run_at_minute,
         "timezone": s.timezone,
+        # Every rule the schedule fires on, primary first. Single-rule schedules
+        # produce a one-element list matching the flat fields above.
+        "rules": [rule.as_dict() for rule in s.recurrence_rules],
         "clear_context": s.clear_context,
         "status": s.status,
         "next_run_at": _iso(s.next_run_at),
@@ -1275,6 +1279,7 @@ async def create_schedule(
     clear_context: bool = False,
     enabled: bool = True,
     collection: str | None = None,
+    extra_rules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Create a recurring schedule on a new topic that runs ``prompt`` on a cadence.
 
@@ -1284,6 +1289,11 @@ async def create_schedule(
     pure interval. When ``clear_context`` is set each run starts fresh.
     ``collection`` names (or slugs) the collection the new topic lands in;
     omit it to use the default one.
+
+    ``extra_rules`` adds further recurrences alongside the primary one — each is
+    a dict with the same ``interval_seconds`` / ``days_of_week`` /
+    ``run_at_minute`` / ``timezone`` keys. The topic then runs at whichever comes
+    first, so "every day at 07:00" plus "every weekday at 12:00" gives both.
     """
     if not await _section_enabled("schedules"):
         return {"error": _GATED.format(section="schedules")}
@@ -1291,6 +1301,18 @@ async def create_schedule(
         return {"error": "title and prompt must not be empty"}
     if interval_seconds < 60:
         return {"error": "interval_seconds must be >= 60"}
+    try:
+        rules = [
+            RecurrenceRule(
+                interval_seconds=interval_seconds,
+                days_of_week=days_of_week,
+                run_at_minute=run_at_minute,
+                timezone=timezone,
+            ),
+            *(RecurrenceRule(**rule) for rule in extra_rules or []),
+        ]
+    except (TypeError, ValidationError) as exc:
+        return {"error": f"Invalid extra_rules: {exc}"}
     async with SessionLocal() as session:
         collection_id: int | None = None
         if collection:
@@ -1327,18 +1349,11 @@ async def create_schedule(
             topic_id=topic.id,
             enabled=enabled,
             prompt=prompt,
-            interval_seconds=interval_seconds,
-            days_of_week=days_of_week,
-            run_at_minute=run_at_minute,
-            timezone=timezone,
             clear_context=clear_context,
-            next_run_at=compute_next_run(
-                _now(), interval_seconds, days_of_week, run_at_minute, timezone
-            )
-            if enabled
-            else None,
             status="idle",
         )
+        schedule.set_recurrence_rules([rule.to_timing() for rule in rules])
+        schedule.next_run_at = schedule.next_run_after(_now()) if enabled else None
         session.add(schedule)
         await session.commit()
         await session.refresh(schedule)
@@ -1358,13 +1373,7 @@ async def set_schedule_enabled(topic_id: int, enabled: bool) -> dict[str, Any]:
         if s is None:
             return {"error": f"No schedule for topic {topic_id}"}
         s.enabled = enabled
-        s.next_run_at = (
-            compute_next_run(
-                _now(), s.interval_seconds, s.days_of_week, s.run_at_minute, s.timezone
-            )
-            if enabled
-            else None
-        )
+        s.next_run_at = s.next_run_after(_now()) if enabled else None
         await session.commit()
         await session.refresh(s)
         result = _schedule_dict(s)
