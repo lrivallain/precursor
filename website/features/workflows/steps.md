@@ -130,7 +130,7 @@ wiring. In a long pipeline that gets expensive, so each step can choose:
 | Context | The step receives |
 | --- | --- |
 | **Previous step** (default) | The last real producer's output + every earlier step's artifacts. |
-| **Pick steps** | Only the earlier steps you name. The last one named is the hand-off; the rest form its reference board. |
+| **Pick steps** | Only the earlier steps you name. The **highest-numbered** one you name is the hand-off; the rest form its reference board. |
 | **None** | Nothing upstream — the step runs on its own objective and the run brief alone. |
 
 The run brief, reviewer directives and the step's own instructions are *always*
