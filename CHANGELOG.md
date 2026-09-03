@@ -11,6 +11,35 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Precursor is usable on a phone.** The shell assumed a permanent sidebar
+  beside the content, so on a 390px screen the sidebar and its rail took ~330px
+  and left a sliver for the conversation — the app was effectively unusable on
+  a phone.
+
+  Below **768px** the shell now collapses to a single pane. The sidebar leaves
+  the flow and becomes an **off-canvas drawer** opened from a new hamburger in
+  the shared header, dismissed by the scrim, its **×**, or <kbd>Esc</kbd>, and
+  closed automatically when you pick a topic, chat, session, workspace or home.
+  Switching section keeps it open so you can browse that section's list next.
+  On the home launcher the drawer replaces the standalone section rail, leaving
+  one navigation affordance. Nothing changes above the breakpoint.
+
+  Panes that can't sit side by side collapse instead of squeezing: the
+  **workspace** file tree and editor become a list → detail flow with a back
+  arrow, and the **conversation stats** rail is hidden. The **workspace
+  assistant** gets its own, wider threshold — below **1024px** it starts stowed
+  and expands over the workspace rather than beside it, because a tree, an
+  editor and a 24rem panel stop fitting well before phone width. A small
+  screen's collapse state is never persisted back over your desktop preference.
+
+  Touch fixes ride along, all keyed to `(hover: none)` so a touchscreen laptop
+  with a trackpad is unaffected: hover-only affordances — row actions and the
+  **Copy** button on code blocks — stay visible where hovering is impossible;
+  form controls get a 16px floor so Safari stops zooming in on focus; the shell
+  is sized with `100dvh` so the composer isn't buried under a collapsing address
+  bar; `viewport-fit=cover` plus safe-area padding clears the home indicator;
+  and page-level rubber-banding is pinned.
+
 - **Chats name themselves from the first message.** A new chat was created as
   "New chat" and stayed that way unless you renamed it, so an afternoon of quick
   questions left a sidebar of identical rows that had to be opened one by one to
@@ -222,6 +251,34 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   a browser flow.
 
 ### Fixed
+
+- **A fresh install couldn't chat until you picked a model.** The factory
+  default chat model was the hardcoded literal `claude-sonnet-4.5`, which GitHub
+  Copilot has since retired. Nothing validated it, so `resolve_llm_model` handed
+  the dead id straight to the provider and every turn failed — on a new install,
+  and on any existing one that had never opened **Settings → Model**.
+
+  No model id is pinned any more. The chat model is reconciled against the
+  catalogue the active provider advertises: an unset choice uses the first model
+  offered, a stored choice is honoured while it still exists, and one that has
+  been retired falls back to a working model with a logged warning instead of
+  failing every turn. If the catalogue can't be fetched, the stored value is
+  trusted unchanged — an unreachable network shouldn't override the user. The
+  catalogue is cached with a short TTL behind a lock, so this costs no
+  per-turn round-trip, and is invalidated when credentials or the provider
+  change. **Settings → Model** now shows the *effective* model rather than a raw
+  stored value.
+
+  Agents were already immune (they default to `auto`, which the SDK resolves at
+  runtime) — but `SettingsRead.agents_default_model` still declared the same
+  retired literal, contradicting `DEFAULT_AGENTS_MODEL`; it now says `auto`.
+
+- **A long collapsed prompt preview stretched the whole conversation pane.** The
+  truncated one-line preview on a scheduled topic's `Prompt` bubble sat in a
+  flex chain with no `min-width: 0`, so it could not shrink and forced the
+  transcript — and with it the main pane — wider than the viewport, cutting
+  message content off on the right. Only ever visible on a narrow screen, which
+  had no slack to absorb it.
 
 - **A workflow could no longer be switched off "at a time" back to an interval.**
   `PUT /api/workflows/{id}/schedule` applied `run_at_minute` only when it was

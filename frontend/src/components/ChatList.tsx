@@ -198,7 +198,7 @@ export function ChatList({
           )}
           {!sel.active && (
             <button
-              className="hidden shrink-0 rounded p-1 hover:bg-border group-hover:block"
+              className="hover-reveal hidden shrink-0 rounded p-1 hover:bg-border group-hover:block"
               aria-label="Chat settings"
               data-tooltip="Chat settings"
               onClick={(e) => {

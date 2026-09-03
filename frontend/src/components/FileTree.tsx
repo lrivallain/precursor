@@ -249,7 +249,7 @@ export function FileTree({
                 onRename={(name) => onRename(node.path, name)}
                 className="flex-1 truncate py-1"
               />
-              <div className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <div className="hover-reveal flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                 <button
                   className="p-0.5 rounded hover:bg-bg text-muted hover:text-text"
                   aria-label={`New file in ${node.name}`}

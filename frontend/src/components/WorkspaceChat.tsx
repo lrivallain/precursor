@@ -20,6 +20,8 @@ import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import type { WorkspaceFileRef } from "../lib/workspaceLink";
 import { useResizableWidth } from "../lib/useResizableWidth";
+import { WORKSPACE_PANES_QUERY, useMediaQuery } from "../lib/useMediaQuery";
+import { Z_INDEX } from "../lib/constants";
 import { ResizeHandle } from "./ResizeHandle";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
@@ -59,16 +61,23 @@ export function WorkspaceChat({
   const [pending, setPending] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const narrow = useMediaQuery(WORKSPACE_PANES_QUERY);
   // Collapse the assistant into a thin rail (persisted), mirroring the
   // conversation-stats aside on topics/chats. Kept mounted so chat state and
   // any in-flight stream survive a collapse.
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
+    // Too narrow for three panes: start stowed, because expanded the assistant
+    // covers the workspace and must not be the state you land on.
+    if (window.matchMedia?.(WORKSPACE_PANES_QUERY).matches) return true;
     return window.localStorage.getItem(CHAT_COLLAPSE_KEY) === "1";
   });
   useEffect(() => {
+    // A transient choice made on a small screen shouldn't overwrite the
+    // preference set where the panel actually fits.
+    if (narrow) return;
     window.localStorage.setItem(CHAT_COLLAPSE_KEY, collapsed ? "1" : "0");
-  }, [collapsed]);
+  }, [collapsed, narrow]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -328,10 +337,16 @@ export function WorkspaceChat({
 
   return (
     <aside
-      className="relative shrink-0 border-l border-border flex flex-col min-h-0"
-      style={{ width: panelWidth }}
+      className={
+        // Below the three-pane threshold a 24rem side panel leaves no editor,
+        // so the expanded assistant covers the workspace instead.
+        narrow
+          ? `fixed inset-0 flex flex-col min-h-0 bg-bg ${Z_INDEX.SIDEBAR}`
+          : "relative shrink-0 border-l border-border flex flex-col min-h-0"
+      }
+      style={narrow ? undefined : { width: panelWidth }}
     >
-      <ResizeHandle onMouseDown={onPanelResize} side="left" />
+      {!narrow && <ResizeHandle onMouseDown={onPanelResize} side="left" />}
       <div className="flex items-center justify-between px-3 h-10 border-b border-border">
         <span className="text-xs font-medium text-muted uppercase tracking-wide">
           Assistant

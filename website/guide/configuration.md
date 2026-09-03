@@ -29,6 +29,29 @@ so the chat flow stays usable with zero setup. Configure a real provider wheneve
 you're ready.
 :::
 
+### Which model gets used
+
+Precursor pins **no** model id of its own. Until you choose one in
+**Settings → Model**, the chat model is the first entry in the catalogue the
+active provider advertises — so a fresh install works without picking anything,
+whatever that provider happens to offer today.
+
+Your choice is honoured for as long as the provider still lists it. Providers
+retire models on their own schedule, though, and a retired id would otherwise
+fail *every* turn — so if the one you picked disappears, Precursor logs a warning
+and falls back to a model that exists rather than erroring. If the catalogue
+can't be reached at all, your stored choice is used unchanged: an unreachable
+network is no reason to second-guess you.
+
+The catalogue is cached briefly, and re-read immediately when you change provider
+or credentials.
+
+::: tip Agents pick their own
+[Agent](/features/agents-mode) sessions default to **`auto`**, which lets the
+Copilot SDK runtime choose a current model. That's an agents-only value — it is
+not a chat model id, and it isn't valid in **Settings → Model**.
+:::
+
 ## GitHub authentication
 
 Precursor resolves a GitHub token in this order:

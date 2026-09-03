@@ -97,6 +97,14 @@ features:
       or a deterministic mock provider for offline development.
     link: /guide/configuration
     linkText: Configure a provider
+  - icon: 📱
+    title: Works on your phone
+    details: >-
+      Below 768px the sidebar becomes a drawer and the content takes the whole
+      screen, with touch-friendly actions, real viewport height and safe-area
+      padding. Add it to your home screen and it behaves.
+    link: /features/mobile
+    linkText: About the mobile layout
   - icon: 🔒
     title: Local-first & private
     details: >-

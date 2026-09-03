@@ -130,7 +130,7 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
       <button
         type="button"
         onClick={copy}
-        className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded border border-border bg-bg/80 px-1.5 py-0.5 text-[11px] text-muted opacity-0 backdrop-blur transition-opacity hover:text-accent focus:opacity-100 group-hover:opacity-100"
+        className="hover-reveal absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded border border-border bg-bg/80 px-1.5 py-0.5 text-[11px] text-muted opacity-0 backdrop-blur transition-opacity hover:text-accent focus:opacity-100 group-hover:opacity-100"
         aria-label="Copy code"
         data-tooltip="Copy code"
       >

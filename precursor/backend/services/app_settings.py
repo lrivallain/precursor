@@ -7,6 +7,7 @@ factory defaults used until the user picks something in the UI.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -17,9 +18,15 @@ from precursor.backend.config import get_settings
 from precursor.backend.models import AppSetting
 from precursor.backend.services import cmd_runner
 from precursor.backend.services.cmd_runner import CmdRunnerConfig
+from precursor.backend.services.model_catalog import offered_model_ids
+
+logger = logging.getLogger(__name__)
 
 # Factory defaults — surface in the UI before the user has saved a preference.
-DEFAULT_LLM_MODEL = "claude-sonnet-4.5"
+# No model is pinned: a literal id is only correct until the provider retires
+# it, after which it fails every turn. The effective model is resolved against
+# the provider's live catalogue instead — see ``resolve_llm_model``.
+DEFAULT_LLM_MODEL = ""
 # Reasoning effort hint for reasoning-capable models. "" means auto/off — the
 # request omits the param entirely (safe for models that don't support it).
 DEFAULT_LLM_REASONING_EFFORT = ""
@@ -190,10 +197,30 @@ async def resolve_global_github_repo(session: AsyncSession) -> str:
 
 
 async def resolve_llm_model(session: AsyncSession) -> str:
-    """Return the user-selected LLM model id, or the factory default."""
-    return await resolve(
+    """Return the chat model id to use, reconciled with the provider catalogue.
+
+    A stored id is honoured as long as the provider still offers it. When it
+    has been retired — or nothing has been chosen yet — the first model the
+    catalogue advertises is used instead, so a fresh install works out of the
+    box and a since-removed model degrades to a working one rather than failing
+    every turn. If the catalogue can't be read the stored value is trusted
+    as-is, since guessing would be worse than the user's own choice.
+    """
+    stored = await resolve(
         session, SettingSpec("llm_model", _nonempty_str(), default=DEFAULT_LLM_MODEL)
     )
+    offered = await offered_model_ids(session)
+    if offered is None:
+        return stored
+    if stored and stored in offered:
+        return stored
+    if stored:
+        logger.warning(
+            "Chat model %r is no longer offered by the provider — falling back to %r",
+            stored,
+            offered[0],
+        )
+    return offered[0]
 
 
 async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:

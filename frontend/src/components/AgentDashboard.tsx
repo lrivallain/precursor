@@ -198,7 +198,7 @@ export function AgentDashboard({
     <div className="flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
       {/* Control-tower header: title + KPI stat tiles. */}
       <div className="border-b border-border px-4 pb-3 pt-4">
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
             <Bot size={16} />
           </span>
@@ -208,7 +208,9 @@ export function AgentDashboard({
               {summary.total}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          {/* Wraps onto its own line(s) rather than running off a phone
+              screen, which would put "New agent" out of reach. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             {agents.length > 0 && (
               <div className="relative">
                 <Search
@@ -221,7 +223,7 @@ export function AgentDashboard({
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Filter agents…"
                   aria-label="Filter agents by name"
-                  className="w-44 rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40 sm:w-56"
+                  className="w-36 rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40 sm:w-56"
                 />
                 {search && (
                   <button

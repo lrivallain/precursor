@@ -952,7 +952,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   return (
     <div className="h-full flex min-h-0">
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {reminder && reminder.status === "fired" && (
           <ReminderBanner
             reminder={reminder}
@@ -960,7 +960,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             onDone={() => void runReminderClear(true)}
           />
         )}
-        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
           <div
             className="relative mx-auto space-y-3"
             style={{ maxWidth: chatWidth }}
@@ -1093,7 +1093,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         </div>
       </div>
 
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 pb-safe">
         <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
           {pendingDeletes.length > 0 && (
             <div className="flex flex-col gap-1">

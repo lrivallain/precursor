@@ -2650,7 +2650,7 @@ export function AgentView({
         // but don't flash a Stop control until there's actually a turn to stop.
         const sending = busy && pending != null;
         return (
-          <div ref={composerWrapRef} className="shrink-0 border-t border-border px-5 py-3">
+          <div ref={composerWrapRef} className="shrink-0 border-t border-border px-5 py-3 pb-safe">
             <Composer
               value={followUp}
               onChange={setFollowUp}

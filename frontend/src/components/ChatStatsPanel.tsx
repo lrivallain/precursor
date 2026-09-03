@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, BarChart3 } from "lucide-react";
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
+import { useIsNarrow } from "../lib/useMediaQuery";
 import type { Message } from "../lib/types";
 
 interface ChatStatsPanelProps {
@@ -82,6 +83,7 @@ function chars(messages: Message[]): number {
 const STORAGE_KEY = "precursor:chat-stats:collapsed";
 
 export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
+  const narrow = useIsNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     // Hidden by default — only stay open when the user explicitly expanded it.
@@ -118,6 +120,11 @@ export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
   const liveUsage = streamStore.lastUsage(streamKey);
   const lastInput = liveUsage?.prompt_tokens ?? totals.lastPrompt;
   const lastOutput = liveUsage?.completion_tokens ?? totals.lastCompletion;
+
+  // Even collapsed this rail costs 2.25rem, and expanded it would take most of
+  // a phone screen. It's an at-a-glance diagnostic, so on narrow viewports the
+  // transcript gets the width instead. Hooks above run unconditionally.
+  if (narrow) return null;
 
   if (collapsed) {
     return (

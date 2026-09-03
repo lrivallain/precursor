@@ -58,7 +58,7 @@ export function CopyableMarkdown({ children, className }: Props) {
 
   return (
     <div className="group relative">
-      <div className="absolute right-0 top-0 z-10 flex items-center gap-0.5 rounded-full border border-border bg-surface/90 px-0.5 py-0.5 opacity-0 backdrop-blur transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+      <div className="hover-reveal absolute right-0 top-0 z-10 flex items-center gap-0.5 rounded-full border border-border bg-surface/90 px-0.5 py-0.5 opacity-0 backdrop-blur transition-opacity focus-within:opacity-100 group-hover:opacity-100">
         <button
           type="button"
           onClick={() => void copyHtml()}
