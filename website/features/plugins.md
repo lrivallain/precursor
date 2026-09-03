@@ -105,6 +105,7 @@ registry — without vendoring any of it.
 # my_pkg/plugin.py
 from precursor.plugin_api import PluginRegistry
 
+
 def register(registry: PluginRegistry) -> None:
     registry.add_router(router)
     registry.add_section(id="my-plugin", title="My section")

@@ -51,7 +51,7 @@ def _neutral_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(empty))
 
 
-def _fake_sdk(monkeypatch, *, cached: str | None | object = _MISSING) -> None:
+def _fake_sdk(monkeypatch, *, cached: str | object | None = _MISSING) -> None:
     """Install a fake ``copilot`` package so ``sdk_installed()`` reports True.
 
     ``cached`` mirrors what the SDK's download cache would answer; ``_MISSING``

@@ -176,7 +176,7 @@ A plugin with configuration declares a page and gets its own entry in the
 Settings modal, under a **Plugins** group:
 
 ```python
-registry.add_settings_page(title="My plugin")   # id defaults to the plugin's
+registry.add_settings_page(title="My plugin")  # id defaults to the plugin's
 ```
 
 ```tsx
@@ -205,7 +205,7 @@ The plugin's **backend** reads the same blob:
 ```python
 from precursor.plugin_api import get_plugin_settings, read_plugin_settings
 
-values = await get_plugin_settings("my-plugin")          # opens its own session
+values = await get_plugin_settings("my-plugin")  # opens its own session
 values = await read_plugin_settings(session, "my-plugin")  # inside a request
 ```
 
