@@ -492,6 +492,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runRename(argument);
       return;
     }
+    if (name === "suggest-name") {
+      await runSuggestName();
+      return;
+    }
     if (name === "new") {
       await runNew(argument);
       return;
@@ -747,6 +751,20 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       onTopicUpdated();
     } catch (err) {
       systemNote(`Rename failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function runSuggestName(): Promise<void> {
+    try {
+      const { title } = await api.topics.suggestName(topic.id);
+      onTopicUpdated();
+      systemNote(
+        title
+          ? `Renamed this topic to "${title}".`
+          : "Could not suggest a name; the title is unchanged.",
+      );
+    } catch (err) {
+      systemNote(`Suggest name failed: ${(err as Error).message}`);
     }
   }
 

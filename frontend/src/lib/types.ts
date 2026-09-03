@@ -122,6 +122,12 @@ export interface ChatCreate {
   description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
+  /**
+   * Declares `title` a placeholder the client picked rather than something the
+   * user typed, letting the server replace it with one derived from the first
+   * message. See `services/chat_autoname.py`.
+   */
+  autoname?: boolean;
 }
 
 export interface ChatUpdate {
@@ -1024,6 +1030,10 @@ export interface Settings {
   live_enabled: boolean;
   live_fast_model: string;
   live_reasoning_effort: string;
+  // Auto-naming a placeholder-titled chat from its first message. Empty model
+  // resolves to the default chat model.
+  chat_autoname_enabled: boolean;
+  chat_autoname_model: string;
   // Which Precursor capability sections the built-in MCP server exposes.
   mcp_expose: Record<string, boolean>;
   // HTTP transport for the built-in 'precursor' MCP server.
@@ -1107,6 +1117,8 @@ export interface SettingsUpdate {
   live_enabled?: boolean;
   live_fast_model?: string;
   live_reasoning_effort?: string;
+  chat_autoname_enabled?: boolean;
+  chat_autoname_model?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   plugin_install_enabled?: boolean;

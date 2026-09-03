@@ -38,12 +38,14 @@ from precursor.backend.schemas import (
     NotesDraftSaveRequest,
     NotesRephraseRequest,
     NotesRephraseResponse,
+    SuggestNameResponse,
 )
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services.app_settings import (
     resolve_issue_associations_enabled,
     resolve_llm_model,
 )
+from precursor.backend.services.chat_autoname import suggest_topic_name
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.events import (
     publish_message_changed,
@@ -649,6 +651,27 @@ async def gh_close_post(
         comment_url=comment_url,
         message=message_read,
     )
+
+
+# ---------------------------------------------------------------------------
+# /suggest-name — re-derive the topic's title from what has been discussed.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/suggest-name", response_model=SuggestNameResponse)
+async def suggest_name(
+    topic_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> SuggestNameResponse:
+    """Rename this topic from its transcript.
+
+    Only the title moves. The slug is deliberately left alone so links already
+    shared or open elsewhere keep resolving.
+    """
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    return SuggestNameResponse(title=await suggest_topic_name(session, topic))
 
 
 # ---------------------------------------------------------------------------

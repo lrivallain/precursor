@@ -11,6 +11,27 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Chats name themselves from the first message.** A new chat was created as
+  "New chat" and stayed that way unless you renamed it, so an afternoon of quick
+  questions left a sidebar of identical rows that had to be opened one by one to
+  tell apart.
+
+  Sending the first message now kicks off a short side request that derives a
+  title from what you asked and renames the chat in place. It runs **alongside**
+  the streaming answer rather than after it, so the name usually lands while the
+  reply is still being written and never delays it. Failure is silent by design:
+  an unreachable provider or unusable output leaves the placeholder alone.
+
+  A title you set always wins — renaming a chat yourself (sidebar, header, or
+  `/rename`) cancels naming for good, including a request already in flight.
+  Only the title moves; chats are addressed by a stable slug, so a rename can't
+  break a link that's already open.
+
+  New **`/suggest-name`** command re-names an existing conversation from its
+  transcript, in both chats and topics. **Settings → Chat → Auto-naming** turns
+  the automatic pass off and can point naming at a cheaper, faster model than the
+  default chat one.
+
 - **Several schedules on one item — "every day at 07:00" *and* "every weekday at
   noon".** A scheduled topic, agent or workflow held exactly one recurrence rule,
   so any cadence that wasn't a single interval or a single time-of-day meant

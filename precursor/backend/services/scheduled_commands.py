@@ -58,6 +58,7 @@ BUILTIN_TOPIC_COMMANDS: frozenset[str] = frozenset(
         "gh-close",
         "notes",
         "rename",
+        "suggest-name",
         "new",
         "pin",
         "unpin",
@@ -663,6 +664,20 @@ async def _handle_rename(topic_id: int, argument: str) -> None:
     await _record(topic_id, f'Renamed this topic to "{title[:255]}".')
 
 
+async def _handle_suggest_name(topic_id: int, argument: str) -> None:
+    from precursor.backend.services.chat_autoname import suggest_topic_name
+
+    async with SessionLocal() as session:
+        topic = await session.get(Topic, topic_id)
+        if topic is None:
+            return
+        title = await suggest_topic_name(session, topic)
+    if title:
+        await _record(topic_id, f'Renamed this topic to "{title}".')
+    else:
+        await _record(topic_id, "Could not suggest a name; the title is unchanged.")
+
+
 async def _handle_new(topic_id: int, argument: str) -> None:
     from precursor.backend.routers.topics import create_topic
     from precursor.backend.schemas import TopicCreate
@@ -800,6 +815,7 @@ _BUILTIN_HANDLERS = {
     "gh-create": _handle_gh_create,
     "gh-close": _handle_gh_close,
     "rename": _handle_rename,
+    "suggest-name": _handle_suggest_name,
     "new": _handle_new,
     "pin": _handle_pin,
     "unpin": _handle_unpin,

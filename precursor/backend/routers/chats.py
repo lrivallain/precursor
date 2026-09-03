@@ -92,6 +92,7 @@ async def create_chat(
         description=payload.description,
         description_as_system_prompt=payload.description_as_system_prompt,
         pinned=payload.pinned,
+        autoname_pending=payload.autoname,
     )
     session.add(chat)
     await session.commit()
@@ -133,6 +134,9 @@ async def update_chat(
 
     if payload.title is not None:
         chat.title = payload.title
+        # A title the user chose settles the name — a queued auto-name must not
+        # come along afterwards and overwrite it.
+        chat.autoname_pending = False
     if payload.description is not None:
         chat.description = payload.description
     if payload.description_as_system_prompt is not None:

@@ -242,6 +242,10 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [liveReasoningEffort, setLiveReasoningEffort] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(true);
   const [liveTranscriptRetentionDays, setLiveTranscriptRetentionDays] = useState(7);
+  // Auto-naming a fresh chat from its first message, and the model that does it
+  // ("" = the default chat model).
+  const [chatAutonameEnabled, setChatAutonameEnabled] = useState(true);
+  const [chatAutonameModel, setChatAutonameModel] = useState("");
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
   >({ state: "idle" });
@@ -374,6 +378,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setLiveReasoningEffort(s.live_reasoning_effort);
       setLiveEnabled(s.live_enabled);
       setLiveTranscriptRetentionDays(s.live_transcript_retention_days);
+      setChatAutonameEnabled(s.chat_autoname_enabled);
+      setChatAutonameModel(s.chat_autoname_model);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
@@ -472,6 +478,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         live_reasoning_effort: liveReasoningEffort,
         live_enabled: liveEnabled,
         live_transcript_retention_days: liveTranscriptRetentionDays,
+        chat_autoname_enabled: chatAutonameEnabled,
+        chat_autoname_model: chatAutonameModel,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
         workiq_tenant_id: workiqTenant.trim(),
@@ -741,6 +749,50 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                       </span>
                     </span>
                   </label>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-medium mb-2">Auto-naming</h3>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={chatAutonameEnabled}
+                      onChange={(e) => setChatAutonameEnabled(e.target.checked)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span>
+                      <span className="block text-sm">
+                        Name new chats from their first message
+                      </span>
+                      <span className="block text-[11px] text-muted">
+                        Replaces the "New chat" placeholder with a short title
+                        derived from what you asked, so the sidebar stays
+                        readable. Runs alongside the answer and never delays it.
+                        Renaming a chat yourself always wins. Use{" "}
+                        <code>/suggest-name</code> to re-name any conversation
+                        later.
+                      </span>
+                    </span>
+                  </label>
+
+                  <label className="block text-xs text-muted mt-4 mb-1">
+                    Naming model
+                  </label>
+                  <Select
+                    value={chatAutonameModel}
+                    onChange={setChatAutonameModel}
+                    disabled={!chatAutonameEnabled}
+                    ariaLabel="Chat auto-naming model"
+                    fullWidth
+                    options={[
+                      { value: "", label: "Use default chat model" },
+                      ...models.map((m) => ({ value: m.id, label: m.name })),
+                    ]}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    Naming is a one-line request, so a small fast model is
+                    usually the better choice here.
+                  </p>
                 </section>
 
                 <section>

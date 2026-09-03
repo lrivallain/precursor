@@ -86,6 +86,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic", "chat", "agent"],
   },
   {
+    name: "suggest-name",
+    label: "/suggest-name",
+    description:
+      "Let the AI re-name this conversation from what has been discussed so far. Only the title changes — existing links keep working.",
+    kind: "builtin",
+    surfaces: ["topic", "chat"],
+  },
+  {
     name: "new",
     label: "/new",
     description:

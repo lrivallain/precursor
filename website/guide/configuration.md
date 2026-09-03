@@ -86,6 +86,7 @@ feature it configures:
 | Tab | Covers |
 | --- | --- |
 | **Model** | Active provider + credentials, default chat model. |
+| **Chat** | Stats sidebar, notifications, and [auto-naming](/features/chats#chats-name-themselves) for new chats. |
 | **GitHub** | Token, default repository, issue-context behaviour. |
 | **MCP** | Enable [tool servers](/features/mcp), and choose which of your own sections the built-in server exposes (off by default). |
 | **Collections** | Create and edit [collections](/features/collections). |

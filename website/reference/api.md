@@ -54,7 +54,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `topics` | CRUD for topics, the topic tree, read/unread state, and per-topic messages. Reads carry the topic's immutable `public_id`; `GET /by-slug/{slug}` and `GET /by-public-id/{public_id}` back the `/topics/…` and `/t/{uuid}` routes. `GET /api/topics` and `GET /api/topics/archived` accept `?collection_id=`, and `GET /api/topics/tree` already did. |
 | `collections` | CRUD for [collections](/features/collections); deleting one re-homes its topics via `?reassign_to=`. |
 | `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events. |
-| `chats` | Quick throwaway chats, including read/unread state. `POST /{id}/promote` turns one into a topic and takes `?collection_id=` for where it lands. |
+| `chats` | Quick throwaway chats, including read/unread state. `POST /{id}/promote` turns one into a topic and takes `?collection_id=` for where it lands. `POST /{id}/messages/suggest-name` re-derives the title from the transcript; `POST /api/chats` takes `autoname: true` to mark the supplied title a placeholder the server may replace. |
 | `commands` | The `/slash` [commands](/features/skills-memory) a topic composer can run. |
 | `attachments` | Upload / fetch [attachments](/features/attachments) on a topic or chat. |
 | `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed). |
@@ -115,6 +115,7 @@ client's own events are filtered back out.
 | Event | Fires when |
 | --- | --- |
 | `topic.changed` | A topic's metadata or state is mutated. |
+| `chat.changed` | A chat's own metadata is mutated — most often [auto-naming](/features/chats#chats-name-themselves) replacing its placeholder title. Broadcast without client-id filtering in that case, since the window that started the chat is the one that needs the new title. |
 | `message.changed` | A message is added or edited in a topic or chat. |
 | `stream.started` | A chat turn begins. |
 | `stream.ended` | A chat turn completes. |

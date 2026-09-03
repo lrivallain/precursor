@@ -44,6 +44,11 @@ MAX_TOOL_ROUNDS_CEILING = 1000
 # cached contexts are preserved so the user can re-enable later.
 DEFAULT_ISSUE_ASSOCIATIONS_ENABLED = True
 
+# Whether a chat created with a placeholder title is renamed from its first
+# message. Default on — the sidebar filling up with identical "New chat" rows is
+# the problem this exists to solve.
+DEFAULT_CHAT_AUTONAME_ENABLED = True
+
 # Sections of Precursor's *own* capabilities that the built-in "precursor" MCP
 # server can expose to callers (the in-app agent and external MCP hosts). Each
 # is opt-in (default False) — serving conversation history / write actions
@@ -211,6 +216,30 @@ async def resolve_llm_reasoning_effort(session: AsyncSession) -> str:
 async def resolve_live_enabled(session: AsyncSession) -> bool:
     """Whether the Live meeting assistant section is enabled (default on)."""
     return await resolve(session, SettingSpec("live_enabled", _boolean, default=True))
+
+
+async def resolve_chat_autoname_enabled(session: AsyncSession) -> bool:
+    """Whether a placeholder-titled chat is named from its first message.
+
+    On by default: the point of the feature is that the user shouldn't have to
+    name a conversation before having it.
+    """
+    return await resolve(
+        session,
+        SettingSpec("chat_autoname_enabled", _boolean, default=DEFAULT_CHAT_AUTONAME_ENABLED),
+    )
+
+
+async def resolve_chat_autoname_model(session: AsyncSession) -> str:
+    """Return the model used to name conversations.
+
+    Naming is a throwaway one-liner, so it's worth pointing at something cheap
+    and fast. Falls back to the configured chat model when unset.
+    """
+    db_value = await _get_db_value(session, "chat_autoname_model")
+    if isinstance(db_value, str) and db_value.strip():
+        return db_value.strip()
+    return await resolve_llm_model(session)
 
 
 async def resolve_live_fast_model(session: AsyncSession) -> str:

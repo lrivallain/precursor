@@ -36,6 +36,7 @@ from precursor.backend.schemas import (
     NotesRephraseRequest,
     NotesRephraseResponse,
     StoppedTurn,
+    SuggestNameResponse,
 )
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services import skills as skills_service
@@ -46,6 +47,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
+from precursor.backend.services.chat_autoname import schedule_autoname, suggest_chat_name
 from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
@@ -196,6 +198,16 @@ async def stream_chat(
                 await session.commit()
                 bound_attachments.extend(note_bound)
 
+    # A chat created with a placeholder title gets a real one derived from this
+    # prompt. Fired as a detached task rather than awaited: naming is a side
+    # errand, and the answer must not wait on it. It typically lands while the
+    # reply is still streaming. Retries are included — the flag stays set until a
+    # name actually sticks, and a retried turn is often the one that succeeds.
+    # `prompt_override` is preferred so a skill invocation names the chat after
+    # what it actually asked rather than after `/to-en …`.
+    if chat.autoname_pending:
+        schedule_autoname(chat_id, prompt=payload.prompt_override or user_msg.content)
+
     # Snapshot history + system context now, before the session closes.
     system_prompt = await build_chat_system_context(session, chat)
     history_result = await session.execute(
@@ -269,6 +281,18 @@ async def stream_chat(
         enabled_servers=enabled_servers,
     )
     return EventSourceResponse(lifecycle_stream("chat", chat_id, inner))
+
+
+@router.post("/suggest-name", response_model=SuggestNameResponse)
+async def suggest_name(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> SuggestNameResponse:
+    """Rename this chat from its transcript (the ``/suggest-name`` command)."""
+    chat = await session.get(Chat, chat_id)
+    if chat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    return SuggestNameResponse(title=await suggest_chat_name(session, chat))
 
 
 @router.post("/notes/rephrase", response_model=NotesRephraseResponse)

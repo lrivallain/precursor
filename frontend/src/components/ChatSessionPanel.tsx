@@ -344,6 +344,20 @@ export function ChatSessionPanel({
       }
       return;
     }
+    if (name === "suggest-name") {
+      try {
+        const { title } = await api.chats.suggestName(chat.id);
+        onChatUpdated();
+        systemNote(
+          title
+            ? `Renamed this chat to "${title}".`
+            : "Could not suggest a name; the title is unchanged.",
+        );
+      } catch (err) {
+        systemNote(`Suggest name failed: ${(err as Error).message}`);
+      }
+      return;
+    }
     if (name === "pin" || name === "unpin") {
       const pinned = name === "pin";
       if (chat.pinned === pinned) return systemNote(pinned ? "Already pinned." : "Not pinned.");

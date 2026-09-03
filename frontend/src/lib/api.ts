@@ -249,6 +249,12 @@ export const api = {
       request<Topic>(`/api/topics`, { method: "POST", body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Topic>) =>
       request<Topic>(`/api/topics/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    // /suggest-name — re-derive the topic's title from its transcript. Renames
+    // the topic server-side and returns the new title ("" when unusable).
+    suggestName: (id: number) =>
+      request<{ title: string }>(`/api/topics/${id}/commands/suggest-name`, {
+        method: "POST",
+      }),
     remove: (id: number) => request<void>(`/api/topics/${id}`, { method: "DELETE" }),
     markRead: (id: number) =>
       request<void>(`/api/topics/${id}/read`, { method: "POST" }),
@@ -326,6 +332,11 @@ export const api = {
       request<Message>(`/api/chats/${chatId}/messages/stopped`, {
         method: "POST",
         body: JSON.stringify({ content }),
+      }),
+    // /suggest-name — re-derive the chat's title from its transcript.
+    suggestName: (chatId: number) =>
+      request<{ title: string }>(`/api/chats/${chatId}/messages/suggest-name`, {
+        method: "POST",
       }),
     // /notes for chats (no GitHub comment option)
     rephraseNotes: (chatId: number, text: string, instruction?: string) =>

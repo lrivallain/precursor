@@ -127,6 +127,16 @@ class NotesRephraseResponse(BaseModel):
     text: str
 
 
+class SuggestNameResponse(BaseModel):
+    """Result of ``/suggest-name``. ``title`` is the newly-applied one.
+
+    Empty when the model returned nothing usable, in which case the existing
+    title was left alone and the client says so rather than showing a rename.
+    """
+
+    title: str
+
+
 class NotesAppendRequest(BaseModel):
     text: str = ""
     attachment_ids: list[int] = Field(default_factory=list)
