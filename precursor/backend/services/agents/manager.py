@@ -391,6 +391,15 @@ def _strip_trailing_directives(content: str) -> str:
     return "\n".join(lines).strip()
 
 
+# How much of a turn's answer we keep in ``result_summary``. This is a *display*
+# budget — the column feeds the agent list and the run cards, where an unbounded
+# body would be unreadable — not a limit on what the agent produced. The full
+# message stays in the durable event archive, so any consumer that needs the
+# whole thing (the topic repost, a workflow step's trace) reads it back from
+# there rather than inheriting this cut. See
+# ``precursor.backend.services.agents.workflow._step_output``.
+RESULT_SUMMARY_CAP = 2000
+
 # Whole-line control directives (anywhere in the text) plus an ``ARTIFACT`` block
 # terminator. Used to scrub a value that will be *shown to the user* as a result,
 # so the agent's control channel never leaks into its displayed deliverable.
@@ -2836,7 +2845,9 @@ class AgentManager:
                 # Scrub control directives from the *displayed* summary; keep the
                 # raw message in ``pending_answer`` for the topic repost and for
                 # directive/gate parsing downstream.
-                patch["result_summary"] = strip_control_directives(str(content))[:2000]
+                patch["result_summary"] = strip_control_directives(str(content))[
+                    :RESULT_SUMMARY_CAP
+                ]
                 # Keep the full answer for the topic/chat repost — the summary
                 # column is capped for the agent list.
                 live = self._live.get(run_id)
@@ -3057,9 +3068,9 @@ class AgentManager:
             # prose — the joke itself. Prefer that prose as the displayed result,
             # falling back to the reason only when the final turn was
             # directives-only (a bare OBJECTIVE_COMPLETE with no body).
-            reason = strip_control_directives(str(directives["complete"]))[:2000]
+            reason = strip_control_directives(str(directives["complete"]))[:RESULT_SUMMARY_CAP]
             body = (
-                strip_control_directives(str(live.pending_answer))[:2000]
+                strip_control_directives(str(live.pending_answer))[:RESULT_SUMMARY_CAP]
                 if live is not None and live.pending_answer
                 else ""
             )

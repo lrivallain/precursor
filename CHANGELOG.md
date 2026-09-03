@@ -161,6 +161,26 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **`{{step.N.output}}` no longer silently truncates a workflow step's output at
+  2000 characters.** The placeholder resolved from the run trace, which inherited
+  `result_summary` — a column deliberately capped for the *agent list*, where an
+  unbounded body would be unreadable. That display cap leaked into what is
+  actually a **data** channel: a collector step emitting a JSON array of records
+  reached the next step cut mid-record, and because what survived still parsed,
+  the run reported success while quietly dropping the rest. Nothing failed, the
+  trace looked healthy, and the only symptom was records that were never
+  processed.
+
+  A step's output is now rebuilt from the durable event archive whenever that
+  display cap bit, so the placeholder carries the whole answer the way the docs
+  imply. The trace keeps a ceiling of its own (8000 characters) — but a value
+  that reaches it is now **marked in the text**
+  (`… [truncated: 41230 characters, capped at 8000]`), so a receiving step can
+  tell its input is incomplete instead of treating a severed array as the whole
+  one. The docs say plainly that the placeholder is for values of that size and
+  that **artifacts + `context_mode`** are the uncapped channel for a substantial
+  payload. ([#304](https://github.com/lrivallain/precursor/issues/304))
+
 - **Signing in to one WorkIQ server now counts for every server sharing that
   credential.** The Agent 365 endpoints authenticate with a single Entra token,
   but only the server you clicked was re-pointed at the fresh one — its siblings

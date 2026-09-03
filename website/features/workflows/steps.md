@@ -37,7 +37,7 @@ generic definition adapts to each run:
 | Placeholder | Resolves to |
 | --- | --- |
 | <code v-pre>{{run.input}}</code> | The [run brief](/features/workflows/running#the-run-brief-one-workflow-a-different-subject-each-run) for *this* run |
-| <code v-pre>{{step.N.output}}</code> | What the step at 0-based position `N` produced this run |
+| <code v-pre>{{step.N.output}}</code> | What the step at 0-based position `N` produced this run — capped at 8000 characters (see the note below) |
 | <code v-pre>{{state.&lt;key&gt;}}</code> | A value from the workflow's [saved state](#pipeline-state-what-a-workflow-remembers) |
 
 Each takes an optional fallback after a pipe — <code v-pre>{{state.cursor | the
@@ -54,6 +54,21 @@ rather than live artifacts, so it still resolves after the blackboard is cleared
 instead of inheriting the whole upstream transcript, a step names the one earlier
 output it needs. In a long pipeline that's the difference between a focused
 prompt and an expensive, distracting one.
+:::
+
+::: warning A step's output has a ceiling — 8000 characters
+The trace keeps a step's whole answer, not the shorter summary the agent list
+shows, so a substantial payload survives the hand-off intact. But it is still
+capped: past 8000 characters the value is cut, and the cut is **marked in the
+text** — `… [truncated: 41230 characters, capped at 8000]` — so a step reading it
+can tell its input is incomplete rather than treating half a JSON array as the
+whole thing.
+
+For anything that might get that big, don't use the placeholder as the transport.
+Have the producing step publish an **[artifact](/features/agents-mode/artifacts-state)**
+and let the consumer inherit it through `context_mode` — that channel is uncapped
+and is what the blackboard is for. <code v-pre>{{step.N.output}}</code> is at its
+best carrying a short value: a verdict, a chosen option, a cursor, a filename.
 :::
 
 ## Pipeline state: what a workflow remembers

@@ -3923,6 +3923,124 @@ async def test_context_mode_none_cuts_off_upstream_material() -> None:
     assert "UPSTREAM-PAYLOAD" not in (mgr.calls[0][1] or "")
 
 
+async def test_step_output_placeholder_carries_payload_past_the_summary_cap() -> None:
+    """``{{step.N.output}}`` resolves to the step's *whole* output.
+
+    Regression (#304): the trace inherited ``result_summary``, which the manager
+    caps at 2000 chars for the agent list. A collector emitting a JSON array of
+    records therefore reached the next step severed mid-record — and, because
+    what survived still parsed, the run reported success while silently dropping
+    the remainder.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentRun, AgentSession
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.agents.manager import RESULT_SUMMARY_CAP
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(
+        kinds=["task", "task"],
+        step_kwargs=[
+            {},
+            {"context_mode": "none", "instructions": "Score each: {{step.0.output}}"},
+        ],
+    )
+    run_id = await _open_run_for(wf_id)
+
+    payload = json.dumps([{"id": f"invitation-{i}", "subject": "x" * 800} for i in range(3)])
+    assert len(payload) > RESULT_SUMMARY_CAP
+
+    async with SessionLocal() as session:
+        agent_run = await _latest_run(agents[0])
+        assert agent_run is not None
+        run = await session.get(AgentRun, agent_run.id)
+        agent = await session.get(AgentSession, agents[0])
+        assert run is not None and agent is not None
+        # Exactly what the manager persists: the display-capped summary on the
+        # run (and its agent mirror), the whole message in the event archive.
+        run.result_summary = payload[:RESULT_SUMMARY_CAP]
+        agent.result_summary = payload[:RESULT_SUMMARY_CAP]
+        session.add(
+            AgentEventRecord(
+                agent_session_id=agents[0],
+                agent_run_id=run.id,
+                payload=json.dumps({"kind": "assistant_message", "text": payload}),
+            )
+        )
+        await session.commit()
+        agent_run_id = run.id
+
+    mgr = _FakeWorkflowManager()
+    async with SessionLocal() as session:
+        wf = await wf_mod._load_workflow(session, wf_id)
+        assert wf is not None
+        await wf_mod._advance_one(session, mgr, wf, agents[0], "idle", agent_run_id=agent_run_id)
+
+    # The trace holds the full payload, not the capped summary...
+    trace = next(s for s in await _run_steps(run_id) if s.position == 0)
+    assert trace.output_summary == payload
+
+    # ...and the consuming step is handed all three records, still valid JSON.
+    context = mgr.calls[0][1] or ""
+    assert payload in context
+    assert "invitation-2" in context
+
+
+async def test_step_output_beyond_the_trace_cap_says_so() -> None:
+    """A payload past the trace's own ceiling is marked, never silently severed."""
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    fits = "x" * wf_mod.OUTPUT_SUMMARY_CAP
+    assert wf_mod._cap_output_summary(fits) == fits  # exactly at the cap: untouched
+
+    oversized = "y" * (wf_mod.OUTPUT_SUMMARY_CAP + 500)
+    capped = wf_mod._cap_output_summary(oversized)
+    assert len(capped) == wf_mod.OUTPUT_SUMMARY_CAP
+    assert capped.endswith(f"characters, capped at {wf_mod.OUTPUT_SUMMARY_CAP}]")
+    assert str(len(oversized)) in capped
+
+
+async def test_step_output_keeps_the_tidied_summary_when_nothing_was_cut() -> None:
+    """Under the cap, the stored summary still wins over the raw archived turn.
+
+    ``result_summary`` is the scrubbed, gate-tidied value; only a summary that
+    actually hit the display cap is worth rebuilding from the archive.
+    """
+    import json
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentRun
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    await _ensure_schema()
+    wf_id, agents = await _seed_linear_workflow(kinds=["task", "task"])
+    await _open_run_for(wf_id)
+
+    async with SessionLocal() as session:
+        agent_run = await _latest_run(agents[0])
+        assert agent_run is not None
+        run = await session.get(AgentRun, agent_run.id)
+        assert run is not None
+        run.result_summary = "The deliverable."
+        session.add(
+            AgentEventRecord(
+                agent_session_id=agents[0],
+                agent_run_id=run.id,
+                payload=json.dumps(
+                    {
+                        "kind": "assistant_message",
+                        "text": "The deliverable.\nOBJECTIVE_COMPLETE: wrote it",
+                    }
+                ),
+            )
+        )
+        await session.commit()
+
+        assert await wf_mod._step_output(session, agents[0], run) == "The deliverable."
+
+
 async def test_step_capability_overrides_and_workflow_role_apply_at_launch() -> None:
     """Step toggles and the workflow role land on the agent before it runs."""
     from precursor.backend.db import SessionLocal
