@@ -192,6 +192,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             yield
     finally:
+        from precursor.backend.services.chat_autoname import cancel_pending_autonames
+
+        await cancel_pending_autonames()
         await scheduler.stop()
         await reminder_ticker.stop()
         await tool_result_ticker.stop()

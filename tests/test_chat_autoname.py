@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -392,3 +393,38 @@ def test_streaming_the_first_turn_renames_the_chat(monkeypatch: pytest.MonkeyPat
             time.sleep(0.05)
 
         assert title == "Fixing the login redirect"
+
+
+def test_shutdown_cancels_detached_autoname_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A TestClient/app shutdown must not leave naming DB work running."""
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    async def _parked_autoname(_chat_id: int, *, prompt: str) -> None:
+        assert prompt == "Why does my login redirect loop?"
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(chat_autoname, "_autoname_chat", _parked_autoname)
+    monkeypatch.setattr(chat_messages, "get_llm_provider", _stub_provider_factory("ok"))
+
+    app = create_app()
+    with TestClient(app) as client:
+        chat = client.post("/api/chats", json={"title": "New chat", "autoname": True}).json()
+
+        with client.stream(
+            "POST",
+            f"/api/chats/{chat['id']}/messages/stream",
+            json={"content": "Why does my login redirect loop?"},
+        ) as r:
+            for _ in r.iter_lines():
+                pass
+
+        assert started.wait(2.0)
+        assert any(not task.done() for task in chat_autoname._pending)
+
+    assert cancelled.wait(2.0)
+    assert not chat_autoname._pending

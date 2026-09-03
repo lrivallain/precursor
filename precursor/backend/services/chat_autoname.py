@@ -212,6 +212,23 @@ def schedule_autoname(chat_id: int, *, prompt: str) -> None:
     task.add_done_callback(_pending.discard)
 
 
+async def cancel_pending_autonames() -> None:
+    """Stop any detached naming tasks owned by the current app loop."""
+    for task in tuple(_pending):
+        if task.done():
+            _pending.discard(task)
+
+    loop = asyncio.get_running_loop()
+    tasks = [task for task in tuple(_pending) if task.get_loop() is loop]
+    if not tasks:
+        return
+
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _pending.difference_update(tasks)
+
+
 async def _autoname_chat(chat_id: int, *, prompt: str) -> None:
     """Name a chat from its first prompt, if it is still waiting for one.
 
