@@ -776,6 +776,24 @@ async def _approval_notes(session: AsyncSession, workflow: Workflow) -> str | No
 # recording concerns out of the advancement logic and are all no-ops when the
 # workflow has no active run (e.g. legacy rows), so tracing never blocks a run.
 
+# The trace's own ceiling for a step's output. Generous enough for a real payload
+# — this is the channel ``{{step.N.output}}`` resolves from — but still finite so
+# one runaway step can't bloat every run row.
+OUTPUT_SUMMARY_CAP = 8000
+
+# Appended when that ceiling actually bites. A severed payload is worse than a
+# short one precisely because it looks complete: half a JSON array still parses.
+# Saying so *in the text* is what lets the receiving step tell the difference.
+_TRUNCATION_NOTE = "\n\n… [truncated: {total} characters, capped at {cap}]"
+
+
+def _cap_output_summary(text: str) -> str:
+    """Fit a step's output into the trace column, marking it when we had to cut."""
+    if len(text) <= OUTPUT_SUMMARY_CAP:
+        return text
+    note = _TRUNCATION_NOTE.format(total=len(text), cap=OUTPUT_SUMMARY_CAP)
+    return text[: OUTPUT_SUMMARY_CAP - len(note)] + note
+
 
 async def _begin_run(
     session: AsyncSession,
@@ -806,16 +824,40 @@ async def _step_output(
     when a bare turn left none — its (directive-stripped) assistant body.
 
     Prefers the run's own summary; the agent's is a mirror that a concurrent
-    execution may already have overwritten."""
+    execution may already have overwritten.
+
+    ``result_summary`` is capped at ``RESULT_SUMMARY_CAP`` for the *agent list*,
+    which is far tighter than what the trace can hold. That cut must not leak
+    here: this value is the trace's ``output_summary``, and therefore what
+    ``{{step.N.output}}`` hands the next step — a data channel, not a card. A
+    collector emitting a JSON array would otherwise arrive downstream severed
+    mid-record, parsing as a shorter but perfectly valid array. So when the
+    summary sits at the display cap we rebuild it from the durable event
+    archive, scrubbed exactly the way the manager scrubbed the summary, and keep
+    whichever is longer.
+    """
+    from precursor.backend.services.agents.manager import (
+        RESULT_SUMMARY_CAP,
+        strip_control_directives,
+    )
+
+    summary: str | None = None
     if agent_run is not None and agent_run.result_summary:
-        return agent_run.result_summary
-    if agent_run is None:
+        summary = agent_run.result_summary
+    elif agent_run is None:
         agent = await session.get(AgentSession, agent_id)
         if agent is not None and agent.result_summary:
-            return agent.result_summary
+            summary = agent.result_summary
+
+    if summary is not None and len(summary) < RESULT_SUMMARY_CAP:
+        return summary  # never reached the cap — nothing was lost
+
     body = await _last_assistant_message(
         session, agent_id, agent_run.id if agent_run is not None else None
     )
+    if summary is not None:
+        full = strip_control_directives(body) if body else ""
+        return full if len(full) > len(summary) else summary
     if body:
         return _DIRECTIVE_LINE_RE.sub("", body).strip() or body
     return None
@@ -1076,7 +1118,7 @@ async def _close_run_step(
     run_step.status = status
     run_step.finished_at = datetime.now(UTC)
     if output_summary is not None:
-        run_step.output_summary = output_summary[:8000]
+        run_step.output_summary = _cap_output_summary(output_summary)
     if gate_verdict is not None:
         run_step.gate_verdict = gate_verdict
 
@@ -1250,7 +1292,7 @@ async def _finalize_step_by_position(
     run_step.status = status
     run_step.finished_at = datetime.now(UTC)
     if output_summary is not None:
-        run_step.output_summary = output_summary[:8000]
+        run_step.output_summary = _cap_output_summary(output_summary)
 
 
 def _selected_source_positions(step: WorkflowStep, max_position: int) -> list[int]:

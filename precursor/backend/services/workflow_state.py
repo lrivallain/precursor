@@ -235,6 +235,13 @@ async def step_outputs_for_run(session: AsyncSession, run_id: int) -> dict[int, 
     resolvable after the blackboard is cleared, and a step re-driven by a gate
     loop-back resolves to its **latest** attempt (the trace is append-only, so
     the highest id for a position is the freshest).
+
+    The trace holds a step's *whole* output, not the tighter summary shown on the
+    agent list — the coordinator rebuilds it from the event archive when that
+    display cap bit. It still has a ceiling of its own
+    (``workflow.OUTPUT_SUMMARY_CAP``), but a value that hits it carries an
+    explicit ``… [truncated: …]`` marker, so a step is never handed a severed
+    payload that reads as a complete one.
     """
     rows = await session.execute(
         select(WorkflowRunStep.position, WorkflowRunStep.output_summary)
