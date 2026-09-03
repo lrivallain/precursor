@@ -640,7 +640,7 @@ export function ChatSessionPanel({
           </div>
         </div>
 
-        <div className="border-t border-border p-3">
+        <div className="border-t border-border p-3 pb-safe">
           <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
             {pendingDeletes.length > 0 && (
               <div className="flex flex-col gap-1">

@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Menu,
   MessagesSquare,
   Pin,
   PinOff,
@@ -53,6 +54,7 @@ import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { ReminderModal } from "./components/ReminderModal";
 import { api } from "./lib/api";
+import { Z_INDEX } from "./lib/constants";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
 import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
@@ -62,6 +64,7 @@ import { rolesStore } from "./lib/rolesStore";
 import { useSettings } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
+import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { openNotes } from "./lib/notesOpen";
 import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLink";
@@ -496,6 +499,26 @@ export default function App() {
   // Vertical-nav choice, shared with the sidebar. Drives whether the home
   // launcher also shows the standalone rail ("tabs" has no standalone form).
   const [navStyle] = useSidebarNavStyle();
+  // Phone-sized viewports can't afford a permanent sidebar column, so the whole
+  // navigation surface moves into an off-canvas drawer that overlays the main
+  // pane. `narrow` drives every layout branch that differs; `mobileNavOpen` is
+  // the drawer's state and is meaningless when the sidebar is in-flow.
+  const narrow = useIsNarrow();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+  // Growing past the breakpoint puts the sidebar back in the flow; drop the
+  // drawer state so returning to a narrow viewport doesn't reopen it.
+  useEffect(() => {
+    if (!narrow) setMobileNavOpen(false);
+  }, [narrow]);
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === "Escape") setMobileNavOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileNavOpen]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The parent topic preselected in the inline "new topic" form (set by the
   // sidebar "+" and the tree's per-node "+ child"). `null` means top level.
@@ -1338,11 +1361,16 @@ export default function App() {
     history.pushState(null, "", target);
     setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
+    // Agents and workflows keep their list in the main pane, so the drawer has
+    // nothing left to browse once the section is picked — get it out of the
+    // way. Every other section shows its list in the drawer, which stays open.
+    if (next === "agents" || next === "workflows") closeMobileNav();
   }
 
   // Navigate to the root home launcher.
   async function goHome(): Promise<void> {
     if (!(await confirmLeaveRecording())) return;
+    closeMobileNav();
     if (window.location.pathname !== "/") history.pushState(null, "", "/");
     setWsRoute({ open: false, slug: null, path: null });
     setAtHome(true);
@@ -1728,6 +1756,7 @@ export default function App() {
   }, []);
 
   async function handleSelect(id: number): Promise<void> {
+    closeMobileNav();
     setActiveTopic(await api.topics.get(id));
     try {      await api.topics.markRead(id);
       await refreshTree();
@@ -1802,6 +1831,7 @@ export default function App() {
   }
 
   async function handleSelectChat(chat: Chat): Promise<void> {
+    closeMobileNav();
     setActiveChat(chat);
     try {
       await api.chats.markRead(chat.id);
@@ -1933,6 +1963,7 @@ export default function App() {
   // Chats and agents drop the selection to reveal their "start" landing surface;
   // topics open the create dialog directly.
   function handleNew(): void {
+    closeMobileNav();
     // The "+" always lands on a mode's create surface, so leave the home
     // launcher (routing to the current mode's start surface) if we're on it.
     if (atHome) {
@@ -2101,6 +2132,7 @@ export default function App() {
   }, [sidebarMode]);
 
   function handleSelectWorkspace(ws: Workspace): void {
+    closeMobileNav();
     setActiveWorkspaceId(ws.id);
     navigateWorkspace(ws.slug, null);
   }
@@ -2154,6 +2186,7 @@ export default function App() {
     // Switching to a different session unmounts the recording LiveView; confirm
     // first so an accidental click doesn't drop an in-progress capture.
     if (session.id !== activeSessionId && !(await confirmLeaveRecording())) return;
+    closeMobileNav();
     setActiveSessionId(session.id);
     history.pushState(null, "", liveUrl(session));
   }
@@ -2308,7 +2341,7 @@ export default function App() {
           initialQuery={atHome ? "" : searchHighlight.trim()}
         />
       )}
-      {atHome && navStyle === "rail" && (
+      {atHome && navStyle === "rail" && !narrow && (
         <SectionRail
           mode={sidebarMode}
           atHome
@@ -2321,7 +2354,34 @@ export default function App() {
           pluginSections={enabledSections}
         />
       )}
-      {!atHome && (
+      {/* Scrim behind the mobile drawer. Kept mounted so it can cross-fade, and
+          click-through disabled while the drawer is closed. */}
+      {narrow && (
+        <div
+          className={`fixed inset-0 bg-black/40 transition-opacity duration-200 ${Z_INDEX.SIDEBAR} ${
+            mobileNavOpen ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+          aria-hidden="true"
+          onClick={closeMobileNav}
+        />
+      )}
+      {/* On phones the sidebar is an off-canvas drawer sliding over the main
+          pane — including at home, where it replaces the standalone section
+          rail so there's a single navigation affordance. It sits after the
+          scrim so it paints above it at the same stacking tier, and goes inert
+          while closed to stay out of the tab order. Wider viewports keep the
+          sidebar in the flex flow, hence the transparent `contents` wrapper. */}
+      {(narrow || !atHome) && (
+      <div
+        className={
+          narrow
+            ? `fixed inset-y-0 left-0 flex bg-bg transition-transform duration-200 ${Z_INDEX.SIDEBAR} ${
+                mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+              }`
+            : "contents"
+        }
+        inert={narrow && !mobileNavOpen}
+      >
       <Sidebar
         tree={collectionTree}
         collections={collections}
@@ -2336,7 +2396,12 @@ export default function App() {
         onMoveToCollection={moveTopicToCollection}
         activeId={activeTopic?.id ?? null}
         streamingTopicIds={streamingTopicIds}
-        collapsed={sidebarCollapsed || sidebarMode === "agents" || sidebarMode === "workflows"}
+        narrow={narrow}
+        onClose={closeMobileNav}
+        collapsed={
+          !narrow &&
+          (sidebarCollapsed || sidebarMode === "agents" || sidebarMode === "workflows")
+        }
         expandable={sidebarMode !== "agents" && sidebarMode !== "workflows"}
         mode={sidebarMode}
         onModeChange={changeMode}
@@ -2402,12 +2467,23 @@ export default function App() {
         unreadByMode={unreadByMode}
         pluginSections={enabledSections}
       />
+      </div>
       )}
 
       <main className="flex-1 flex flex-col min-w-0">
         {/* One shared header across every mode: active item title on the left,
             mode-specific actions on the right. */}
-        <header className="flex items-center justify-between px-4 h-12 border-b border-border gap-3">
+        <header className="flex items-center justify-between px-3 md:px-4 h-12 border-b border-border gap-2 md:gap-3">
+          {narrow && (
+            <button
+              type="button"
+              className="-ml-1 shrink-0 rounded p-2 hover:bg-surface"
+              aria-label="Open navigation"
+              onClick={() => setMobileNavOpen(true)}
+            >
+              <Menu size={18} />
+            </button>
+          )}
           {atHome ? (
             <span className="truncate font-medium min-w-0 flex-1">Home</span>
           ) : sidebarMode === "topics" ? (

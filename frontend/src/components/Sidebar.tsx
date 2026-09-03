@@ -28,6 +28,7 @@ import {
   Search,
   StickyNote,
   Workflow as WorkflowIcon,
+  X,
 } from "lucide-react";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
 import { sectionColor } from "../lib/sections";
@@ -155,6 +156,12 @@ interface Props {
   onManageCollections?: () => void;
   /** Move a topic (and its subtree) to another collection. */
   onMoveToCollection?: (topicId: number, collectionId: number) => void | Promise<void>;
+  /** Rendered as an off-canvas drawer on phone-sized viewports: the sidebar
+      takes a share of the screen instead of the persisted pixel width, and
+      trades the resize/collapse affordances for a dismiss button. */
+  narrow?: boolean;
+  /** Dismiss the drawer. Only used when `narrow`. */
+  onClose?: () => void;
 }
 
 export function Sidebar({
@@ -198,6 +205,8 @@ export function Sidebar({
   onCollectionCreate,
   onManageCollections,
   onMoveToCollection,
+  narrow = false,
+  onClose,
 }: Props) {
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
@@ -300,10 +309,15 @@ export function Sidebar({
         />
       )}
       <aside
-        className="relative border-r border-border flex flex-col shrink-0 min-w-0"
-        style={{ width }}
+        className={`relative border-r border-border flex flex-col shrink-0 min-w-0${
+          // Leaves a strip of scrim to tap; the section rail takes 3rem of the
+          // drawer's total footprint, hence the modest share of the viewport.
+          narrow ? " w-[min(17rem,68vw)]" : ""
+        }`}
+        style={narrow ? undefined : { width }}
       >
-        <ResizeHandle onMouseDown={onResizeStart} />
+        {/* The drawer is sized to the viewport, so there's nothing to drag. */}
+        {!narrow && <ResizeHandle onMouseDown={onResizeStart} />}
       <div className="flex items-center gap-2 px-3 h-12 border-b border-border">
         <button
           type="button"
@@ -324,14 +338,16 @@ export function Sidebar({
           />
           <span className="flex-1 truncate font-semibold tracking-tight">Precursor</span>
         </button>
-        <button
-          className="p-1.5 rounded hover:bg-surface"
-          aria-label={navStyle === "rail" ? "Use tab navigation" : "Use rail navigation"}
-          data-tooltip={navStyle === "rail" ? "Switch to tabs" : "Switch to rail"}
-          onClick={() => setNavStyle(navStyle === "rail" ? "tabs" : "rail")}
-        >
-          {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
-        </button>
+        {!narrow && (
+          <button
+            className="p-1.5 rounded hover:bg-surface"
+            aria-label={navStyle === "rail" ? "Use tab navigation" : "Use rail navigation"}
+            data-tooltip={navStyle === "rail" ? "Switch to tabs" : "Switch to rail"}
+            onClick={() => setNavStyle(navStyle === "rail" ? "tabs" : "rail")}
+          >
+            {navStyle === "rail" ? <PanelTop size={16} /> : <PanelLeft size={16} />}
+          </button>
+        )}
         {supportsNew(mode, activeSection) && (
           <button
             className={`p-1.5 rounded-full transition-opacity hover:opacity-80 ${sectionColor(mode).icon}`}
@@ -342,14 +358,25 @@ export function Sidebar({
             <Plus size={16} />
           </button>
         )}
-        <button
-          className="p-1.5 rounded hover:bg-surface"
-          aria-label="Collapse sidebar"
-          data-tooltip="Collapse sidebar"
-          onClick={onToggleCollapsed}
-        >
-          <PanelLeftClose size={16} />
-        </button>
+        {narrow ? (
+          <button
+            className="p-1.5 rounded hover:bg-surface"
+            aria-label="Close navigation"
+            data-tooltip="Close navigation"
+            onClick={onClose}
+          >
+            <X size={16} />
+          </button>
+        ) : (
+          <button
+            className="p-1.5 rounded hover:bg-surface"
+            aria-label="Collapse sidebar"
+            data-tooltip="Collapse sidebar"
+            onClick={onToggleCollapsed}
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        )}
       </div>
 
       {/* Mode switcher: Topics ⟷ Chats ⟷ Files. Persona + settings stay
@@ -642,7 +669,7 @@ function TopicItem({
           <span className="text-[10px] text-muted">#{node.github_issue_number}</span>
         )}
         <button
-          className="p-0.5 opacity-0 group-hover:opacity-100 text-muted hover:text-text"
+          className="hover-reveal p-0.5 opacity-0 group-hover:opacity-100 text-muted hover:text-text"
           onClick={(e) => {
             e.stopPropagation();
             onCreate(node.id);
@@ -1332,7 +1359,7 @@ function ReminderRow({ item, onSelect, onDone }: ReminderRowProps) {
         <span className="flex-1 truncate font-semibold">{item.title}</span>
         <button
           type="button"
-          className="shrink-0 p-0.5 rounded text-muted hover:text-text hover:bg-border opacity-0 group-hover:opacity-100"
+          className="hover-reveal shrink-0 p-0.5 rounded text-muted hover:text-text hover:bg-border opacity-0 group-hover:opacity-100"
           aria-label="Mark reminder done"
           data-tooltip="Done"
           onClick={(e) => {

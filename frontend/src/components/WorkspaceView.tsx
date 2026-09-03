@@ -3,6 +3,7 @@ import {
   ClipboardCheck,
   ClipboardCopy,
   Code2,
+  ChevronLeft,
   Download,
   ExternalLink,
   Eye,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
 import { useResizableWidth } from "../lib/useResizableWidth";
+import { useIsNarrow } from "../lib/useMediaQuery";
 import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
@@ -124,6 +126,13 @@ export function WorkspaceView({
     min: 160,
     max: 520,
   });
+
+  // The tree and the editor can't share a phone screen, so they become a
+  // list → detail flow: the tree owns the width until a file is opened, and
+  // the editor's back button returns to it.
+  const narrow = useIsNarrow();
+  const showFiles = !narrow || !activePath;
+  const showEditor = !narrow || activePath !== null;
 
   const refreshFiles = useCallback(async () => {
     setFiles(await api.workspaces.listFiles(area.id));
@@ -339,11 +348,16 @@ export function WorkspaceView({
       )}
 
       <div className="flex-1 min-h-0 flex">
+        {showFiles && (
         <aside
-          className="relative shrink-0 border-r border-border flex flex-col min-h-0"
-          style={{ width: filesWidth }}
+          className={`relative border-r border-border flex flex-col min-h-0 ${
+            // Beside the assistant's 2.25rem rail, so it fills what's left
+            // rather than claiming a full viewport width the row can't afford.
+            narrow ? "flex-1 min-w-0 border-r-0" : "shrink-0"
+          }`}
+          style={narrow ? undefined : { width: filesWidth }}
         >
-          <ResizeHandle onMouseDown={onFilesResize} side="right" />
+          {!narrow && <ResizeHandle onMouseDown={onFilesResize} side="right" />}
           <div className="flex items-center justify-between px-3 h-10 border-b border-border">
             <span className="text-xs font-medium text-muted uppercase tracking-wide">
               Files
@@ -382,20 +396,34 @@ export function WorkspaceView({
             />
           </div>
         </aside>
+        )}
 
+        {showEditor && (
         <section className="flex-1 min-w-0 flex flex-col">
           {activePath ? (
             <>
-              <div className="flex items-center gap-2 px-4 h-10 border-b border-border">
+              {/* Wraps on phones: fixed-height nowrap would clip the
+                  edit/preview toggle and the file actions off-screen. */}
+              <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 border-b border-border md:h-10 md:flex-nowrap md:py-0">
+                {narrow && (
+                  <button
+                    type="button"
+                    className="-ml-2 shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-text"
+                    aria-label="Back to files"
+                    onClick={() => setActivePath(null)}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                )}
                 <FileText size={15} className="text-muted shrink-0" />
-                <span className="text-sm truncate flex-1" title={activePath}>
+                <span className="text-sm truncate flex-1 min-w-0" title={activePath}>
                   {activePath}
                   {dirty && <span className="text-accent"> •</span>}
                 </span>
                 {(isMarkdown(activePath) ||
                   isHtml(activePath) ||
                   isDrawio(activePath)) && (
-                  <div className="flex rounded border border-border overflow-hidden text-xs">
+                  <div className="flex shrink-0 rounded border border-border overflow-hidden text-xs">
                     <button
                       className={`px-2 py-1 inline-flex items-center gap-1 ${
                         mode === "edit" ? "bg-surface" : "hover:bg-surface/60"
@@ -517,6 +545,7 @@ export function WorkspaceView({
             </div>
           )}
         </section>
+        )}
 
         <WorkspaceChat
           area={area}

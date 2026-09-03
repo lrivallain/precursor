@@ -52,6 +52,9 @@ These work across the sections above:
   import.
 - [**Storage & retention**](/features/storage) — per-feature sweeps that bound
   database growth, plus an on-demand cleanup cockpit and database compaction.
+- [**Phone & tablet layout**](/features/mobile) — below 768px the sidebar
+  becomes an overlay drawer and the content takes the whole screen, with
+  touch-reachable actions and safe-area padding.
 - [**Background app**](/features/background-app) — install with one command, run
   it at login, drive it from a menu-bar icon, and update in place.
 - [**Plugins**](/features/plugins) — install a package and it brings a whole

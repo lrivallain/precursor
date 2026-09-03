@@ -241,6 +241,37 @@ const scenes = {
       return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
     },
   },
+
+  // Phone layout: a conversation with the whole screen to itself. `isMobile`
+  // makes Chromium report `hover: none` / `pointer: coarse`, which is what
+  // reveals the touch affordances, so it can't be faked with a narrow viewport.
+  "mobile-chat": {
+    viewport: { width: 390, height: 844 },
+    context: { isMobile: true, hasTouch: true },
+    async go(page) {
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, {
+        waitUntil: "networkidle",
+      });
+      await sleep(1400);
+      // Whole-viewport shot: the point is the phone screen itself.
+      return undefined;
+    },
+  },
+
+  // The same screen with the navigation drawer pulled out over it.
+  "mobile-drawer": {
+    viewport: { width: 390, height: 844 },
+    context: { isMobile: true, hasTouch: true },
+    async go(page) {
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, {
+        waitUntil: "networkidle",
+      });
+      await sleep(1000);
+      await page.getByRole("button", { name: "Open navigation" }).click();
+      await sleep(700);
+      return undefined;
+    },
+  },
 };
 
 async function run(names) {
@@ -259,6 +290,7 @@ async function run(names) {
           deviceScaleFactor: 2,
           colorScheme: theme,
           reducedMotion: "reduce",
+          ...(scene.context ?? {}),
         });
         const page = await ctx.newPage();
         const clip = await scene.go(page, theme);

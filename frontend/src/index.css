@@ -115,9 +115,56 @@ body,
   height: 100%;
 }
 
+/* Mobile browsers collapse their chrome as you scroll, so the large viewport
+   (`100%` / `100vh`) is taller than what's actually on screen — which parks the
+   composer underneath the URL bar. The dynamic viewport unit tracks the visible
+   area instead, keeping the shell exactly one screen tall. */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /* Every pane scrolls internally, so the page itself never should — this stops
+     the whole shell rubber-banding behind them on touch. */
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Safari zooms the page when a focused control's text is under 16px and offers
+   no way back, so touch devices get a 16px floor on the controls themselves.
+   Surrounding type keeps its designed scale. */
+@media (pointer: coarse) and (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Controls that fade/pop in on hover are permanently unreachable on touch,
+   where no hover state exists. Marking one `.hover-reveal` keeps the desktop
+   hover behaviour but pins it visible on pointer-less devices. Unlayered, so
+   it outranks the Tailwind utilities it overrides. */
+@media (hover: none) {
+  .hover-reveal {
+    opacity: 1;
+  }
+  .hover-reveal.hidden {
+    display: block;
+  }
+}
+
+/* Clears the home indicator on notched phones; pairs with `viewport-fit=cover`
+   in index.html. Applied to the bottom-most chrome of a scroll container (the
+   composer bars) so content isn't cut off by the gesture area. */
+.pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
 
 /* Horizontally scrollable rows (e.g. the sidebar mode switcher) that scroll via

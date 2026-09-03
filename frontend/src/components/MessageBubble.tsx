@@ -157,7 +157,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
       firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
     return (
       <div
-        className="flex flex-col items-end gap-1 group"
+        className="flex flex-col items-end gap-1 group min-w-0"
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
       >
@@ -192,7 +192,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
               Prompt
             </span>
             {!expanded && (
-              <span className="truncate text-text/70 font-normal normal-case">
+              <span className="truncate min-w-0 text-text/70 font-normal normal-case">
                 {preview}
               </span>
             )}
@@ -216,7 +216,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
 
   return (
     <div
-      className={`group flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
+      className={`group flex flex-col gap-1 min-w-0 ${isUser ? "items-end" : "items-start"}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
