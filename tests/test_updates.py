@@ -7,7 +7,9 @@ can share a base version), so they compare by commit.
 
 from __future__ import annotations
 
+import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -157,13 +159,18 @@ def test_source_checkout_is_the_install_mode_here() -> None:
     assert updates.install_mode() == "source"
 
 
-def _write_receipt(tmp_path: Path, extras: list[str]) -> None:
+def _write_receipt(
+    tmp_path: Path,
+    extras: list[str],
+    *,
+    siblings: tuple[str, ...] = ("precursor-kanban",),
+    url: str = "",
+) -> None:
+    host = f'{{ name = "precursor-ai", extras = {json.dumps(extras)}'
+    host += f', url = "{url}" }}' if url else " }"
+    entries = [host, *(f'{{ name = "{name}" }}' for name in siblings)]
     (tmp_path / "uv-receipt.toml").write_text(
-        "[tool]\n"
-        "requirements = [\n"
-        f'    {{ name = "precursor-ai", extras = {extras!r} }},\n'
-        '    { name = "precursor-kanban" },\n'
-        "]\n".replace("'", '"'),
+        "[tool]\nrequirements = [\n" + "".join(f"    {e},\n" for e in entries) + "]\n",
         encoding="utf-8",
     )
 
@@ -276,8 +283,14 @@ def _uv_tool_info() -> updates.UpdateInfo:
     )
 
 
-def _install_extras(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extras: list[str]) -> None:
-    _write_receipt(tmp_path, extras)
+def _install_extras(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    extras: list[str],
+    *,
+    siblings: tuple[str, ...] = ("precursor-kanban",),
+) -> None:
+    _write_receipt(tmp_path, extras, siblings=siblings)
     monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
     monkeypatch.setenv("PRECURSOR_UPDATE_EXTRAS", "")
     config.get_settings.cache_clear()
@@ -314,10 +327,10 @@ def test_a_failure_unrelated_to_the_plugin_still_fails(
     assert len(calls) == 2  # tried, then gave up
 
 
-def test_nothing_is_retried_when_no_extra_is_droppable(
+def test_nothing_is_retried_when_nothing_is_droppable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _install_extras(monkeypatch, tmp_path, ["tray"])
+    _install_extras(monkeypatch, tmp_path, ["tray"], siblings=())
     calls = _record_installs(monkeypatch, fails="precursor-ai")
 
     with pytest.raises(updates.UpdateError):
@@ -343,3 +356,69 @@ def test_a_failed_command_leads_with_the_reason_not_the_command() -> None:
     # The command is still there, but with the URL collapsed to its filename.
     assert "…/precursor_ai-1-py3-none-any.whl" in message
     assert "exited 1" in message
+
+
+# --- out-of-tree plugins ----------------------------------------------------
+#
+# A plugin that ships from its own repository has no extra in core's metadata to
+# be named by, so uv's receipt is the only record that it was ever asked for.
+# `uv tool install` rebuilds the environment from its arguments, which makes
+# re-stating those siblings the whole of "the install persists".
+
+
+def test_sibling_distributions_are_read_from_the_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_receipt(tmp_path, ["tray"], siblings=("precursor-kanban", "precursor-notes"))
+    monkeypatch.setattr(updates.sys, "prefix", str(tmp_path))
+    assert updates.installed_plugins() == ("precursor-kanban", "precursor-notes")
+
+
+def test_an_update_reinstalls_out_of_tree_plugins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The bug this guards: `precursor service update` rebuilt the environment
+    from the extras alone, so every plugin installed with `--with` — which is
+    every plugin that lives outside this repository — was silently uninstalled
+    on each update."""
+    _install_extras(monkeypatch, tmp_path, ["tray"], siblings=("precursor-notes",))
+    calls = _record_installs(monkeypatch, fails=None)
+
+    updates.apply(_uv_tool_info())
+
+    assert len(calls) == 1
+    assert calls[0].count("--with") == 1
+    assert "precursor-notes" in calls[0]
+
+
+def test_a_same_commit_wheel_supersedes_the_plain_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both sources naming one distribution must install it once, from the
+    pinned wheel — a nightly host paired with a PyPI plugin is the mismatch
+    publishing them together exists to avoid."""
+    _install_extras(monkeypatch, tmp_path, ["tray"], siblings=("precursor-kanban",))
+    calls = _record_installs(monkeypatch, fails=None)
+    wheel = "https://example.invalid/nightly/precursor_kanban-2026.9-py3-none-any.whl"
+
+    updates.apply(replace(_uv_tool_info(), extra_wheel_urls=(wheel,)))
+
+    assert calls[0].count("--with") == 1
+    assert wheel in calls[0]
+    assert "precursor-kanban" not in calls[0]
+
+
+def test_a_plugin_the_index_cannot_serve_does_not_strand_the_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A sibling is optional by construction, exactly like a plugin extra: an
+    updated host missing one board beats no update at all."""
+    _install_extras(monkeypatch, tmp_path, ["tray"], siblings=("precursor-notes",))
+    calls = _record_installs(monkeypatch, fails="precursor-notes")
+
+    summary = updates.apply(_uv_tool_info())
+
+    assert len(calls) == 2
+    assert "--with" not in calls[1]
+    assert "precursor-ai[tray]" in calls[1]
+    assert "precursor-notes" in summary
