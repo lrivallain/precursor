@@ -126,6 +126,20 @@ policy**:
 Retry budgets are **per run**, so a scheduled pipeline doesn't exhaust its
 allowance over its lifetime.
 
+### A dropped model stream counts as a failure
+
+A step's turn can end without ever finishing — the model's response stream drops
+mid-sentence, so no completion and no token usage are ever recorded. From the
+outside that looks exactly like an agent falling quiet after a job well done, and
+it used to be traced as a **completed** step with an empty output, quietly
+advancing the run on nothing.
+
+A turn that ends with **no output *and* no recorded spend** is now failed
+instead, so it goes through the failure policy above like any other — which is
+what makes a dropped stream *retryable*, the one thing it most wants to be. Both
+halves of that test matter: a step that legitimately answers nothing still spends
+tokens getting there, so a silent-but-paid turn still completes normally.
+
 ### The stall watchdog
 
 An agent that never returns would otherwise park an unattended pipeline in

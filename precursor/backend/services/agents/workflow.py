@@ -768,6 +768,32 @@ async def _step_output(
     return None
 
 
+# A turn whose model stream drops mid-flight never emits ``turn_end`` or a
+# ``usage`` event, so the manager just sees the session fall quiet and rests it
+# at ``idle`` — indistinguishable, from the coordinator's seat, from a turn that
+# finished. Left alone that reads as a clean success: the step is traced
+# ``completed`` with an empty summary, the run advances, and the very failure
+# ``on_error``/``max_retries`` exist for is out of their reach. Both halves of
+# the test are required, and each covers the other's false positive: a step that
+# genuinely answers nothing still burns tokens, and a turn that spent nothing
+# still leaves text if it really spoke.
+_DROPPED_TURN_REASON = (
+    "The step's turn ended without producing any output or recording any model usage "
+    "— the response stream most likely dropped mid-turn."
+)
+
+
+def _turn_dropped(agent_run: AgentRun | None, output: str | None) -> bool:
+    """True when a nominally-done turn produced no output *and* recorded no spend."""
+    if output and output.strip():
+        return False
+    # No execution row in hand means no usage counters to judge by — a caller
+    # that can't see the spend must not guess a step into failure.
+    if agent_run is None:
+        return False
+    return not (agent_run.total_input_tokens or 0) and not (agent_run.total_output_tokens or 0)
+
+
 async def _open_run_step(
     session: AsyncSession, run_id: int, position: int, agent_id: int
 ) -> WorkflowRunStep | None:
@@ -1633,6 +1659,16 @@ async def _advance_one(
             )
             verdict_text = fallback or ""
         passed = _parse_verdict(verdict_text)
+        if _turn_dropped(agent_run, verdict_text):
+            # Checked before the tidy below, which would otherwise stamp a
+            # fabricated "Passed" onto a turn that never spoke. A dropped gate is
+            # worse than a dropped task: the verdict grammar is deliberately
+            # fail-*open*, so silence waves the deliverable through. Route it
+            # through the step's own error policy, where a transient fault belongs.
+            await _apply_failure_policy(
+                session, manager, workflow, steps, current_idx, agent_id, _DROPPED_TURN_REASON
+            )
+            return
         # Normalise the gate's stored result to a plain verdict and drop its
         # auto-captured artifact — a gate judges, it doesn't publish deliverables.
         await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
@@ -1721,12 +1757,18 @@ async def _advance_one(
     # --- Step done: close its trace, then move on (or finish) --------------
     # A just-passed gate already closed its own trace above.
     if current.kind != "gate":
+        output = await _step_output(session, agent_id, agent_run)
+        if _turn_dropped(agent_run, output):
+            await _apply_failure_policy(
+                session, manager, workflow, steps, current_idx, agent_id, _DROPPED_TURN_REASON
+            )
+            return
         await _finalize_run_step(
             session,
             workflow,
             agent_id,
             status="completed",
-            output_summary=await _step_output(session, agent_id, agent_run),
+            output_summary=output,
         )
     await _advance_from(
         session,
@@ -2125,20 +2167,27 @@ async def finalize_replays_for_run(session: AsyncSession, agent_run_id: int) -> 
                 session, agent_id, agent_run.id if agent_run is not None else None
             ) or (agent_run.result_summary or "")
             passed = _parse_verdict(verdict_text)
-            await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
-            await _close_run_step(
-                session,
-                run_step,
-                status="passed" if passed else "failed",
-                output_summary=_verdict_reason(verdict_text),
-                gate_verdict="PASS" if passed else "FAIL",
-            )
+            if _turn_dropped(agent_run, verdict_text):
+                await _close_run_step(
+                    session, run_step, status="failed", output_summary=_DROPPED_TURN_REASON
+                )
+            else:
+                await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
+                await _close_run_step(
+                    session,
+                    run_step,
+                    status="passed" if passed else "failed",
+                    output_summary=_verdict_reason(verdict_text),
+                    gate_verdict="PASS" if passed else "FAIL",
+                )
         else:
+            output = await _step_output(session, agent_id, agent_run)
+            dropped = _turn_dropped(agent_run, output)
             await _close_run_step(
                 session,
                 run_step,
-                status="completed",
-                output_summary=await _step_output(session, agent_id),
+                status="failed" if dropped else "completed",
+                output_summary=_DROPPED_TURN_REASON if dropped else output,
             )
     else:
         # running / interrupted — not a decision point.

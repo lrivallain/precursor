@@ -179,6 +179,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A workflow step whose model stream dropped mid-turn was recorded as
+  `completed`, so its failure policy never engaged.** A dropped stream ends the
+  turn without a completion or any usage event, so the agent just fell quiet —
+  which the coordinator read as a job well done. The step was traced `completed`
+  with an empty output and zero tokens, and the run advanced on nothing, with
+  `on_error: fail` never stopping it and `max_retries` never retrying it. That
+  put the textbook transient fault out of reach of the very machinery meant to
+  absorb it, and left the trace reading green throughout.
+
+  A turn that ends with **no output and no recorded spend** is now failed instead
+  and put through the step's own `on_error` policy, so a dropped stream can stop
+  the run or — far more usefully — be retried. Both halves of that test are
+  required and each covers the other's false positive: a step that legitimately
+  answers nothing still burns tokens getting there, so a silent-but-paid turn
+  still completes as before. Gate steps get the same treatment, where it matters
+  more still: the verdict grammar is deliberately fail-*open*, so a silent gate
+  used to be read as `PASS` and wave its deliverable through.
+
 - **Signing in to one WorkIQ server now counts for every server sharing that
   credential.** The Agent 365 endpoints authenticate with a single Entra token,
   but only the server you clicked was re-pointed at the fresh one — its siblings
