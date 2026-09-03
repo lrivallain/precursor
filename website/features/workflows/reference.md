@@ -6,6 +6,14 @@ title: Workflows reference
 
 The `/api/workflows` surface, and how a pipeline travels between installs.
 
+::: tip Generating a workflow with an AI assistant
+This page documents the surface for a human reader. If you're pointing a coding
+assistant at Precursor and asking it to *produce* a workflow, give it the
+[workflow authoring spec](/reference/workflow-authoring) instead — a
+machine-oriented specification with the exact field tables, placeholder grammar,
+gate verdict parsing and validation rules.
+:::
+
 ## Sharing a workflow
 
 A workflow can be **exported to YAML** — its steps, its wiring, and the agents
