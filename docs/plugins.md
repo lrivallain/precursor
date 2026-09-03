@@ -169,7 +169,7 @@ A plugin with configuration declares a page and gets its own entry in the
 Settings modal, under a **Plugins** group:
 
 ```python
-registry.add_settings_page(title="My plugin")   # id defaults to the plugin's
+registry.add_settings_page(title="My plugin")  # id defaults to the plugin's
 ```
 
 ```tsx
@@ -198,7 +198,7 @@ The plugin's **backend** reads the same blob:
 ```python
 from precursor.plugin_api import get_plugin_settings, read_plugin_settings
 
-values = await get_plugin_settings("my-plugin")          # opens its own session
+values = await get_plugin_settings("my-plugin")  # opens its own session
 values = await read_plugin_settings(session, "my-plugin")  # inside a request
 ```
 
@@ -352,6 +352,37 @@ re-execs itself.
 The install command is environment-specific — a `uv tool install` lives in an
 isolated environment that `pip install` silently fails to extend — so the backend
 detects which installer owns the instance and reports the one that works.
+
+### How an install persists
+
+A `uv tool` environment is **rebuilt from the requirements it was requested
+with**, which uv records in `uv-receipt.toml` beside the environment. That file
+is the whole of a plugin's persistence, because anything not named in it is gone
+after the next reinstall — silently. So Precursor reads the receipt before it
+rebuilds anything and restates what it finds: the host's extras and its pinned
+wheel, plus every distribution installed alongside them.
+
+That is why a plugin shipping from its own repository needs **no entry in core's
+metadata**. Core's `kanban` extra is a convenience for naming the board in a
+fresh `pip install`; it is not the mechanism that keeps it installed, and no
+plugin needs an equivalent.
+
+Two consequences worth knowing:
+
+- **`precursor service update` carries your plugins across.** It re-states every
+  sibling from the receipt, so an update no longer uninstalls them. Where a
+  release publishes a wheel built from the same commit as the host, that pin wins
+  over the plain name — a nightly gets a same-commit plugin rather than whatever
+  PyPI serves.
+- **A plugin your index can't serve won't strand the host.** The update retries
+  without the optional pieces, and the summary names what it gave up rather than
+  reporting success.
+
+Adding or removing one plugin never narrows the rest: both commands rebuild the
+environment from the full receipt. Removal is refused only for a distribution
+that was *not* installed alongside the tool, since that one arrived as a
+dependency of Precursor or of an extra, and dropping it would break the install
+— disable the plugin instead.
 
 ### Why installing is opt-in
 

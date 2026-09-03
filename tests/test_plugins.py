@@ -368,17 +368,136 @@ def test_uv_tool_environments_are_detected_via_xdg_data_home(
     A `uv tool` install misdetected as a plain venv gets `uv pip install`, which
     appears to work and is silently discarded on the next tool upgrade.
     """
+    _uv_tool_env(monkeypatch, tmp_path)
+    from precursor.backend.plugins import install as install_mod
+
+    assert install_mod.detect_environment().installer == "uv-tool"
+    # Nothing was installed alongside the tool, so this package can only have
+    # arrived as a dependency — removing it would break the install.
+    assert install_mod.uninstall_command("anything") is None
+
+
+# --- extending a uv tool environment ----------------------------------------
+#
+# `uv tool install` rewrites the receipt from its own arguments. So every
+# command that touches the environment has to restate the whole of it: the
+# host with its extras and pinned wheel, plus every plugin already installed
+# beside it. Naming less is not "leave the rest alone", it is "uninstall it".
+
+_WHEEL = "https://example.invalid/nightly/precursor_ai-2026.9-py3-none-any.whl"
+
+
+def _uv_tool_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, receipt: str | None = None
+) -> Path:
     from precursor.backend.plugins import install as install_mod
 
     tools = tmp_path / "uv" / "tools" / "precursor-ai"
-    tools.mkdir(parents=True)
+    tools.mkdir(parents=True, exist_ok=True)
+    if receipt is not None:
+        (tools / "uv-receipt.toml").write_text(receipt, encoding="utf-8")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.delenv("UV_TOOL_DIR", raising=False)
     monkeypatch.setattr(install_mod.sys, "prefix", str(tools))
-    assert install_mod.detect_environment().installer == "uv-tool"
-    # A uv tool env is rebuilt from its requested packages, so a single one
-    # cannot be removed — that has to surface rather than silently "work".
-    assert install_mod.uninstall_command("anything") is None
+    return tools
+
+
+def _receipt(*entries: str) -> str:
+    return "[tool]\nrequirements = [\n" + "".join(f"    {e},\n" for e in entries) + "]\n"
+
+
+def test_installing_a_plugin_does_not_downgrade_the_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The bug this guards: the command named a bare `precursor-ai`, so adding a
+    plugin dropped the extras (uninstalling the tray) and re-resolved a pinned
+    nightly down to whatever the index served as latest."""
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(f'{{ name = "precursor-ai", extras = ["tray"], url = "{_WHEEL}" }}'),
+    )
+    argv = install_mod.install_command("precursor-notes")
+
+    assert f"precursor-ai[tray] @ {_WHEEL}" in argv
+    assert "precursor-ai" not in argv
+    assert argv[-2:] == ["--with", "precursor-notes"]
+
+
+def test_installing_a_second_plugin_keeps_the_first(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt('{ name = "precursor-ai" }', '{ name = "precursor-kanban" }'),
+    )
+    argv = install_mod.install_command("precursor-notes")
+
+    assert argv.count("--with") == 2
+    assert "precursor-kanban" in argv and "precursor-notes" in argv
+
+
+def test_reinstalling_a_plugin_names_it_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Upgrading an installed plugin must not ask uv for it twice."""
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt('{ name = "precursor-ai" }', '{ name = "precursor_kanban" }'),
+    )
+    argv = install_mod.install_command("precursor-kanban")
+    assert argv.count("--with") == 1
+
+
+def test_uninstalling_rebuilds_the_tool_without_that_plugin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The receipt says what the tool was requested with, so "reinstall without
+    this one" is expressible exactly rather than refused."""
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(
+            '{ name = "precursor-ai", extras = ["tray"] }',
+            '{ name = "precursor-kanban" }',
+            '{ name = "precursor-notes" }',
+        ),
+    )
+    argv = install_mod.uninstall_command("precursor-kanban")
+
+    assert argv is not None
+    assert "precursor-kanban" not in argv
+    assert argv.count("--with") == 1 and "precursor-notes" in argv
+    assert "precursor-ai[tray]" in argv
+
+
+def test_the_displayed_command_matches_what_the_server_would_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With the in-app installer off, this string is the only path a user has —
+    so it must not be a narrower command than the one the server runs."""
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(f'{{ name = "precursor-ai", extras = ["tray"], url = "{_WHEEL}" }}'),
+    )
+    rendered = install_mod.detect_environment().command_template.format(package="precursor-notes")
+
+    assert rendered.startswith("uv tool install --force ")
+    assert f"precursor-ai[tray] @ {_WHEEL}" in rendered
+    assert rendered.endswith("--with precursor-notes")
 
 
 # --- per-plugin settings ----------------------------------------------------

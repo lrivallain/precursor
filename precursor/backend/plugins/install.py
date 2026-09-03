@@ -21,10 +21,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from precursor.backend import uv_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,50 @@ class Environment:
 
 def _uv() -> str | None:
     return shutil.which("uv")
+
+
+#: Substituted by the router before the command is shown to a user.
+PACKAGE_PLACEHOLDER = "{package}"
+
+
+def _host_requirement() -> str:
+    """The host named exactly as it is installed — extras and wheel URL included.
+
+    ``uv tool install`` rewrites the receipt from its own arguments, so naming a
+    bare ``precursor-ai`` here does not mean "leave it as it is": it drops the
+    extras (uninstalling the tray) and re-resolves a pinned nightly down to
+    whatever the index serves as latest. Restating the requirement keeps adding
+    a plugin from being an accidental downgrade.
+    """
+    installed = uv_receipt.host()
+    return installed.as_argument() if installed else uv_receipt.HOST
+
+
+def _uv_tool_argv(package: str) -> list[str]:
+    """Argv adding ``package`` to this tool environment without narrowing it.
+
+    Every sibling is restated, because uv rebuilds the environment from the
+    arguments it is given: installing a second plugin with only that plugin
+    named would uninstall the first.
+    """
+    cmd = ["uv", "tool", "install", "--force", _host_requirement()]
+    wanted = uv_receipt.canonical_name(package)
+    for sibling in uv_receipt.siblings():
+        if uv_receipt.canonical_name(sibling.name) != wanted:
+            cmd += ["--with", sibling.as_argument()]
+    return [*cmd, "--with", package]
+
+
+def _template(argv: Sequence[str]) -> str:
+    """``argv`` as a ``str.format`` template, the package placeholder preserved."""
+    parts = []
+    for argument in argv:
+        if argument == PACKAGE_PLACEHOLDER:
+            parts.append(argument)
+            continue
+        # Braces elsewhere would be read as fields by `.format()`.
+        parts.append(shlex.quote(argument).replace("{", "{{").replace("}", "}}"))
+    return " ".join(parts)
 
 
 def detect_environment() -> Environment:
@@ -87,8 +135,9 @@ def detect_environment() -> Environment:
         return Environment(
             installer="uv-tool",
             # A uv tool environment is rebuilt from its requested packages, so a
-            # plugin has to be named as part of the tool rather than injected.
-            command_template='uv tool install --with {package} "precursor-ai"',
+            # plugin has to be named as part of the tool rather than injected —
+            # and so does everything already installed alongside it.
+            command_template=_template(_uv_tool_argv(PACKAGE_PLACEHOLDER)),
             python=sys.executable,
             can_install=uv is not None,
             reason=None if uv else "`uv` is not on PATH.",
@@ -112,22 +161,31 @@ def install_command(package: str, env: Environment | None = None) -> list[str]:
     """Argv for installing ``package``. Never shelled out through a shell."""
     env = env or detect_environment()
     if env.installer == "uv-tool":
-        return ["uv", "tool", "install", "--with", package, "precursor-ai"]
+        return _uv_tool_argv(package)
     if env.installer == "uv-venv":
         return ["uv", "pip", "install", "--python", sys.executable, package]
     return [sys.executable, "-m", "pip", "install", package]
 
 
 def uninstall_command(package: str, env: Environment | None = None) -> list[str] | None:
-    """Argv for removing ``package``, or ``None`` when it can't be expressed.
-
-    A ``uv tool`` environment has no per-package removal: it is rebuilt from the
-    packages it was requested with, so dropping one means reinstalling the tool
-    without it — which we won't guess at on the user's behalf.
-    """
+    """Argv for removing ``package``, or ``None`` when it can't be expressed."""
     env = env or detect_environment()
     if env.installer == "uv-tool":
-        return None
+        # No per-package removal exists, but the receipt says what the tool was
+        # requested with — so "reinstall without this one" is expressible
+        # exactly, rather than guessed at.
+        dropped = uv_receipt.canonical_name(package)
+        siblings = [
+            s for s in uv_receipt.siblings() if uv_receipt.canonical_name(s.name) != dropped
+        ]
+        if len(siblings) == len(uv_receipt.siblings()):
+            # Not installed as a sibling: it is a dependency of the host or of
+            # one of its extras, and removing it would break the install.
+            return None
+        cmd = ["uv", "tool", "install", "--force", _host_requirement()]
+        for sibling in siblings:
+            cmd += ["--with", sibling.as_argument()]
+        return cmd
     if env.installer == "uv-venv":
         return ["uv", "pip", "uninstall", "--python", sys.executable, package]
     return [sys.executable, "-m", "pip", "uninstall", "-y", package]

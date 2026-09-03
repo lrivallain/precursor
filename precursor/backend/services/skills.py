@@ -336,8 +336,8 @@ async def update_skill(
     name: str,
     *,
     new_name: str | None = None,
-    description: str | None | object = UNSET,
-    instructions: str | None | object = UNSET,
+    description: str | object | None = UNSET,
+    instructions: str | object | None = UNSET,
     enabled: bool | None = None,
 ) -> ResolvedSkill:
     skill = await get_resolved(session, name)

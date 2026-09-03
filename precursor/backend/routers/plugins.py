@@ -383,9 +383,9 @@ async def uninstall_plugin(
     if argv is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "A `uv tool` install is rebuilt from the packages it was created "
-            "with, so a single one can't be removed from here. Reinstall the "
-            "tool without it, or just disable the plugin.",
+            "This plugin was not installed alongside the tool, so it arrived as "
+            "a dependency of Precursor itself or of one of its extras — removing "
+            "it would break the install. Disable the plugin instead.",
         )
     code, output = await run_install(argv)
     if code != 0:

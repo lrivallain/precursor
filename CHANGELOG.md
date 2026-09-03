@@ -179,6 +179,38 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **An out-of-tree plugin now survives `precursor service update`.** A plugin
+  installed into a `uv tool` environment was uninstalled by every self-update.
+  uv rebuilds a tool environment from the requirements in its
+  `uv-receipt.toml`, and Precursor read only the *extras* of its own entry —
+  discarding every sibling distribution installed with `--with`. Since a plugin
+  that ships from its own repository has no extra in core's metadata to be named
+  by, `precursor-kanban` persisting at all was an accident of core declaring a
+  `kanban` extra; anything else vanished on the next update, with the plugin's
+  settings still in the database and no message explaining where it went.
+
+  The receipt is now read whole: an update restates every sibling it records, so
+  a plugin persists on its own terms and needs nothing in core's `pyproject.toml`.
+  Where a release publishes a wheel built from the same commit as the host, that
+  pin still wins over the plain name. A plugin the configured index cannot serve
+  is dropped from the retry and named in the summary — the existing guard against
+  one unresolvable plugin stranding the host, now covering siblings too.
+
+- **Installing a plugin from Settings → Plugins no longer downgrades Precursor.**
+  The command was `uv tool install --with <plugin> precursor-ai` — a bare host
+  name. Because uv rewrites the receipt from the arguments it is given, that did
+  not mean "leave the rest alone": it **dropped the extras**, uninstalling the
+  menu-bar tray, and **discarded the pinned wheel URL**, silently re-resolving a
+  nightly install down to the latest release on the index. Installing a second
+  plugin also removed the first.
+
+  Both the command the server runs and the one the panel displays are now built
+  from the receipt, naming the host exactly as installed (extras and wheel URL)
+  plus every plugin already beside it. Uninstalling is expressible for the same
+  reason, so a `uv tool` install no longer refuses removal outright — it is
+  refused only for a distribution that arrived as a dependency rather than being
+  installed alongside the tool.
+
 - **`{{step.N.output}}` no longer silently truncates a workflow step's output at
   2000 characters.** The placeholder resolved from the run trace, which inherited
   `result_summary` — a column deliberately capped for the *agent list*, where an

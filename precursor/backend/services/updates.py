@@ -28,7 +28,6 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from importlib import metadata
@@ -38,6 +37,7 @@ from typing import Any, Literal
 import httpx
 
 from precursor import __version__
+from precursor.backend import uv_receipt
 from precursor.backend.config import get_settings, is_source_checkout
 
 logger = logging.getLogger(__name__)
@@ -331,20 +331,20 @@ def installed_extras() -> tuple[str, ...]:
     updating against a default of ``kanban`` uninstalls the menu-bar icon and
     Agents mode without saying anything.
     """
-    receipt = Path(sys.prefix) / "uv-receipt.toml"
-    try:
-        with receipt.open("rb") as handle:
-            data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
-        return ()
-    requirements = data.get("tool", {}).get("requirements", [])
-    if not isinstance(requirements, list):
-        return ()
-    for entry in requirements:
-        if isinstance(entry, dict) and entry.get("name") == "precursor-ai":
-            extras = entry.get("extras") or []
-            return tuple(str(e) for e in extras) if isinstance(extras, list) else ()
-    return ()
+    installed = uv_receipt.host()
+    return installed.extras if installed else ()
+
+
+def installed_plugins() -> tuple[str, ...]:
+    """Distributions installed *alongside* the host, as uv command arguments.
+
+    These are the out-of-tree plugins. They have no extra in core's metadata to
+    be named by — that is the point of shipping from their own repository — so
+    the receipt is the only record that they were asked for. Reinstalling
+    without re-stating them uninstalls every one of them, which is what
+    ``precursor service update`` used to do on every single run.
+    """
+    return tuple(r.as_argument() for r in uv_receipt.siblings())
 
 
 def _extras() -> tuple[str, ...]:
@@ -412,15 +412,31 @@ def plugin_extras(extras: Sequence[str]) -> tuple[str, ...]:
     )
 
 
-def _install_cmd(uv: str, info: UpdateInfo, extras: Sequence[str]) -> list[str]:
+def _install_cmd(
+    uv: str, info: UpdateInfo, extras: Sequence[str], with_arguments: Sequence[str]
+) -> list[str]:
     requirement = _requirement(extras)
     target = f"{requirement} @ {info.wheel_url}" if info.channel == "nightly" else requirement
     cmd = [uv, "tool", "install", "--force", target]
-    for extra in info.extra_wheel_urls:
-        # Pin the companion wheels built from the same commit, so a nightly host
-        # isn't paired with something months old resolved from PyPI.
-        cmd += ["--with", extra]
+    for argument in with_arguments:
+        cmd += ["--with", argument]
     return cmd
+
+
+def _with_arguments(info: UpdateInfo) -> tuple[str, ...]:
+    """Everything to re-state with ``--with``, same-commit pins winning.
+
+    The receipt carries the plugins this install actually has; the release
+    manifest carries wheels for the ones built alongside this host. When both
+    name a distribution the manifest wins — pairing a nightly host with a plugin
+    resolved from PyPI is exactly what pinning them together avoids.
+    """
+    arguments: dict[str, str] = {}
+    for argument in installed_plugins():
+        arguments[uv_receipt.canonical_name(argument)] = argument
+    for url in info.extra_wheel_urls:
+        arguments[uv_receipt.canonical_name(url)] = url
+    return tuple(arguments.values())
 
 
 def apply(info: UpdateInfo | None = None) -> str:
@@ -456,26 +472,28 @@ def apply(info: UpdateInfo | None = None) -> str:
         raise UpdateError("The nightly release did not advertise a wheel to install.")
 
     extras = _extras()
+    with_arguments = _with_arguments(info)
     summary = f"Installed {info.latest_version or 'the latest build'}."
     try:
-        _run(_install_cmd(uv, info, extras))
+        _run(_install_cmd(uv, info, extras, with_arguments))
     except UpdateError as exc:
         # A plugin the configured index doesn't carry (a restricted mirror, a
         # release it hasn't ingested yet) used to strand the host on its old
         # build. Retry without the optional plugins and say so: an updated host
         # missing one board beats no update at all.
         optional = plugin_extras(extras)
-        if not optional:
+        if not optional and not with_arguments:
             raise
         try:
-            _run(_install_cmd(uv, info, [e for e in extras if e not in optional]))
+            _run(_install_cmd(uv, info, [e for e in extras if e not in optional], ()))
         except UpdateError:
             # Dropping them didn't help, so they were never the problem — the
             # first failure is the honest one to report.
             raise exc from None
-        logger.warning("Updated without the %s extra(s): %s", ", ".join(optional), exc)
+        dropped = [*optional, *(uv_receipt.canonical_name(a) for a in with_arguments)]
+        logger.warning("Updated without the %s plugin(s): %s", ", ".join(dropped), exc)
         invalidate()
-        return f"{summary} Skipped {', '.join(optional)} — not installable from your index: {exc}"
+        return f"{summary} Skipped {', '.join(dropped)} — not installable from your index: {exc}"
 
     invalidate()
     return summary
