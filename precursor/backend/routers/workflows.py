@@ -61,7 +61,6 @@ from precursor.backend.services.app_settings import (
     resolve_workflows_default_step_timeout,
 )
 from precursor.backend.services.events import publish_workflow_changed
-from precursor.backend.services.schedule_timing import compute_next_run
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -780,27 +779,18 @@ async def update_schedule(
     session: AsyncSession = Depends(get_session),
 ) -> WorkflowRead:
     workflow = await _load(session, workflow_id)
-    if payload.interval_seconds is not None:
-        workflow.interval_seconds = payload.interval_seconds
-    if payload.run_at_minute is not None:
-        workflow.run_at_minute = payload.run_at_minute
-    if payload.timezone is not None:
-        workflow.timezone = payload.timezone
-    if payload.days_of_week is not None:
-        workflow.days_of_week = payload.days_of_week
+    # A `rules` list replaces the whole recurrence set (so a workflow can run
+    # "every day at 07:00" *and* "every weekday at noon"); the flat fields patch
+    # the primary rule and leave any extras alone. `run_at_minute` is honoured
+    # as tri-state, so an explicit null switches back to interval mode.
+    rules = payload.merged_rules(workflow.recurrence_rules if workflow.interval_seconds else [])
+    if rules is not None:
+        workflow.set_recurrence_rules(rules)
     if payload.schedule_enabled is not None:
         workflow.schedule_enabled = payload.schedule_enabled
 
-    if workflow.schedule_enabled and (
-        workflow.interval_seconds is not None or workflow.run_at_minute is not None
-    ):
-        workflow.next_run_at = compute_next_run(
-            _now(),
-            workflow.interval_seconds or 86400,
-            workflow.days_of_week,
-            workflow.run_at_minute,
-            workflow.timezone,
-        )
+    if workflow.schedule_enabled and workflow.interval_seconds is not None:
+        workflow.next_run_at = workflow.next_run_after(_now())
     elif not workflow.schedule_enabled:
         workflow.next_run_at = None
     await session.commit()

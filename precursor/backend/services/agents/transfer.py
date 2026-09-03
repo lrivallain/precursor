@@ -32,12 +32,14 @@ from sqlalchemy.orm import selectinload
 from precursor import __version__
 from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
 from precursor.backend.models.agent_schedule import AgentSchedule
+from precursor.backend.models.recurrence import RecurrenceMixin
 from precursor.backend.models.workflow import (
     WORKFLOW_STEP_CONTEXT_MODES,
     WORKFLOW_STEP_ERROR_POLICIES,
     WORKFLOW_STEP_KINDS,
     WORKFLOW_STEP_REJECT_POLICIES,
 )
+from precursor.backend.schemas.schedule import RecurrenceRule
 from precursor.backend.schemas.transfer import (
     TRANSFER_FORMAT_VERSION,
     ConflictAction,
@@ -53,6 +55,7 @@ from precursor.backend.schemas.transfer import (
     TransferWarning,
     TransferWorkflow,
 )
+from precursor.backend.services.schedule_timing import normalize_rules, rules_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,27 @@ def _role_doc(role: Role | None) -> TransferRole | None:
     return TransferRole(name=role.name, system_prompt=role.system_prompt or "")
 
 
+def _extra_rule_docs(owner: RecurrenceMixin) -> list[RecurrenceRule]:
+    """The rules beyond the primary one, as portable schema objects."""
+    return [RecurrenceRule.model_validate(rule) for rule in owner.recurrence_rules[1:]]
+
+
+def _apply_transfer_rules(owner: RecurrenceMixin, incoming: TransferSchedule) -> None:
+    """Write an imported recurrence onto a schedule row.
+
+    The primary rule is copied field-for-field rather than round-tripped through
+    ``set_recurrence_rules`` so a workflow's nullable ``interval_seconds`` keeps
+    its "daily-only" shape; the extras are normalised on the way in.
+    """
+    owner.interval_seconds = incoming.interval_seconds
+    owner.run_at_minute = incoming.run_at_minute
+    owner.timezone = incoming.timezone
+    owner.days_of_week = incoming.days_of_week
+    owner.extra_rules = rules_to_json(
+        normalize_rules(rule.to_timing() for rule in incoming.extra_rules)
+    )
+
+
 def _agent_schedule_doc(schedule: AgentSchedule | None) -> TransferSchedule | None:
     if schedule is None:
         return None
@@ -83,6 +107,7 @@ def _agent_schedule_doc(schedule: AgentSchedule | None) -> TransferSchedule | No
         run_at_minute=schedule.run_at_minute,
         timezone=schedule.timezone,
         days_of_week=schedule.days_of_week,
+        extra_rules=_extra_rule_docs(schedule),
         clear_context=schedule.clear_context,
     )
 
@@ -97,6 +122,7 @@ def _workflow_schedule_doc(workflow: Workflow) -> TransferSchedule | None:
         run_at_minute=workflow.run_at_minute,
         timezone=workflow.timezone,
         days_of_week=workflow.days_of_week,
+        extra_rules=_extra_rule_docs(workflow),
     )
 
 
@@ -649,12 +675,10 @@ async def _apply_agent_schedule(
     schedule = existing or AgentSchedule(agent_session_id=agent.id)
     schedule.enabled = False
     schedule.clear_context = incoming.clear_context
-    # Interval mode needs a value even in daily-at-time mode (the column is not
-    # nullable); a day is the natural floor for a daily schedule.
+    _apply_transfer_rules(schedule, incoming)
+    # Interval mode needs a value even in daily-at-time mode (the agent column
+    # is not nullable); a day is the natural floor for a daily schedule.
     schedule.interval_seconds = incoming.interval_seconds or 86400
-    schedule.run_at_minute = incoming.run_at_minute
-    schedule.timezone = incoming.timezone
-    schedule.days_of_week = incoming.days_of_week
     schedule.next_run_at = None
     if existing is None:
         session.add(schedule)
@@ -800,10 +824,7 @@ async def import_document(
     if incoming_wf.schedule is not None:
         # Imported paused, like an agent's cadence.
         workflow.schedule_enabled = False
-        workflow.interval_seconds = incoming_wf.schedule.interval_seconds
-        workflow.run_at_minute = incoming_wf.schedule.run_at_minute
-        workflow.timezone = incoming_wf.schedule.timezone
-        workflow.days_of_week = incoming_wf.schedule.days_of_week
+        _apply_transfer_rules(workflow, incoming_wf.schedule)
         workflow.next_run_at = None
     await session.flush()
 

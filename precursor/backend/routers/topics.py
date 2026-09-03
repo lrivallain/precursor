@@ -29,7 +29,6 @@ from precursor.backend.services.events import (
     publish_topic_changed,
     set_current_client_id,
 )
-from precursor.backend.services.schedule_timing import compute_next_run
 from precursor.backend.services.scheduler import get_scheduler
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.topic_issue import (
@@ -443,22 +442,13 @@ async def create_topic_schedule(
         topic_id=topic_id,
         enabled=payload.enabled,
         prompt=payload.prompt,
-        interval_seconds=payload.interval_seconds,
-        days_of_week=payload.days_of_week,
-        run_at_minute=payload.run_at_minute,
-        timezone=payload.timezone,
         clear_context=payload.clear_context,
-        next_run_at=compute_next_run(
-            _now(),
-            payload.interval_seconds,
-            payload.days_of_week,
-            payload.run_at_minute,
-            payload.timezone,
-        )
-        if payload.enabled
-        else None,
         status="idle",
     )
+    # Seeds the primary columns + extra_rules from the resolved rule set, so a
+    # legacy flat payload and a multi-rule one land the same way.
+    schedule.set_recurrence_rules(payload.resolved_rules() or [])
+    schedule.next_run_at = schedule.next_run_after(_now()) if payload.enabled else None
     session.add(schedule)
     await session.commit()
     await session.refresh(schedule)
@@ -477,45 +467,23 @@ async def update_topic_schedule(
 
     if data.get("prompt"):
         schedule.prompt = data["prompt"]
-    if data.get("interval_seconds"):
-        schedule.interval_seconds = data["interval_seconds"]
-    if data.get("days_of_week"):
-        schedule.days_of_week = data["days_of_week"]
-    if data.get("timezone"):
-        schedule.timezone = data["timezone"]
     if "clear_context" in data and data["clear_context"] is not None:
         schedule.clear_context = data["clear_context"]
 
-    # run_at_minute is tri-state: omitted = unchanged, int = daily-at-time,
-    # explicit null = back to interval mode.
-    cadence_changed = (
-        "interval_seconds" in data
-        or "days_of_week" in data
-        or "timezone" in data
-        or "run_at_minute" in data
-    )
-    if "run_at_minute" in data:
-        schedule.run_at_minute = data["run_at_minute"]
-
-    if cadence_changed and schedule.enabled:
-        schedule.next_run_at = compute_next_run(
-            _now(),
-            schedule.interval_seconds,
-            schedule.days_of_week,
-            schedule.run_at_minute,
-            schedule.timezone,
-        )
+    # Cadence is tri-state per field: omitted = unchanged, value = set, and for
+    # run_at_minute an explicit null = back to interval mode. `resolved_rules`
+    # folds the flat fields and the `rules` list into one answer, returning None
+    # when the payload doesn't touch the cadence at all.
+    rules = payload.merged_rules(schedule.recurrence_rules)
+    if rules is not None:
+        schedule.set_recurrence_rules(rules)
+        if schedule.enabled:
+            schedule.next_run_at = schedule.next_run_after(_now())
 
     if "enabled" in data and data["enabled"] is not None:
         schedule.enabled = data["enabled"]
         if schedule.enabled and schedule.next_run_at is None:
-            schedule.next_run_at = compute_next_run(
-                _now(),
-                schedule.interval_seconds,
-                schedule.days_of_week,
-                schedule.run_at_minute,
-                schedule.timezone,
-            )
+            schedule.next_run_at = schedule.next_run_after(_now())
         if not schedule.enabled:
             schedule.next_run_at = None
 

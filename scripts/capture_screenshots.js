@@ -167,7 +167,8 @@ const scenes = {
   },
 
   // A scheduled topic with its recurrence editor open — the control scheduled
-  // topics, agents and workflows all share.
+  // topics, agents and workflows all share. The demo schedule carries two rules,
+  // so the shot shows a schedule that combines cadences.
   scheduler: {
     viewport: { width: 1440, height: 1240 },
     async go(page) {
@@ -180,7 +181,14 @@ const scenes = {
         await gear.click().catch(() => {});
         await sleep(1400);
       }
-      return undefined;
+      // The schedule section sits below the fold of a long settings panel, so
+      // bring it into view and frame the panel around it.
+      const anchor = page.locator("text=Add another schedule").first();
+      if (await anchor.count()) {
+        await anchor.scrollIntoViewIfNeeded().catch(() => {});
+        await sleep(900);
+      }
+      return clipOf(page, 'text="Topic settings" >> xpath=ancestor::div[contains(@class,"fixed")]');
     },
   },
 

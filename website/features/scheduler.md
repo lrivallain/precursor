@@ -8,7 +8,7 @@ Precursor runs an in-process **scheduler** that drives recurring
 [topics](/features/topics) **and** scheduled [agents](/features/agents-mode), plus
 one-shot **reminders** that resurface a topic at a set time.
 
-<Screenshot src="/screenshots/scheduler.png" alt="A topic's settings panel with Run on a schedule enabled, showing the prompt to run each time, an interval-or-time-of-day recurrence choice, and a weekday picker" caption="The recurrence editor — the same control scheduled topics, agents and workflows share." />
+<Screenshot src="/screenshots/scheduler.png" alt="A topic's settings panel with Run on a schedule enabled, showing the prompt to run each time and two recurrence rules — Monday at 09:00 and Friday at 17:00 — with an Add another schedule button beneath them" caption="The recurrence editor — the same control scheduled topics, agents and workflows share. A schedule can hold several rules and fires at whichever comes first." />
 
 ## Recurring topics and agents
 
@@ -18,6 +18,29 @@ edited from its settings panel. Recurrence supports:
 - an **interval**,
 - a **weekday mask**, and
 - a daily **time-of-day** in a timezone.
+
+### Several cadences on one item
+
+One schedule can hold **more than one recurrence rule**. Press *Add another
+schedule* in the recurrence editor to combine them — for example
+**every day at 07:00** *plus* **every weekday at 12:00**. The item then fires at
+whichever rule comes first, so you express "the morning digest, and a midday one
+on working days" without duplicating the topic, agent or workflow.
+
+Rules are independent: each has its own interval-or-time mode, weekday mask and
+time. The item still has a single prompt, a single enable toggle and a single
+next-run time (the earliest across the set), so pausing it pauses every rule at
+once.
+
+The same editor backs scheduled topics, agents and
+[workflows](/features/workflows/scheduling), so the vocabulary is identical
+everywhere.
+
+::: tip
+Prefer several **time-of-day** rules over one short interval when you want runs
+at specific moments. Two daily rules cost two runs a day; a 15-minute interval
+costs 96.
+:::
 
 ### Commands vs generation
 

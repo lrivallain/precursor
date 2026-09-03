@@ -33,14 +33,27 @@ export interface Topic {
   schedule: ScheduleSummary | null;
 }
 
-// Lightweight schedule view embedded in the sidebar tree (mirrors backend
-// ScheduleSummary). Datetimes are ISO-8601 UTC strings.
-export interface ScheduleSummary {
-  enabled: boolean;
+// One "when to run" clause of a schedule (mirrors backend RecurrenceRule). A
+// schedule fires at the earliest next occurrence across all of its rules, so
+// "every day at 07:00" + "every weekday at 12:00" gives both.
+export interface RecurrenceRule {
   interval_seconds: number;
   days_of_week: number;
   run_at_minute: number | null;
   timezone: string;
+}
+
+// Lightweight schedule view embedded in the sidebar tree (mirrors backend
+// ScheduleSummary). Datetimes are ISO-8601 UTC strings.
+export interface ScheduleSummary {
+  enabled: boolean;
+  // The primary rule, kept flat for backwards compatibility. `rules` is the
+  // complete set (primary first) and is what the editors read.
+  interval_seconds: number;
+  days_of_week: number;
+  run_at_minute: number | null;
+  timezone: string;
+  rules: RecurrenceRule[];
   clear_context: boolean;
   next_run_at: string | null;
   last_run_at: string | null;
@@ -58,12 +71,14 @@ export interface Schedule extends ScheduleSummary {
 }
 
 // Attach a recurrence to an existing topic (no title — the topic owns it).
+// Send either the flat fields or `rules`; `rules` wins when both are present.
 export interface TopicScheduleCreate {
   prompt: string;
-  interval_seconds: number;
+  interval_seconds?: number;
   days_of_week?: number;
   run_at_minute?: number | null;
   timezone?: string;
+  rules?: RecurrenceRule[];
   clear_context?: boolean;
   enabled?: boolean;
 }
@@ -74,6 +89,7 @@ export interface ScheduleUpdate {
   days_of_week?: number;
   run_at_minute?: number | null;
   timezone?: string;
+  rules?: RecurrenceRule[];
   clear_context?: boolean;
   enabled?: boolean;
 }
@@ -362,10 +378,12 @@ export interface AgentPendingPermission {
 // AgentScheduleSummary). Datetimes are ISO-8601 UTC strings.
 export interface AgentScheduleSummary {
   enabled: boolean;
+  // Primary rule, kept flat for backwards compatibility; `rules` is the set.
   interval_seconds: number;
   days_of_week: number;
   run_at_minute: number | null;
   timezone: string;
+  rules: RecurrenceRule[];
   clear_context: boolean;
   next_run_at: string | null;
   last_run_at: string | null;
@@ -381,11 +399,13 @@ export interface AgentSchedule extends AgentScheduleSummary {
   updated_at: string;
 }
 
+// Send either the flat fields or `rules`; `rules` wins when both are present.
 export interface AgentScheduleCreate {
-  interval_seconds: number;
+  interval_seconds?: number;
   days_of_week?: number;
   run_at_minute?: number | null;
   timezone?: string;
+  rules?: RecurrenceRule[];
   clear_context?: boolean;
   enabled?: boolean;
 }
@@ -395,6 +415,7 @@ export interface AgentScheduleUpdate {
   days_of_week?: number;
   run_at_minute?: number | null;
   timezone?: string;
+  rules?: RecurrenceRule[];
   clear_context?: boolean;
   enabled?: boolean;
 }
@@ -776,12 +797,13 @@ export interface Workflow {
   finished_at: string | null;
   result_summary: string | null;
   error: string | null;
-  // Scheduling
+  // Scheduling. The flat fields hold the primary rule; `rules` is the full set.
   schedule_enabled: boolean;
   interval_seconds: number | null;
   run_at_minute: number | null;
   timezone: string;
   days_of_week: number;
+  rules: RecurrenceRule[];
   next_run_at: string | null;
   webhook_token: string | null;
   archived_at: string | null;
@@ -852,6 +874,8 @@ export interface WorkflowScheduleUpdate {
   run_at_minute?: number | null;
   timezone?: string | null;
   days_of_week?: number | null;
+  /** Replaces the whole recurrence set. Wins over the flat fields above. */
+  rules?: RecurrenceRule[];
 }
 
 // --- YAML transfer (export / import of agents and workflows) ----------------

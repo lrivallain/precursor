@@ -11,6 +11,29 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Several schedules on one item — "every day at 07:00" *and* "every weekday at
+  noon".** A scheduled topic, agent or workflow held exactly one recurrence rule,
+  so any cadence that wasn't a single interval or a single time-of-day meant
+  duplicating the whole thing: two topics with the same prompt, two agents with
+  the same task, two workflows with the same steps — each then drifting from the
+  other the moment one was edited.
+
+  The recurrence editor now takes a **list** of rules. *Add another schedule*
+  appends one, each with its own interval-or-time mode, weekday mask and time,
+  and the item fires at whichever comes first. Everything else stays singular:
+  one prompt, one enable toggle, one next-run time (the earliest across the set),
+  so pausing still pauses the lot. A single-rule schedule looks and behaves
+  exactly as before — no extra chrome appears until a second rule exists.
+
+  The API is backwards compatible. Every schedule payload gained an optional
+  `rules` array of `{interval_seconds, days_of_week, run_at_minute, timezone}`,
+  and every read returns one; the existing flat fields still work and mirror the
+  **first** rule. Sending `rules` replaces the whole set, while sending only the
+  flat fields patches the primary rule and leaves the extras alone, so an older
+  client that PATCHes just an interval can't silently drop rules added in the UI.
+  The `precursor` MCP server's `create_schedule` takes the extra rules too, and
+  YAML export/import carries all of them.
+
 - **A workflow authoring spec, so a coding assistant can generate a pipeline
   without reading the source.** The docs site publishes
   [`/reference/workflow-authoring`](https://precursor.vuptime.io/reference/workflow-authoring):
@@ -178,6 +201,12 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   a browser flow.
 
 ### Fixed
+
+- **A workflow could no longer be switched off "at a time" back to an interval.**
+  `PUT /api/workflows/{id}/schedule` applied `run_at_minute` only when it was
+  non-null, so the payload the editor sends for interval mode — an explicit
+  `run_at_minute: null` — was ignored and the workflow stayed pinned to its old
+  time of day. The field is now honoured as the tri-state it is meant to be.
 
 - **An out-of-tree plugin now survives `precursor service update`.** A plugin
   installed into a `uv tool` environment was uninstalled by every self-update.

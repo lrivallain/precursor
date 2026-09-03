@@ -13,7 +13,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from precursor.backend.schemas.agent import AgentApprovalPolicy, AgentPendingPermission
-from precursor.backend.schemas.schedule import UtcDateTime
+from precursor.backend.schemas.schedule import (
+    RuleListRead,
+    RuleListWrite,
+    RulesPayload,
+    UtcDateTime,
+)
 
 WorkflowStatus = Literal[
     "draft",
@@ -220,12 +225,14 @@ class WorkflowRead(BaseModel):
     finished_at: UtcDateTime | None = None
     result_summary: str | None = None
     error: str | None = None
-    # Scheduling
+    # Scheduling. The flat fields hold the primary recurrence rule; `rules`
+    # carries the complete set (primary first) for multi-rule schedules.
     schedule_enabled: bool = False
     interval_seconds: int | None = None
     run_at_minute: int | None = None
     timezone: str = "UTC"
     days_of_week: int = 127
+    rules: RuleListRead
     next_run_at: UtcDateTime | None = None
     # Presence-only: never echo the raw token in list payloads beyond what the
     # owner needs to copy it once. Kept simple here (single-user local app).
@@ -314,12 +321,15 @@ class WorkflowUpdate(BaseModel):
     steps: list[WorkflowStepInput] | None = None
 
 
-class WorkflowScheduleUpdate(BaseModel):
+class WorkflowScheduleUpdate(RulesPayload):
     schedule_enabled: bool | None = None
     interval_seconds: int | None = Field(default=None, ge=60)
     run_at_minute: int | None = Field(default=None, ge=0, le=1439)
     timezone: str | None = None
     days_of_week: int | None = Field(default=None, ge=0, le=127)
+    # Replaces the whole rule set when supplied, so a workflow can run "every
+    # day at 07:00" *and* "every weekday at noon".
+    rules: RuleListWrite
 
 
 class WorkflowRunRequest(BaseModel):

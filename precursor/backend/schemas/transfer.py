@@ -21,12 +21,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from precursor.backend.schemas.agent import AgentApprovalPolicy
+from precursor.backend.schemas.schedule import RecurrenceRule
 from precursor.backend.schemas.workflow import (
     WorkflowStepContextMode,
     WorkflowStepErrorPolicy,
     WorkflowStepKind,
     WorkflowStepRejectPolicy,
 )
+from precursor.backend.services.schedule_timing import MAX_RULES
 
 # Bumped when the document shape changes incompatibly. The importer refuses a
 # major it doesn't understand rather than silently dropping fields.
@@ -57,12 +59,17 @@ class TransferSchedule(BaseModel):
 
     Always imported **disabled**: a file dropped into a new install should not
     start firing on a cadence its new owner never asked for.
+
+    The flat fields describe the primary rule; ``extra_rules`` carries any
+    additional ones (e.g. "…and also every weekday at noon") so a multi-rule
+    schedule survives a round-trip. Older files simply omit it.
     """
 
     interval_seconds: int | None = Field(default=None, ge=60)
     run_at_minute: int | None = Field(default=None, ge=0, le=1439)
     timezone: str = "UTC"
     days_of_week: int = Field(default=127, ge=0, le=127)
+    extra_rules: list[RecurrenceRule] = Field(default_factory=list, max_length=MAX_RULES)
     # Agent schedules only: whether each run starts from a clean context.
     clear_context: bool = True
 

@@ -15,7 +15,10 @@ until something triggers the first step:
 - **Manual** — the **Run** button, optionally with a
   [run brief](#the-run-brief-one-workflow-a-different-subject-each-run).
 - **Schedule** — the same recurrence control scheduled topics and agents use:
-  either an interval, or a **time of day on chosen weekdays**.
+  either an interval, or a **time of day on chosen weekdays**. A workflow can
+  hold [several rules at once](/features/scheduler#several-cadences-on-one-item)
+  ("every day at 07:00" *and* "every weekday at noon") and runs at whichever
+  comes first.
 - **Webhook** — mint a token to expose a `POST /api/workflows/hooks/{token}`
   URL that kicks off the run. Any body you post becomes the run's brief.
 

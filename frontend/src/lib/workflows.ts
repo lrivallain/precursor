@@ -2,7 +2,14 @@
 // orchestrator. Mirrors the tone of `agents.ts`: full Tailwind class strings so
 // the compiler keeps them, keyed by the backend `WorkflowStatus`.
 
-import type { Workflow, WorkflowRun, WorkflowRunStep, WorkflowStatus, WorkflowStep } from "./types";
+import type {
+  RecurrenceRule,
+  Workflow,
+  WorkflowRun,
+  WorkflowRunStep,
+  WorkflowStatus,
+  WorkflowStep,
+} from "./types";
 
 export const WORKFLOW_STATUS_LABEL: Record<WorkflowStatus, string> = {
   draft: "Draft",
@@ -198,13 +205,13 @@ export function workflowRelativeTime(iso: string | null): string {
 }
 
 // Human-readable recurrence summary from the schedule fields, e.g.
-// "Every 6h", "Daily at 09:00", "Weekly · Mon,Wed". null when disabled.
+// "Every 6h", "Daily at 09:00", "Weekly · Mon,Wed". A schedule with several
+// rules joins them with " + ". null when disabled.
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export function scheduleSummary(workflow: Workflow): string | null {
-  if (!workflow.schedule_enabled) return null;
+export function recurrenceRuleSummary(rule: RecurrenceRule): string {
   const parts: string[] = [];
-  const interval = workflow.interval_seconds ?? 86400;
+  const interval = rule.interval_seconds || 86400;
   if (interval % 86400 === 0 && interval >= 86400) {
     const days = interval / 86400;
     parts.push(days === 1 ? "Daily" : `Every ${days}d`);
@@ -213,16 +220,32 @@ export function scheduleSummary(workflow: Workflow): string | null {
   } else {
     parts.push(`Every ${Math.round(interval / 60)}m`);
   }
-  if (workflow.run_at_minute != null) {
-    const h = Math.floor(workflow.run_at_minute / 60);
-    const m = workflow.run_at_minute % 60;
+  if (rule.run_at_minute != null) {
+    const h = Math.floor(rule.run_at_minute / 60);
+    const m = rule.run_at_minute % 60;
     parts.push(`at ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
   }
-  if (workflow.days_of_week !== 127) {
-    const active = DAY_NAMES.filter((_, i) => (workflow.days_of_week & (1 << i)) !== 0);
+  if (rule.days_of_week !== 127) {
+    const active = DAY_NAMES.filter((_, i) => (rule.days_of_week & (1 << i)) !== 0);
     if (active.length && active.length < 7) parts.push(`· ${active.join(",")}`);
   }
   return parts.join(" ");
+}
+
+export function scheduleSummary(workflow: Workflow): string | null {
+  if (!workflow.schedule_enabled) return null;
+  // Fall back to the flat primary-rule fields for a server predating `rules`.
+  const rules: RecurrenceRule[] = workflow.rules?.length
+    ? workflow.rules
+    : [
+        {
+          interval_seconds: workflow.interval_seconds ?? 86400,
+          days_of_week: workflow.days_of_week,
+          run_at_minute: workflow.run_at_minute,
+          timezone: workflow.timezone,
+        },
+      ];
+  return rules.map(recurrenceRuleSummary).join(" + ");
 }
 
 // --- Run history / trace presentation --------------------------------------

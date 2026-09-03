@@ -39,9 +39,10 @@ targets, approval checkpoints and per-step instructions.
 | **Webhook tokens** | They're per-install credentials. Sharing a file must never share a way to fire it. Re-mint on the target. |
 | Topic / chat links | Machine-local containers. An imported agent arrives unattached. |
 
-Because the recurrence *is* part of the definition, a schedule travels — but it
-arrives **paused**. A file dropped into a new install describes *when* something
-should run; it doesn't get to start running it.
+Because the recurrence *is* part of the definition, a schedule travels — all of
+its [rules](/features/scheduler#several-cadences-on-one-item), not just the
+first — but it arrives **paused**. A file dropped into a new install describes
+*when* something should run; it doesn't get to start running it.
 
 ## Importing
 

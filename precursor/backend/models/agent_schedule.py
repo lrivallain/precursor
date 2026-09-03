@@ -27,12 +27,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
+from precursor.backend.models.recurrence import RecurrenceMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.agent_session import AgentSession
 
 
-class AgentSchedule(Base, TimestampMixin):
+class AgentSchedule(Base, TimestampMixin, RecurrenceMixin):
     __tablename__ = "agent_schedule"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -53,7 +54,8 @@ class AgentSchedule(Base, TimestampMixin):
         Boolean, nullable=False, default=True, server_default="1"
     )
     # Interval-based recurrence: run every N seconds. The UI exposes this as a
-    # value + unit (minutes / hours / days).
+    # value + unit (minutes / hours / days). This is the schedule's *primary*
+    # rule; extras live in ``RecurrenceMixin.extra_rules``.
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     # Daily-at-time recurrence: when set, the schedule runs once per allowed day
     # at this minute-of-day (0..1439) in ``timezone`` instead of using

@@ -35,6 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
+from precursor.backend.models.recurrence import RecurrenceMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.agent_session import AgentSession
@@ -89,7 +90,7 @@ def _mint_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-class Workflow(Base, TimestampMixin):
+class Workflow(Base, TimestampMixin, RecurrenceMixin):
     __tablename__ = "workflows"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -174,7 +175,9 @@ class Workflow(Base, TimestampMixin):
     # Mirrors AgentSchedule but inlined on the workflow row: the background
     # scheduler polls ``schedule_enabled`` workflows whose ``next_run_at`` is due
     # and starts a fresh run. A null ``interval_seconds`` with a ``run_at_minute``
-    # is daily-at-time; otherwise interval mode.
+    # is daily-at-time; otherwise interval mode. Additional rules (e.g. "and also
+    # every weekday at noon") live in ``RecurrenceMixin.extra_rules``; the run
+    # fires at the earliest of them.
     schedule_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
