@@ -11,6 +11,24 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **A workflow authoring spec, so a coding assistant can generate a pipeline
+  without reading the source.** The docs site publishes
+  [`/reference/workflow-authoring`](https://precursor.vuptime.io/reference/workflow-authoring):
+  a machine-oriented specification of the workflow engine aimed at external
+  coding AI agents. It carries the exact field tables for the workflow, step and
+  agent objects, the placeholder grammar (including the literal `(unset)` render
+  and the `|` fallback rules), the kickoff composition order, the gate verdict
+  vocabulary and its fail-open tie-breaking, the state key/value caps, the
+  tri-state `mcp_servers` allowlist, and every validation error the API raises.
+
+  It documents the behaviours a generator gets wrong from the prose pages alone:
+  that `context_sources` is **sorted**, so the hand-off is the highest-numbered
+  position rather than the last one typed; that the state key index — and the
+  `workflow_state_*` tools with it — is suppressed for a step whose allowlist
+  omits `precursor`; and that a gate's PASS reason mentioning an opposite-verdict
+  word like "unsafe" trips the FAIL pattern. Ends with an authoring checklist and
+  a worked stateful example.
+
 - **Three more Agent 365 MCP servers — `workiq-planner`, `workiq-word` and
   `workiq-excel` — on the sign-in you already have.** Precursor shipped two of
   Microsoft's hosted [Agent 365](https://precursor.vuptime.io/features/mcp.html#agent-365-workiq-teams-and-workiq-user)
