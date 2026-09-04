@@ -268,6 +268,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Opening Agents or Workflows briefly claimed the feature was off.** Both
+  cockpits read `agents_enabled` straight from the settings store, which is
+  `null` until its first fetch resolves — so for the width of that request the
+  flag defaulted to `false` and the section rendered its "Agents mode is off" /
+  "Workflows need Agents mode" prompt, complete with an **Open Settings**
+  button, before the user's own agents appeared. A cold load of a perfectly
+  healthy install looked like the feature had been disabled.
+
+  The settings store now tracks whether the first fetch has **resolved** as
+  distinct from what it returned, and both sections hold a neutral loading
+  frame until it has — so a boot reads as "loading", never as "disabled". The
+  agents surface waits on the session list too, which removes a second flash
+  where the empty "Start an agent task" form appeared for a beat before the
+  fleet dashboard replaced it. A genuinely disabled feature still shows its
+  prompt, just once settings actually say so.
+
 - **A running agent flooded the browser with refetches.** Every SDK event an
   agent emits publishes an `agent.changed` signal, and five listeners answered
   each one with an immediate refetch: the roster, the run rail, the artifact
