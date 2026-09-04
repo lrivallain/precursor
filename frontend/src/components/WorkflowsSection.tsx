@@ -3,11 +3,18 @@ import { Settings as SettingsIcon, Workflow as WorkflowIcon } from "lucide-react
 import { api } from "../lib/api";
 import type { Workflow } from "../lib/types";
 import { WorkflowList } from "./WorkflowList";
+import { SectionLoading } from "./SectionLoading";
 import { WorkflowView } from "./WorkflowView";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 
 interface Props {
   enabled: boolean;
+  /**
+   * Settings haven't resolved yet, so `enabled` is not yet meaningful. Without
+   * it, opening Workflows cold flashes the "needs Agents mode" prompt before
+   * the gallery loads.
+   */
+  ready?: boolean;
   /** Bumped by App on `workflow.changed` SSE to force a reload. */
   reloadKey: number;
   /** Deep-link target from the route (`/workflows/<id>`); null shows the gallery. */
@@ -33,6 +40,7 @@ type Mode = { kind: "list" } | { kind: "view"; id: number } | { kind: "builder";
  */
 export function WorkflowsSection({
   enabled,
+  ready = true,
   reloadKey,
   activeId,
   newSignal,
@@ -104,6 +112,12 @@ export function WorkflowsSection({
       return next;
     });
   }, []);
+
+  // Feature state unknown: say nothing rather than advertising the section as
+  // unavailable for the width of the settings request.
+  if (!ready) {
+    return <SectionLoading label="Loading workflows…" />;
+  }
 
   if (!enabled) {
     return (

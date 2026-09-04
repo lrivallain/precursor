@@ -61,7 +61,7 @@ import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
 import { agentsWaitingCount } from "./lib/agents";
 import { skillsStore } from "./lib/skillsStore";
 import { rolesStore } from "./lib/rolesStore";
-import { useSettings } from "./lib/settingsStore";
+import { useSettings, useSettingsReady } from "./lib/settingsStore";
 import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
 import { useIsNarrow } from "./lib/useMediaQuery";
@@ -566,6 +566,7 @@ export default function App() {
   const streamingChatIds = streamStore.streamingIds("chat");
 
   const settings = useSettings();
+  const settingsReady = useSettingsReady();
 
   // Sections contributed by installed backend plugins. `null` until the first
   // fetch resolves, which the gating effect below waits for so a deep link into
@@ -589,6 +590,11 @@ export default function App() {
   const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
+  // Two async gaps sit between opening an agents surface and having something
+  // to show: settings (which decide whether the feature is on at all) and the
+  // session list. Both default to "off"/"empty", so rendering them straight
+  // through flashes "Agents mode is off", then the start form, then the fleet.
+  const agentsBooting = !settingsReady || (agentsEnabled && agents === null);
 
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
 
@@ -2830,6 +2836,7 @@ export default function App() {
                   agents={agents ?? []}
                   agentId={null}
                   enabled={agentsEnabled}
+                  loading={agentsBooting}
                   available={agentsAvailable}
                   unavailableReason={agentsUnavailableReason}
                   onReload={() => void loadAgents()}
@@ -2967,6 +2974,7 @@ export default function App() {
           ) : sidebarMode === "workflows" ? (
             <WorkflowsSection
               enabled={agentsEnabled}
+              ready={settingsReady}
               reloadKey={workflowReloadKey}
               activeId={activeWorkflowId}
               newSignal={workflowNewSignal}
@@ -3011,6 +3019,7 @@ export default function App() {
               agents={agents ?? []}
               agentId={activeAgentId}
               enabled={agentsEnabled}
+              loading={agentsBooting}
               available={agentsAvailable}
               unavailableReason={agentsUnavailableReason}
               onReload={() => void loadAgents()}

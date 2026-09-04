@@ -51,6 +51,7 @@ import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
 import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { SuggestedReplies } from "./SuggestedReplies";
+import { SectionLoading } from "./SectionLoading";
 import { TopicPicker } from "./TopicPicker";
 import { Select } from "./Select";
 import { APPROVAL_POLICIES } from "./AgentsSettings";
@@ -81,6 +82,12 @@ interface AgentViewProps {
   agents: AgentSession[];
   agentId: number | null;
   enabled: boolean;
+  /**
+   * Feature state (and the session list) not resolved yet. Held apart from
+   * `enabled` because settings load asynchronously: without it a cold open of
+   * the agents surface flashes "Agents mode is off" before the fleet appears.
+   */
+  loading?: boolean;
   available: boolean;
   unavailableReason: string | null;
   /** Re-fetch the session list in the parent (status changed, created, deleted). */
@@ -1711,6 +1718,7 @@ export function AgentView({
   agents,
   agentId,
   enabled,
+  loading = false,
   available,
   unavailableReason,
   onReload,
@@ -2250,6 +2258,12 @@ export function AgentView({
     } finally {
       setBusy(false);
     }
+  }
+
+  // Still resolving whether the feature is on (and what's in the fleet): stay
+  // neutral rather than claiming it's off or offering an empty start form.
+  if (loading) {
+    return <SectionLoading label="Loading agents…" />;
   }
 
   // Disabled: send the user to Settings to turn the feature on.
