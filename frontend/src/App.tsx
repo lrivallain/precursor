@@ -56,7 +56,7 @@ import { ReminderModal } from "./components/ReminderModal";
 import { api } from "./lib/api";
 import { Z_INDEX } from "./lib/constants";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
-import { eventBus } from "./lib/events";
+import { coalesce, eventBus } from "./lib/events";
 import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
 import { agentsWaitingCount } from "./lib/agents";
 import { skillsStore } from "./lib/skillsStore";
@@ -1566,7 +1566,29 @@ export default function App() {
   // are filtered out inside the bus.
   useEffect(() => {
     eventBus.start();
-    return eventBus.subscribe((event) => {
+    // A running agent emits SDK events at token cadence and each one lands here
+    // as `agent.changed`. Coalesce the roster refresh so a burst costs one
+    // `/api/agents` round-trip per window rather than one per event.
+    const refreshAgents = coalesce(async () => {
+      const list = await loadAgents();
+      // Keep the session the user is actively viewing marked read as it
+      // produces output, so its badge doesn't resurrect when they navigate
+      // away (mirrors how a chat/topic is re-marked read on turn completion).
+      // Gate on a settled status so we mark once per turn, not per streamed
+      // event; markAgentRead doesn't publish, so this can't loop.
+      const activeId = activeAgentIdRef.current;
+      if (activeId == null || !isViewing("agent", activeId) || !windowFocused()) return;
+      const active = list.find((a) => a.id === activeId);
+      if (active && active.unread_count > 0 && AGENT_SETTLED_STATUSES.has(active.status)) {
+        try {
+          await api.agents.markRead(activeId);
+          await loadAgents();
+        } catch {
+          // non-fatal
+        }
+      }
+    });
+    const off = eventBus.subscribe((event) => {
       if (event.type === "topic.changed") {
         void refreshTree();
         const active = activeTopicRef.current;
@@ -1671,7 +1693,7 @@ export default function App() {
           setChatListReloadKey((k) => k + 1);
           void refreshChatsUnread();
         } else if (event.agent_session_id != null) {
-          void loadAgents();
+          refreshAgents();
         } else {
           void refreshTree();
         }
@@ -1679,25 +1701,7 @@ export default function App() {
         // An agent session was created, advanced, or finished (possibly in the
         // background). Refresh the list so statuses/badges stay current; the
         // AgentView refreshes its own timeline.
-        void (async () => {
-          const list = await loadAgents();
-          // Keep the session the user is actively viewing marked read as it
-          // produces output, so its badge doesn't resurrect when they navigate
-          // away (mirrors how a chat/topic is re-marked read on turn completion).
-          // Gate on a settled status so we mark once per turn, not per streamed
-          // event; markAgentRead doesn't publish, so this can't loop.
-          const activeId = activeAgentIdRef.current;
-          if (activeId == null || !isViewing("agent", activeId) || !windowFocused()) return;
-          const active = list.find((a) => a.id === activeId);
-          if (active && active.unread_count > 0 && AGENT_SETTLED_STATUSES.has(active.status)) {
-            try {
-              await api.agents.markRead(activeId);
-              await loadAgents();
-            } catch {
-              // non-fatal
-            }
-          }
-        })();
+        refreshAgents();
       } else if (event.type === "workflow.changed") {
         // A workflow was created, advanced a step, or finished (possibly in the
         // background via the coordinator). Bump the reload key so the cockpit
@@ -1715,6 +1719,10 @@ export default function App() {
         if (meetingSessionsRef.current !== null) void loadMeetingSessions();
       }
     });
+    return () => {
+      off();
+      refreshAgents.cancel();
+    };
   }, []);
 
   // When this tab regains focus, mark whatever conversation it's showing read.

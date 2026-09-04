@@ -6,6 +6,7 @@ import type {
   AgentBlueprintInstantiate,
   AgentBlueprintUpdate,
   AgentEvent,
+  AgentEventPage,
   AgentInboxItem,
   AgentLink,
   AgentMetrics,
@@ -411,10 +412,16 @@ export const api = {
       }),
     // `agentRunId` narrows the transcript to one execution — without it a
     // reusable agent driven by two workflows at once reads as one conversation.
-    getEvents: (id: number, agentRunId?: number | null) =>
-      request<AgentEvent[]>(
-        `/api/agents/${id}/events${agentRunId != null ? `?agent_run_id=${agentRunId}` : ""}`,
-      ),
+    // `after` is the cursor from the previous read: the timeline is append-only,
+    // so a live view asks only for the events it hasn't seen. Omit it for the
+    // whole transcript.
+    getEvents: (id: number, agentRunId?: number | null, after = 0) => {
+      const qs = new URLSearchParams();
+      if (agentRunId != null) qs.set("agent_run_id", String(agentRunId));
+      if (after > 0) qs.set("after", String(after));
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      return request<AgentEventPage>(`/api/agents/${id}/events${suffix}`);
+    },
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
     // Runtime capability + provisioning. Unlike the rest of this namespace these
     // stay reachable when the runtime is down — they are how it gets fixed.

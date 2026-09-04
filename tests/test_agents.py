@@ -7648,19 +7648,28 @@ async def test_transcript_can_be_read_one_run_at_a_time() -> None:
 
         # Unfiltered, the transcript still spans every run.
         every = client.get(f"/api/agents/{agent_id}/events").json()
-        assert [e["text"] for e in every] == ["run ALPHA", "run BRAVO", "ALPHA", "BRAVO"]
+        assert [e["text"] for e in every["events"]] == [
+            "run ALPHA",
+            "run BRAVO",
+            "ALPHA",
+            "BRAVO",
+        ]
         # The run id rides on the event even for rows archived before the payload
         # carried one — the column is the authority.
-        assert [e["agent_run_id"] for e in every] == [alpha, bravo, alpha, bravo]
+        assert [e["agent_run_id"] for e in every["events"]] == [alpha, bravo, alpha, bravo]
 
         # Scoped to one run, each execution reads on its own.
         assert [
             e["text"]
-            for e in client.get(f"/api/agents/{agent_id}/events?agent_run_id={alpha}").json()
+            for e in client.get(f"/api/agents/{agent_id}/events?agent_run_id={alpha}").json()[
+                "events"
+            ]
         ] == ["run ALPHA", "ALPHA"]
         assert [
             e["text"]
-            for e in client.get(f"/api/agents/{agent_id}/events?agent_run_id={bravo}").json()
+            for e in client.get(f"/api/agents/{agent_id}/events?agent_run_id={bravo}").json()[
+                "events"
+            ]
         ] == ["run BRAVO", "BRAVO"]
 
         # A run belonging to someone else is not a filter, it's a 404.
@@ -7673,6 +7682,67 @@ async def test_transcript_can_be_read_one_run_at_a_time() -> None:
         assert (
             client.get(f"/api/agents/{agent_id}/events?agent_run_id={stranger}").status_code == 404
         )
+
+
+async def test_transcript_reads_incrementally_from_a_cursor() -> None:
+    """A live timeline must fetch what's new, not re-download its whole history.
+
+    The transcript is re-read on every ``agent.changed`` signal — which a running
+    agent emits at token cadence — so returning the full history each time made
+    the cost of one refresh grow with the run. The archive is append-only, so a
+    reader can carry a cursor and ask only for the events after it.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentEventRecord, AgentSession
+    from precursor.backend.schemas.agent import AgentEvent
+    from precursor.backend.services.agents.manager import get_agent_manager
+
+    with TestClient(create_app()) as client:
+        async with SessionLocal() as session:
+            agent = AgentSession(title="Chatty", task_prompt="do", status="idle")
+            session.add(agent)
+            await session.flush()
+            agent_id = agent.id
+            for text in ("one", "two"):
+                session.add(
+                    AgentEventRecord(
+                        agent_session_id=agent_id,
+                        payload=AgentEvent(kind="assistant_message", text=text).model_dump_json(),
+                    )
+                )
+            await session.commit()
+
+        # A cursor-less read is the whole transcript, and reports where it ends.
+        first = client.get(f"/api/agents/{agent_id}/events").json()
+        assert [e["text"] for e in first["events"]] == ["one", "two"]
+        assert first["cursor"] == 2
+        assert first["reset"] is False
+
+        # Re-reading at that cursor with nothing new costs an empty delta — this
+        # is the case a token-cadence refresh hits over and over.
+        idle = client.get(f"/api/agents/{agent_id}/events?after=2").json()
+        assert idle["events"] == []
+        assert idle["cursor"] == 2
+
+        # A further step lands the way a live turn appends one: onto the manager's
+        # in-memory timeline, which is authoritative once the archive is loaded.
+        mgr = get_agent_manager()
+        mgr._events.setdefault(agent_id, []).append(
+            AgentEvent(kind="assistant_message", text="three")
+        )
+
+        # It comes back on its own, without the history the caller already holds.
+        delta = client.get(f"/api/agents/{agent_id}/events?after=2").json()
+        assert [e["text"] for e in delta["events"]] == ["three"]
+        assert delta["cursor"] == 3
+
+        # A cursor past the end no longer addresses this transcript (cleared or
+        # pruned): answer with everything and say so, rather than silently
+        # skipping the events the caller is missing.
+        stale = client.get(f"/api/agents/{agent_id}/events?after=99").json()
+        assert stale["reset"] is True
+        assert [e["text"] for e in stale["events"]] == ["one", "two", "three"]
+        assert stale["cursor"] == 3
 
 
 async def test_workflow_board_shows_its_own_run_not_the_agents_latest() -> None:
