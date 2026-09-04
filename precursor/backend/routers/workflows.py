@@ -42,6 +42,7 @@ from precursor.backend.schemas.workflow import (
     WorkflowRead,
     WorkflowResumeRequest,
     WorkflowRetryRequest,
+    WorkflowRunProgress,
     WorkflowRunRead,
     WorkflowRunRequest,
     WorkflowScheduleUpdate,
@@ -72,6 +73,13 @@ def _cap_default(enabled: bool) -> bool | None:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+# Step-attempt statuses that mean "this position resolved and the run moved on",
+# and the ones that mean "the run is sitting here right now". Mirrors the
+# frontend's `runProgress` so the gallery bar and the board agree.
+_RUN_STEP_DONE_STATUSES = frozenset({"completed", "passed"})
+_RUN_STEP_ACTIVE_STATUSES = frozenset({"running", "awaiting_approval", "blocked"})
 
 
 async def _webhook_input(request: Request) -> str | None:
@@ -169,6 +177,87 @@ async def _step_run_state(
     return {key: by_id[run_id] for key, run_id in wanted.items() if run_id in by_id}
 
 
+async def _latest_run_progress(
+    session: AsyncSession, workflows: list[Workflow]
+) -> dict[int, WorkflowRunProgress]:
+    """Map ``workflow_id`` to how far its newest run advanced.
+
+    Batched across the whole list so the gallery can follow several live runs at
+    once off a single payload, instead of fetching a run per card. Only the
+    newest run is consulted — that is the one whose progress is still moving;
+    older executions live in the detail board's trace timeline.
+    """
+    ids = [w.id for w in workflows]
+    if not ids:
+        return {}
+    latest = (
+        select(WorkflowRun.workflow_id, func.max(WorkflowRun.id).label("run_id"))
+        .where(WorkflowRun.workflow_id.in_(ids))
+        .group_by(WorkflowRun.workflow_id)
+        .subquery()
+    )
+    runs = (
+        await session.execute(
+            select(
+                WorkflowRun.id,
+                WorkflowRun.workflow_id,
+                WorkflowRun.run_number,
+                WorkflowRun.status,
+                WorkflowRun.started_at,
+                WorkflowRun.finished_at,
+            ).join(latest, latest.c.run_id == WorkflowRun.id)
+        )
+    ).all()
+    if not runs:
+        return {}
+    attempts: dict[int, list[tuple[int, str]]] = {}
+    rows = (
+        await session.execute(
+            select(
+                WorkflowRunStep.run_id,
+                WorkflowRunStep.position,
+                WorkflowRunStep.status,
+            )
+            .where(WorkflowRunStep.run_id.in_([r.id for r in runs]))
+            # A manual replay re-runs a step out of band and advances nothing, so
+            # counting it would report progress the pipeline never made.
+            .where(WorkflowRunStep.replay.is_(False))
+            # Newest attempt last, so the in-flight cursor below keeps it.
+            .order_by(WorkflowRunStep.id)
+        )
+    ).all()
+    for run_id, position, step_status in rows:
+        attempts.setdefault(run_id, []).append((position, step_status))
+
+    totals = {w.id: len(w.steps) for w in workflows}
+    progress: dict[int, WorkflowRunProgress] = {}
+    for run in runs:
+        done: set[int] = set()
+        seen: set[int] = set()
+        current: int | None = None
+        for position, step_status in attempts.get(run.id, []):
+            seen.add(position)
+            if step_status in _RUN_STEP_DONE_STATUSES:
+                done.add(position)
+            if step_status in _RUN_STEP_ACTIVE_STATUSES:
+                current = position
+        # A run recorded against a since-edited definition can hold positions the
+        # workflow no longer has; fall back to what it actually executed so the
+        # bar can never read past full.
+        total = totals.get(run.workflow_id) or len(seen)
+        progress[run.workflow_id] = WorkflowRunProgress(
+            run_id=run.id,
+            run_number=run.run_number,
+            status=run.status,
+            done=min(len(done), total) if total else len(done),
+            total=total,
+            current_position=current,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+        )
+    return progress
+
+
 async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[WorkflowRead]:
     """Serialise workflows, folding each step agent's *live* state into it.
 
@@ -180,9 +269,16 @@ async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[Workfl
 
     Execution-state fields are then re-pointed at the run each step actually
     drove, so a shared agent doesn't broadcast one workflow's outcome onto every
-    board that references it.
+    board that references it. Each workflow's newest run advancement is folded in
+    too, so the gallery can draw a progress bar without loading run traces.
     """
     reads = [WorkflowRead.model_validate(w) for w in workflows]
+    # Run advancement is independent of the agents: a pipeline made only of
+    # approval checkpoints still has progress to report, so resolve it before the
+    # agent-only shortcut below.
+    run_progress = await _latest_run_progress(session, workflows)
+    for read in reads:
+        read.run_progress = run_progress.get(read.id)
     agent_ids = [s.agent_id for w in workflows for s in w.steps if s.agent_id is not None]
     if not agent_ids:
         return reads

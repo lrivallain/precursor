@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Settings as SettingsIcon, Workflow as WorkflowIcon } from "lucide-react";
 import { api } from "../lib/api";
 import type { Workflow } from "../lib/types";
@@ -45,21 +45,41 @@ export function WorkflowsSection({
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
+  const loadedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    if (!enabled) return;
-    setLoading(true);
-    try {
-      const items = await api.workflows.list();
-      setWorkflows(items);
-    } finally {
-      setLoading(false);
-    }
-  }, [enabled]);
+  // `silent` refetches without flipping the spinner — a background refresh must
+  // not blank the gallery the user is watching. Only the first load has nothing
+  // to show yet.
+  const load = useCallback(
+    async (silent = false) => {
+      if (!enabled) return;
+      if (!silent) setLoading(true);
+      try {
+        const items = await api.workflows.list();
+        setWorkflows(items);
+        loadedRef.current = true;
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [enabled],
+  );
 
   useEffect(() => {
-    void load();
+    void load(loadedRef.current);
   }, [load, reloadKey]);
+
+  // `workflow.changed` only fires when the pipeline *advances a step*, so a step
+  // that runs for minutes leaves every gallery bar frozen. Poll while a run is
+  // actually executing to pick up the in-step agent progress the bars blend in.
+  // Paused and awaiting-approval runs make no progress of their own — SSE
+  // already covers the moment they move — so an otherwise idle gallery is free.
+  const anyRunning = workflows.some((w) => w.status === "running");
+  useEffect(() => {
+    if (!enabled || !anyRunning || mode.kind !== "list") return;
+    const t = window.setInterval(() => void load(true), 2000);
+    return () => window.clearInterval(t);
+  }, [enabled, anyRunning, mode.kind, load]);
 
   // Route-driven active workflow: sync the deep-link id into local mode.
   useEffect(() => {

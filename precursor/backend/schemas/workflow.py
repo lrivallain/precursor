@@ -188,6 +188,35 @@ class WorkflowRunRead(BaseModel):
     step_runs: list[WorkflowRunStepRead] = []
 
 
+class WorkflowRunProgress(BaseModel):
+    """How far a workflow's **newest** run has advanced.
+
+    ``WorkflowRead`` carries the definition, not the trace, so a gallery card
+    would otherwise have to infer progress from each step agent's *current*
+    status — which survives between runs and reads as done the instant a fresh
+    one starts. This is the same measure the detail board's run header shows,
+    resolved server-side so the gallery can follow several runs at once without
+    fetching a run per card.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    run_id: int
+    run_number: int
+    status: str
+    # Distinct positions that reached a terminal, non-failed state, over the
+    # workflow's step count. Gate loop-backs (repeated positions) collapse and
+    # manual replays never count, so this measures pipeline advancement rather
+    # than attempts.
+    done: int = 0
+    total: int = 0
+    # Position of the attempt currently in flight, so the bar can name the step
+    # the run is sitting on. Null once nothing is running.
+    current_position: int | None = None
+    started_at: UtcDateTime | None = None
+    finished_at: UtcDateTime | None = None
+
+
 class WorkflowSummary(BaseModel):
     """Just enough of a workflow to name and link it from another surface."""
 
@@ -241,6 +270,8 @@ class WorkflowRead(BaseModel):
     created_at: UtcDateTime
     updated_at: UtcDateTime
     steps: list[WorkflowStepRead] = []
+    # Advancement of the newest run; null until the workflow has ever run.
+    run_progress: WorkflowRunProgress | None = None
 
 
 # --- Requests --------------------------------------------------------------

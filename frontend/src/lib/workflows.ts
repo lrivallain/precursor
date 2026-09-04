@@ -137,11 +137,86 @@ export function workflowIsActive(workflow: Workflow): boolean {
   );
 }
 
-// How many steps have completed (for the gallery card progress bar).
-export function stepProgress(workflow: Workflow): { done: number; total: number } {
+// How many steps have completed, inferred from the step agents alone. Only a
+// fallback for a workflow that has never run — `workflowProgress` prefers the
+// run's own trace, which can't go stale between runs.
+function stepProgress(workflow: Workflow): { done: number; total: number } {
   const total = workflow.steps.length;
   const done = workflow.steps.filter((s) => stepState(workflow, s) === "done").length;
   return { done, total };
+}
+
+/** A gallery-card progress readout: how far the newest run got, and how to draw it. */
+export interface WorkflowProgressView {
+  done: number;
+  total: number;
+  /** 0–100, including the in-flight step's own fraction so the bar keeps moving. */
+  pct: number;
+  /** Tailwind fill colour for the bar, keyed on how the run is going. */
+  bar: string;
+  /** Short caption: the step being worked, else "n of m steps". */
+  label: string;
+  /** The run is still moving, so the bar should read as live. */
+  live: boolean;
+}
+
+/**
+ * Progress of a workflow as the gallery should draw it.
+ *
+ * Prefers the server-resolved `run_progress` — the same measure the detail
+ * board's run header uses, so a card and its board can't disagree. Falls back to
+ * the step-agent heuristic for a workflow that has never run (there is no trace
+ * to read, and a draft's bar is simply empty). Returns null for a workflow with
+ * no steps: its card reads "empty", and a past run's shape would only misdescribe
+ * the definition that is actually there now.
+ */
+export function workflowProgress(workflow: Workflow): WorkflowProgressView | null {
+  if (workflow.steps.length === 0) return null;
+  const run = workflow.run_progress;
+  const fallback = stepProgress(workflow);
+  const total = run?.total || fallback.total;
+  if (total <= 0) return null;
+  const done = Math.min(run ? run.done : fallback.done, total);
+  const status = run?.status ?? workflow.status;
+  const live = status === "running" || status === "awaiting_approval" || status === "paused";
+
+  // A step can run for minutes, so whole steps alone leave the bar frozen — the
+  // one thing a "watch several runs at once" view mustn't do. Blend in the
+  // current step's own agent progress, which is never one of the done positions.
+  const current =
+    run?.current_position != null
+      ? workflow.steps.find((s) => s.position === run.current_position) ?? null
+      : null;
+  const partial =
+    live && current?.agent?.progress != null
+      ? Math.min(100, Math.max(0, current.agent.progress)) / 100
+      : 0;
+  const pct = Math.min(100, Math.round(((done + partial) / total) * 100));
+
+  return {
+    done,
+    total,
+    pct,
+    bar:
+      status === "failed"
+        ? "bg-red-500"
+        : status === "cancelled"
+          ? "bg-muted"
+          : status === "completed"
+            ? "bg-emerald-500"
+            : status === "awaiting_approval"
+              ? "bg-violet-500"
+              : status === "paused"
+                ? "bg-amber-500"
+                : "bg-sky-500",
+    label:
+      status === "running" && current
+        ? stepLabel(current)
+        : status === "awaiting_approval" && current
+          ? `Needs you · ${stepLabel(current)}`
+          : `${done} of ${total} steps`,
+    live,
+  };
 }
 
 // A step's display label — its override name, else the agent title, else a

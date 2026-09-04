@@ -769,6 +769,25 @@ export interface WorkflowRun {
   step_runs: WorkflowRunStep[];
 }
 
+/**
+ * How far a workflow's newest run has advanced — served with the workflow so
+ * the gallery can follow several live runs at once without fetching a run per
+ * card. Null until the workflow has ever run. Mirrors the backend
+ * `WorkflowRunProgress`.
+ */
+export interface WorkflowRunProgress {
+  run_id: number;
+  run_number: number;
+  status: string;
+  /** Distinct positions that resolved; gate loop-backs and replays don't count. */
+  done: number;
+  total: number;
+  /** Position the run is sitting on right now; null once nothing is running. */
+  current_position: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 /** Just enough of a workflow to name and link it from another surface. */
 export interface WorkflowSummary {
   id: number;
@@ -816,6 +835,8 @@ export interface Workflow {
   created_at: string;
   updated_at: string;
   steps: WorkflowStep[];
+  /** Advancement of the newest run; null until the workflow has ever run. */
+  run_progress: WorkflowRunProgress | null;
 }
 
 // One step in a create/replace payload. Either reference an existing agent by

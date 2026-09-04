@@ -16,8 +16,8 @@ import {
   WORKFLOW_STATUS_LABEL,
   scheduleSummary,
   stepLabel,
-  stepProgress,
   workflowIsActive,
+  workflowProgress,
   workflowRelativeTime,
 } from "../lib/workflows";
 import { useState } from "react";
@@ -108,7 +108,8 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {workflows.map((wf) => {
-              const { done, total } = stepProgress(wf);
+              const progress = workflowProgress(wf);
+              const total = wf.steps.length;
               const schedule = scheduleSummary(wf);
               const active = workflowIsActive(wf);
               // The holographic frame draws its own 2px ring at the card's edge,
@@ -143,7 +144,7 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
                     <span
                       className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${WORKFLOW_STATUS_BADGE[wf.status]}`}
                     >
-                      {total > 0 ? `${done}/${total}` : "empty"}
+                      {progress ? `${progress.done}/${progress.total}` : "empty"}
                     </span>
                   </div>
 
@@ -167,6 +168,31 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
                       {total > 4 && (
                         <span className="text-[10px] text-muted">+{total - 4}</span>
                       )}
+                    </div>
+                  )}
+
+                  {/* Live progress bar — only while a run is in flight, so the
+                      gallery can be watched as a dashboard of several at once.
+                      A resting card keeps its step trail and nothing more. */}
+                  {progress && progress.live && (
+                    <div className="mt-3">
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted">
+                        <span className="truncate">{progress.label}</span>
+                        <span className="shrink-0 tabular-nums">{progress.pct}%</span>
+                      </div>
+                      <div
+                        className="h-1.5 w-full overflow-hidden rounded-full bg-border/60"
+                        role="progressbar"
+                        aria-valuenow={progress.pct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${wf.name} progress`}
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${progress.bar}`}
+                          style={{ width: `${progress.pct}%` }}
+                        />
+                      </div>
                     </div>
                   )}
 
