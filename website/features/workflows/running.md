@@ -47,6 +47,26 @@ The brief is stored on the run and shows on the run header, so a past run is
 self-explanatory rather than a mystery result. Scheduled runs carry no brief by
 design; a webhook may supply one by posting a body.
 
+## Watching several pipelines at once
+
+The **Workflows gallery** is the home page for everything in flight. A card for a
+workflow that is **running**, **paused** or **awaiting approval** grows a
+**progress bar** under its step trail: how far the run has got, which step it is
+sitting on, and the percentage complete.
+
+The bar reads the run's own trace rather than guessing from the step agents'
+current statuses — so it measures how far *this* run advanced, not what those
+agents happened to finish last time they were used. Repeated attempts collapse
+into their position, so a [gate](/features/workflows/building#gates-and-loop-back)
+looping back doesn't rewind the bar or double-count, and a
+[replay](#replaying-a-single-step) — which advances nothing — never moves it. The
+in-flight step's own progress is blended in, so a stage that takes minutes still
+shows movement instead of a frozen bar, and the fill takes the run's colour:
+sky while running, amber paused, violet when it needs you.
+
+Cards refresh as their runs advance, and resting workflows keep just their step
+trail — so the gallery reads as a dashboard of what is actually moving.
+
 ## The detail board
 
 The workflow **detail board** shows the sequence as a horizontal strip of step

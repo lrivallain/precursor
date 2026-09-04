@@ -11,6 +11,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **The Workflows gallery shows live progress bars.** Following more than one
+  running pipeline meant opening each workflow's board in turn: the gallery card
+  offered a `2/5` badge derived from its step agents' *current* statuses — which
+  survive between runs, so a step that finished last time read as done the
+  instant a fresh run started.
+
+  A card for a workflow that is **running**, **paused** or **awaiting approval**
+  now carries a **progress bar** showing how far the run has got, which step it
+  is on, and the percentage complete — so the gallery reads as a dashboard of
+  everything in flight. It is fed by a new `run_progress` field on the workflow
+  payload, resolved from the newest run's own trace: repeated attempts collapse
+  into their position, so a gate loop-back neither rewinds the bar nor
+  double-counts, and a replay (which advances nothing) never moves it. The
+  in-flight step's own progress is blended in so a long stage still shows
+  movement, and the fill takes the run's colour. Resting cards are unchanged.
+
 - **Precursor is usable on a phone.** The shell assumed a permanent sidebar
   beside the content, so on a 390px screen the sidebar and its rail took ~330px
   and left a sliver for the conversation — the app was effectively unusable on

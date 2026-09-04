@@ -58,6 +58,12 @@ Workflows live under `/api/workflows`:
 Lifecycle changes broadcast a `workflow.changed` [SSE event](/reference/api#real-time-events)
 so the dashboard live-updates without polling.
 
+Every workflow read carries a `run_progress` object — the newest run's `done` /
+`total` positions, its `status`, and the `current_position` in flight (null until
+the workflow has ever run). That's what lets the gallery
+[draw a progress bar per card](/features/workflows/running#watching-several-pipelines-at-once)
+without loading a run trace for each one.
+
 ## MCP tools
 
 An agent running a step can read and write its pipeline's
