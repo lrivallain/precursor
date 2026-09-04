@@ -184,3 +184,117 @@ export const eventBus = {
     };
   },
 };
+
+/**
+ * Minimum gap between two runs of a burst-coalesced refresh.
+ *
+ * Short enough that a live view still reads as real-time, long enough that a
+ * token-cadence event stream collapses into a handful of refreshes per second
+ * instead of one per event.
+ */
+export const REFRESH_COALESCE_MS = 400;
+
+/** A coalesced refresh trigger: call it as often as you like. */
+export type CoalescedRunner = {
+  (): void;
+  /** Drop any pending trailing run (call from effect cleanup). */
+  cancel(): void;
+};
+
+/**
+ * Wrap a refetch so a burst of events costs at most one request per window.
+ *
+ * An agent turn emits SDK events at token cadence, and every `agent.changed`
+ * listener answers with a full refetch (the roster, the run rail, the timeline,
+ * the artifact list…). Uncoalesced, one turn fans a few hundred signals into
+ * thousands of overlapping requests: the browser starts rejecting them with
+ * `ERR_INSUFFICIENT_RESOURCES`, memory climbs with responses nobody reads, and
+ * the UI flickers as each late response overwrites the last.
+ *
+ * Runs on the leading edge so the first signal lands immediately, then admits at
+ * most one run per `windowMs` and never overlaps an in-flight one — a burst
+ * always ends with exactly one trailing run, so the final state is never stale.
+ */
+export function coalesce(
+  handler: () => void | Promise<void>,
+  windowMs: number = REFRESH_COALESCE_MS,
+): CoalescedRunner {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inFlight = false;
+  let queued = false;
+  let lastRun = 0;
+  let cancelled = false;
+
+  const run = (): void => {
+    if (cancelled) return;
+    queued = false;
+    inFlight = true;
+    lastRun = Date.now();
+    void Promise.resolve()
+      .then(handler)
+      .catch(() => {
+        // Callers own their own error handling; a rejection must not wedge the
+        // runner in the in-flight state.
+      })
+      .then(() => {
+        inFlight = false;
+        // Measure the window from completion, so a slow endpoint backs itself
+        // off instead of queueing another request the moment it answers.
+        lastRun = Date.now();
+        if (queued) schedule();
+      });
+  };
+
+  const schedule = (): void => {
+    if (cancelled || inFlight || timer != null) return;
+    const wait = Math.max(0, windowMs - (Date.now() - lastRun));
+    if (wait === 0) {
+      run();
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      run();
+    }, wait);
+  };
+
+  const trigger = (() => {
+    queued = true;
+    schedule();
+  }) as CoalescedRunner;
+
+  trigger.cancel = () => {
+    cancelled = true;
+    queued = false;
+    if (timer != null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  return trigger;
+}
+
+/**
+ * Subscribe to `agent.changed` with burst coalescing (see {@link coalesce}).
+ *
+ * `agentId` narrows to one session; a broadcast (no `agent_session_id`) always
+ * matches, mirroring how the raw handlers treated an unaddressed signal as
+ * "something moved, refresh". Pass `null` to react to every agent.
+ */
+export function subscribeAgentChanged(
+  agentId: number | null,
+  handler: () => void | Promise<void>,
+  windowMs: number = REFRESH_COALESCE_MS,
+): () => void {
+  const trigger = coalesce(handler, windowMs);
+  const off = eventBus.subscribe((ev) => {
+    if (ev.type !== "agent.changed") return;
+    if (agentId != null && ev.agent_session_id != null && ev.agent_session_id !== agentId) return;
+    trigger();
+  });
+  return () => {
+    off();
+    trigger.cancel();
+  };
+}

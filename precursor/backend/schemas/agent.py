@@ -314,6 +314,30 @@ class AgentEvent(BaseModel):
     agent_run_id: int | None = None
 
 
+class AgentEventPage(BaseModel):
+    """One incremental read of an agent's transcript.
+
+    The archived timeline is append-only, so a live reader only needs the events
+    it hasn't seen: ``events`` is everything after the caller's ``after`` cursor,
+    and ``cursor`` is what to send back next time. Without this the timeline
+    re-downloaded its whole history on every ``agent.changed`` signal — a cost
+    that grows with the run while being paid at token cadence.
+
+    ``pending`` is the volatile tail of unresolved approval cards. Those are
+    never archived and vanish as approvals are answered, so they sit outside the
+    cursor and are replaced wholesale on every read rather than appended.
+
+    ``reset`` means the cursor no longer addresses this transcript — it was
+    cleared, pruned by retention, or belongs to a different run — and ``events``
+    is therefore a complete replacement rather than a delta.
+    """
+
+    events: list[AgentEvent] = []
+    pending: list[AgentEvent] = []
+    cursor: int = 0
+    reset: bool = False
+
+
 class AgentModelInfo(BaseModel):
     """A model available to the agents runtime (for the default-model picker)."""
 

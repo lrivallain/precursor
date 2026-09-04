@@ -268,6 +268,35 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **A running agent flooded the browser with refetches.** Every SDK event an
+  agent emits publishes an `agent.changed` signal, and five listeners answered
+  each one with an immediate refetch: the roster, the run rail, the artifact
+  list, the orchestration panel and — the expensive one — the agent's *entire*
+  transcript. A turn signalling at token cadence therefore fanned into a few
+  hundred overlapping requests per second with no backpressure. The tab
+  flickered as each late response overwrote the last, memory climbed with
+  payloads nobody read, and the browser eventually rejected the pile-up outright
+  with `net::ERR_INSUFFICIENT_RESOURCES` — taking unrelated requests down with
+  it, so the agent view could no longer load at all.
+
+  Those listeners now share a burst-coalescing helper. The first signal still
+  refreshes immediately, so a live agent reads as real-time, but the rest of a
+  burst collapses into a **single trailing refresh** — and a listener never has
+  more than **one request in flight**, with the next window measured from the
+  previous response, so a slow endpoint backs itself off instead of queueing
+  another fetch the moment it answers. A burst always ends with one final
+  refresh, so the settled view is never stale.
+
+  The transcript itself is now read **incrementally**. `GET /api/agents/{id}/events`
+  used to return the agent's entire history on every read, so the cost of a
+  refresh grew with the run while being paid at token cadence — the single
+  biggest contributor to the traffic. It now answers with a page: the events
+  after an `?after=` cursor, the volatile approval cards separately (they aren't
+  archived and vanish once answered), and a `reset` flag for when the cursor no
+  longer addresses that transcript — cleared, pruned by retention, or taken
+  against a different run — so a stale cursor re-syncs instead of silently
+  skipping steps. A live timeline now transfers only the steps it hasn't seen.
+
 - **A fresh install couldn't chat until you picked a model.** The factory
   default chat model was the hardcoded literal `claude-sonnet-4.5`, which GitHub
   Copilot has since retired. Nothing validated it, so `resolve_llm_model` handed

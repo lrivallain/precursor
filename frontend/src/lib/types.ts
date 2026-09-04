@@ -460,6 +460,22 @@ export interface AgentEvent {
   agent_run_id: number | null;
 }
 
+// One incremental read of an agent's transcript (mirrors AgentEventPage).
+// The archived timeline is append-only, so a live view sends back the previous
+// `cursor` as `after` and receives only what it hasn't seen.
+export interface AgentEventPage {
+  // The delta after the requested cursor — or the whole transcript when `reset`.
+  events: AgentEvent[];
+  // Unresolved approval cards. Never archived and they vanish once answered, so
+  // they sit outside the cursor and replace the previous tail on every read.
+  pending: AgentEvent[];
+  // Send this back as `after` on the next read.
+  cursor: number;
+  // The cursor no longer addresses this transcript (cleared, pruned, or taken
+  // against another run): replace what you hold instead of appending to it.
+  reset: boolean;
+}
+
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
 
 // A model exposed by the agents runtime, for the default-model picker.

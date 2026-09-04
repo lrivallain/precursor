@@ -62,7 +62,7 @@ from precursor.backend.models import (
     MessageRole,
     Topic,
 )
-from precursor.backend.schemas.agent import AgentEvent
+from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
 from precursor.backend.services.agent_state import build_state_index_prompt
 from precursor.backend.services.agents import fleet, runtime
 from precursor.backend.services.agents.event_normalizer import normalize_event
@@ -2065,10 +2065,16 @@ class AgentManager:
             await self._teardown_run(run_id)
         return cleared
 
-    async def get_events(
+    async def _timeline(
         self, agent_id: int, *, agent_run_id: int | None = None
-    ) -> list[AgentEvent]:
-        """Return the normalised event history for the workflow timeline.
+    ) -> tuple[list[AgentEvent], list[AgentEvent]]:
+        """Split the transcript into its stable prefix and its volatile tail.
+
+        The archived history is append-only, which is what lets a live reader ask
+        for only what it hasn't seen (:meth:`get_events_page`). Unresolved
+        permission cards are *not* archived — they appear and vanish as approvals
+        are answered — so they are returned separately instead of being counted
+        into a cursor they would immediately invalidate.
 
         The archive is per *agent* — the transcript the user reads spans every
         execution — but the live fallback and the pending-approval cards belong
@@ -2099,7 +2105,7 @@ class AgentManager:
             if live is None:
                 loaded = await self._load_run(run.id) if run is not None else None
                 if loaded is None or not loaded[0].copilot_session_id:
-                    return []
+                    return [], []
                 live = await self._ensure_live(loaded[1], loaded[0])
             try:
                 raw = await live.sdk_session.get_events()
@@ -2107,20 +2113,52 @@ class AgentManager:
                 logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
                 raw = []
             events = [normalize_event(ev) for ev in raw or []]
-        # Append any unresolved permission requests as inline workflow steps so
-        # the approval card renders in-place (with details of what's requested)
+        # Unresolved permission requests render as inline workflow steps so the
+        # approval card appears in-place (with details of what's requested)
         # rather than floating detached from the timeline.
-        if live is not None:
-            for info in live.pending_info.values():
-                events.append(
-                    AgentEvent(
-                        kind="permission_request",
-                        text=info.get("title"),
-                        request_id=info.get("request_id"),
-                        data=info,
-                    )
+        pending = (
+            [
+                AgentEvent(
+                    kind="permission_request",
+                    text=info.get("title"),
+                    request_id=info.get("request_id"),
+                    data=info,
                 )
-        return events
+                for info in live.pending_info.values()
+            ]
+            if live is not None
+            else []
+        )
+        return events, pending
+
+    async def get_events(
+        self, agent_id: int, *, agent_run_id: int | None = None
+    ) -> list[AgentEvent]:
+        """The whole transcript: stable history followed by any parked approvals.
+
+        See :meth:`_timeline` for how ``agent_run_id`` scopes the read.
+        """
+        stable, pending = await self._timeline(agent_id, agent_run_id=agent_run_id)
+        return [*stable, *pending]
+
+    async def get_events_page(
+        self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
+    ) -> AgentEventPage:
+        """The transcript from ``after`` onward, for an incremental live reader.
+
+        A cursor past the end no longer addresses this transcript — it was
+        cleared, pruned by retention, or was taken against a different run — so
+        answer with the whole thing and flag it as a replacement rather than
+        silently skipping the events the caller is missing.
+        """
+        stable, pending = await self._timeline(agent_id, agent_run_id=agent_run_id)
+        reset = after < 0 or after > len(stable)
+        return AgentEventPage(
+            events=stable[0 if reset else after :],
+            pending=pending,
+            cursor=len(stable),
+            reset=reset,
+        )
 
     async def _teardown_run(self, run_id: int, *, forget: bool = False) -> None:
         """Disconnect a single run's live SDK session and drop its runtime state.

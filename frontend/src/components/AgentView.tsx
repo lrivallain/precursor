@@ -33,7 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
-import { eventBus } from "../lib/events";
+import { subscribeAgentChanged } from "../lib/events";
 import { mcpAuthStore } from "../lib/mcpAuth";
 import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
@@ -360,25 +360,26 @@ function AgentOrchestrationSection({
   const [viewing, setViewing] = useState<AgentArtifact | null>(null);
   const [expandedState, setExpandedState] = useState<string | null>(null);
 
-  const loadOrch = useCallback(() => {
-    void api.agents.listArtifacts(agent.id).then(setArtifacts).catch(() => setArtifacts([]));
-    void api.agents.listTriggers(agent.id).then(setTriggers).catch(() => setTriggers([]));
-    void api.agents.listState(agent.id).then(setState).catch(() => setState([]));
-  }, [agent.id]);
+  const loadOrch = useCallback(
+    (): Promise<void> =>
+      // Awaited as a unit so the coalesced refresh treats all three as one
+      // in-flight round-trip and won't start another until they land.
+      Promise.all([
+        api.agents.listArtifacts(agent.id).then(setArtifacts).catch(() => setArtifacts([])),
+        api.agents.listTriggers(agent.id).then(setTriggers).catch(() => setTriggers([])),
+        api.agents.listState(agent.id).then(setState).catch(() => setState([])),
+      ]).then(() => undefined),
+    [agent.id],
+  );
 
   useEffect(() => {
-    loadOrch();
+    void loadOrch();
     // Refresh live: mid-mission ARTIFACT directives publish to the blackboard as
     // they're emitted, and a completed turn publishes its result — the sidebar
     // must reflect those without waiting for a manual reload (mirrors the
-    // in-chat AgentDeliverables refresh).
-    const off = eventBus.subscribe((ev) => {
-      if (ev.type !== "agent.changed") return;
-      if (ev.agent_session_id == null || ev.agent_session_id === agent.id) {
-        loadOrch();
-      }
-    });
-    return off;
+    // in-chat AgentDeliverables refresh). Coalesced: this is three requests per
+    // signal, and a running turn signals at token cadence.
+    return subscribeAgentChanged(agent.id, loadOrch);
   }, [loadOrch, agent.id]);
 
   // Auto-open an artifact from a `?artifact={id}` permalink once the list has
@@ -960,8 +961,8 @@ function AgentDeliverables({ agent }: { agent: AgentSession }) {
 
   useEffect(() => {
     let alive = true;
-    const load = (): void =>
-      void api.agents
+    const load = (): Promise<void> =>
+      api.agents
         .listArtifacts(agent.id)
         .then((rows) => {
           if (alive) setArtifacts(rows);
@@ -969,13 +970,10 @@ function AgentDeliverables({ agent }: { agent: AgentSession }) {
         .catch(() => {
           if (alive) setArtifacts([]);
         });
-    load();
+    void load();
     // Refresh on agent.changed: a completed turn publishes its result and
     // mid-mission ARTIFACT directives publish as they're emitted.
-    const off = eventBus.subscribe((ev) => {
-      if (ev.type !== "agent.changed") return;
-      if (ev.agent_session_id == null || ev.agent_session_id === agent.id) load();
-    });
+    const off = subscribeAgentChanged(agent.id, load);
     return () => {
       alive = false;
       off();
@@ -1954,11 +1952,39 @@ export function AgentView({
     );
   }, [segmentCount]);
 
+  // Incremental transcript state. `archived` is the append-only history the
+  // server has confirmed, `cursor` is how much of it we hold; a refresh asks
+  // only for what arrived since. Refs rather than state because a refresh reads
+  // them without wanting to be re-subscribed when they move.
+  const archivedRef = useRef<AgentEvent[]>([]);
+  const cursorRef = useRef(0);
+
   const loadEvents = useCallback(
-    async (id: number, agentRunId: number | null = null): Promise<void> => {
+    async (
+      id: number,
+      agentRunId: number | null = null,
+      { fresh = false }: { fresh?: boolean } = {},
+    ): Promise<void> => {
       try {
-        setEvents(await api.agents.getEvents(id, agentRunId));
+        const page = await api.agents.getEvents(id, agentRunId, fresh ? 0 : cursorRef.current);
+        // `reset` means our cursor no longer addresses this transcript (cleared,
+        // pruned, or taken against another run) and the payload is a whole
+        // replacement. Otherwise append — and keep the same array identity when
+        // the delta is empty so an unchanged timeline doesn't re-render.
+        const archived =
+          page.reset || fresh
+            ? page.events
+            : page.events.length > 0
+              ? [...archivedRef.current, ...page.events]
+              : archivedRef.current;
+        archivedRef.current = archived;
+        cursorRef.current = page.cursor;
+        // Parked approval cards live outside the cursor and are replaced whole,
+        // so they're re-appended on every read rather than accumulated.
+        setEvents(page.pending.length > 0 ? [...archived, ...page.pending] : archived);
       } catch {
+        archivedRef.current = [];
+        cursorRef.current = 0;
         setEvents([]);
       }
     },
@@ -1997,19 +2023,15 @@ export function AgentView({
       setRunsState({ agentId: null, items: [] });
       return;
     }
-    const load = () => {
-      void api.agents
+    const load = (): Promise<void> =>
+      api.agents
         .runs(agentId, { limit: 12 })
         .then((items) => setRunsState({ agentId, items }))
         .catch(() => setRunsState({ agentId, items: [] }));
-    };
-    load();
+    void load();
     // A run opens and closes as the agent works, so the rail — and the default
     // filter riding on it — follow the live stream rather than a manual reload.
-    return eventBus.subscribe((ev) => {
-      if (ev.type !== "agent.changed") return;
-      if (ev.agent_session_id == null || ev.agent_session_id === agentId) load();
-    });
+    return subscribeAgentChanged(agentId, load);
   }, [agentId]);
 
   const runs = runsState.agentId === agentId ? runsState.items : [];
@@ -2025,16 +2047,17 @@ export function AgentView({
     // switch *into* its own freshly created session, cleared later when it lands).
     setPending((p) => (p && p.agentId !== agentId ? null : p));
     if (agentId == null) {
+      archivedRef.current = [];
+      cursorRef.current = 0;
       setEvents([]);
       return;
     }
-    void loadEvents(agentId, runFilter);
-    return eventBus.subscribe((ev) => {
-      if (ev.type !== "agent.changed") return;
-      if (ev.agent_session_id == null || ev.agent_session_id === agentId) {
-        void loadEvents(agentId, runFilter);
-      }
-    });
+    // A different agent or run filter is a different sequence, so a carried-over
+    // cursor would address the wrong transcript: start this one from scratch.
+    void loadEvents(agentId, runFilter, { fresh: true });
+    // Thereafter refresh incrementally — coalesced so a burst costs one read,
+    // and cursored so that read carries only the steps since the last one.
+    return subscribeAgentChanged(agentId, () => loadEvents(agentId, runFilter));
   }, [agentId, loadEvents, runFilter]);
 
   // A pinned run belongs to the agent it was chosen on — switching agents must
