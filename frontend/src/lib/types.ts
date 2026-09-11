@@ -1017,6 +1017,36 @@ export interface Message {
   is_error?: boolean;
 }
 
+/**
+ * The editable status brief shown above a topic's transcript. Mirrors
+ * `schemas/topic_summary.py`. A topic has none until one is generated or an
+ * item is added to it, so the API resolves to `null` rather than 404.
+ */
+export interface TopicSummary {
+  content: string;
+  visible: boolean;
+  user_edited: boolean;
+  model: string | null;
+  generated_at: string | null;
+  updated_at: string | null;
+  suggestion: TopicSummarySuggestion | null;
+}
+
+/** A model proposal parked for per-change review on a user-edited summary. */
+export interface TopicSummarySuggestion {
+  content: string;
+  model: string | null;
+  generated_at: string | null;
+  hunks: TopicSummaryHunk[];
+}
+
+/** One contiguous change (removed lines → added lines) in a proposal. */
+export interface TopicSummaryHunk {
+  index: number;
+  removed: string[];
+  added: string[];
+}
+
 export interface NotesDraft {
   text: string | null;
   updated_at: string | null;

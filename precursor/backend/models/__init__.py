@@ -47,6 +47,7 @@ from precursor.backend.models.settings import AppSetting
 from precursor.backend.models.skill import Skill
 from precursor.backend.models.topic import Topic
 from precursor.backend.models.topic_schedule import TopicSchedule
+from precursor.backend.models.topic_summary import TopicSummary
 from precursor.backend.models.usage import UsageRecord
 from precursor.backend.models.workflow import (
     WORKFLOW_STATUSES,
@@ -107,6 +108,7 @@ __all__ = [
     "Skill",
     "Topic",
     "TopicSchedule",
+    "TopicSummary",
     "UsageRecord",
     "Workflow",
     "WorkflowRun",

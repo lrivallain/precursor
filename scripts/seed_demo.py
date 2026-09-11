@@ -49,6 +49,7 @@ from precursor.backend.models.role import Role  # noqa: E402
 from precursor.backend.models.skill import Skill  # noqa: E402
 from precursor.backend.models.topic import Topic  # noqa: E402
 from precursor.backend.models.topic_schedule import TopicSchedule  # noqa: E402
+from precursor.backend.models.topic_summary import TopicSummary  # noqa: E402
 from precursor.backend.models.workflow import (  # noqa: E402
     Workflow,
     WorkflowRun,
@@ -185,6 +186,46 @@ async def seed() -> None:
                 description="Breaking changes that need a callout in the notes.",
                 parent_id=t_release.id,
                 collection_id=platform.id,
+            )
+        )
+
+        # ---------------- an edited topic summary awaiting review ----------------
+        # The release topic carries a hand-edited brief plus a proposal, so the
+        # screenshot shows the per-change review the panel is built around.
+        s.add(
+            TopicSummary(
+                topic_id=t_release.id,
+                visible=True,
+                user_edited=True,
+                model="gpt-4.1",
+                generated_at=ago(days=1),
+                content=(
+                    "## Status\n"
+                    "- Release branch cut; QA is running the regression pass.\n"
+                    "- Migration notes still missing the storage callout.\n\n"
+                    "## Actions\n"
+                    "- [ ] Ask @dana for the signing certificate\n"
+                    "- [ ] Write the storage migration callout\n"
+                    "- [x] Tag rc2\n\n"
+                    "## Key information\n"
+                    "- Ship window closes Friday 18:00 CET\n"
+                    "- Rollback is `widget-platform@2026.7.3`"
+                ),
+                pending_model="gpt-4.1",
+                pending_generated_at=NOW,
+                pending_content=(
+                    "## Status\n"
+                    "- Release branch cut; QA finished the regression pass with 2 "
+                    "known issues.\n"
+                    "- Migration notes still missing the storage callout.\n\n"
+                    "## Actions\n"
+                    "- [x] Ask @dana for the signing certificate\n"
+                    "- [ ] Write the storage migration callout\n"
+                    "- [x] Tag rc2\n\n"
+                    "## Key information\n"
+                    "- Ship window closes Friday 18:00 CET\n"
+                    "- Rollback is `widget-platform@2026.7.3`"
+                ),
             )
         )
 

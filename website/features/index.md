@@ -35,6 +35,9 @@ launcher sit together at the top of the rail, above the sections.
 
 These work across the sections above:
 
+- [**Topic summary**](/features/topic-summary) — an editable status brief above
+  a topic's transcript: status, open actions and key information, refreshed on
+  request and merged change by change when you have edited it.
 - [**Skills, roles & memory**](/features/skills-memory) — reusable `/slash`
   prompt presets (stored as `SKILL.md` files), named assistant personas,
   and long-term memory injected into every conversation.

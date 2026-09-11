@@ -26,7 +26,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 from fastapi import HTTPException
@@ -72,6 +72,11 @@ BUILTIN_TOPIC_COMMANDS: frozenset[str] = frozenset(
         "memory-store",
         "memory-list",
         "memory-update",
+        "show-summary",
+        "hide-summary",
+        "update-summary",
+        "todo-summary",
+        "important-summary",
     }
 )
 
@@ -808,6 +813,61 @@ async def _handle_memory_list(topic_id: int, argument: str) -> None:
     await _record(topic_id, listing)
 
 
+async def _handle_update_summary(topic_id: int, argument: str) -> None:
+    from precursor.backend.routers.topic_summary import generate_summary
+    from precursor.backend.schemas import TopicSummaryGenerate
+
+    async with SessionLocal() as session:
+        summary = await generate_summary(
+            topic_id, TopicSummaryGenerate(instruction=argument or None), session
+        )
+    if summary.suggestion is not None:
+        await _record(
+            topic_id,
+            "Summary refresh ready: open the topic to accept or refuse the "
+            "suggested changes to your edited summary.",
+        )
+
+
+async def _set_summary_visible(topic_id: int, visible: bool) -> None:
+    from precursor.backend.routers.topic_summary import set_visibility
+    from precursor.backend.schemas import TopicSummaryVisibility
+
+    async with SessionLocal() as session:
+        await set_visibility(topic_id, TopicSummaryVisibility(visible=visible), session)
+
+
+async def _handle_show_summary(topic_id: int, argument: str) -> None:
+    await _set_summary_visible(topic_id, True)
+
+
+async def _handle_hide_summary(topic_id: int, argument: str) -> None:
+    await _set_summary_visible(topic_id, False)
+
+
+async def _add_summary_item(
+    topic_id: int, kind: Literal["todo", "important"], text: str, usage: str
+) -> None:
+    from precursor.backend.routers.topic_summary import add_item
+    from precursor.backend.schemas import TopicSummaryItem
+
+    if not text.strip():
+        await _record(topic_id, usage)
+        return
+    async with SessionLocal() as session:
+        await add_item(topic_id, TopicSummaryItem(kind=kind, text=text.strip()), session)
+
+
+async def _handle_todo_summary(topic_id: int, argument: str) -> None:
+    await _add_summary_item(topic_id, "todo", argument, "Usage: `/todo-summary <action>`")
+
+
+async def _handle_important_summary(topic_id: int, argument: str) -> None:
+    await _add_summary_item(
+        topic_id, "important", argument, "Usage: `/important-summary <information>`"
+    )
+
+
 _BUILTIN_HANDLERS = {
     "agent": _handle_agent,
     "gh-sync": _handle_gh_sync,
@@ -829,6 +889,11 @@ _BUILTIN_HANDLERS = {
     "memory-store": _handle_memory_store,
     "memory-list": _handle_memory_list,
     "memory-update": _handle_memory_update,
+    "show-summary": _handle_show_summary,
+    "hide-summary": _handle_hide_summary,
+    "update-summary": _handle_update_summary,
+    "todo-summary": _handle_todo_summary,
+    "important-summary": _handle_important_summary,
 }
 
 

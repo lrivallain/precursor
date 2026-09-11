@@ -102,6 +102,7 @@ import type {
   CompactResult,
   Topic,
   TopicNode,
+  TopicSummary,
   TransferImportResult,
   TransferPreview,
   TransferResolution,
@@ -1351,6 +1352,45 @@ export const api = {
       request<SearchResponse>(
         `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
       ),
+  },
+
+  topicSummary: {
+    // The topic's editable status brief (issue #316). Resolves to null while the
+    // topic has never had one — generation is always user-initiated.
+    get: (topicId: number) =>
+      request<TopicSummary | null>(`/api/topics/${topicId}/topic-summary`),
+    save: (topicId: number, content: string, visible?: boolean) =>
+      request<TopicSummary>(`/api/topics/${topicId}/topic-summary`, {
+        method: "PUT",
+        body: JSON.stringify({ content, visible: visible ?? null }),
+      }),
+    // Hiding a topic that never had a summary resolves to null: nothing is
+    // created just to be collapsed.
+    setVisible: (topicId: number, visible: boolean) =>
+      request<TopicSummary | null>(`/api/topics/${topicId}/topic-summary/visibility`, {
+        method: "POST",
+        body: JSON.stringify({ visible }),
+      }),
+    // Regenerates from the conversation, notes and attachments. When the
+    // summary was hand-edited the answer comes back as `suggestion` to review
+    // instead of replacing `content`.
+    generate: (topicId: number, instruction?: string) =>
+      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/generate`, {
+        method: "POST",
+        body: JSON.stringify({ instruction: instruction ?? null }),
+      }),
+    resolve: (topicId: number, accepted: number[]) =>
+      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/resolve`, {
+        method: "POST",
+        body: JSON.stringify({ accepted }),
+      }),
+    addItem: (topicId: number, kind: "todo" | "important", text: string) =>
+      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/items`, {
+        method: "POST",
+        body: JSON.stringify({ kind, text }),
+      }),
+    remove: (topicId: number) =>
+      request<void>(`/api/topics/${topicId}/topic-summary`, { method: "DELETE" }),
   },
 
   ai: {
