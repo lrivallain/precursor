@@ -1364,8 +1364,10 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ content, visible: visible ?? null }),
       }),
+    // Hiding a topic that never had a summary resolves to null: nothing is
+    // created just to be collapsed.
     setVisible: (topicId: number, visible: boolean) =>
-      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/visibility`, {
+      request<TopicSummary | null>(`/api/topics/${topicId}/topic-summary/visibility`, {
         method: "POST",
         body: JSON.stringify({ visible }),
       }),

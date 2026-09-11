@@ -20,6 +20,7 @@ interface Props {
   busy: boolean;
   error: string | null;
   onChanged: (summary: TopicSummary | null) => void;
+  onFailed: (message: string) => void;
   onRefresh: () => void;
   onToggleVisible: () => void;
   onDismissError: () => void;
@@ -43,6 +44,7 @@ export function TopicSummaryPanel({
   busy,
   error,
   onChanged,
+  onFailed,
   onRefresh,
   onToggleVisible,
   onDismissError,
@@ -77,10 +79,12 @@ export function TopicSummaryPanel({
     try {
       onChanged(await api.topicSummary.save(topicId, draft));
       setEditing(false);
+    } catch (err) {
+      onFailed((err as Error).message);
     } finally {
       setSaving(false);
     }
-  }, [draft, onChanged, topicId]);
+  }, [draft, onChanged, onFailed, topicId]);
 
   async function resolve(all: "accept" | "refuse" | null): Promise<void> {
     const indices =
@@ -92,14 +96,20 @@ export function TopicSummaryPanel({
     setResolving(true);
     try {
       onChanged(await api.topicSummary.resolve(topicId, indices));
+    } catch (err) {
+      onFailed((err as Error).message);
     } finally {
       setResolving(false);
     }
   }
 
   async function remove(): Promise<void> {
-    await api.topicSummary.remove(topicId);
-    onChanged(null);
+    try {
+      await api.topicSummary.remove(topicId);
+      onChanged(null);
+    } catch (err) {
+      onFailed((err as Error).message);
+    }
   }
 
   function toggleHunk(hunk: TopicSummaryHunk): void {

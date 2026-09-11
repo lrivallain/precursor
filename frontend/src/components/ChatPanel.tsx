@@ -1002,6 +1002,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             busy={summary.busy}
             error={summary.error}
             onChanged={summary.apply}
+            onFailed={summary.fail}
             onRefresh={() => void summary.refresh()}
             onToggleVisible={() => void summary.toggleVisible()}
             onDismissError={summary.clearError}

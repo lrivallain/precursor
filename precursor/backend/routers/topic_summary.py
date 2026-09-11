@@ -93,15 +93,25 @@ async def save_summary(
     return _to_read(row)
 
 
-@router.post("/visibility", response_model=TopicSummaryRead)
+@router.post("/visibility", response_model=TopicSummaryRead | None)
 async def set_visibility(
     topic_id: int,
     payload: TopicSummaryVisibility,
     session: AsyncSession = Depends(get_session),
-) -> TopicSummaryRead:
-    """Expand / collapse the panel (`/show-summary`, `/hide-summary`)."""
+) -> TopicSummaryRead | None:
+    """Expand / collapse the panel (`/show-summary`, `/hide-summary`).
+
+    Hiding a topic that has no brief is a no-op: it must not conjure an empty
+    summary the user then has to delete.
+    """
     await _require_topic(session, topic_id)
-    row = await summary_service.get_or_create_summary(session, topic_id)
+    row: TopicSummary | None
+    if payload.visible:
+        row = await summary_service.get_or_create_summary(session, topic_id)
+    else:
+        row = await summary_service.get_summary(session, topic_id)
+        if row is None:
+            return None
     row.visible = payload.visible
     await session.commit()
     await session.refresh(row)
@@ -148,7 +158,8 @@ async def generate_summary(
     except Exception as exc:  # provider outage, refusal, …
         logger.warning("Topic summary generation failed: %s", exc)
         raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, f"Summary generation failed: {exc}"
+            status.HTTP_502_BAD_GATEWAY,
+            "Summary generation failed, please try again.",
         ) from exc
 
     now = summary_service.utcnow()

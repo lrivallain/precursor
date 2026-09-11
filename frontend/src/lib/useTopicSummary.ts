@@ -7,6 +7,8 @@ export interface TopicSummaryController {
   busy: boolean;
   error: string | null;
   clearError: () => void;
+  /** Surface a failure raised by a mutation the panel owns. */
+  fail: (message: string) => void;
   /** Replace the local copy after an edit / review (null = deleted). */
   apply: (summary: TopicSummary | null) => void;
   /** Regenerate from the conversation, notes and attachments. */
@@ -46,7 +48,7 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
   }, [topicId]);
 
   const run = useCallback(
-    async (action: () => Promise<TopicSummary>): Promise<void> => {
+    async (action: () => Promise<TopicSummary | null>): Promise<void> => {
       setBusy(true);
       setError(null);
       try {
@@ -87,6 +89,7 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
     busy,
     error,
     clearError: () => setError(null),
+    fail: setError,
     apply: setSummary,
     refresh,
     setVisible,

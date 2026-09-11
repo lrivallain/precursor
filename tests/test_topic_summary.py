@@ -60,6 +60,14 @@ def test_visibility_toggles_without_losing_the_text(client: TestClient) -> None:
     assert r.json()["content"] == "## Status\n- Here"
 
 
+def test_hiding_a_topic_without_a_summary_creates_nothing(client: TestClient) -> None:
+    topic_id = _topic(client)
+    r = client.post(f"/api/topics/{topic_id}/topic-summary/visibility", json={"visible": False})
+    assert r.status_code == 200
+    assert r.json() is None
+    assert client.get(f"/api/topics/{topic_id}/topic-summary").json() is None
+
+
 def test_items_append_under_the_right_section(client: TestClient) -> None:
     topic_id = _topic(client)
     client.post(
