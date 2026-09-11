@@ -77,6 +77,13 @@ still resolve: the trailing slug is unique on its own, and Precursor rewrites th
 address to the current readable form once it has loaded.
 :::
 
+## Status at a glance
+
+Each topic can carry an editable [**summary**](/features/topic-summary) — a
+short brief of where it stands and what is still open, generated on request
+from the conversation, notes and attachments, and merged change by change once
+you have edited it yourself.
+
 ## Scheduling & reminders
 
 Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
@@ -87,7 +94,7 @@ Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
 
 - **Streaming** replies with markdown, mermaid, and code highlighting.
 - **`/` slash commands** — [skills](/features/skills-memory), memory, GitHub
-  actions, `/notes`.
+  actions, `/notes`, [summary](/features/topic-summary) commands.
 - **[Attachments](/features/attachments)** — images (vision) and documents.
 - **[MCP tools](/features/mcp)** — shown inline as they are called.
 

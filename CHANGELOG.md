@@ -11,6 +11,22 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Topics carry an editable summary.** Coming back to a long topic meant
+  re-reading the transcript to work out where it stood and what was still open.
+
+  A topic can now carry a **status brief** above the transcript — *Status*,
+  *Actions*, *Key information* — reached from the document icon in the topic
+  header or with `/show-summary`. It is generated only when asked
+  (`/update-summary`, optionally with an instruction) from the conversation,
+  the `/notes` scratchpad and the topic's attachments, and it is **editable in
+  place**. Once you edit it, a refresh never overwrites: the model's version
+  arrives as a **list of suggested changes** — removed lines in red, added in
+  green — each accepted or refused on its own before anything is written, and
+  the prompt is told to treat your wording as authoritative. `/todo-summary`
+  and `/important-summary` append an action or a fact, `/hide-summary`
+  collapses the panel without discarding the text, and all five commands work
+  from a scheduled run.
+
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card
   offered a `2/5` badge derived from its step agents' *current* statuses — which

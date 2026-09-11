@@ -114,7 +114,7 @@ export function TopicSummaryPanel({
   const collapsed = !summary.visible;
 
   return (
-    <div className="border-b border-border bg-surface/40">
+    <div data-summary-panel className="border-b border-border bg-surface/40">
       <div className="flex items-center gap-1.5 px-3 py-1.5">
         <button
           type="button"

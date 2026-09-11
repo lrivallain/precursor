@@ -258,6 +258,19 @@ const scenes = {
     },
   },
 
+  // The topic summary panel with a proposal open for per-change review.
+  // Clipped to the chat pane so the sidebar (and its persona footer) stays out.
+  "topic-summary": {
+    viewport: { width: 1440, height: 1250 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
+      await page.waitForSelector("text=Apply selected", { timeout: 20000 });
+      await sleep(1200);
+      // Clip to the panel itself: the sidebar (and its persona footer) stays out.
+      return clipOf(page, '[data-summary-panel]', 0);
+    },
+  },
+
   // The same screen with the navigation drawer pulled out over it.
   "mobile-drawer": {
     viewport: { width: 390, height: 844 },
