@@ -184,6 +184,47 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic"],
   },
   {
+    name: "update-summary",
+    label: "/update-summary",
+    description:
+      "Generate (or refresh) this topic's summary from the conversation, notes and attachments. The text after the command steers it. If you edited the summary, the update arrives as suggested changes to accept or refuse one by one.",
+    argumentHint: "instruction (optional)",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
+    name: "show-summary",
+    label: "/show-summary",
+    description: "Expand the topic summary area above the transcript.",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
+    name: "hide-summary",
+    label: "/hide-summary",
+    description: "Collapse the topic summary area. The summary itself is kept.",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
+    name: "todo-summary",
+    label: "/todo-summary",
+    description:
+      "Add a pending action to the topic summary's Actions list.",
+    argumentHint: "action",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
+    name: "important-summary",
+    label: "/important-summary",
+    description:
+      "Add a piece of key information to the topic summary so it survives future refreshes.",
+    argumentHint: "information",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
     name: "memory-store",
     label: "/memory-store",
     description:

@@ -38,6 +38,9 @@ import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import { useReminders } from "../lib/useReminders";
 import { useNotesDraft } from "../lib/useNotesDraft";
+import { useTopicSummary } from "../lib/useTopicSummary";
+import { subscribeTopicSummaryToggle } from "../lib/summaryOpen";
+import { TopicSummaryPanel } from "./TopicSummaryPanel";
 import { usePendingAttachments } from "../lib/usePendingAttachments";
 import { useMessageDeletion } from "../lib/useMessageDeletion";
 import { parseToolMeta } from "../lib/toolMeta";
@@ -220,6 +223,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     onRemindersChanged,
     systemNote,
   });
+
+  const summary = useTopicSummary(topic.id);
+  const toggleSummary = summary.toggleVisible;
+  // The panel is reached from the shared topic header, which doesn't own its
+  // state — see lib/summaryOpen.ts.
+  useEffect(
+    () => subscribeTopicSummaryToggle(topic.id, () => void toggleSummary()),
+    [topic.id, toggleSummary],
+  );
 
   const notesApi = useMemo(
     () => ({
@@ -534,6 +546,29 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     if (name === "memory-update") {
       await runMemoryUpdate(argument);
+      return;
+    }
+    if (name === "show-summary" || name === "hide-summary") {
+      await summary.setVisible(name === "show-summary");
+      return;
+    }
+    if (name === "update-summary") {
+      await summary.refresh(argument || undefined);
+      return;
+    }
+    if (name === "todo-summary" || name === "important-summary") {
+      if (!argument.trim()) {
+        systemNote(
+          name === "todo-summary"
+            ? "Usage: `/todo-summary <action>`"
+            : "Usage: `/important-summary <information>`",
+        );
+        return;
+      }
+      await summary.addItem(
+        name === "todo-summary" ? "todo" : "important",
+        argument.trim(),
+      );
       return;
     }
     if (name === "role") {
@@ -958,6 +993,18 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             reminder={reminder}
             busy={reminderBusy}
             onDone={() => void runReminderClear(true)}
+          />
+        )}
+        {summary.summary && (
+          <TopicSummaryPanel
+            topicId={topic.id}
+            summary={summary.summary}
+            busy={summary.busy}
+            error={summary.error}
+            onChanged={summary.apply}
+            onRefresh={() => void summary.refresh()}
+            onToggleVisible={() => void summary.toggleVisible()}
+            onDismissError={summary.clearError}
           />
         )}
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
