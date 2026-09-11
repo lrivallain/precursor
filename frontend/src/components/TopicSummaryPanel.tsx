@@ -63,8 +63,11 @@ export function TopicSummaryPanel({
   // "yes, take the update", and refusing one is a single click.
   useEffect(() => {
     setAccepted(new Set(hunks.map((h) => h.index)));
+    // Keyed on the proposed text: two refreshes can land in the same second
+    // with the same number of changes, and stale selections would then point
+    // at different hunks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestion?.generated_at, hunks.length]);
+  }, [suggestion?.content]);
 
   useEffect(() => {
     if (!editing) setDraft(summary.content);
