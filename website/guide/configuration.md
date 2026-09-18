@@ -108,6 +108,7 @@ feature it configures:
 
 | Tab | Covers |
 | --- | --- |
+| **Appearance** | Light/dark/system theme and the reading font, including dyslexia-friendly options like OpenDyslexic and Atkinson Hyperlegible. |
 | **Model** | Active provider + credentials, default chat model. |
 | **Chat** | Stats sidebar, notifications, and [auto-naming](/features/chats#chats-name-themselves) for new chats. |
 | **GitHub** | Token, default repository, issue-context behaviour. |
@@ -117,7 +118,7 @@ feature it configures:
 | **Workflows** | The [defaults a new pipeline starts from](/features/workflows/building). |
 | **Live / Speech-to-text** | Enable the section, pick the fast insights model, set [transcript retention](/features/live-sessions#transcript-retention) and Azure Speech credentials. |
 | **Backup** | Periodic copy of the database + attachment blobs into a plain folder. |
-| **System** | Theme, [storage retention](/features/storage), and the [command-runner jail](/features/command-runner). |
+| **System** | [Storage retention](/features/storage) and the [command-runner jail](/features/command-runner). |
 
 Fleet-wide knobs that aren't per-object — the agent concurrency cap, retry
 backoff — are [`.env` settings](#process-level-configuration-env).
