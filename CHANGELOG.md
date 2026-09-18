@@ -11,6 +11,20 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Selectable reading font, including dyslexia-friendly options.** Settings →
+  Appearance now has a *Reading font* picker alongside the existing theme
+  toggle: the default Inter stack, **OpenDyslexic** (wide, weighted letterforms
+  designed to reduce letter confusion), **Atkinson Hyperlegible** (the Braille
+  Institute's typeface tuned for character legibility), or **Lexend** (a
+  reading-fluency typeface shown in independent studies to speed up reading for
+  low-proficiency and dyslexic readers). All three fonts are bundled as local
+  `@font-face` assets, so the feature works offline and needs nothing installed
+  on the OS. The choice applies instantly app-wide, persists across reloads
+  (`precursor:font` in local storage, mirroring the theme toggle), and is
+  mirrored to the new `font_family` setting so it round-trips with the rest of
+  your preferences. See the new [Accessibility](/features/accessibility) page.
+  Closes #319.
+
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card
   offered a `2/5` badge derived from its step agents' *current* statuses — which

@@ -1040,6 +1040,7 @@ export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
 export interface Settings {
   theme: "light" | "dark" | "system";
+  font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
   // "" => auto/off; otherwise "low" | "medium" | "high".
   llm_reasoning_effort: string;
@@ -1136,6 +1137,7 @@ export interface Settings {
 
 export interface SettingsUpdate {
   theme?: Settings["theme"];
+  font_family?: Settings["font_family"];
   llm_model?: string;
   llm_reasoning_effort?: string;
   github_repo?: string;

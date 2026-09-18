@@ -31,6 +31,7 @@ import { mcpAuthStore } from "../lib/mcpAuth";
 import { mcpAuthFamily, mcpServerLabel } from "../lib/mcpServers";
 import { signInWorkiq } from "../lib/workiqSignIn";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
+import { setFont, getStoredFont, FONT_OPTIONS, type FontChoice } from "../lib/font";
 import { modelsStore } from "../lib/modelsStore";
 import { settingsStore } from "../lib/settingsStore";
 import {
@@ -195,6 +196,16 @@ const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
   { value: "zh-CN", label: "Chinese (Mandarin, Simplified)" },
 ];
 
+// CSS font stacks for the picker's own label previews, keyed by FontChoice.
+// "system" is left undefined so the label just inherits the app's actual font
+// (whatever `--font-sans` currently resolves to) rather than hardcoding Inter.
+const FONT_PREVIEW_STACKS: Record<FontChoice, string | undefined> = {
+  system: undefined,
+  opendyslexic: '"OpenDyslexic", sans-serif',
+  "atkinson-hyperlegible": '"Atkinson Hyperlegible", sans-serif',
+  lexend: '"Lexend", sans-serif',
+};
+
 export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }: Props) {
   const confirmAction = useConfirm();
   const [category, setCategory] = useState<Category>(initialCategory ?? "appearance");
@@ -225,6 +236,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [mcp, setMcp] = useState<MCPServerStatus[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
   const [theme, setThemeState] = useState<Theme>(getStoredTheme());
+  const [font, setFontState] = useState<FontChoice>(getStoredFont());
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -465,6 +477,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     try {
       const payload: Parameters<typeof api.settings.update>[0] = {
         theme,
+        font_family: font,
         llm_provider: provider,
         github_repo: repo,
         issue_context_ttl_minutes: ttlMinutes,
@@ -509,6 +522,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setGithubToken("");
       setAzureKey("");
       setTheme(theme);
+      setFont(font);
       onClose();
     } finally {
       setSaving(false);
@@ -722,6 +736,43 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                     >
                       {t}
                     </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {category === "appearance" && (
+              <section>
+                <h3 className="text-sm font-medium mb-2">Reading font</h3>
+                <p className="text-[11px] text-muted mb-2">
+                  Applies to the whole app. Includes fonts designed to help
+                  dyslexic or low-vision readers.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {FONT_OPTIONS.map((opt) => (
+                    <label
+                      key={opt.id}
+                      className="flex items-start gap-2 cursor-pointer"
+                    >
+                      <input
+                        type="radio"
+                        name="font_family"
+                        checked={font === opt.id}
+                        onChange={() => setFontState(opt.id)}
+                        className="mt-0.5 accent-accent"
+                      />
+                      <span>
+                        <span
+                          className="block text-sm"
+                          style={{ fontFamily: FONT_PREVIEW_STACKS[opt.id] }}
+                        >
+                          {opt.label}
+                        </span>
+                        <span className="block text-[11px] text-muted">
+                          {opt.description}
+                        </span>
+                      </span>
+                    </label>
                   ))}
                 </div>
               </section>
