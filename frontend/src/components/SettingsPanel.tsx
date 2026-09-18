@@ -196,6 +196,16 @@ const STT_LANGUAGES: ReadonlyArray<{ value: string; label: string }> = [
   { value: "zh-CN", label: "Chinese (Mandarin, Simplified)" },
 ];
 
+// CSS font stacks for the picker's own label previews, keyed by FontChoice.
+// "system" is left undefined so the label just inherits the app's actual font
+// (whatever `--font-sans` currently resolves to) rather than hardcoding Inter.
+const FONT_PREVIEW_STACKS: Record<FontChoice, string | undefined> = {
+  system: undefined,
+  opendyslexic: '"OpenDyslexic", sans-serif',
+  "atkinson-hyperlegible": '"Atkinson Hyperlegible", sans-serif',
+  lexend: '"Lexend", sans-serif',
+};
+
 export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }: Props) {
   const confirmAction = useConfirm();
   const [category, setCategory] = useState<Category>(initialCategory ?? "appearance");
@@ -754,14 +764,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                       <span>
                         <span
                           className="block text-sm"
-                          style={{
-                            fontFamily:
-                              opt.id === "system"
-                                ? undefined
-                                : opt.id === "opendyslexic"
-                                  ? '"OpenDyslexic", sans-serif'
-                                  : '"Atkinson Hyperlegible", sans-serif',
-                          }}
+                          style={{ fontFamily: FONT_PREVIEW_STACKS[opt.id] }}
                         >
                           {opt.label}
                         </span>

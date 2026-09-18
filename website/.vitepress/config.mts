@@ -131,6 +131,7 @@ export default withMermaid(
             { text: "Attachments", link: "/features/attachments" },
             { text: "Storage & retention", link: "/features/storage" },
             { text: "Phone & tablet layout", link: "/features/mobile" },
+            { text: "Accessibility", link: "/features/accessibility" },
             { text: "Background app", link: "/features/background-app" },
             { text: "Plugins", link: "/features/plugins" },
           ],

@@ -50,6 +50,20 @@
   font-style: italic;
   font-display: swap;
 }
+@font-face {
+  font-family: "Lexend";
+  src: url("/fonts/Lexend-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lexend";
+  src: url("/fonts/Lexend-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* Theme tokens. Defined as @theme so Tailwind generates the matching utilities
    (bg-bg, text-muted, border-border, …). The values are CSS variables so the
@@ -94,6 +108,9 @@
 }
 .font-atkinson-hyperlegible {
   --font-sans: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+}
+.font-lexend {
+  --font-sans: "Lexend", system-ui, -apple-system, sans-serif;
 }
 
 /* Per-section accent. A `.section-<mode>` class is set on an ancestor (the app

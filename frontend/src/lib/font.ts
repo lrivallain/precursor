@@ -2,7 +2,7 @@
 // on <html> and persisted to localStorage for the next page load, while the
 // choice is also mirrored into Settings (font_family) so it round-trips with
 // the rest of the user's preferences.
-export type FontChoice = "system" | "opendyslexic" | "atkinson-hyperlegible";
+export type FontChoice = "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
 
 export interface FontOption {
   id: FontChoice;
@@ -28,6 +28,12 @@ export const FONT_OPTIONS: FontOption[] = [
     id: "atkinson-hyperlegible",
     label: "Atkinson Hyperlegible",
     description: "Braille Institute typeface tuned for maximum character legibility.",
+  },
+  {
+    id: "lexend",
+    label: "Lexend",
+    description:
+      "Reading-fluency typeface: studies found it measurably speeds up reading for low-proficiency and dyslexic readers.",
   },
 ];
 

@@ -242,6 +242,17 @@ const scenes = {
     },
   },
 
+  // Settings → Appearance: theme toggle + the reading-font picker (dyslexia /
+  // low-vision friendly options).
+  accessibility: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Appearance");
+      return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
   // Phone layout: a conversation with the whole screen to itself. `isMobile`
   // makes Chromium report `hover: none` / `pointer: coarse`, which is what
   // reveals the touch affordances, so it can't be faked with a narrow viewport.

@@ -108,7 +108,7 @@ feature it configures:
 
 | Tab | Covers |
 | --- | --- |
-| **Appearance** | Light/dark/system theme and the reading font, including dyslexia-friendly options like OpenDyslexic and Atkinson Hyperlegible. |
+| **Appearance** | Light/dark/system theme and the reading font, including dyslexia-friendly options like OpenDyslexic, Atkinson Hyperlegible and Lexend — see [Accessibility](/features/accessibility). |
 | **Model** | Active provider + credentials, default chat model. |
 | **Chat** | Stats sidebar, notifications, and [auto-naming](/features/chats#chats-name-themselves) for new chats. |
 | **GitHub** | Token, default repository, issue-context behaviour. |

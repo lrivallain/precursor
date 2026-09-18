@@ -1040,7 +1040,7 @@ export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
 export interface Settings {
   theme: "light" | "dark" | "system";
-  font_family: "system" | "opendyslexic" | "atkinson-hyperlegible";
+  font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
   // "" => auto/off; otherwise "low" | "medium" | "high".
   llm_reasoning_effort: string;

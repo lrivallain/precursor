@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 Theme = Literal["light", "dark", "system"]
 # Reading font applied app-wide, incl. dyslexia/low-vision-friendly options —
 # see frontend/src/lib/font.ts for the matching CSS class per id.
-FontFamily = Literal["system", "opendyslexic", "atkinson-hyperlegible"]
+FontFamily = Literal["system", "opendyslexic", "atkinson-hyperlegible", "lexend"]
 GitHubTokenSource = Literal["env", "gh-cli", "settings", "none"]
 
 
