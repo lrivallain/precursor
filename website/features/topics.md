@@ -9,7 +9,7 @@ Where a [chat](/features/chats) is throwaway, a topic is a thread of work you
 return to over days or weeks — and it can be **linked to a GitHub issue** whose
 body, comments, and labels become live context on every turn.
 
-<Screenshot src="/screenshots/topics.png" alt="A topic linked to a GitHub issue, showing the issue's labels as tags and a streamed reply" caption="A topic linked to a GitHub issue — the issue's labels tag the chat and its comments feed the assistant's context." />
+<Screenshot src="/screenshots/topics.png" alt="An onboarding topic beside the collection picker and topic tree" caption="A persistent conversation beside its topic tree, with collections keeping related work together." />
 
 ## Issue-linked context
 

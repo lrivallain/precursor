@@ -110,13 +110,11 @@ interface Props {
   liveSlot?: ReactNode;
   /** Rendered in the body when mode === "workspaces" (the workspace list). */
   workspaceSlot?: ReactNode;
+  agentSlot?: ReactNode;
+  workflowSlot?: ReactNode;
   /** Rendered in the body when a plugin section is active (its own list). */
   pluginSlot?: ReactNode;
   onToggleCollapsed: () => void;
-  /** Whether the collapsed rail offers an "expand" button. Agents mode locks
-      the sidebar to rail-only (the fleet dashboard is the list), so it hides
-      the affordance to avoid a no-op expand. */
-  expandable?: boolean;
   onSelect: (id: number) => void;
   /** Mode-aware "New" action (topic / chat / workspace) in the header. */
   onNew: () => void;
@@ -176,9 +174,10 @@ export function Sidebar({
   chatSlot,
   liveSlot,
   workspaceSlot,
+  agentSlot,
+  workflowSlot,
   pluginSlot,
   onToggleCollapsed,
-  expandable = true,
   onSelect,
   onNew,
   onCreate,
@@ -253,17 +252,21 @@ export function Sidebar({
   const pinned = useMemo(() => collectPinned(filtered), [filtered]);
   const mainTree = filtered;
 
-  if (collapsed) {
-    return (
-      <aside className="w-12 border-r border-border flex flex-col items-center py-2 gap-2">
-        <img
-          src="/logo.svg"
-          alt="Precursor"
-          width={28}
-          height={28}
-          className="rounded-md mb-1"
-        />
-        {expandable && (
+  const railFooter = (
+    <>
+      {collapsed && (
+        <>
+          {supportsNew(mode, activeSection) && (
+            <button
+              type="button"
+              className="rounded p-2 hover:bg-surface"
+              aria-label={newActionLabel(mode, activeSection)}
+              data-tooltip={newActionLabel(mode, activeSection)}
+              onClick={onNew}
+            >
+              <Plus size={18} />
+            </button>
+          )}
           <button
             className="p-2 rounded hover:bg-surface"
             aria-label="Expand sidebar"
@@ -272,30 +275,15 @@ export function Sidebar({
           >
             <PanelLeftOpen size={18} />
           </button>
-        )}
-        <div className="my-1 h-px w-6 bg-border" />
-        <SectionRailButtons
-          mode={mode}
-          atHome={atHome}
-          onGoHome={onGoHome}
-          onOpenPalette={onOpenPalette}
-          onModeChange={onModeChange}
-          onNew={onNew}
-          unreadByMode={unreadByMode}
-          liveEnabled={liveEnabled}
-          orderedModes={orderedModes}
-          onReorder={reorderSections}
-          activeSection={activeSection}
-        />
-        <div className="flex-1" />
-        <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
-      </aside>
-    );
-  }
+        </>
+      )}
+      <PersonaMenu collapsed onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
+    </>
+  );
 
   return (
     <div className="flex h-full shrink-0">
-      {navStyle === "rail" && (
+      {(navStyle === "rail" || collapsed) && (
         <SectionRail
           mode={mode}
           atHome={atHome}
@@ -306,9 +294,12 @@ export function Sidebar({
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
           pluginSections={pluginSections}
+          footer={railFooter}
         />
       )}
+      {!collapsed && (
       <aside
+        aria-label={`${modeDefs.find((def) => def.mode === mode)?.label ?? mode} sidebar`}
         className={`relative border-r border-border flex flex-col shrink-0 min-w-0${
           // Leaves a strip of scrim to tap; the section rail takes 3rem of the
           // drawer's total footprint, hence the modest share of the viewport.
@@ -336,7 +327,9 @@ export function Sidebar({
             height={22}
             className="rounded-md shrink-0"
           />
-          <span className="flex-1 truncate font-semibold tracking-tight">Precursor</span>
+          <span className="flex-1 truncate font-semibold tracking-tight">
+            {mode === "agents" ? "Agents" : mode === "workflows" ? "Workflows" : "Precursor"}
+          </span>
         </button>
         {!narrow && (
           <button
@@ -426,6 +419,10 @@ export function Sidebar({
         liveSlot
       ) : mode === "workspaces" ? (
         workspaceSlot
+      ) : mode === "agents" ? (
+        agentSlot
+      ) : mode === "workflows" ? (
+        workflowSlot
       ) : activeSection ? (
         pluginSlot
       ) : !CORE_MODE_KEYS.has(mode) ? (
@@ -528,10 +525,13 @@ export function Sidebar({
         </>
       )}
 
-      <div className="border-t border-border px-2 py-2">
-        <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
-      </div>
+      {navStyle === "tabs" && (
+        <div className="border-t border-border px-2 py-2">
+          <PersonaMenu onOpenSettings={onOpenGlobalSettings} onOpenArchive={onOpenArchive} />
+        </div>
+      )}
       </aside>
+      )}
     </div>
   );
 }
@@ -1083,6 +1083,7 @@ export function SectionRail({
   unreadByMode,
   liveEnabled = true,
   pluginSections = EMPTY_SECTIONS,
+  footer,
 }: {
   mode: SidebarMode;
   atHome?: boolean;
@@ -1093,6 +1094,7 @@ export function SectionRail({
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   liveEnabled?: boolean;
   pluginSections?: SectionPlugin[];
+  footer?: ReactNode;
 }) {
   const modeDefs = useModeDefs(pluginSections);
   const allModes = useMemo(() => modeDefs.map((m) => m.mode), [modeDefs]);
@@ -1105,7 +1107,7 @@ export function SectionRail({
     });
   }, [order, modeDefs]);
   return (
-    <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
+    <nav aria-label="Sections" className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border py-2">
       <SectionRailButtons
         mode={mode}
         atHome={atHome}
@@ -1120,6 +1122,8 @@ export function SectionRail({
         showNew={false}
         labelOnHover
       />
+      <div className="flex-1" />
+      {footer}
     </nav>
   );
 }

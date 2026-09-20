@@ -124,11 +124,13 @@
 .section-chats { --section-accent: #059669; }
 .section-live { --section-accent: #e11d48; }
 .section-agents { --section-accent: #7c3aed; }
+.section-workflows { --section-accent: #4f46e5; }
 .section-workspaces { --section-accent: #d97706; }
 .dark .section-topics { --section-accent: #38bdf8; }
 .dark .section-chats { --section-accent: #34d399; }
 .dark .section-live { --section-accent: #fb7185; }
 .dark .section-agents { --section-accent: #a78bfa; }
+.dark .section-workflows { --section-accent: #818cf8; }
 .dark .section-workspaces { --section-accent: #fbbf24; }
 
 /* Home start-surface ("wizard") panel. Revealed under the section cards when a

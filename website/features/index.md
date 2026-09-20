@@ -31,6 +31,12 @@ styles. When you pick the vertical rail, it also stays on the **home launcher**
 so you're never more than a click from any section; **Home** and the ⌘K search
 launcher sit together at the top of the rail, above the sections.
 
+**One sidebar shell.** Every section uses the same resizable, collapsible list
+panel; in rail navigation the section icons and account controls stay in place
+when the panel is collapsed. Agents and Workflows each offer a searchable list
+plus an **Overview** entry for their card dashboard. Clicking either section in
+the rail or tabs opens that overview; selecting a list row opens the item.
+
 ## Cross-cutting capabilities
 
 These work across the sections above:

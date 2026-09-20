@@ -47,6 +47,7 @@ interface Props {
   onOpenSettings?: () => void;
   /** Open the archives panel (from the persona menu). */
   onOpenArchive?: () => void;
+  showPersona?: boolean;
 }
 
 /** Fold/unroll duration for the start-surface panel; mirrors the CSS transition. */
@@ -68,6 +69,7 @@ export function HomePage({
   onNavigate,
   onOpenSettings,
   onOpenArchive,
+  showPersona = true,
 }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<HomeKind | null>(null);
@@ -372,7 +374,7 @@ export function HomePage({
 
       {/* Persona + settings, pinned to the bottom-left to mirror the sidebar
           footer. `mt-auto` keeps it at the bottom when no surface is open. */}
-      {(onOpenSettings || onOpenArchive) && (
+      {showPersona && (onOpenSettings || onOpenArchive) && (
         <div className="mt-auto shrink-0 border-t border-border px-3 py-2">
           <div className="w-56 max-w-full">
             <PersonaMenu

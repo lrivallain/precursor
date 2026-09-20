@@ -93,6 +93,19 @@ npm --prefix frontend run build
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
 
+For sidebar or section-routing changes, build the SPA and run the seeded demo
+with `scripts/seed_demo.py` and `scripts/demo_server.sh` (see the screenshot
+instructions in `.github/copilot-instructions.md`). Then run the browser smoke
+suite with the screenshot tooling's Playwright installation:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_section_navigation.js
+```
+
+This covers Agents/Workflows overviews, item selection, history, deep links,
+search, shared progress, empty/error states and the mobile drawer. It requires
+the anonymous demo on port 8899; it does not execute agents or pipelines.
+
 The suite is hermetic: the root `conftest.py` points the app at a throwaway
 database, skills and data directory, and keeps the LLM provider on the offline
 `MockProvider` by hiding any GitHub token from it. So `make check` behaves the

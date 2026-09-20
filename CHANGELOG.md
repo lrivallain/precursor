@@ -11,6 +11,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Agents and Workflows now share the standard sidebar.** Both sections have
+  searchable item lists and an **Overview** entry alongside their existing card
+  dashboards. Section navigation always opens the overview; rows, cards and
+  direct links open individual items. Workflow rows and cards share live
+  progress, and creation is an explicit **New** action even in empty sections.
+  The sidebar can resize or collapse in every section without shifting the
+  navigation rail's icons or account controls, and the lists work in the mobile
+  drawer too.
+
 - **Agents have a Run play button in their header.** Start a parked agent or
   rerun its saved task without opening settings or sending a follow-up. The
   button shows launch progress, surfaces errors, and is disabled for active or
