@@ -110,6 +110,11 @@ It is registered as `<plugin_id>.<name>`, appears in **Settings → MCP servers*
 attributed to the plugin, and inherits the per-surface enable toggles. Use
 `url=` instead for a hosted `streamable_http` server.
 
+Keep that namespaced server ID and your MCP tool names unchanged. Core generates
+stable, provider-safe aliases when advertising tools to the model, then routes
+calls back to the original server/tool pair. Plugins do not need to remove dots
+from server IDs or implement their own model-specific naming.
+
 ## Frontend
 
 A plugin's UI is a **separate bundle**, shipped inside the wheel and imported by

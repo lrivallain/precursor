@@ -296,6 +296,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **Enabling plugin tools no longer makes the model reject the request.**
+  Plugin server IDs such as `kanban.board` introduced dots into the tool names
+  sent to the model. Core now generates stable, provider-safe aliases with
+  length limits and collision protection, while routing calls to the original
+  MCP server and tool. Existing unambiguous, provider-safe names stay unchanged;
+  plugin IDs and saved enable toggles do not change.
+
 - **Opening Agents or Workflows briefly claimed the feature was off.** Both
   cockpits read `agents_enabled` straight from the settings store, which is
   `null` until its first fetch resolves — so for the width of that request the

@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 import os
+import re
 import shutil
 import sys
 from collections.abc import AsyncIterator, Callable, Iterable
@@ -132,6 +135,11 @@ ConnectionState = Literal[
     "disabled",
 ]
 
+# Use the stricter OpenAI-compatible limit, including providers allowing 128.
+_TOOL_NAME_MAX_LENGTH = 64
+_TOOL_ALIAS_PREFIX = "_mcp_"
+_UNSAFE_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
 
 @dataclass(slots=True)
 class MCPToolDef:
@@ -144,9 +152,25 @@ class MCPToolDef:
 
     @property
     def qualified_name(self) -> str:
-        # OpenAI tool names must match ``^[a-zA-Z0-9_-]+$`` and be unique
-        # per request, so we namespace ``server__tool``.
-        return f"{self.server}__{self.name}"
+        """Stable provider-facing alias; routing retains the raw server/tool pair."""
+        qualified = f"{self.server}__{self.name}"
+        safe = _UNSAFE_TOOL_NAME_CHARS.sub("_", qualified)
+        if (
+            safe == qualified
+            and len(qualified) <= _TOOL_NAME_MAX_LENGTH
+            and not qualified.startswith(_TOOL_ALIAS_PREFIX)
+            and "__" not in self.server
+            and not self.server.endswith("_")
+        ):
+            return qualified
+
+        # Hash the pair, not the joined name: separators, normalization and
+        # truncation can all merge distinct tools. Reserve the alias prefix so
+        # a literal server/tool name cannot impersonate a generated alias.
+        identity = json.dumps([self.server, self.name], ensure_ascii=True, separators=(",", ":"))
+        digest = hashlib.sha256(identity.encode("ascii")).hexdigest()[:32]
+        readable_length = _TOOL_NAME_MAX_LENGTH - len(_TOOL_ALIAS_PREFIX) - len(digest) - 1
+        return f"{_TOOL_ALIAS_PREFIX}{safe[:readable_length]}_{digest}"
 
 
 HeadersProvider = Callable[[str], dict[str, str] | None]
