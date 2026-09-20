@@ -123,7 +123,7 @@ backgrounded agent therefore reads as "what it is doing now" in its own words.
 Click any card to drop into that agent's
 [timeline](/features/agents-mode/running); hit **New agent** to start a fresh
 task. Inside a single agent, **← All agents** returns you to the dashboard, and
-per-agent actions (rename, archive, stop, delete) live in that header.
+per-agent actions (rename, run, archive, stop, delete) live in that header.
 
 ::: tip Chaining agents into a pipeline
 Sequencing one agent after another — research → draft → review — is owned by

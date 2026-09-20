@@ -13,6 +13,17 @@ Give an agent a **task prompt** and it works autonomously, streaming its steps
 into a **timeline** you can watch: tool calls visualised inline, permission
 prompts surfaced for actions needing approval, and per-session token accounting.
 
+Use the **Run agent** play button in the header to start a parked agent or run
+its saved task again without opening settings or typing a follow-up. It starts
+a **new execution** with the saved definition; it does not send the composer
+draft. The button shows a spinner while the request is in flight, and any launch
+error appears below the header.
+
+Run is disabled while the agent is pending, running, awaiting approval, or
+interrupted, and whenever Agents mode or the Copilot runtime is unavailable.
+Use **Stop** for an active run, or the timeline's **Resume** action to continue
+an interrupted turn rather than replace it.
+
 ## Approval policy (per agent)
 
 Every agent action is gated by an **approval policy**. There's a global default

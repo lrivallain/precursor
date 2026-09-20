@@ -5,10 +5,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Loader2,
   Menu,
   MessagesSquare,
   Pin,
   PinOff,
+  Play,
   Search,
   Settings as SettingsIcon,
   Square,
@@ -61,7 +63,7 @@ import { Z_INDEX } from "./lib/constants";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { coalesce, eventBus } from "./lib/events";
 import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
-import { agentsWaitingCount } from "./lib/agents";
+import { agentCanStart, agentsWaitingCount } from "./lib/agents";
 import { skillsStore } from "./lib/skillsStore";
 import { rolesStore } from "./lib/rolesStore";
 import { useSettings, useSettingsReady } from "./lib/settingsStore";
@@ -462,6 +464,8 @@ export default function App() {
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [startingAgentIds, setStartingAgentIds] = useState<Set<number>>(() => new Set());
+  const [agentRunError, setAgentRunError] = useState<{ agentId: number; message: string } | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
     // A legacy integer ref resolves immediately; a UUID waits for the list.
     () => resolveAgentRef(parseAppRoute().agentRef, null),
@@ -612,6 +616,17 @@ export default function App() {
     () => (agents ?? []).find((a) => a.id === activeAgentId) ?? null,
     [agents, activeAgentId],
   );
+  const agentRunDisabledReason = !agentsEnabled
+    ? "Agents mode is off"
+    : !agentsAvailable
+      ? agentsUnavailableReason || "The Copilot runtime is unavailable"
+      : activeAgent && startingAgentIds.has(activeAgent.id)
+        ? "Starting agent..."
+        : activeAgent?.status === "interrupted"
+          ? "Resume the interrupted turn from the timeline"
+          : activeAgent && !agentCanStart(activeAgent)
+            ? "Agent is already active"
+            : null;
 
   // Mirror activeTopic into a ref so the onComplete callback (set up once)
   // can read the current value without resubscribing on every change.
@@ -1852,6 +1867,26 @@ export default function App() {
     await loadAgents();
   }
 
+  async function handleRunAgent(agent: AgentSession): Promise<void> {
+    if (!agentsEnabled || !agentsAvailable || !agentCanStart(agent) || startingAgentIds.has(agent.id)) {
+      return;
+    }
+    setStartingAgentIds((ids) => new Set(ids).add(agent.id));
+    setAgentRunError(null);
+    try {
+      await api.agents.start(agent.id);
+      await loadAgents();
+    } catch (e) {
+      setAgentRunError({ agentId: agent.id, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setStartingAgentIds((ids) => {
+        const next = new Set(ids);
+        next.delete(agent.id);
+        return next;
+      });
+    }
+  }
+
   async function handleDeleteAgent(agent: AgentSession): Promise<void> {
     if (
       !(await confirmAction({
@@ -2777,6 +2812,19 @@ export default function App() {
                   >
                     <SettingsIcon size={18} />
                   </button>
+                  <button
+                    type="button"
+                    className="p-2 rounded hover:bg-surface shrink-0 text-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="Run agent"
+                    aria-busy={startingAgentIds.has(activeAgent.id)}
+                    data-tooltip={agentRunDisabledReason ?? "Run the agent's saved task"}
+                    disabled={agentRunDisabledReason !== null}
+                    onClick={() => void handleRunAgent(activeAgent)}
+                  >
+                    {startingAgentIds.has(activeAgent.id)
+                      ? <Loader2 size={18} className="animate-spin" />
+                      : <Play size={18} />}
+                  </button>
                   {(activeAgent.status === "running" ||
                     activeAgent.status === "pending" ||
                     activeAgent.status === "needs_approval") && (
@@ -2836,6 +2884,21 @@ export default function App() {
             />
           )}
         </header>
+
+        {!atHome && sidebarMode === "agents" && agentRunError && agentRunError.agentId === activeAgent?.id && (
+          <div role="alert" className="flex items-center gap-2 border-b border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-500">
+            <span className="min-w-0 flex-1">Could not run agent: {agentRunError.message}</span>
+            <button
+              type="button"
+              onClick={() => setAgentRunError(null)}
+              className="shrink-0 rounded p-1 hover:bg-red-500/10"
+              aria-label="Dismiss run error"
+              data-tooltip="Dismiss run error"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         <McpAuthBanner />
 

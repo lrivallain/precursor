@@ -20,6 +20,11 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   navigation rail's icons or account controls, and the lists work in the mobile
   drawer too.
 
+- **Agents have a Run play button in their header.** Start a parked agent or
+  rerun its saved task without opening settings or sending a follow-up. The
+  button shows launch progress, surfaces errors, and is disabled for active or
+  interrupted agents and when the runtime is unavailable.
+
 - **Selectable reading font, including dyslexia-friendly options.** Settings →
   Appearance now has a *Reading font* picker alongside the existing theme
   toggle: the default Inter stack, **OpenDyslexic** (wide, weighted letterforms

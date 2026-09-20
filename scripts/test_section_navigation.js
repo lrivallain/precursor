@@ -44,8 +44,25 @@ async function run() {
     await row(agentList, agent.title).click();
     await page.waitForURL(`${BASE}/agents/${agent.public_id}`);
     await current(agentList, agent.title);
+    const runButton = page.getByRole("button", { name: "Run agent", exact: true });
+    assert.equal(await runButton.isEnabled(), true);
+    const runningAgents = agents.map((item) =>
+      item.id === agent.id ? { ...item, status: "running" } : item);
+    let started = false;
+    await page.route(`**/api/agents/${agent.id}/start`, (route) => {
+      started = true;
+      return route.fulfill({ json: runningAgents.find((item) => item.id === agent.id) });
+    });
+    await page.route("**/api/agents", (route) =>
+      route.fulfill({ json: started ? runningAgents : agents }));
+    await runButton.click();
+    await row(agentList, agent.title).filter({ hasText: "Running" }).waitFor();
+    assert.equal(await runButton.isDisabled(), true);
     await overview(agentList).click();
     await page.waitForURL(`${BASE}/agents`);
+    await page.locator("main").getByRole("button").filter({ hasText: agent.title }).filter({ hasText: "Running" }).first().waitFor();
+    await page.unroute(`**/api/agents/${agent.id}/start`);
+    await page.unroute("**/api/agents");
     await page.goBack();
     await page.waitForURL(`${BASE}/agents/${agent.public_id}`);
     await current(agentList, agent.title);

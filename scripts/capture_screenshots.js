@@ -16,8 +16,9 @@
 // into website/public/screenshots/ at deviceScaleFactor 2, matching the
 // convention the <Screenshot> component expects (see website/features/AGENTS.md).
 //
-// The target must be the DEMO instance on :8899, whose persona resolves to
-// "Guest / Not connected" because its server runs with `gh` off PATH.
+// The target must be the DEMO instance, whose persona resolves to "Guest / Not
+// connected" because its server runs with `gh` off PATH. If :8899 is occupied,
+// launch with DEMO_PORT=<port> and capture with DEMO_BASE=http://127.0.0.1:<port>.
 
 let chromium;
 try {
@@ -32,9 +33,8 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
-const { prepareDemoPage } = require("./demo_browser");
+const { BASE, prepareDemoPage } = require("./demo_browser");
 
-const BASE = process.env.DEMO_BASE || "http://127.0.0.1:8899";
 const OUT = path.resolve(__dirname, "..", "website", "public", "screenshots");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -169,8 +169,15 @@ const scenes = {
   agents: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
-      await page.goto(`${BASE}/agents/4`, { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "Agent settings", exact: true }).waitFor();
+      const response = await page.request.get(`${BASE}/api/agents`);
+      const agents = await response.json();
+      const agent = agents.find((item) => item.title === "Digest writer");
+      if (!agent) throw new Error("Seed the demo Digest writer before capturing agents.");
+      await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Run agent", exact: true }).waitFor();
+      await page.getByText("The draft is ready for review before publishing.").waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      await sleep(800);
       return undefined;
     },
   },
