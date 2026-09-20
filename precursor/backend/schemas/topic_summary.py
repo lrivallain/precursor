@@ -9,9 +9,16 @@ from pydantic import BaseModel, Field
 
 
 class SummaryHunkRead(BaseModel):
-    """One reviewable change between the live summary and a proposal."""
+    """One reviewable change between the live summary and a proposal.
+
+    ``base_start``/``base_end`` are line offsets into the *current* content, so
+    the client can render the change inline at its real position in the brief
+    rather than as a detached list.
+    """
 
     index: int
+    base_start: int
+    base_end: int
     removed: list[str]
     added: list[str]
 
@@ -55,10 +62,11 @@ class TopicSummaryGenerate(BaseModel):
 
 
 class TopicSummaryResolve(BaseModel):
-    """Per-change verdict on a pending suggestion (indices to accept)."""
+    """Resolve all changes, or only ``reviewed`` indices when supplied."""
 
     revision: str
     accepted: list[int] = Field(default_factory=list)
+    reviewed: list[int] | None = Field(default=None, min_length=1)
 
 
 class TopicSummaryItem(BaseModel):

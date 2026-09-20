@@ -259,6 +259,16 @@ def apply_hunks(base: str, hunks: list[SummaryHunk], accepted: set[int]) -> str:
     return "\n".join(out)
 
 
+def resolve_hunks(
+    base: str, hunks: list[SummaryHunk], accepted: set[int], reviewed: set[int]
+) -> tuple[str, str | None]:
+    """Apply accepted hunks and retain only undecided changes in the proposal."""
+    content = apply_hunks(base, hunks, accepted)
+    remaining = {h.index for h in hunks} - reviewed
+    proposed = apply_hunks(base, hunks, accepted | remaining)
+    return content, proposed if proposed != content else None
+
+
 def _split_sections(content: str) -> list[tuple[str | None, list[str]]]:
     """Split markdown into `(heading, body lines)` pairs, preamble first."""
     sections: list[tuple[str | None, list[str]]] = []

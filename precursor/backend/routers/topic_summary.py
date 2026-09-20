@@ -41,7 +41,16 @@ def _to_read(row: TopicSummary) -> TopicSummaryRead:
             content=row.pending_content,
             model=row.pending_model,
             generated_at=row.pending_generated_at,
-            hunks=[SummaryHunkRead(index=h.index, removed=h.removed, added=h.added) for h in hunks],
+            hunks=[
+                SummaryHunkRead(
+                    index=h.index,
+                    base_start=h.base_start,
+                    base_end=h.base_end,
+                    removed=h.removed,
+                    added=h.added,
+                )
+                for h in hunks
+            ],
         )
     return TopicSummaryRead(
         revision=summary_service.revision(row),
@@ -204,17 +213,23 @@ async def resolve_suggestion(
     payload: TopicSummaryResolve,
     session: AsyncSession = Depends(get_session),
 ) -> TopicSummaryRead:
-    """Merge a pending proposal, keeping only the accepted changes."""
+    """Apply review decisions and keep any unreviewed changes pending."""
     await _require_topic(session, topic_id)
     row = await summary_service.get_summary(session, topic_id)
     if row is None or row.pending_content is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No suggestion to review")
     _check_revision(row, payload.revision)
     hunks = summary_service.diff_hunks(row.content, row.pending_content)
+    indices = {h.index for h in hunks}
     accepted = set(payload.accepted)
-    if not accepted <= {h.index for h in hunks}:
+    reviewed = indices if payload.reviewed is None else set(payload.reviewed)
+    if not (accepted | reviewed) <= indices:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown change index")
-    merged = summary_service.apply_hunks(row.content, hunks, accepted)
+    if not accepted <= reviewed:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Accepted changes must be reviewed"
+        )
+    merged, pending = summary_service.resolve_hunks(row.content, hunks, accepted, reviewed)
     return await _write(
         session,
         topic_id,
@@ -225,7 +240,7 @@ async def resolve_suggestion(
             if accepted
             else {}
         ),
-        **summary_service.CLEAR_SUGGESTION,
+        **(summary_service.CLEAR_SUGGESTION if pending is None else {"pending_content": pending}),
     )
 
 

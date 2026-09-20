@@ -14,7 +14,7 @@ export interface TopicSummaryController {
   toggleVisible: () => Promise<boolean>;
   addItem: (kind: "todo" | "important", text: string) => Promise<boolean>;
   save: (content: string, revision: string) => Promise<TopicSummary | null>;
-  resolve: (accepted: number[], revision: string) => Promise<boolean>;
+  resolve: (accepted: number[], revision: string, reviewed?: number[]) => Promise<boolean>;
   remove: (revision: string) => Promise<boolean>;
 }
 
@@ -168,7 +168,8 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
       }, true);
       return saved;
     },
-    resolve: (accepted, revision) => run(() => api.topicSummary.resolve(topicId, accepted, revision)),
+    resolve: (accepted, revision, reviewed) =>
+      run(() => api.topicSummary.resolve(topicId, accepted, revision, reviewed)),
     remove: (revision) => run(async () => {
       await api.topicSummary.remove(topicId, revision);
       return null;

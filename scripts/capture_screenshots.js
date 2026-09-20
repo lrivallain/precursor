@@ -262,10 +262,11 @@ const scenes = {
   "topic-summary": {
     viewport: { width: 1440, height: 1250 },
     async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:topic-summary:height", "340"));
       await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
       const expand = page.getByRole("button", { name: "Expand topic summary", exact: true });
       if (await expand.isVisible()) await expand.click();
-      await page.waitForSelector("text=Apply selected", { timeout: 20000 });
+      await page.getByRole("button", { name: "Accept change 1", exact: true }).waitFor();
       await page.mouse.move(0, 0);
       await sleep(1200);
       // Clip to the panel itself, which keeps the sidebar persona footer out.
@@ -276,6 +277,7 @@ const scenes = {
   "topic-summary-editing": {
     viewport: { width: 1440, height: 1250 },
     async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:topic-summary:height", "280"));
       await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
       const expand = page.getByRole("button", { name: "Expand topic summary", exact: true });
       if (await expand.isVisible()) await expand.click();

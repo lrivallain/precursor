@@ -18,6 +18,12 @@ The **document icon in the topic header** and `/show-summary` remain shortcuts.
 By default a topic has **no summary at all**: nothing is generated until you ask.
 Pending suggestions remain visible as a small count on the collapsed bar.
 
+Drag the **bottom divider** to resize the expanded summary. Its height is
+remembered in this browser and adapts to the available space without hiding the
+composer. The body scrolls when needed, including the full review and editor
+controls. The divider also supports touch and keyboard resizing: focus it and
+use **↑/↓**, or **Home/End** for the minimum/maximum height.
+
 <Screenshot
   src="/screenshots/topic-summary-collapsed.png"
   alt="A slim summary toggle below the topic header, with a centered chevron and a pending-change count"
@@ -27,7 +33,7 @@ Pending suggestions remain visible as a small count on the collapsed bar.
 <Screenshot
   src="/screenshots/topic-summary.png"
   alt="The topic summary panel above a transcript, with a proposed update listed change by change"
-  caption="A hand-edited brief with a fresh proposal: every change is accepted or refused on its own."
+  caption="Accept or reject each change immediately, and resize the panel to review more at once."
 />
 
 ## Generating one
@@ -100,11 +106,17 @@ Both manual edits and checkbox changes mark the summary as **yours**. From then 
 - a refresh is told to treat your wording as authoritative and to keep it
   wherever it is still accurate — your edits carry more weight than the model's
   previous text;
-- the new version is **never written straight in**. It arrives as a list of
-  **suggested changes** — removed lines in red, added lines in green — and you
-  accept or refuse each one before anything is saved, the way you review a code
-  suggestion. **Apply selected** writes exactly what you ticked; **Refuse all**
-  leaves the brief untouched.
+- the new version is **never written straight in**. It is merged into the
+  brief **in place** — each changed line or block shown right where it sits in
+  the document, with the unchanged text around it — removed lines struck
+  through in red, added lines in green, and a compact **✔ Accept** / **✗
+  Reject** pair sharing the same row (with tooltips and keyboard-accessible
+  labels). Each decision is **saved immediately** and removes that suggestion,
+  leaving the others pending. Accepting updates the brief; rejecting keeps
+  that part of your text. **Accept all** and **Reject all** act only on the
+  suggestions still pending. There is no final Apply step, and rejected
+  changes cannot reappear from the same proposal when you accept another
+  change later.
 
 Everything is persisted server-side, so the brief (and whether the panel is
 expanded) survives reloads and updates other open windows immediately.

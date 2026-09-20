@@ -21,7 +21,7 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the `/notes` scratchpad and the topic's attachments, and it is **editable in
   place**. Once you edit it, a refresh never overwrites: the model's version
   arrives as a **list of suggested changes** — removed lines in red, added in
-  green — each accepted or refused on its own before anything is written, and
+  green — each accepted or rejected and saved independently, and
   the prompt is told to treat your wording as authoritative. `/todo-summary`
   and `/important-summary` append an action or a fact, `/hide-summary`
   collapses the panel without discarding the text, and all five commands work
@@ -41,6 +41,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   opens the editor with the caret at the corresponding Markdown position.
   Refreshes that produce no changes briefly confirm successful completion in
   the Saved status area instead of appearing to do nothing.
+  Each suggested change is now shown **in place** — merged into the brief at
+  its real position, alongside the unchanged text around it — with its own
+  compact **✔ / ✗** controls sharing the same line as the diff, not a separate
+  header row. There is no final Apply step; undecided suggestions remain
+  pending, re-based against the brief after each decision. The expanded area is
+  vertically resizable with a remembered height, pointer/keyboard controls and
+  scrolling for the complete summary and review.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card

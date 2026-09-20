@@ -1041,11 +1041,25 @@ export interface TopicSummarySuggestion {
   hunks: TopicSummaryHunk[];
 }
 
-/** One contiguous change (removed lines → added lines) in a proposal. */
+/**
+ * One contiguous change (removed lines → added lines) in a proposal.
+ * `base_start`/`base_end` are line offsets into the *current* content, so the
+ * change can be rendered inline at its real position rather than in a
+ * detached list.
+ */
 export interface TopicSummaryHunk {
   index: number;
+  base_start: number;
+  base_end: number;
   removed: string[];
   added: string[];
+}
+
+/** Omit reviewed to resolve the entire proposal; otherwise decide only those hunks. */
+export interface TopicSummaryResolve {
+  revision: string;
+  accepted: number[];
+  reviewed?: number[] | null;
 }
 
 export interface NotesDraft {

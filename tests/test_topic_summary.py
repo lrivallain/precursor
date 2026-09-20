@@ -165,6 +165,125 @@ def test_delete_returns_the_topic_to_having_no_summary(client: TestClient) -> No
     assert client.get(f"/api/topics/{topic_id}/topic-summary").json() is None
 
 
+def test_individual_decisions_preserve_remaining_changes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = f"/api/topics/{_topic(client)}/topic-summary"
+    base = "first\nanchor one\nsecond\nanchor two\nthird"
+    proposed = "FIRST\nanchor one\nSECOND\nanchor two\nTHIRD"
+    client.put(path, json={"content": base})
+    monkeypatch.setattr(svc, "generate_summary", AsyncMock(return_value=(proposed, "test")))
+    before = client.post(f"{path}/generate", json={}).json()
+    assert len(before["suggestion"]["hunks"]) == 3
+
+    accepted = client.post(
+        f"{path}/resolve",
+        json={
+            "revision": before["revision"],
+            "accepted": [0],
+            "reviewed": [0],
+        },
+    )
+    assert accepted.status_code == 200
+    after = accepted.json()
+    assert after["content"] == "FIRST\nanchor one\nsecond\nanchor two\nthird"
+    assert after["model"] == "test"
+    assert after["suggestion"]["content"] == proposed
+    assert len(after["suggestion"]["hunks"]) == 2
+    assert after["suggestion"]["generated_at"] == before["suggestion"]["generated_at"]
+
+    # Indices are re-based after each decision; old clients cannot act on them.
+    assert (
+        client.post(
+            f"{path}/resolve",
+            json={
+                "revision": before["revision"],
+                "accepted": [],
+                "reviewed": [0],
+            },
+        ).status_code
+        == 409
+    )
+    rejected = client.post(
+        f"{path}/resolve",
+        json={
+            "revision": after["revision"],
+            "accepted": [],
+            "reviewed": [0],
+        },
+    )
+    assert rejected.status_code == 200
+    remaining = rejected.json()
+    assert remaining["content"] == after["content"]
+    assert remaining["suggestion"]["content"] == "FIRST\nanchor one\nsecond\nanchor two\nTHIRD"
+    assert len(remaining["suggestion"]["hunks"]) == 1
+
+    final = client.post(
+        f"{path}/resolve",
+        json={
+            "revision": remaining["revision"],
+            "accepted": [0],
+            "reviewed": [0],
+        },
+    ).json()
+    assert final["content"] == "FIRST\nanchor one\nsecond\nanchor two\nTHIRD"
+    assert final["suggestion"] is None
+    assert final["user_edited"] is True
+
+
+@pytest.mark.parametrize("accept_rest", [False, True])
+def test_bulk_review_after_an_individual_rejection(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, accept_rest: bool
+) -> None:
+    path = f"/api/topics/{_topic(client)}/topic-summary"
+    client.put(path, json={"content": "keep\nanchor\nold"})
+    monkeypatch.setattr(
+        svc, "generate_summary", AsyncMock(return_value=("discard\nanchor\nnew", "test"))
+    )
+    generated = client.post(f"{path}/generate", json={}).json()
+    remaining = client.post(
+        f"{path}/resolve",
+        json={
+            "revision": generated["revision"],
+            "reviewed": [0],
+        },
+    ).json()
+    final = client.post(
+        f"{path}/resolve",
+        json={
+            "revision": remaining["revision"],
+            "accepted": [0] if accept_rest else [],
+        },
+    ).json()
+    assert final["content"] == ("keep\nanchor\nnew" if accept_rest else "keep\nanchor\nold")
+    assert final["suggestion"] is None
+
+
+@pytest.mark.parametrize("reviewed,accepted", [([], []), ([-1], []), ([5], []), ([0], [1])])
+def test_invalid_partial_review_preserves_the_proposal(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    reviewed: list[int],
+    accepted: list[int],
+) -> None:
+    path = f"/api/topics/{_topic(client)}/topic-summary"
+    client.put(path, json={"content": "first\nanchor\nlast"})
+    monkeypatch.setattr(
+        svc, "generate_summary", AsyncMock(return_value=("FIRST\nanchor\nLAST", "test"))
+    )
+    original = client.post(f"{path}/generate", json={}).json()
+    response = client.post(
+        f"{path}/resolve",
+        json={
+            "revision": original["revision"],
+            "reviewed": reviewed,
+            "accepted": accepted,
+        },
+    )
+    assert response.status_code == 422
+    assert client.get(path).json() == original
+
+
 def test_unknown_topic_is_404(client: TestClient) -> None:
     assert client.get("/api/topics/999999/topic-summary").status_code == 404
 
@@ -575,6 +694,26 @@ def test_diff_and_apply_round_trip() -> None:
     assert svc.apply_hunks(base, hunks, set()).strip() == base
     assert svc.apply_hunks(base, hunks, {0, 1}).strip() == proposed
     assert svc.apply_hunks(base, hunks, {1}).strip() == "a\nb\nc\nd"
+
+
+@pytest.mark.parametrize(
+    "base,proposed,selected,accepted",
+    [
+        ("a\nb\nc", "a\nB\nc\nd", 1, "a\nb\nc\nd"),
+        ("a\nb\nc\nd", "a\nc\nD", 0, "a\nc\nd"),
+    ],
+)
+def test_partial_review_rebases_insertions_and_deletions(
+    base: str, proposed: str, selected: int, accepted: str
+) -> None:
+    hunks = svc.diff_hunks(base, proposed)
+    content, remaining = svc.resolve_hunks(base, hunks, {selected}, {selected})
+    assert content == accepted
+    assert remaining == proposed
+    assert svc.resolve_hunks(content, svc.diff_hunks(content, remaining), set(), {0}) == (
+        accepted,
+        None,
+    )
 
 
 def test_append_item_creates_missing_sections_in_order() -> None:

@@ -103,6 +103,7 @@ import type {
   Topic,
   TopicNode,
   TopicSummary,
+  TopicSummaryResolve,
   TransferImportResult,
   TransferPreview,
   TransferResolution,
@@ -1379,11 +1380,13 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ instruction: instruction ?? null }),
       }),
-    resolve: (topicId: number, accepted: number[], revision: string) =>
-      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/resolve`, {
+    resolve: (topicId: number, accepted: number[], revision: string, reviewed?: number[]) => {
+      const payload: TopicSummaryResolve = { accepted, revision, reviewed };
+      return request<TopicSummary>(`/api/topics/${topicId}/topic-summary/resolve`, {
         method: "POST",
-        body: JSON.stringify({ accepted, revision }),
-      }),
+        body: JSON.stringify(payload),
+      });
+    },
     addItem: (topicId: number, kind: "todo" | "important", text: string) =>
       request<TopicSummary>(`/api/topics/${topicId}/topic-summary/items`, {
         method: "POST",

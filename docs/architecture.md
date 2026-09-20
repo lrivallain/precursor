@@ -126,7 +126,10 @@ bounded conversation, scratchpad and filename context, then releases the DB
 connection before the model call. A compare-and-swap write rejects concurrent
 changes (`409`) rather than overwriting user edits; user-owned briefs receive a
 proposal. Reviews echo the returned content revision to bind their hunk indices
-to the exact text shown. Manual edits invalidate previous proposals. Committed
+to the exact text shown. A `reviewed` index list applies only those decisions:
+accepted changes update the brief, rejected changes are removed from the proposal, and
+the remaining proposal is re-diffed against the new brief. Omitting that list
+resolves the entire proposal. Manual edits invalidate previous proposals. Committed
 changes emit `topic-summary.changed` to synchronize open windows and scheduled
 updates without reloading chat. The linked GitHub issue's `/summary` endpoint
 remains separate.

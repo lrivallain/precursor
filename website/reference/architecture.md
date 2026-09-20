@@ -122,7 +122,11 @@ generation succeeds. A compare-and-swap write rejects concurrent changes with
 
 Reads include a content revision covering both the brief and the proposal.
 Review submissions must echo that revision so change indices cannot silently
-apply to different text. Manual saves and item appends invalidate old proposals.
+apply to different text. Individual decisions include `reviewed` indices:
+accepted hunks update the live brief, rejected hunks are removed from the
+proposal, and unresolved hunks are re-diffed against the updated brief. Omitting
+`reviewed` preserves the bulk-resolution behavior. Manual saves and item appends
+invalidate old proposals.
 Committed mutations emit `topic-summary.changed` for cross-window and scheduled
 updates without reloading the transcript. This is separate from the GitHub issue
 summary at `/api/topics/{id}/summary`.
