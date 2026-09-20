@@ -31,7 +31,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   not hold the database write lock while waiting for the model. Refresh prompts
   favor minimal, evidence-backed updates over rewrites: without a material
   change, the model is asked to return the existing brief verbatim, whether
-  user-edited or originally generated.
+  user-edited or originally generated. An always-visible, slim **Summary** bar
+  below the topic header expands or collapses the brief, with a centered
+  chevron, a pending-change count and an explicit **Generate summary** action
+  for empty topics; editing tools stay out of the way when collapsed.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card

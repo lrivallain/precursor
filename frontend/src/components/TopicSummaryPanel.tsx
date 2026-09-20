@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   FileText,
   Loader2,
   Pencil,
@@ -15,7 +14,7 @@ import { Markdown } from "./Markdown";
 import type { TopicSummary, TopicSummaryHunk } from "../lib/types";
 
 interface Props {
-  summary: TopicSummary;
+  summary: TopicSummary | null;
   busy: boolean;
   error: string | null;
   onSave: (content: string, revision: string) => Promise<boolean>;
@@ -50,13 +49,20 @@ export function TopicSummaryPanel({
   onDismissError,
 }: Props) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(summary.content);
-  const [draftRevision, setDraftRevision] = useState(summary.revision);
+  const [draft, setDraft] = useState(summary?.content ?? "");
+  const [draftRevision, setDraftRevision] = useState(summary?.revision ?? "");
+  const contentId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const confirm = useConfirm();
 
-  const suggestion = summary.suggestion;
+  const suggestion = summary?.suggestion;
   const hunks = suggestion?.hunks ?? [];
+  const collapsed = !summary?.visible;
+  const hasContent = Boolean(summary?.content.trim());
+
+  useEffect(() => {
+    if (!summary) setEditing(false);
+  }, [summary]);
 
   useEffect(() => {
     if (editing) textareaRef.current?.focus();
@@ -67,6 +73,7 @@ export function TopicSummaryPanel({
   }
 
   async function remove(): Promise<void> {
+    if (!summary) return;
     if (await confirm({
       title: "Delete summary?",
       message: "The summary and any pending suggestions will be permanently deleted.",
@@ -77,46 +84,73 @@ export function TopicSummaryPanel({
     }
   }
 
-  const collapsed = !summary.visible;
-
   return (
-    <div data-summary-panel className="border-b border-border bg-surface/40">
-      <div className="flex items-center gap-1.5 px-3 py-1.5">
-        <button
-          type="button"
-          onClick={onToggleVisible}
-          disabled={busy}
-          aria-expanded={summary.visible}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[11px] uppercase tracking-wide text-muted hover:text-fg"
-        >
-          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-          <FileText size={12} />
+    <div data-summary-panel aria-busy={busy} className="shrink-0 border-b border-border bg-surface/40">
+      <button
+        type="button"
+        onClick={onToggleVisible}
+        disabled={busy}
+        aria-label={collapsed ? "Expand topic summary" : "Collapse topic summary"}
+        aria-expanded={!collapsed}
+        aria-controls={contentId}
+        aria-describedby={suggestion ? `${contentId}-changes` : undefined}
+        className="summary-toggle relative flex min-h-8 w-full items-center justify-center text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-wait"
+      >
+        {busy ? (
+          <span role="status">
+            <Loader2 size={20} className="animate-spin motion-reduce:animate-none" />
+            <span className="sr-only">Updating summary…</span>
+          </span>
+        ) : (
+          <ChevronDown
+            size={22}
+            strokeWidth={1.25}
+            className={`motion-safe:transition-transform motion-safe:duration-150 ${collapsed ? "" : "rotate-180"}`}
+          />
+        )}
+        <span className="absolute left-1/2 ml-7 flex max-w-[calc(50%-2rem)] items-center gap-1.5 text-[10px] uppercase tracking-wide">
+          <FileText size={11} className="shrink-0" />
           <span>Summary</span>
           {suggestion && (
-            <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] normal-case tracking-normal text-accent">
-              {hunks.length} suggested change{hunks.length === 1 ? "" : "s"}
+            <span
+              id={`${contentId}-changes`}
+              className="rounded bg-accent/15 px-1.5 py-0.5 normal-case tracking-normal text-accent"
+              data-tooltip={`${hunks.length} suggested change${hunks.length === 1 ? "" : "s"}`}
+            >
+              {hunks.length}
+              <span className="sr-only"> suggested change{hunks.length === 1 ? "" : "s"}</span>
             </span>
           )}
-        </button>
-        {!collapsed && !editing && (
-          <>
-            <button
-              type="button"
-              className="rounded p-1.5 hover:bg-surface disabled:opacity-50"
-              aria-label="Refresh summary"
-              data-tooltip="Regenerate from the conversation, notes and attachments"
-              disabled={busy}
-              onClick={onRefresh}
-            >
-              {busy ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
+        </span>
+      </button>
+
+      {error && (
+        <div role="alert" className="mx-3 my-2 flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[12px] text-red-500">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button type="button" aria-label="Dismiss error" onClick={onDismissError}>
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      <div id={contentId} role="region" aria-label="Topic summary" hidden={collapsed}>
+        {summary && !editing && (
+          <div className="flex items-center justify-end gap-1 border-t border-border/60 px-3 py-1">
+            {hasContent && (
+              <button
+                type="button"
+                className="summary-action rounded p-1.5 hover:bg-surface disabled:opacity-50"
+                aria-label="Refresh summary"
+                data-tooltip="Regenerate from the conversation, notes and attachments"
+                disabled={busy}
+                onClick={onRefresh}
+              >
                 <RefreshCw size={14} />
-              )}
-            </button>
+              </button>
+            )}
             <button
               type="button"
-              className="rounded p-1.5 hover:bg-surface"
+              className="summary-action rounded p-1.5 hover:bg-surface disabled:opacity-50"
               aria-label="Edit summary"
               data-tooltip="Edit the summary"
               disabled={busy}
@@ -130,7 +164,7 @@ export function TopicSummaryPanel({
             </button>
             <button
               type="button"
-              className="rounded p-1.5 hover:bg-surface"
+              className="summary-action rounded p-1.5 hover:bg-surface disabled:opacity-50"
               aria-label="Delete summary"
               data-tooltip="Delete the summary"
               disabled={busy}
@@ -138,77 +172,79 @@ export function TopicSummaryPanel({
             >
               <Trash2 size={14} />
             </button>
-          </>
+          </div>
+        )}
+
+        {summary && (
+          <div className={`max-h-[40vh] overflow-y-auto px-3 pb-3 ${editing ? "border-t border-border/60 pt-3" : ""}`}>
+            {editing ? (
+              <div className="space-y-2">
+                <textarea
+                  ref={textareaRef}
+                  aria-label="Summary markdown"
+                  disabled={busy}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={10}
+                  className="w-full resize-y rounded border border-border bg-bg p-2 font-mono text-[12px] outline-none focus:border-accent/60"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="summary-action inline-flex items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-bg disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => void save()}
+                  >
+                    {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="summary-action rounded border border-border px-2 py-1 text-[12px]"
+                    disabled={busy}
+                    onClick={() => {
+                      setDraft(summary.content);
+                      setEditing(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <span className="text-[11px] text-muted">
+                    Saved edits are preserved when the summary is refreshed.
+                  </span>
+                </div>
+              </div>
+            ) : hasContent ? (
+              <Markdown className="summary-markdown text-[13px]">{summary.content}</Markdown>
+            ) : (
+              <div className="space-y-3 pb-1">
+                <p className="text-[12px] text-muted">
+                  No summary yet. Generate a brief from this topic, or add items with{" "}
+                  <code>/todo-summary</code> and <code>/important-summary</code>.
+                </p>
+                <button
+                  type="button"
+                  className="summary-action inline-flex items-center gap-2 rounded bg-accent px-3 py-1.5 text-[12px] text-bg disabled:opacity-50"
+                  disabled={busy}
+                  onClick={onRefresh}
+                >
+                  <RefreshCw size={13} />
+                  Generate summary
+                </button>
+              </div>
+            )}
+
+            {suggestion && !editing && (
+              <SuggestionReview
+                key={summary.revision}
+                hunks={hunks}
+                busy={busy}
+                onResolve={(indices) => void onResolve(indices, summary.revision)}
+              />
+            )}
+          </div>
         )}
       </div>
-
-      {error && (
-        <div role="alert" className="mx-3 mb-2 flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[12px] text-red-500">
-          <span className="min-w-0 flex-1">{error}</span>
-          <button type="button" aria-label="Dismiss error" onClick={onDismissError}>
-            <X size={12} />
-          </button>
-        </div>
-      )}
-
-      {!collapsed && (
-        <div className="max-h-[40vh] overflow-y-auto px-3 pb-3">
-          {editing ? (
-            <div className="space-y-2">
-              <textarea
-                ref={textareaRef}
-                aria-label="Summary markdown"
-                disabled={busy}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={10}
-                className="w-full resize-y rounded border border-border bg-bg p-2 font-mono text-[12px] outline-none focus:border-accent/60"
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => void save()}
-                >
-                  {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                  Save
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-border px-2 py-1 text-[12px]"
-                  disabled={busy}
-                  onClick={() => {
-                    setDraft(summary.content);
-                    setEditing(false);
-                  }}
-                >
-                  Cancel
-                </button>
-                <span className="text-[11px] text-muted">
-                  Saved edits are preserved when the summary is refreshed.
-                </span>
-              </div>
-            </div>
-          ) : summary.content.trim() ? (
-            <Markdown className="summary-markdown text-[13px]">{summary.content}</Markdown>
-          ) : (
-            <p className="text-[12px] text-muted">
-              No summary yet — refresh to generate one, or add items with{" "}
-              <code>/todo-summary</code> and <code>/important-summary</code>.
-            </p>
-          )}
-
-          {suggestion && !editing && (
-            <SuggestionReview
-              key={summary.revision}
-              hunks={hunks}
-              busy={busy}
-              onResolve={(indices) => void onResolve(indices, summary.revision)}
-            />
-          )}
-        </div>
-      )}
     </div>
   );
 }

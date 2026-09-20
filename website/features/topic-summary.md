@@ -9,9 +9,20 @@ where the topic stands, the actions still open, and the handful of facts needed
 to act. It is written by the model and **owned by you** — once you edit it, no
 refresh can silently overwrite your text.
 
-Open it from the **document icon in the topic header**, or with
-`/show-summary`. By default a topic has **no summary at all**: nothing is
-generated until you ask for it.
+The slim **Summary bar** beneath the topic header is always available, even
+before a brief exists. Its centered chevron expands or collapses the panel;
+refresh, edit and delete controls stay inside the expanded area. When empty,
+open it and choose **Generate summary**. Merely opening it does not call the model.
+
+The **document icon in the topic header** and `/show-summary` remain shortcuts.
+By default a topic has **no summary at all**: nothing is generated until you ask.
+Pending suggestions remain visible as a small count on the collapsed bar.
+
+<Screenshot
+  src="/screenshots/topic-summary-collapsed.png"
+  alt="A slim summary toggle below the topic header, with a centered chevron and a pending-change count"
+  caption="Collapse the brief to keep the conversation in focus; the Summary bar remains within reach."
+/>
 
 <Screenshot
   src="/screenshots/topic-summary.png"

@@ -242,6 +242,17 @@ body {
 .markdown h5 { font-size: 0.9em; }
 .markdown h6 { font-size: 0.85em; color: var(--color-muted); }
 
+/* Keep the compact desktop handle and its actions comfortable for touch. */
+@media (pointer: coarse) {
+  .summary-toggle,
+  .summary-action {
+    min-height: 44px;
+  }
+  .summary-action {
+    min-width: 44px;
+  }
+}
+
 /* Topic summary brief: a dense status panel, not an article — shrink the
    fixed section headings so Status / Actions / Key information read as labels. */
 .markdown.summary-markdown :where(h1, h2, h3) {
