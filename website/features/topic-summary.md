@@ -70,6 +70,11 @@ explicitly request a rewrite or reorganization in the command's instruction.
 This is prompt guidance, not a semantic filter; review suggestions before
 accepting them.
 
+When a requested refresh completes without changing the brief or proposing any
+changes, the Saved status area briefly confirms **“Summary refreshed — no
+changes”**. It returns to the normal status after three seconds. The same
+confirmation appears for `/update-summary`.
+
 ## Editing, and what happens next
 
 Check or uncheck an action **directly in view mode** to mark it done or reopen

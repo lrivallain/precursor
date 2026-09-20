@@ -20,6 +20,7 @@ interface Props {
   summary: TopicSummary | null;
   busy: boolean;
   error: string | null;
+  refreshNotice: string | null;
   onSave: (content: string, revision: string) => Promise<TopicSummary | null>;
   onResolve: (accepted: number[], revision: string) => Promise<boolean>;
   onRemove: (revision: string) => Promise<boolean>;
@@ -45,6 +46,7 @@ export function TopicSummaryPanel({
   summary,
   busy,
   error,
+  refreshNotice,
   onSave,
   onResolve,
   onRemove,
@@ -72,6 +74,8 @@ export function TopicSummaryPanel({
         "Not saved"
       ) : draft.dirty ? (
         "Unsaved changes"
+      ) : refreshNotice && !busy && !error ? (
+        <><Check size={11} /> {refreshNotice}</>
       ) : (
         <><Check size={11} /> Saved</>
       )}

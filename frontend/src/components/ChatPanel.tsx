@@ -1001,6 +1001,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           summary={summary.summary}
           busy={summary.busy}
           error={summary.error}
+          refreshNotice={summary.refreshNotice}
           onSave={summary.save}
           onResolve={summary.resolve}
           onRemove={summary.remove}

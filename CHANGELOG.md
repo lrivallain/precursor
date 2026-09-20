@@ -39,6 +39,8 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   pause with saving/error feedback. Both count as user edits, and stale saves
   remain protected by the same revision checks. Double-clicking summary text
   opens the editor with the caret at the corresponding Markdown position.
+  Refreshes that produce no changes briefly confirm successful completion in
+  the Saved status area instead of appearing to do nothing.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card
