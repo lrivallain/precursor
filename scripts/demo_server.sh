@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 # lives in the same bin directory as `gh`, so dropping that directory would take
 # the launcher with it.
 UV=$(command -v uv) || { echo "uv not found on PATH" >&2; exit 1; }
+PORT=${DEMO_PORT:-8899}
 CLEANPATH=$(echo "$PATH" | tr ':' '\n' | while read -r d; do [ -x "$d/gh" ] || echo "$d"; done | paste -sd: -)
 exec env -u GITHUB_TOKEN -u GH_TOKEN -u GH_ENTERPRISE_TOKEN \
   PATH="$CLEANPATH" \
@@ -14,5 +15,5 @@ exec env -u GITHUB_TOKEN -u GH_TOKEN -u GH_ENTERPRISE_TOKEN \
   PRECURSOR_DATA_DIR="$(pwd)/.demo/data" \
   PRECURSOR_SKILLS_DIR="$(pwd)/.demo/skills" \
   PRECURSOR_SCHEDULER_ENABLED=false \
-  PRECURSOR_PORT=8899 \
-  "$UV" run --frozen --no-sync precursor --port 8899 --strict-port
+  PRECURSOR_PORT="$PORT" \
+  "$UV" run --frozen --no-sync precursor --port "$PORT" --strict-port

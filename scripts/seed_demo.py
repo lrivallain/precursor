@@ -40,12 +40,15 @@ def _guard() -> None:
 _guard()
 
 from precursor.backend.db import SessionLocal, init_db  # noqa: E402
+from precursor.backend.models.agent_event import AgentEventRecord  # noqa: E402
+from precursor.backend.models.agent_run import AgentRun  # noqa: E402
 from precursor.backend.models.agent_session import AgentSession  # noqa: E402
 from precursor.backend.models.chat import Chat  # noqa: E402
 from precursor.backend.models.collection import Collection  # noqa: E402
 from precursor.backend.models.memory import Memory  # noqa: E402
 from precursor.backend.models.message import Message, MessageRole  # noqa: E402
 from precursor.backend.models.role import Role  # noqa: E402
+from precursor.backend.models.settings import AppSetting  # noqa: E402
 from precursor.backend.models.skill import Skill  # noqa: E402
 from precursor.backend.models.topic import Topic  # noqa: E402
 from precursor.backend.models.topic_schedule import TopicSchedule  # noqa: E402
@@ -56,6 +59,7 @@ from precursor.backend.models.workflow import (  # noqa: E402
     WorkflowStep,
 )
 from precursor.backend.models.workflow_state import WorkflowState  # noqa: E402
+from precursor.backend.schemas.agent import AgentEvent  # noqa: E402
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
 
 NOW = datetime.now(UTC)
@@ -109,6 +113,9 @@ async def seed() -> None:
     await init_db()
 
     async with SessionLocal() as s:
+        # Screenshots render archived fixtures, never a real Copilot session.
+        await s.merge(AppSetting(key="agents_enabled", value="false"))
+
         # ---------------- roles ----------------
         # The built-in `default` role is seeded by a migration; only add extras.
         s.add_all(
@@ -434,6 +441,56 @@ async def seed() -> None:
         )
         s.add_all([a_survey, a_writer, a_editor, a_owner, v_publish, v_classify, v_reply])
         await s.flush()
+
+        writer_run = AgentRun(
+            agent_id=a_writer.id,
+            status="idle",
+            model=a_writer.model,
+            started_at=ago(days=1, minutes=2),
+            finished_at=ago(days=1),
+            last_activity_at=ago(days=1),
+        )
+        s.add(writer_run)
+        await s.flush()
+        a_writer.current_run_id = writer_run.id
+
+        for event in [
+            AgentEvent(
+                kind="user_message",
+                text="Draft this week's engineering digest from the release survey.",
+                at=ago(days=1, minutes=2),
+            ),
+            AgentEvent(
+                kind="assistant_reasoning",
+                text=(
+                    "I will group the survey by user impact, distinguish shipped changes "
+                    "from investigations, and keep the digest short."
+                ),
+                at=ago(days=1, minutes=1),
+            ),
+            AgentEvent(
+                kind="assistant_message",
+                text=(
+                    "## This week in the platform\n\n"
+                    "- **Tool scoping:** each agent can now use a focused set of MCP servers.\n"
+                    "- **Workflow replay:** revisit a step without advancing the pipeline.\n"
+                    "- **Search performance:** the regression is diagnosed; a fix is still "
+                    "in progress.\n\n"
+                    "The draft is ready for review before publishing.\n\n"
+                    "```suggest\nMake it shorter\nAdd a next-steps section\n```"
+                ),
+                at=ago(days=1),
+            ),
+        ]:
+            event.agent_run_id = writer_run.id
+            s.add(
+                AgentEventRecord(
+                    agent_session_id=a_writer.id,
+                    agent_run_id=writer_run.id,
+                    payload=event.model_dump_json(),
+                    created_at=event.at,
+                )
+            )
 
         wf = Workflow(
             name="Weekly release digest",

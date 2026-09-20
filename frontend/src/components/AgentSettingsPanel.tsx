@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { agentCanStart } from "../lib/agents";
 import type {
   AgentApprovalPolicy,
   AgentSession,
@@ -126,7 +127,7 @@ export function AgentSettingsPanel({
   const taskLocked = ["pending", "running", "needs_approval"].includes(agent.status);
   // POST /{id}/start rejects an already-active agent, so "Save & run" is only
   // offered when the agent isn't mid-turn.
-  const isActive = ["pending", "running", "needs_approval", "interrupted"].includes(agent.status);
+  const isActive = !agentCanStart(agent);
 
   useEffect(() => {
     void api.topics.list()
