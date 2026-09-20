@@ -352,6 +352,71 @@ const scenes = {
     },
   },
 
+  // The topic summary panel with a proposal open for per-change review.
+  "topic-summary": {
+    viewport: { width: 1440, height: 1250 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:topic-summary:height", "340"));
+      await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
+      const expand = page.getByRole("button", { name: "Expand topic summary", exact: true });
+      if (await expand.isVisible()) await expand.click();
+      await page.getByRole("button", { name: "Accept change 1", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(1200);
+      // Clip to the panel itself, which keeps the sidebar persona footer out.
+      return clipOf(page, '[data-summary-panel]', 0);
+    },
+  },
+
+  "topic-summary-editing": {
+    viewport: { width: 1440, height: 1250 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:topic-summary:height", "280"));
+      await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
+      const expand = page.getByRole("button", { name: "Expand topic summary", exact: true });
+      if (await expand.isVisible()) await expand.click();
+      await page.getByRole("button", { name: "Edit summary", exact: true }).click();
+      await page.getByRole("textbox", { name: "Summary markdown" }).waitFor();
+      await page.mouse.move(0, 0);
+      return clipOf(page, "[data-summary-panel]");
+    },
+  },
+
+  "topic-summary-collapsed": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      // The seeded issue is fictional; don't show an offline GitHub error in the header.
+      await page.route(/\/api\/topics\/\d+\/summary(?:\?.*)?$/, (route) => route.fulfill({
+        json: {
+          repo: "acme/widget-platform",
+          issue_number: 482,
+          issue_title: "Release preparation",
+          issue_state: "open",
+          issue_url: null,
+          labels: [],
+          summary: "QA is running; signing and migration notes are the remaining actions.",
+          model: "demo-fixture",
+          fetched_at: new Date().toISOString(),
+          cached: true,
+        },
+      }));
+      await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
+      const collapse = page.getByRole("button", { name: "Collapse topic summary", exact: true });
+      if (await collapse.isVisible()) await collapse.click();
+      await page.getByRole("button", { name: "Expand topic summary", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const clip = await clipOf(page, "[data-summary-panel]");
+      // Include the topic header and the start of the transcript, not the persona.
+      return {
+        ...clip,
+        y: Math.max(0, clip.y - 56),
+        width: page.viewportSize().width - clip.x,
+        height: 196,
+      };
+    },
+  },
+
   // The same screen with the navigation drawer pulled out over it.
   "mobile-drawer": {
     viewport: { width: 390, height: 844 },

@@ -23,6 +23,44 @@ are the per-version history; releasing does not rewrite this file.
   same tag and checksum-pinned artifacts. Manual runs, planning-only dry runs,
   and manual tags remain available alongside the rolling nightly channel.
 
+- **Topics carry an editable summary.** Coming back to a long topic meant
+  re-reading the transcript to work out where it stood and what was still open.
+
+  A topic can now carry a **status brief** above the transcript — *Status*,
+  *Actions*, *Key information* — reached from the document icon in the topic
+  header or with `/show-summary`. It is generated only when asked
+  (`/update-summary`, optionally with an instruction) from the conversation,
+  the `/notes` scratchpad and the topic's attachments, and it is **editable in
+  place**. Once you edit it, a refresh never overwrites: the model's version
+  arrives as a **list of suggested changes** — removed lines in red, added in
+  green — each accepted or rejected and saved independently, and
+  the prompt is told to treat your wording as authoritative. `/todo-summary`
+  and `/important-summary` append an action or a fact, `/hide-summary`
+  collapses the panel without discarding the text, and all five commands work
+  from a scheduled run. Updates synchronize across open windows; stale edits
+  and reviews are rejected instead of overwriting newer work. Manual Markdown
+  formatting is preserved, first-use failures are visible, and generation does
+  not hold the database write lock while waiting for the model. Refresh prompts
+  favor minimal, evidence-backed updates over rewrites: without a material
+  change, the model is asked to return the existing brief verbatim, whether
+  user-edited or originally generated. An always-visible, slim **Summary** bar
+  below the topic header expands or collapses the brief, with a centered
+  chevron, a pending-change count and an explicit **Generate summary** action
+  for empty topics; editing tools stay out of the way when collapsed. Actions
+  can be checked directly in view mode, and manual edits autosave after a short
+  pause with saving/error feedback. Both count as user edits, and stale saves
+  remain protected by the same revision checks. Double-clicking summary text
+  opens the editor with the caret at the corresponding Markdown position.
+  Refreshes that produce no changes briefly confirm successful completion in
+  the Saved status area instead of appearing to do nothing.
+  Each suggested change is now shown **in place** — merged into the brief at
+  its real position, alongside the unchanged text around it — with its own
+  compact **✔ / ✗** controls sharing the same line as the diff, not a separate
+  header row. There is no final Apply step; undecided suggestions remain
+  pending, re-based against the brief after each decision. The expanded area is
+  vertically resizable with a remembered height, pointer/keyboard controls and
+  scrolling for the complete summary and review.
+
 - **Workflow agents have their own section in the Agents overview and sidebar.**
   Reusable agents referenced by non-archived workflows are grouped separately
   from standalone agents, without duplicating shared agents. Untick **Show
@@ -314,6 +352,19 @@ are the per-version history; releasing does not rewrite this file.
   a browser flow.
 
 ### Fixed
+
+- **An installed Precursor failed to start on the migration step.** Startup
+  runs `alembic upgrade head`, and the config it built pointed at the
+  repository's `alembic.ini` — a file that configures the *CLI* (logging,
+  autogenerate hooks) and is deliberately not shipped in the wheel. The missing
+  path was not inert: the migration environment saw a config file name, tried
+  to apply its logging section and died with
+  `FileNotFoundError: …/site-packages/alembic.ini doesn't exist`, taking the
+  whole application startup with it. `uv tool install precursor-ai` / `uvx`
+  installs could not boot. The runtime now falls back to an in-memory config
+  (everything it needs — the script location and the database URL — was already
+  set programmatically), and the migration environment ignores a config file
+  that isn't there.
 
 - **Enabling plugin tools no longer makes the model reject the request.**
   Plugin server IDs such as `kanban.board` introduced dots into the tool names

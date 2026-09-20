@@ -51,6 +51,7 @@ RELAY_TOKEN_HEADER = "X-Precursor-Event-Token"
 RELAYABLE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "topic.changed",
+        "topic-summary.changed",
         "chat.changed",
         "message.changed",
         "reminder.changed",
@@ -226,6 +227,10 @@ def get_bus() -> EventBus:
 
 async def publish_topic_changed(topic_id: int | None = None) -> None:
     await _bus.publish({"type": "topic.changed", "topic_id": topic_id})
+
+
+async def publish_topic_summary_changed(topic_id: int) -> None:
+    await _bus.publish({"type": "topic-summary.changed", "topic_id": topic_id})
 
 
 async def publish_message_changed(topic_id: int) -> None:

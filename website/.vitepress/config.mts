@@ -97,6 +97,7 @@ export default withMermaid(
           items: [
             { text: "Overview", link: "/features/" },
             { text: "Topics", link: "/features/topics" },
+            { text: "Topic summary", link: "/features/topic-summary" },
             { text: "Collections", link: "/features/collections" },
             { text: "Chats", link: "/features/chats" },
             { text: "Live sessions", link: "/features/live-sessions" },

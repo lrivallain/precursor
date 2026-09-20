@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  FileText,
   Loader2,
   Menu,
   MessagesSquare,
@@ -54,6 +55,7 @@ import { WorkflowSidebarList } from "./components/WorkflowSidebarList";
 import { PersonaMenu } from "./components/PersonaMenu";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
+import { toggleTopicSummary } from "./lib/summaryOpen";
 import { useConfirm } from "./components/ConfirmDialog";
 import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
@@ -2633,6 +2635,16 @@ export default function App() {
                     ))}
                   </div>
                 )}
+              {activeTopic && (
+                <button
+                  className="p-2 rounded hover:bg-surface shrink-0"
+                  aria-label="Toggle topic summary"
+                  data-tooltip={"Topic summary\nStatus, open actions and key information"}
+                  onClick={() => toggleTopicSummary(activeTopic.id)}
+                >
+                  <FileText size={18} />
+                </button>
+              )}
               {activeTopic && (
                 <button
                   className="p-2 rounded hover:bg-surface shrink-0"

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
     from precursor.backend.models.topic_schedule import TopicSchedule
+    from precursor.backend.models.topic_summary import TopicSummary
 
 
 class Topic(Base, TimestampMixin):
@@ -122,6 +123,15 @@ class Topic(Base, TimestampMixin):
     # Optional one-shot reminder. One-to-one; deleting the topic cascades to it.
     reminder: Mapped[Reminder | None] = relationship(
         "Reminder",
+        back_populates="topic",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    # Optional editable status brief shown above the transcript. Created on
+    # demand (a topic has no summary until one is generated or added to).
+    summary: Mapped[TopicSummary | None] = relationship(
+        "TopicSummary",
         back_populates="topic",
         cascade="all, delete-orphan",
         uselist=False,

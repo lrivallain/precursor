@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
+import pytest
 import sqlalchemy as sa
 
 _VERSIONS = Path(__file__).resolve().parents[1] / "precursor" / "backend" / "alembic" / "versions"
@@ -414,3 +417,48 @@ def test_agent_run_split_downgrade_folds_the_newest_run_back() -> None:
     finally:
         engine.dispose()
         os.unlink(db_path)
+
+
+# --- installed-wheel layout --------------------------------------------------
+
+
+def test_migrations_run_without_alembic_ini(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    from precursor.backend import config, logging_config
+    from precursor.backend import db as db_module
+
+    installed_backend = tmp_path / "site-packages" / "precursor" / "backend"
+    shutil.copytree(_VERSIONS.parent, installed_backend / "alembic")
+    monkeypatch.setattr(db_module, "__file__", str(installed_backend / "db.py"))
+    database = tmp_path / "installed.db"
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(database_url=f"sqlite+aiosqlite:///{database}"),
+    )
+    monkeypatch.setattr(logging_config, "logging_is_configured", lambda: False)
+
+    cfg = db_module._alembic_config()
+    assert cfg.config_file_name is None
+    assert Path(cfg.get_main_option("script_location") or "") == installed_backend / "alembic"
+    assert db_module._known_revisions()
+    command.upgrade(cfg, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database}")
+    try:
+        assert "topic_summaries" in sa.inspect(engine).get_table_names()
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == (
+                ScriptDirectory.from_config(cfg).get_current_head()
+            )
+    finally:
+        engine.dispose()
+
+    stale = Config(str(tmp_path / "nope.ini"))
+    stale.set_main_option("script_location", cfg.get_main_option("script_location") or "")
+    command.upgrade(stale, "head")
