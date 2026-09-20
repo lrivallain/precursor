@@ -140,9 +140,12 @@ _SYSTEM_BASE = (
     "You maintain a short status brief for a working topic. The brief is what "
     "someone reads to know where the topic stands and what is left to do.\n"
     "Rules:\n"
-    "- Reply with GitHub-Flavored Markdown only — no preamble, no code fence "
-    "around the whole answer.\n"
-    "- Use exactly these sections, in this order, omitting none:\n"
+    "- Reply with the brief's GitHub-Flavored Markdown only — no preamble or "
+    "explanation. Do not add a new code fence around the whole answer."
+)
+
+_INITIAL_CLAUSE = (
+    "\n- Create a new brief using exactly these sections, in this order, omitting none:\n"
     f"  {STATUS_HEADING} — 1 to 4 bullet points on where things stand.\n"
     f"  {ACTIONS_HEADING} — a task list (`- [ ]` pending, `- [x]` done) of "
     "real, actionable items with an owner when one is known. Leave it empty "
@@ -154,9 +157,44 @@ _SYSTEM_BASE = (
     "- Write in the language the conversation is in."
 )
 
+_REFRESH_CLAUSE = (
+    "\n- This is incremental maintenance of an existing brief, NOT a fresh "
+    "summary or an opportunity to improve its writing. The existing brief is "
+    "the baseline, whether model-generated or user-edited.\n"
+    "- Change a line only when the supplied context provides clear evidence of "
+    "a material update not already reflected in the brief: a changed status or "
+    "blocker, a confirmed decision, a new actionable task, an explicit change "
+    "of owner or deadline, or a factual correction. An explicit user request "
+    "to change the brief also authorizes that specific change.\n"
+    "- Compare meaning, not wording. Repeated facts, paraphrases and additional "
+    "detail that does not affect what someone needs to know or do are NOT "
+    "material updates. For example, 'QA signed off' does not require changing "
+    "an existing 'QA approved the build'.\n"
+    "- Preserve all unaffected text verbatim: wording, headings, section and "
+    "bullet order, task labels, checkboxes, punctuation, links, language and "
+    "Markdown formatting. Do not polish, rephrase, shorten, expand, deduplicate "
+    "or reorganize the brief unless the user explicitly requests it. Do not "
+    "force an existing brief into the default three-section template.\n"
+    "- Context may contain older messages or only a recent slice of the "
+    "conversation. Missing mentions are not evidence that an existing item "
+    "is obsolete. Keep facts and open actions unless an explicit update "
+    "supersedes them. Do not invent follow-up tasks, infer completion from "
+    "silence or elapsed time, or treat a filename as evidence of its contents.\n"
+    "- If a task is explicitly confirmed complete, change only its checkbox "
+    "when its existing label remains accurate; leave unrelated actions alone.\n"
+    "- If there is no material update and no explicit user-requested change, "
+    "return the existing brief verbatim. An identical answer is the correct "
+    "and preferred result, not a failure to help. Do not add an 'unchanged' "
+    "notice, a timestamp or an explanation.\n"
+    "- Otherwise return the full brief with the smallest necessary edits. "
+    "When evidence is ambiguous, preserve the existing text rather than "
+    "proposing a speculative change."
+)
+
 _PRESERVE_CLAUSE = (
     "\n- The existing brief below was written or edited by the user. Treat it "
-    "as authoritative: keep its wording, ordering and items verbatim wherever "
+    "as authoritative unless the user explicitly requests otherwise: "
+    "keep its wording, ordering and items verbatim wherever "
     "they are still accurate, and change only what the conversation shows to "
     "be outdated, done or missing. Removing a user-written line requires "
     "evidence in the conversation that it no longer applies."
@@ -367,15 +405,17 @@ async def generate_summary(
 ) -> tuple[str, str]:
     """Ask the model for a brief. Returns ``(markdown, model)``.
 
-    ``preserve`` raises the weight of ``existing``: when the user has edited
-    the brief by hand, the prompt makes its content authoritative so a refresh
-    keeps it wherever it is still relevant.
+    Existing briefs always receive a minimal-update prompt. ``preserve`` adds
+    explicit user-ownership priority rather than enabling preservation itself.
     """
-    system = _SYSTEM_BASE + (_PRESERVE_CLAUSE if preserve and existing.strip() else "")
+    has_existing = bool(existing.strip())
+    system = _SYSTEM_BASE + (_REFRESH_CLAUSE if has_existing else _INITIAL_CLAUSE)
+    if preserve and has_existing:
+        system += _PRESERVE_CLAUSE
     user_parts = [await build_context(session, topic_id, title)]
-    if existing.strip():
+    if has_existing:
         label = "Existing brief (user-edited)" if preserve else "Existing brief"
-        user_parts.append(f"{label}:\n{existing.strip()}")
+        user_parts.append(f"{label}:\n{existing}")
     if instruction and instruction.strip():
         user_parts.append(f"Extra instruction from the user: {instruction.strip()}")
 
@@ -401,6 +441,10 @@ async def generate_summary(
             model=model,
             topic_id=topic_id,
         )
+    # Completion helpers trim response boundaries; an otherwise identical
+    # reply must not turn the user's spacing or enclosing fence into a diff.
+    if has_existing and text.strip() == existing.strip():
+        return existing, model
     text = sanitize_summary(text)
     if not text:
         raise ValueError("The provider returned an empty summary")

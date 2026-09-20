@@ -28,7 +28,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   from a scheduled run. Updates synchronize across open windows; stale edits
   and reviews are rejected instead of overwriting newer work. Manual Markdown
   formatting is preserved, first-use failures are visible, and generation does
-  not hold the database write lock while waiting for the model.
+  not hold the database write lock while waiting for the model. Refresh prompts
+  favor minimal, evidence-backed updates over rewrites: without a material
+  change, the model is asked to return the existing brief verbatim, whether
+  user-edited or originally generated.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card

@@ -31,7 +31,7 @@ up to 4,000 characters of scratchpad notes, and the latest 100 attached filename
 It does not independently read attachment contents. Empty or failed model
 responses leave the existing brief unchanged and display an error.
 
-The brief always has the same three sections, so it stays scannable and
+The first generated brief uses three sections, so it stays scannable and
 diffable:
 
 ```markdown
@@ -48,6 +48,16 @@ diffable:
 
 Content is deliberately limited to **real actions, updates and information** —
 no retelling of the conversation.
+
+Refreshing an existing brief is a **minimal-update pass**, not a rewrite. The
+model is instructed to preserve wording, formatting and ordering, and to change
+only material facts or actions supported by explicit updates. Repeated facts,
+paraphrases and missing mentions in recent history should not trigger changes.
+With nothing substantive to update, it is asked to return the existing text
+verbatim, including for a brief you have not edited yourself. You can still
+explicitly request a rewrite or reorganization in the command's instruction.
+This is prompt guidance, not a semantic filter; review suggestions before
+accepting them.
 
 ## Editing, and what happens next
 

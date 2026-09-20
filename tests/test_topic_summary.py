@@ -345,6 +345,75 @@ def test_unchanged_generation_has_no_empty_review(
     assert client.post(f"{path}/generate", json={}).json()["suggestion"] is None
 
 
+@pytest.mark.parametrize("preserve", [False, True])
+async def test_refresh_prompt_prefers_no_change_for_every_existing_brief(
+    monkeypatch: pytest.MonkeyPatch, preserve: bool
+) -> None:
+    existing = "## My release notes\n- QA approved the build.\n- [ ] Run load test\n"
+    complete = AsyncMock(return_value=(existing, None))
+    monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: QA signed off."))
+    monkeypatch.setattr(svc, "get_llm_provider", AsyncMock())
+    monkeypatch.setattr(svc, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(svc, "complete_text_with_usage", complete)
+
+    text, _ = await svc.generate_summary(
+        AsyncMock(),
+        topic_id=1,
+        title="Release",
+        existing=existing,
+        preserve=preserve,
+        instruction="Keep attention on blockers",
+    )
+
+    assert text == existing
+    system, user = complete.call_args.kwargs["messages"]
+    assert svc._REFRESH_CLAUSE in system.content
+    assert svc._INITIAL_CLAUSE not in system.content
+    assert (svc._PRESERVE_CLAUSE in system.content) is preserve
+    assert "return the existing brief verbatim" in system.content
+    assert "Compare meaning, not wording" in system.content
+    assert "Do not polish, rephrase" in system.content
+    assert "Missing mentions are not evidence" in system.content
+    assert "smallest necessary edits" in system.content
+    assert existing in user.content
+    assert "Keep attention on blockers" in user.content
+
+
+async def test_an_identical_refresh_preserves_a_user_authored_code_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = "\n```text\nKeep the release gate closed.\n```\n"
+    monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="No new facts."))
+    monkeypatch.setattr(svc, "get_llm_provider", AsyncMock())
+    monkeypatch.setattr(svc, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(
+        svc, "complete_text_with_usage", AsyncMock(return_value=(existing.strip(), None))
+    )
+    text, _ = await svc.generate_summary(
+        AsyncMock(), topic_id=1, title="Gate", existing=existing, preserve=True
+    )
+    assert text == existing
+
+
+@pytest.mark.parametrize("existing", ["", " \n"])
+async def test_first_generation_still_uses_the_standard_brief_template(
+    monkeypatch: pytest.MonkeyPatch, existing: str
+) -> None:
+    complete = AsyncMock(return_value=("## Status\n- Starting", None))
+    monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: Start a pilot."))
+    monkeypatch.setattr(svc, "get_llm_provider", AsyncMock())
+    monkeypatch.setattr(svc, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(svc, "complete_text_with_usage", complete)
+
+    await svc.generate_summary(
+        AsyncMock(), topic_id=1, title="Pilot", existing=existing, preserve=True
+    )
+    system = complete.call_args.kwargs["messages"][0].content
+    assert svc._INITIAL_CLAUSE in system
+    assert svc._REFRESH_CLAUSE not in system
+    assert svc._PRESERVE_CLAUSE not in system
+
+
 @pytest.mark.parametrize("raw", ["", "   ", "```markdown\n```"])
 def test_empty_model_output_keeps_the_existing_brief(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, raw: str
