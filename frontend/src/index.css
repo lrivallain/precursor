@@ -320,6 +320,29 @@ body {
 .markdown h5 { font-size: 0.9em; }
 .markdown h6 { font-size: 0.85em; color: var(--color-muted); }
 
+/* Keep the compact desktop handle and its actions comfortable for touch. */
+@media (pointer: coarse) {
+  .summary-toggle,
+  .summary-action {
+    min-height: 44px;
+  }
+  .summary-action {
+    min-width: 44px;
+  }
+}
+
+/* Topic summary brief: a dense status panel, not an article — shrink the
+   fixed section headings so Status / Actions / Key information read as labels. */
+.markdown.summary-markdown :where(h1, h2, h3) {
+  font-size: 1em;
+  margin-top: 0.9em;
+  padding-bottom: 0;
+  border-bottom: none;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-muted);
+}
+
 /* Inline emphasis */
 .markdown strong { font-weight: 600; }
 .markdown em { font-style: italic; }
@@ -338,12 +361,36 @@ body {
   margin: 0.15em 0;
 }
 /* GFM task lists */
-.markdown li:has(> input[type="checkbox"]) {
+.markdown li:has(> input[type="checkbox"]),
+.markdown li:has(> .markdown-task-toggle),
+.markdown li:has(> p > .markdown-task-toggle) {
   list-style: none;
   margin-left: -1.25em;
 }
 .markdown input[type="checkbox"] {
   margin-right: 0.4em;
+}
+.markdown-task-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  vertical-align: middle;
+}
+.markdown .markdown-task-toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.markdown-task-toggle:has(input:not(:disabled)),
+.markdown-task-toggle input:not(:disabled) {
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .markdown-task-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* Blockquote */

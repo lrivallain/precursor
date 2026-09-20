@@ -1017,6 +1017,51 @@ export interface Message {
   is_error?: boolean;
 }
 
+/**
+ * The editable status brief shown above a topic's transcript. Mirrors
+ * `schemas/topic_summary.py`. A topic has none until one is generated or an
+ * item is added to it, so the API resolves to `null` rather than 404.
+ */
+export interface TopicSummary {
+  revision: string;
+  content: string;
+  visible: boolean;
+  user_edited: boolean;
+  model: string | null;
+  generated_at: string | null;
+  updated_at: string | null;
+  suggestion: TopicSummarySuggestion | null;
+}
+
+/** A model proposal parked for per-change review on a user-edited summary. */
+export interface TopicSummarySuggestion {
+  content: string;
+  model: string | null;
+  generated_at: string | null;
+  hunks: TopicSummaryHunk[];
+}
+
+/**
+ * One contiguous change (removed lines → added lines) in a proposal.
+ * `base_start`/`base_end` are line offsets into the *current* content, so the
+ * change can be rendered inline at its real position rather than in a
+ * detached list.
+ */
+export interface TopicSummaryHunk {
+  index: number;
+  base_start: number;
+  base_end: number;
+  removed: string[];
+  added: string[];
+}
+
+/** Omit reviewed to resolve the entire proposal; otherwise decide only those hunks. */
+export interface TopicSummaryResolve {
+  revision: string;
+  accepted: number[];
+  reviewed?: number[] | null;
+}
+
 export interface NotesDraft {
   text: string | null;
   updated_at: string | null;

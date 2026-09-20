@@ -1,26 +1,87 @@
 import {
   Children,
   cloneElement,
+  createContext,
   isValidElement,
   memo,
+  useContext,
   useState,
   type ReactElement,
   type ReactNode,
+  type InputHTMLAttributes,
 } from "react";
 import { AlertTriangle, Check, Copy } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
 import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
+import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 
 interface MarkdownProps {
   children: string;
   /** Extra classes appended to the `.markdown` wrapper (spacing, sizing…). */
   className?: string;
+  /** Opt-in task editing; ordinary transcript Markdown remains read-only. */
+  onTaskChange?: (markdown: string) => void;
+  tasksDisabled?: boolean;
+  onTextDoubleClick?: (sourceOffset: number) => void;
 }
+
+interface TaskListOptions {
+  source: string;
+  rendered: string;
+  insertions: { offset: number; length: number }[];
+  onChange: (markdown: string) => void;
+  disabled: boolean;
+}
+
+const TaskListContext = createContext<TaskListOptions | null>(null);
+
+// Stable component identity keeps keyboard focus on a checkbox across saves.
+const TaskListItem: NonNullable<Components["li"]> = ({ node, children, ...props }) => {
+  const tasks = useContext(TaskListContext);
+  const start = node?.position?.start.offset;
+  const marker = !tasks || start == null
+    ? null
+    : tasks.rendered.slice(start).match(/^((?:[-+*]|\d+[.)])[ \t]+\[)[ xX]\]/);
+  if (!tasks || start == null || !marker || !props.className?.includes("task-list-item")) {
+    return <li {...props}>{children}</li>;
+  }
+  const { source, onChange, disabled, insertions } = tasks;
+  const renderedOffset = start + marker[1].length;
+  const offset = renderedOffset - insertions.reduce(
+    (sum, insertion) => sum + (insertion.offset <= renderedOffset ? insertion.length : 0), 0,
+  );
+  if (!/^\[[ xX]\]$/.test(source.slice(offset - 1, offset + 2))) {
+    return <li {...props}>{children}</li>;
+  }
+  const ownChildren = Children.toArray(children).filter(
+    (child) => !isValidElement(child) || (child.type !== "ul" && child.type !== "ol"),
+  );
+  const firstParagraph = ownChildren.find((child) => isValidElement(child) && child.type === "p");
+  const label = flattenText(firstParagraph ?? ownChildren).trim() || "Task";
+  function activate(value: ReactNode): ReactNode {
+    if (!isValidElement(value)) return value;
+    const element = value as ReactElement<{ children?: ReactNode; type?: string }>;
+    // Each nested list item owns its own source position.
+    if (element.type === "ul" || element.type === "ol") return value;
+    if (element.type === "input" && element.props.type === "checkbox") {
+      const input = cloneElement(value as ReactElement<InputHTMLAttributes<HTMLInputElement>>, {
+        disabled,
+        "aria-label": label,
+        onChange: (event) => onChange(
+          source.slice(0, offset) + (event.currentTarget.checked ? "x" : " ") + source.slice(offset + 1),
+        ),
+      });
+      return <label className="markdown-task-toggle">{input}</label>;
+    }
+    return cloneElement(element, undefined, Children.map(element.props.children, activate));
+  }
+  return <li {...props}>{Children.map(children, activate)}</li>;
+};
 
 /** Open external (http/https) links in a new tab; keep in-app anchors inline. */
 function isExternalHref(href: string | undefined): boolean {
@@ -72,16 +133,26 @@ const RAW_SVG_RE = /<svg[\s\S]*?<\/svg>/gi;
  * a code fence) into a ```svg fence, so the `pre` override below renders it as
  * an image. Fenced regions are left untouched.
  */
-function wrapRawSvg(markdown: string): string {
+function wrapRawSvg(markdown: string, insertions: { offset: number; length: number }[] = []): string {
   if (!markdown.toLowerCase().includes("<svg")) return markdown;
+  let sourceOffset = 0;
+  let added = 0;
   return markdown
     .split(FENCE_RE)
     .map((part, index) => {
+      const start = sourceOffset;
+      sourceOffset += part.length;
       if (index % 2 === 1) return part; // captured fenced block
-      return part.replace(
-        RAW_SVG_RE,
-        (match) => `\n\n\`\`\`svg\n${match.trim()}\n\`\`\`\n\n`,
-      );
+      return part.replace(RAW_SVG_RE, (match, offset: number) => {
+        const prefix = "\n\n```svg\n";
+        const suffix = "\n```\n\n";
+        // Task offsets must still address the source, not these injected fences.
+        insertions.push({ offset: start + offset + added, length: prefix.length });
+        added += prefix.length;
+        insertions.push({ offset: start + offset + match.length + added, length: suffix.length });
+        added += suffix.length;
+        return prefix + match + suffix;
+      });
     })
     .join("");
 }
@@ -156,23 +227,45 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * re-run syntax highlighting for the whole transcript — that synchronous work
  * caused visible layout thrash / scrollbar flicker on content-heavy topics.
  */
-export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({
+  children, className, onTaskChange, tasksDisabled = false, onTextDoubleClick,
+}: MarkdownProps) {
   // A non-empty highlight term (set when a content-search hit is opened) adds a
   // rehype pass that wraps matches in <mark>. Kept off the plugin list entirely
   // when idle so normal rendering pays nothing.
   const highlight = useSearchHighlight();
+  const insertions: { offset: number; length: number }[] = [];
+  const rendered = wrapRawSvg(children, insertions);
   const rehypePlugins: PluggableList = highlight.trim()
     ? [
         [rehypeHighlight, { detect: true, ignoreMissing: true }],
         makeHighlightRehype(highlight),
       ]
     : [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+  if (onTextDoubleClick) {
+    rehypePlugins.unshift(makeMarkdownCaretRehype((offset) => offset - insertions.reduce(
+      (sum, insertion) => sum + Math.min(insertion.length, Math.max(0, offset - insertion.offset)), 0,
+    )));
+  }
   return (
-    <div className={className ? `markdown ${className}` : "markdown"}>
+    <div
+      className={className ? `markdown ${className}` : "markdown"}
+      onDoubleClick={onTextDoubleClick ? (event) => {
+        const offset = markdownCaretAtPoint(event.currentTarget, event.nativeEvent, children);
+        if (offset == null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onTextDoubleClick(offset);
+      } : undefined}
+    >
+      <TaskListContext.Provider value={onTaskChange ? {
+        source: children, rendered, insertions, onChange: onTaskChange, disabled: tasksDisabled,
+      } : null}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={rehypePlugins}
         components={{
+          li: onTaskChange ? TaskListItem : "li",
           pre({ children: preChildren, ...props }) {
             const mermaid = mermaidFromPre(preChildren);
             if (mermaid) return <MermaidBlock code={mermaid} />;
@@ -211,8 +304,9 @@ export const Markdown = memo(function Markdown({ children, className }: Markdown
           },
         }}
       >
-        {wrapRawSvg(children) || "\u200B"}
+        {rendered || "\u200B"}
       </ReactMarkdown>
+      </TaskListContext.Provider>
     </div>
   );
 });

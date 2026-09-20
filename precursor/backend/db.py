@@ -114,9 +114,11 @@ def _inspect_alembic_state(sync_conn: Connection) -> tuple[bool, bool, str | Non
 def _alembic_config() -> Config:
     from alembic.config import Config
 
-    repo_root = Path(__file__).resolve().parents[2]
-    cfg = Config(str(repo_root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(repo_root / "precursor" / "backend" / "alembic"))
+    # Wheels omit the CLI's ini. Runtime options are set here and in env.py;
+    # naming a missing ini would make fileConfig fail during startup.
+    ini = Path(__file__).resolve().parents[2] / "alembic.ini"
+    cfg = Config(str(ini)) if ini.is_file() else Config()
+    cfg.set_main_option("script_location", str(Path(__file__).resolve().parent / "alembic"))
     return cfg
 
 
