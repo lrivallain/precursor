@@ -463,6 +463,7 @@ export default function App() {
   );
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
+  const [showWorkflowAgents, setShowWorkflowAgents] = useState(true);
   const [agentsError, setAgentsError] = useState<string | null>(null);
   const [startingAgentIds, setStartingAgentIds] = useState<Set<number>>(() => new Set());
   const [agentRunError, setAgentRunError] = useState<{ agentId: number; message: string } | null>(null);
@@ -1750,6 +1751,7 @@ export default function App() {
         // background via the coordinator). Bump the reload key so the cockpit
         // re-fetches; the WorkflowsSection owns its own collection.
         setWorkflowReloadKey((k) => k + 1);
+        refreshAgents();
         maybeNotifyWorkflow(
           event.workflow_id ?? null,
           event.workflow_status ?? null,
@@ -2517,6 +2519,8 @@ export default function App() {
         agentSlot={
           <AgentList
             agents={agents ?? []}
+            showWorkflowAgents={showWorkflowAgents}
+            onShowWorkflowAgentsChange={setShowWorkflowAgents}
             activeId={agentComposerOpen ? null : activeAgentId}
             overviewSelected={activeAgentId == null && !agentComposerOpen}
             loading={agentsBooting}
@@ -3120,6 +3124,8 @@ export default function App() {
             !agentComposerOpen ? (
             <AgentDashboard
               agents={agents ?? []}
+              showWorkflowAgents={showWorkflowAgents}
+              onShowWorkflowAgentsChange={setShowWorkflowAgents}
               onSelect={(id) => void openAgent(id)}
               onNew={() => setAgentComposerOpen(true)}
               onImported={(result) => {

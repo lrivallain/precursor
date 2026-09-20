@@ -11,6 +11,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Workflow agents have their own section in the Agents overview and sidebar.**
+  Reusable agents referenced by non-archived workflows are grouped separately
+  from standalone agents, without duplicating shared agents. Untick **Show
+  workflow agents** in either view to focus on standalone agents; the shared
+  filter also scopes the overview's KPI counts and inbox, while direct links and
+  fleet-wide totals remain available.
+
 - **Agents and Workflows now share the standard sidebar.** Both sections have
   searchable item lists and an **Overview** entry alongside their existing card
   dashboards. Section navigation always opens the overview; rows, cards and

@@ -162,6 +162,9 @@ const scenes = {
     async go(page) {
       await page.goto(`${BASE}/agents`, { waitUntil: "networkidle" });
       await page.getByRole("heading", { name: "Agent fleet" }).waitFor();
+      await page.locator("main").getByRole("region", { name: "Standalone agents", exact: true }).waitFor();
+      await page.locator("main").getByRole("region", { name: "Workflow agents", exact: true }).waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
       return undefined;
     },
   },

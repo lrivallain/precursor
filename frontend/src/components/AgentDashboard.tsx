@@ -3,7 +3,7 @@
  *
  * Instead of opening agents one at a time like alternative topics, this is the
  * default agents-mode view: a row of KPI stat tiles over an urgency-sorted grid
- * of monitor cards, grouped into swimlanes (Needs you / Working / Idle · done)
+ * of monitor cards, grouped by workflow membership and then into urgency lanes
  * so the fleet reads as a control tower rather than a wall of identical cards.
  * Blocked agents (waiting on the human) float to the top with a warm amber
  * treatment; working agents show their live tool and sub-agent fan-out;
@@ -45,16 +45,19 @@ import { api } from "../lib/api";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { AgentMedallion } from "./AgentMedallion";
 import { ImportDialog } from "./ImportDialog";
+import { WorkflowAgentFilter } from "./WorkflowAgentFilter";
 import {
   AGENT_STATUS_DOT,
   agentIsActive,
   agentNeedsAttention,
   agentRelativeTime,
-  sortAgentsByUrgency,
+  groupAgentsByWorkflow,
 } from "../lib/agents";
 
 interface AgentDashboardProps {
   agents: AgentSession[];
+  showWorkflowAgents: boolean;
+  onShowWorkflowAgentsChange: (show: boolean) => void;
   onSelect: (id: number) => void;
   onNew: () => void;
   /** Refresh + focus the agent an imported YAML file produced. */
@@ -109,12 +112,18 @@ const FILTER_LABEL: Record<FilterKey, string> = {
 
 export function AgentDashboard({
   agents,
+  showWorkflowAgents,
+  onShowWorkflowAgentsChange,
   onSelect,
   onNew,
   onImported,
   onOpenWorkflow,
 }: AgentDashboardProps) {
-  const ordered = useMemo(() => sortAgentsByUrgency(agents), [agents]);
+  const groups = useMemo(
+    () => groupAgentsByWorkflow(agents, showWorkflowAgents),
+    [agents, showWorkflowAgents],
+  );
+  const visibleAgents = useMemo(() => groups.flatMap((group) => group.agents), [groups]);
   const [importing, setImporting] = useState(false);
 
   // Which KPI tile is acting as a filter, if any. Clicking a tile toggles it:
@@ -129,6 +138,7 @@ export function AgentDashboard({
   const clearFilters = () => {
     setFilter(null);
     setQuery("");
+    onShowWorkflowAgentsChange(true);
   };
 
   // Aggregate observability + unified inbox. Polled here (not derived from the
@@ -136,6 +146,11 @@ export function AgentDashboard({
   // headroom, and the inbox surfaces the live parked permission per gate.
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
   const [inbox, setInbox] = useState<AgentInboxItem[]>([]);
+  const visibleInbox = useMemo(() => {
+    if (showWorkflowAgents) return inbox;
+    const ids = new Set(visibleAgents.map((agent) => agent.id));
+    return inbox.filter((item) => ids.has(item.agent_id));
+  }, [inbox, visibleAgents, showWorkflowAgents]);
 
   useEffect(() => {
     let alive = true;
@@ -163,36 +178,35 @@ export function AgentDashboard({
     let working = 0;
     let quiet = 0;
     let scheduled = 0;
-    for (const a of agents) {
+    for (const a of visibleAgents) {
       const lane = laneOf(a);
       if (lane === "attention") attention += 1;
       else if (lane === "working") working += 1;
       else quiet += 1;
       if (a.schedule?.enabled) scheduled += 1;
     }
-    return { attention, working, quiet, scheduled, total: agents.length };
-  }, [agents]);
+    return { attention, working, quiet, scheduled, total: visibleAgents.length };
+  }, [visibleAgents]);
 
-  // Group the already-urgency-sorted list into lanes, preserving order within
-  // each. A lane filter narrows to that single lane; the "scheduled" filter
+  // Split each membership group into urgency lanes. A lane filter narrows to
+  // that single lane; the "scheduled" filter
   // keeps every lane but only its scheduled agents; the search box narrows by
   // name on top of both. Only non-empty lanes render.
-  const lanes = useMemo(() => {
-    const groups: Record<LaneKey, AgentSession[]> = {
-      attention: [],
-      working: [],
-      quiet: [],
-    };
-    for (const a of ordered) {
+  const sections = useMemo(() => groups.map((group) => {
+    const lanes: Record<LaneKey, AgentSession[]> = { attention: [], working: [], quiet: [] };
+    for (const a of group.agents) {
       if (filter === "scheduled" && !a.schedule?.enabled) continue;
       if (search && !a.title.toLowerCase().includes(search)) continue;
-      groups[laneOf(a)].push(a);
+      lanes[laneOf(a)].push(a);
     }
-    return (["attention", "working", "quiet"] as LaneKey[])
-      .filter((key) => filter === null || filter === "scheduled" || key === filter)
-      .map((key) => ({ key, ...LANE_META[key], agents: groups[key] }))
-      .filter((lane) => lane.agents.length > 0);
-  }, [ordered, filter, search]);
+    return {
+      ...group,
+      lanes: (["attention", "working", "quiet"] as LaneKey[])
+        .filter((key) => filter === null || filter === "scheduled" || key === filter)
+        .map((key) => ({ key, ...LANE_META[key], agents: lanes[key] }))
+        .filter((lane) => lane.agents.length > 0),
+    };
+  }).filter((group) => group.lanes.length > 0), [groups, filter, search]);
 
   return (
     <div className="@container flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
@@ -211,6 +225,7 @@ export function AgentDashboard({
           {/* Wraps onto its own line(s) rather than running off a phone
               screen, which would put "New agent" out of reach. */}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <WorkflowAgentFilter checked={showWorkflowAgents} onChange={onShowWorkflowAgentsChange} />
             {agents.length > 0 && (
               <div className="relative">
                 <Search
@@ -309,6 +324,7 @@ export function AgentDashboard({
         </div>
         {metrics && (
           <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted">
+            <span className="font-medium">Fleet totals</span>
             <span
               className="inline-flex items-center gap-1.5"
               data-tooltip="Agents running now vs the concurrency ceiling"
@@ -345,7 +361,7 @@ export function AgentDashboard({
         )}
       </div>
 
-      {inbox.length > 0 && (
+      {visibleInbox.length > 0 && (
         <div className="border-b border-border bg-orange-500/[0.04] px-4 py-2.5">
           <div className="mb-1.5 flex items-center gap-1.5">
             <ShieldQuestion size={13} className="text-orange-500" />
@@ -353,11 +369,11 @@ export function AgentDashboard({
               Inbox
             </h2>
             <span className="rounded-full bg-orange-500/15 px-1.5 text-[10px] font-semibold tabular-nums text-orange-600 dark:text-orange-300">
-              {inbox.length}
+              {visibleInbox.length}
             </span>
           </div>
           <ul className="flex flex-wrap gap-2">
-            {inbox.map((item) => (
+            {visibleInbox.map((item) => (
               <li key={`${item.kind}-${item.agent_id}`}>
                 <InboxChip item={item} onSelect={() => onSelect(item.agent_id)} />
               </li>
@@ -367,7 +383,7 @@ export function AgentDashboard({
       )}
 
       <div className="flex-1 overflow-y-auto p-4">
-        {ordered.length === 0 ? (
+        {agents.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-500 ring-1 ring-violet-500/20">
               <Bot size={30} />
@@ -387,10 +403,14 @@ export function AgentDashboard({
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {(filter || search) && (
+            {(filter || search || !showWorkflowAgents) && (
               <div className="flex items-center gap-2 text-xs text-muted">
                 <span>
                   Filtered to{" "}
+                  {!showWorkflowAgents && (
+                    <span className="font-semibold text-text">Standalone agents</span>
+                  )}
+                  {!showWorkflowAgents && (filter || search) && " · "}
                   {filter && (
                     <span className="font-semibold text-text">{FILTER_LABEL[filter]}</span>
                   )}
@@ -407,7 +427,7 @@ export function AgentDashboard({
                 </button>
               </div>
             )}
-            {lanes.length === 0 ? (
+            {sections.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
                 <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-surface text-muted ring-1 ring-border">
                   <Radar size={22} />
@@ -430,29 +450,40 @@ export function AgentDashboard({
               </div>
             ) : (
               <div className="flex flex-col gap-6">
-                {lanes.map((lane) => (
-                  <section key={lane.key}>
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${lane.dot}`} />
-                      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                        {lane.label}
-                      </h2>
-                      <span className="rounded-full bg-surface px-1.5 text-[10px] font-medium tabular-nums text-muted">
-                        {lane.agents.length}
+                {sections.map((group) => (
+                  <section key={group.key} aria-label={group.label} className="space-y-3">
+                    <h2 className="flex items-center gap-2 text-sm font-semibold">
+                      {group.key === "workflow" ? <WorkflowIcon size={16} /> : <Bot size={16} />}
+                      {group.label}
+                      <span className="rounded-full bg-surface px-2 text-[11px] tabular-nums text-muted">
+                        {group.lanes.reduce((total, lane) => total + lane.agents.length, 0)}
                       </span>
-                      <span className="ml-1 h-px flex-1 bg-border" />
-                    </div>
-                    <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-3">
-                      {lane.agents.map((a) => (
-                        <li key={a.id}>
-                          <AgentCard
-                            agent={a}
-                            onSelect={() => onSelect(a.id)}
-                            onOpenWorkflow={onOpenWorkflow}
-                          />
-                        </li>
-                      ))}
-                    </ul>
+                    </h2>
+                    {group.lanes.map((lane) => (
+                      <div key={lane.key}>
+                        <div className="mb-2.5 flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${lane.dot}`} />
+                          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                            {lane.label}
+                          </h3>
+                          <span className="rounded-full bg-surface px-1.5 text-[10px] font-medium tabular-nums text-muted">
+                            {lane.agents.length}
+                          </span>
+                          <span className="ml-1 h-px flex-1 bg-border" />
+                        </div>
+                        <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-3">
+                          {lane.agents.map((a) => (
+                            <li key={a.id}>
+                              <AgentCard
+                                agent={a}
+                                onSelect={() => onSelect(a.id)}
+                                onOpenWorkflow={onOpenWorkflow}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </section>
                 ))}
               </div>
