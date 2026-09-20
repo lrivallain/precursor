@@ -162,8 +162,12 @@ single source of truth derived from git tags by hatch-vcs at build time — ther
 is no literal to edit. The running version is exposed at `GET /api/version` and
 shown in the Settings panel.
 
-Releases ship from a pushed `v<version>` tag via GitHub Actions. See
-[RELEASING.md](RELEASING.md) and [CHANGELOG.md](CHANGELOG.md).
+Every night at **01:17 UTC**, GitHub Actions releases unreleased, CI-green
+changes from `main` under a new immutable `v<version>` tag, with artifacts on
+GitHub and PyPI. No changes means no release; manual releases remain available.
+The rolling `nightly` prerelease still follows every push. See
+[RELEASING.md](RELEASING.md), [release notes](https://github.com/lrivallain/precursor/releases),
+and [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 
