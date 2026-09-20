@@ -14,6 +14,23 @@ separate switch, so enabling agents is what turns them on.
 
 <Screenshot src="/screenshots/workflows.png" alt="A workflow board showing a five-step pipeline: two task steps, a gate, a human approval checkpoint and an inline publish step, above a completed run header" caption="A pipeline's detail board — the run header, then the step strip carrying all four step kinds." />
 
+## Sidebar and overview
+
+Clicking **Workflows** in the section rail or tabs always opens **Overview**:
+the card gallery with schedules, progress and quick run/pause actions. A compact,
+searchable workflow list stays in the sidebar, showing each workflow's status
+and live progress. Select a row or card to open its detail board; **Overview**
+returns to the gallery.
+
+<Screenshot src="/screenshots/workflows-overview.png" alt="Workflow cards beside a searchable sidebar with an Overview entry" caption="Switch pipelines from the list, or monitor them together from Overview." />
+
+The sidebar shares the same resize, collapse and mobile-drawer behavior as the
+other sections. List rows and cards share their data, so progress stays current
+even while a workflow detail board is open. **New workflow** opens the builder;
+selecting Overview or another workflow exits it. Returning to the section does
+not reopen an old builder. Direct workflow/run links and browser Back/Forward
+still navigate to their specific targets.
+
 ## Start here
 
 | Guide | What it covers |

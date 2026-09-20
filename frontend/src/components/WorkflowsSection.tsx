@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { Settings as SettingsIcon, Workflow as WorkflowIcon } from "lucide-react";
-import { api } from "../lib/api";
 import type { Workflow } from "../lib/types";
 import { WorkflowList } from "./WorkflowList";
 import { SectionLoading } from "./SectionLoading";
@@ -15,12 +13,17 @@ interface Props {
    * the gallery loads.
    */
   ready?: boolean;
-  /** Bumped by App on `workflow.changed` SSE to force a reload. */
-  reloadKey: number;
+  workflows: Workflow[];
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+  onChanged: (workflow: Workflow) => void;
+  onDeleted: (id: number) => void;
   /** Deep-link target from the route (`/workflows/<id>`); null shows the gallery. */
   activeId: number | null;
-  /** Bumped by App when the "New workflow" action fires. */
-  newSignal: number;
+  editor: { id: number | null } | null;
+  onEdit: (id: number | null) => void;
+  onCloseEditor: () => void;
   /** Run segment from the route (`/run/<n|latest>`); null when absent. */
   runSeg: string | null;
   onNavigate: (id: number | null) => void;
@@ -31,88 +34,29 @@ interface Props {
   onOpenAgent: (agentId: number) => void;
 }
 
-type Mode = { kind: "list" } | { kind: "view"; id: number } | { kind: "builder"; id: number | null };
-
 /**
- * Top-level Workflows cockpit. Owns the workflow collection and routes between
- * the gallery, the detail board, and the create/edit builder. Mirrors the
- * agents section's shape but is fully decoupled from topics.
+ * Workflows main pane. The shell owns collection and selection so sidebar,
+ * cards, deep links and browser history all address the same view.
  */
 export function WorkflowsSection({
   enabled,
   ready = true,
-  reloadKey,
+  workflows,
+  loading,
+  error,
+  onReload,
+  onChanged,
+  onDeleted,
   activeId,
-  newSignal,
+  editor,
+  onEdit,
+  onCloseEditor,
   runSeg,
   onNavigate,
   onRunSegChange,
   onOpenSettings,
   onOpenAgent,
 }: Props) {
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<Mode>({ kind: "list" });
-  const loadedRef = useRef(false);
-
-  // `silent` refetches without flipping the spinner — a background refresh must
-  // not blank the gallery the user is watching. Only the first load has nothing
-  // to show yet.
-  const load = useCallback(
-    async (silent = false) => {
-      if (!enabled) return;
-      if (!silent) setLoading(true);
-      try {
-        const items = await api.workflows.list();
-        setWorkflows(items);
-        loadedRef.current = true;
-      } finally {
-        if (!silent) setLoading(false);
-      }
-    },
-    [enabled],
-  );
-
-  useEffect(() => {
-    void load(loadedRef.current);
-  }, [load, reloadKey]);
-
-  // `workflow.changed` only fires when the pipeline *advances a step*, so a step
-  // that runs for minutes leaves every gallery bar frozen. Poll while a run is
-  // actually executing to pick up the in-step agent progress the bars blend in.
-  // Paused and awaiting-approval runs make no progress of their own — SSE
-  // already covers the moment they move — so an otherwise idle gallery is free.
-  const anyRunning = workflows.some((w) => w.status === "running");
-  useEffect(() => {
-    if (!enabled || !anyRunning || mode.kind !== "list") return;
-    const t = window.setInterval(() => void load(true), 2000);
-    return () => window.clearInterval(t);
-  }, [enabled, anyRunning, mode.kind, load]);
-
-  // Route-driven active workflow: sync the deep-link id into local mode.
-  useEffect(() => {
-    if (activeId != null) {
-      setMode((m) => (m.kind === "view" && m.id === activeId ? m : { kind: "view", id: activeId }));
-    } else {
-      setMode((m) => (m.kind === "builder" ? m : { kind: "list" }));
-    }
-  }, [activeId]);
-
-  // "New workflow" trigger from the header / command palette.
-  useEffect(() => {
-    if (newSignal > 0) setMode({ kind: "builder", id: null });
-  }, [newSignal]);
-
-  const upsert = useCallback((wf: Workflow) => {
-    setWorkflows((prev) => {
-      const idx = prev.findIndex((w) => w.id === wf.id);
-      if (idx === -1) return [wf, ...prev];
-      const next = [...prev];
-      next[idx] = wf;
-      return next;
-    });
-  }, []);
-
   // Feature state unknown: say nothing rather than advertising the section as
   // unavailable for the width of the settings request.
   if (!ready) {
@@ -141,51 +85,63 @@ export function WorkflowsSection({
     );
   }
 
-  const active =
-    mode.kind === "view" ? workflows.find((w) => w.id === mode.id) ?? null : null;
+  if (loading) return <SectionLoading label="Loading workflows..." />;
 
-  if (mode.kind === "builder") {
-    const editing = mode.id != null ? workflows.find((w) => w.id === mode.id) ?? null : null;
+  if (error && workflows.length === 0) {
+    return (
+      <div role="alert" className="p-6 text-sm">
+        <p>{error}</p>
+        <button type="button" onClick={onReload} className="mt-3 rounded border border-border px-3 py-1.5 hover:bg-surface">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const active = workflows.find((w) => w.id === activeId) ?? null;
+
+  if (editor) {
+    const editing = workflows.find((w) => w.id === editor.id) ?? null;
     return (
       <WorkflowBuilder
+        key={editor.id ?? "new"}
         workflow={editing}
         onSaved={(wf) => {
-          upsert(wf);
+          onChanged(wf);
           onNavigate(wf.id);
-          setMode({ kind: "view", id: wf.id });
         }}
-        onCancel={() => {
-          if (editing) {
-            setMode({ kind: "view", id: editing.id });
-          } else {
-            onNavigate(null);
-            setMode({ kind: "list" });
-          }
-        }}
+        onCancel={onCloseEditor}
       />
     );
   }
 
-  if (mode.kind === "view" && active) {
+  if (active) {
     return (
       <WorkflowView
         key={active.id}
         workflow={active}
         initialRunSeg={runSeg}
         onRunSegChange={onRunSegChange}
-        onBack={() => {
-          onNavigate(null);
-          setMode({ kind: "list" });
-        }}
-        onEdit={() => setMode({ kind: "builder", id: active.id })}
-        onChanged={upsert}
+        onBack={() => onNavigate(null)}
+        onEdit={() => onEdit(active.id)}
+        onChanged={onChanged}
         onDeleted={() => {
-          setWorkflows((prev) => prev.filter((w) => w.id !== active.id));
+          onDeleted(active.id);
           onNavigate(null);
-          setMode({ kind: "list" });
         }}
         onOpenInAgents={onOpenAgent}
       />
+    );
+  }
+
+  if (activeId != null) {
+    return (
+      <div className="p-6 text-sm">
+        <p>Workflow not found.</p>
+        <button type="button" onClick={() => onNavigate(null)} className="mt-3 rounded border border-border px-3 py-1.5 hover:bg-surface">
+          Back to overview
+        </button>
+      </div>
     );
   }
 
@@ -193,19 +149,15 @@ export function WorkflowsSection({
     <WorkflowList
       workflows={workflows}
       loading={loading}
-      onOpen={(wf) => {
-        onNavigate(wf.id);
-        setMode({ kind: "view", id: wf.id });
-      }}
-      onNew={() => setMode({ kind: "builder", id: null })}
+      onOpen={(wf) => onNavigate(wf.id)}
+      onNew={() => onEdit(null)}
       onImported={(result) => {
-        void load();
+        onReload();
         if (result.workflow_id != null) {
           onNavigate(result.workflow_id);
-          setMode({ kind: "view", id: result.workflow_id });
         }
       }}
-      onChanged={upsert}
+      onChanged={onChanged}
     />
   );
 }

@@ -11,6 +11,15 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Added
 
+- **Agents and Workflows now share the standard sidebar.** Both sections have
+  searchable item lists and an **Overview** entry alongside their existing card
+  dashboards. Section navigation always opens the overview; rows, cards and
+  direct links open individual items. Workflow rows and cards share live
+  progress, and creation is an explicit **New** action even in empty sections.
+  The sidebar can resize or collapse in every section without shifting the
+  navigation rail's icons or account controls, and the lists work in the mobile
+  drawer too.
+
 - **Selectable reading font, including dyslexia-friendly options.** Settings →
   Appearance now has a *Reading font* picker alongside the existing theme
   toggle: the default Inter stack, **OpenDyslexic** (wide, weighted letterforms

@@ -32,6 +32,7 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
+const { prepareDemoPage } = require("./demo_browser");
 
 const BASE = process.env.DEMO_BASE || "http://127.0.0.1:8899";
 const OUT = path.resolve(__dirname, "..", "website", "public", "screenshots");
@@ -112,6 +113,78 @@ async function openSettings(page, tab) {
 // natural heights; the clip trims whatever is left over.
 // --------------------------------------------------------------------------
 const scenes = {
+  home: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      return undefined;
+    },
+  },
+
+  topics: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/onboarding-checklist`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Topic settings", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  chats: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
+      await page.getByText("Regex for semver tags", { exact: true }).first().waitFor();
+      return undefined;
+    },
+  },
+
+  live: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/live/weekly-platform-sync`, { waitUntil: "networkidle" });
+      await page.getByText("Let's review the latency regression and agree on next steps.", { exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  workspaces: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Release checklist", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  "agents-overview": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/agents`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Agent fleet" }).waitFor();
+      return undefined;
+    },
+  },
+
+  agents: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/agents/4`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Agent settings", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  "workflows-overview": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/workflows`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Workflows", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "Weekly release digest", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
   // The workflow detail board: the step strip with all four step kinds.
   workflows: {
     viewport: { width: 1440, height: 1750 },
@@ -304,6 +377,7 @@ async function run(names) {
           ...(scene.context ?? {}),
         });
         const page = await ctx.newPage();
+        await prepareDemoPage(page);
         const clip = await scene.go(page, theme);
         await page.addStyleTag({ content: STABILISE_CSS }).catch(() => {});
         await sleep(200);

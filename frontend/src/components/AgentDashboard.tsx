@@ -195,7 +195,7 @@ export function AgentDashboard({
   }, [ordered, filter, search]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
+    <div className="@container flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
       {/* Control-tower header: title + KPI stat tiles. */}
       <div className="border-b border-border px-4 pb-3 pt-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -223,7 +223,7 @@ export function AgentDashboard({
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Filter agents…"
                   aria-label="Filter agents by name"
-                  className="w-36 rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40 sm:w-56"
+                  className="w-36 rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40 @xl:w-56"
                 />
                 {search && (
                   <button
@@ -242,7 +242,7 @@ export function AgentDashboard({
               <button
                 type="button"
                 onClick={() => setImporting(true)}
-                title="Import an agent from a YAML file"
+                data-tooltip="Import an agent from a YAML file"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:bg-white/5 hover:text-fg"
               >
                 <Upload size={15} />
@@ -267,7 +267,7 @@ export function AgentDashboard({
             onImported={onImported}
           />
         )}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 @xl:grid-cols-4">
           <StatTile
             icon={AlertCircle}
             label="Need you"
@@ -442,7 +442,7 @@ export function AgentDashboard({
                       </span>
                       <span className="ml-1 h-px flex-1 bg-border" />
                     </div>
-                    <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-3">
                       {lane.agents.map((a) => (
                         <li key={a.id}>
                           <AgentCard

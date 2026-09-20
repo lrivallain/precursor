@@ -9,7 +9,23 @@ attached to a topic or chat, then lets it run in the **background** while you
 monitor the whole fleet from a **control-tower dashboard**. It is **opt-in and
 off by default**.
 
-<Screenshot src="/screenshots/agents.png" alt="An agent session timeline showing the task, a reasoning step, and the assistant's answer with suggested replies" caption="An agent session — the task at the top, then a workflow-style timeline: reasoning, tool calls, and the assistant's answer with suggested follow-ups." />
+<Screenshot src="/screenshots/agents-overview.png" alt="The agent fleet overview with monitoring cards beside a searchable agent sidebar" caption="The sidebar is for switching agents; Overview keeps the whole fleet in view." />
+
+## Sidebar and overview
+
+Clicking **Agents** in the section rail or tabs always opens **Overview**, even
+when you previously left an agent open. A searchable, urgency-sorted agent list
+stays beside the main pane, with each agent's status and unread count. Select a
+row or a dashboard card to open the same agent; **Overview** returns to the cards.
+
+The sidebar resizes and collapses like Topics, Chats, Live and Files. In rail
+navigation, collapsing the list does not move the section icons or account
+controls. On a phone, the list lives in the navigation drawer and selecting an
+agent or its overview closes the drawer.
+
+**New agent** explicitly opens the task composer. An empty fleet still has an
+overview with a creation action. Direct agent links, command-palette results,
+and browser Back/Forward continue to select the requested agent.
 
 ## Start here
 
@@ -96,7 +112,7 @@ one click.
 Cards are **urgency-sorted, not chronological**: an agent waiting on you — a
 parked approval or a raised **Needs input** question — floats to the top, then
 interrupted/failed runs, then live work, then idle. The same ordering is used by
-the dashboard and the command palette, so "what needs me next" is always the top
+the sidebar, dashboard and command palette, so "what needs me next" is always the top
 row wherever you look.
 
 While an agent is working, its card shows the **current tool** it is running (and

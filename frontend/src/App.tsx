@@ -46,7 +46,10 @@ import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
 import { AgentStatusBadge } from "./components/AgentStatusBadge";
 import { AgentView } from "./components/AgentView";
 import { AgentDashboard } from "./components/AgentDashboard";
+import { AgentList } from "./components/AgentList";
 import { WorkflowsSection } from "./components/WorkflowsSection";
+import { WorkflowSidebarList } from "./components/WorkflowSidebarList";
+import { PersonaMenu } from "./components/PersonaMenu";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -66,6 +69,7 @@ import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
 import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
+import { useWorkflowCollection } from "./lib/useWorkflowCollection";
 import { openNotes } from "./lib/notesOpen";
 import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLink";
 import type {
@@ -457,6 +461,7 @@ export default function App() {
   );
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
   const [activeAgentId, setActiveAgentId] = useState<number | null>(
     // A legacy integer ref resolves immediately; a UUID waits for the list.
     () => resolveAgentRef(parseAppRoute().agentRef, null),
@@ -477,8 +482,7 @@ export default function App() {
   // "New agent"; it resets to the dashboard whenever an agent is selected or we
   // leave agents mode.
   const [agentComposerOpen, setAgentComposerOpen] = useState(false);
-  // Workflows cockpit state. The active id comes from the route; a reload key is
-  // bumped on `workflow.changed` SSE; a new-signal counter opens the builder.
+  // Selection and editor state are shared by the workflow sidebar and main pane.
   const [activeWorkflowId, setActiveWorkflowId] = useState<number | null>(
     () => parseAppRoute().workflowRef,
   );
@@ -489,7 +493,7 @@ export default function App() {
     () => parseAppRoute().workflowRunRef,
   );
   const [workflowReloadKey, setWorkflowReloadKey] = useState(0);
-  const [workflowNewSignal, setWorkflowNewSignal] = useState(0);
+  const [workflowEditor, setWorkflowEditor] = useState<{ id: number | null } | null>(null);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -594,7 +598,11 @@ export default function App() {
   // to show: settings (which decide whether the feature is on at all) and the
   // session list. Both default to "off"/"empty", so rendering them straight
   // through flashes "Agents mode is off", then the start form, then the fleet.
-  const agentsBooting = !settingsReady || (agentsEnabled && agents === null);
+  const agentsBooting = !settingsReady || (agentsEnabled && agents === null && !agentsError);
+  const workflowCollection = useWorkflowCollection(
+    agentsEnabled && sidebarMode === "workflows" && !atHome,
+    workflowReloadKey,
+  );
 
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
 
@@ -636,12 +644,10 @@ export default function App() {
     if (sidebarMode !== "agents") setAgentComposerOpen(false);
   }, [sidebarMode]);
 
-  // Mirror the composer flag so changeMode (called from the rail) can decide
-  // whether re-clicking the Agents icon should fall back to the dashboard.
-  const agentComposerOpenRef = useRef(agentComposerOpen);
+  // Editors are transient; returning to a section never revives an old draft.
   useEffect(() => {
-    agentComposerOpenRef.current = agentComposerOpen;
-  }, [agentComposerOpen]);
+    if (sidebarMode !== "workflows") setWorkflowEditor(null);
+  }, [sidebarMode]);
 
   // Mirror the active meeting session into refs so changeMode / URL sync can
   // build the /live URL without re-subscribing.
@@ -965,6 +971,9 @@ export default function App() {
 
   useEffect(() => {
     const syncFromUrl = (): void => {
+      setAgentComposerOpen(false);
+      setWorkflowEditor(null);
+      closeMobileNav();
       // Keep the highlight term in step with the URL for reloads / back-forward.
       // Reset the ownership refs so the highlight adopts whichever conversation
       // the URL resolves to (rather than clearing on that first resolution).
@@ -1018,9 +1027,9 @@ export default function App() {
       }
       if (r.mode === "agents") {
         const id = resolveAgentRef(r.agentRef, agentsRef.current);
+        setActiveAgentId(id);
         if (id != null) {
           pendingAgentRef.current = null;
-          setActiveAgentId(id);
         } else {
           // UUID not resolvable yet — stash it for the agents-load effect.
           pendingAgentRef.current = r.agentRef;
@@ -1288,7 +1297,11 @@ export default function App() {
       const id = detail?.id ?? null;
       // A null id opens the new-agent form; carry the topic so it's preselected.
       setAgentDraftTopicId(id == null ? (detail?.topicId ?? null) : null);
+      pendingAgentRef.current = null;
       setActiveAgentId(id);
+      setAgentComposerOpen(id == null);
+      setAtHome(false);
+      closeMobileNav();
       setWsRoute({ open: false, slug: null, path: null });
       setSidebarMode("agents");
     }
@@ -1313,32 +1326,12 @@ export default function App() {
     });
   }
 
-  // Switch sidebar mode, pushing the URL for that mode (the active item's path
-  // when there is one, else the mode's base path).
+  // Section navigation always opens the Agents/Workflows overview. Item links
+  // use their own handlers so this policy never discards a deep-link target.
   async function changeMode(next: SidebarMode): Promise<void> {
-    // In agents mode, re-clicking the Agents rail icon while viewing a single
-    // agent (or the start composer) returns to the fleet dashboard — the
-    // section's monitoring "home" — rather than no-op'ing.
-    if (
-      next === "agents" &&
-      sidebarMode === "agents" &&
-      !atHome &&
-      (activeAgentIdRef.current != null || agentComposerOpenRef.current)
-    ) {
-      setActiveAgentId(null);
-      setAgentComposerOpen(false);
-      return;
-    }
-    // In workflows mode, re-clicking the rail icon while viewing one workflow
-    // returns to the gallery rather than no-op'ing.
-    if (next === "workflows" && sidebarMode === "workflows" && !atHome && activeWorkflowId != null) {
-      setActiveWorkflowId(null);
-      setActiveWorkflowRunSeg(null);
-      return;
-    }
     // Clicking the active mode's tab while on the home launcher still needs to
     // leave home, so only short-circuit when we're already showing that mode.
-    if (next === sidebarMode && !atHome) return;
+    if (next === sidebarMode && !atHome && next !== "agents" && next !== "workflows") return;
     if (!(await confirmLeaveRecording())) return;
     setAtHome(false);
     let target = "/topics";
@@ -1355,22 +1348,50 @@ export default function App() {
       setActiveSessionId(null);
       target = "/live";
     } else if (next === "agents") {
-      target = agentUrl(activeAgentIdRef.current, agentsRef.current);
+      pendingAgentRef.current = null;
+      setActiveAgentId(null);
+      setAgentComposerOpen(false);
+      target = "/agents";
     } else if (next === "workflows") {
-      target = activeWorkflowId != null ? `/workflows/${activeWorkflowId}` : "/workflows";
+      setActiveWorkflowId(null);
+      setActiveWorkflowRunSeg(null);
+      setWorkflowEditor(null);
+      target = "/workflows";
     } else if (isPluginMode(next)) {
       // Re-entering a plugin section restores the sub-route it was left at.
       target = pluginSectionUrl(next, pluginRouteRef.current.segments);
     } else {
       target = "/ws";
     }
-    history.pushState(null, "", target);
+    if (window.location.pathname !== target) history.pushState(null, "", target);
     setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
-    // Agents and workflows keep their list in the main pane, so the drawer has
-    // nothing left to browse once the section is picked — get it out of the
-    // way. Every other section shows its list in the drawer, which stays open.
+    // These section buttons explicitly select the overview, like a list item.
     if (next === "agents" || next === "workflows") closeMobileNav();
+  }
+
+  async function openAgent(id: number | null): Promise<void> {
+    if (!(await confirmLeaveRecording())) return;
+    pendingAgentRef.current = null;
+    setAtHome(false);
+    setWsRoute({ open: false, slug: null, path: null });
+    setAgentComposerOpen(id == null);
+    setActiveAgentId(id);
+    setSidebarMode("agents");
+    closeMobileNav();
+  }
+
+  async function openWorkflow(id: number | null): Promise<void> {
+    if (!(await confirmLeaveRecording())) return;
+    setAtHome(false);
+    setWsRoute({ open: false, slug: null, path: null });
+    setWorkflowEditor(null);
+    setActiveWorkflowId(id);
+    setActiveWorkflowRunSeg(null);
+    setSidebarMode("workflows");
+    closeMobileNav();
+    const target = id == null ? "/workflows" : `/workflows/${id}`;
+    if (window.location.pathname !== target) history.pushState(null, "", target);
   }
 
   // Navigate to the root home launcher.
@@ -1407,6 +1428,7 @@ export default function App() {
       history.pushState(null, "", "/live");
       setSidebarMode("live");
     } else if (mode === "agents") {
+      pendingAgentRef.current = null;
       setActiveAgentId(null);
       setAgentComposerOpen(true);
       history.pushState(null, "", "/agents");
@@ -1414,7 +1436,7 @@ export default function App() {
     } else if (mode === "workflows") {
       setActiveWorkflowId(null);
       setActiveWorkflowRunSeg(null);
-      setWorkflowNewSignal((n) => n + 1);
+      setWorkflowEditor({ id: null });
       history.pushState(null, "", "/workflows");
       setSidebarMode("workflows");
     } else {
@@ -1988,13 +2010,14 @@ export default function App() {
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
     else if (sidebarMode === "agents") {
+      pendingAgentRef.current = null;
       setActiveAgentId(null);
       setAgentComposerOpen(true);
     }
     else if (sidebarMode === "workflows") {
       setActiveWorkflowId(null);
       setActiveWorkflowRunSeg(null);
-      setWorkflowNewSignal((n) => n + 1);
+      setWorkflowEditor({ id: null });
     }
     // Core owns the button; the section owns what it means. A section with no
     // `onNew` has no "+" either (see `supportsNew` in Sidebar).
@@ -2269,11 +2292,12 @@ export default function App() {
       }
       agentUnreadRef.current = new Map(list.map((a) => [a.id, a.unread_count ?? 0]));
       agentStatusRef.current = new Map(list.map((a) => [a.id, a.status]));
+      setAgentsError(null);
       setAgents(list);
       return list;
-    } catch {
-      setAgents([]);
-      return [];
+    } catch (err) {
+      setAgentsError(err instanceof Error ? err.message : "Could not load agents.");
+      return agentsRef.current ?? [];
     }
   }
 
@@ -2346,8 +2370,7 @@ export default function App() {
           onOpenResult={openSearchResult}
           agents={agents ?? []}
           onOpenAgent={(id) => {
-            setSidebarMode("agents");
-            setActiveAgentId(id);
+            void openAgent(id);
             setPaletteOpen(false);
           }}
           liveEnabled={liveEnabled}
@@ -2366,6 +2389,9 @@ export default function App() {
           unreadByMode={unreadByMode}
           liveEnabled={liveEnabled}
           pluginSections={enabledSections}
+          footer={
+            <PersonaMenu collapsed onOpenSettings={() => setGlobalSettingsOpen(true)} onOpenArchive={() => setArchiveOpen(true)} />
+          }
         />
       )}
       {/* Scrim behind the mobile drawer. Kept mounted so it can cross-fade, and
@@ -2412,11 +2438,7 @@ export default function App() {
         streamingTopicIds={streamingTopicIds}
         narrow={narrow}
         onClose={closeMobileNav}
-        collapsed={
-          !narrow &&
-          (sidebarCollapsed || sidebarMode === "agents" || sidebarMode === "workflows")
-        }
-        expandable={sidebarMode !== "agents" && sidebarMode !== "workflows"}
+        collapsed={!narrow && sidebarCollapsed}
         mode={sidebarMode}
         onModeChange={changeMode}
         atHome={atHome}
@@ -2455,6 +2477,32 @@ export default function App() {
             onSelect={handleSelectSession}
             onRename={handleRenameSession}
             onArchiveMany={handleArchiveSessions}
+          />
+        }
+        agentSlot={
+          <AgentList
+            agents={agents ?? []}
+            activeId={agentComposerOpen ? null : activeAgentId}
+            overviewSelected={activeAgentId == null && !agentComposerOpen}
+            loading={agentsBooting}
+            enabled={agentsEnabled}
+            error={agentsEnabled ? agentsError : null}
+            onRetry={() => void loadAgents()}
+            onOverview={() => void changeMode("agents")}
+            onSelect={(id) => void openAgent(id)}
+          />
+        }
+        workflowSlot={
+          <WorkflowSidebarList
+            workflows={workflowCollection.workflows}
+            activeId={activeWorkflowId}
+            overviewSelected={activeWorkflowId == null && workflowEditor == null}
+            loading={!settingsReady || (agentsEnabled && workflowCollection.loading)}
+            enabled={agentsEnabled}
+            error={agentsEnabled ? workflowCollection.error : null}
+            onRetry={() => void workflowCollection.reload()}
+            onOverview={() => void changeMode("workflows")}
+            onSelect={(id) => void openWorkflow(id)}
           />
         }
         pluginSlot={
@@ -2684,7 +2732,7 @@ export default function App() {
                 <>
                   <button
                     type="button"
-                    onClick={() => setActiveAgentId(null)}
+                    onClick={() => void changeMode("agents")}
                     className="group inline-flex shrink-0 items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
                     data-tooltip="Back to the agents dashboard"
                     aria-label="Back to all agents"
@@ -2816,6 +2864,7 @@ export default function App() {
           {atHome ? (
             <HomePage
               liveEnabled={liveEnabled}
+              showPersona={narrow || navStyle === "tabs"}
               pluginSections={enabledSections}
               onNavigate={changeMode}
               onOpenSettings={() => setGlobalSettingsOpen(true)}
@@ -2975,44 +3024,46 @@ export default function App() {
             <WorkflowsSection
               enabled={agentsEnabled}
               ready={settingsReady}
-              reloadKey={workflowReloadKey}
+              workflows={workflowCollection.workflows}
+              loading={workflowCollection.loading}
+              error={workflowCollection.error}
+              onReload={() => void workflowCollection.reload()}
+              onChanged={workflowCollection.upsert}
+              onDeleted={workflowCollection.remove}
               activeId={activeWorkflowId}
-              newSignal={workflowNewSignal}
-              runSeg={activeWorkflowRunSeg}
-              onNavigate={(id) => {
-                setActiveWorkflowId(id);
-                setActiveWorkflowRunSeg(null);
+              editor={workflowEditor}
+              onEdit={(id) => {
+                setWorkflowEditor({ id });
+                closeMobileNav();
               }}
+              onCloseEditor={() => setWorkflowEditor(null)}
+              runSeg={activeWorkflowRunSeg}
+              onNavigate={(id) => void openWorkflow(id)}
               onRunSegChange={setActiveWorkflowRunSeg}
               onOpenSettings={openAgentSettings}
-              onOpenAgent={(agentId) => {
-                setActiveWorkflowId(null);
-                setActiveWorkflowRunSeg(null);
-                setActiveAgentId(agentId);
-                setAgentComposerOpen(false);
-                void changeMode("agents");
-              }}
+              onOpenAgent={(id) => void openAgent(id)}
             />
+          ) : agentsEnabled && agentsError && agents === null ? (
+            <div role="alert" className="p-6 text-sm">
+              <p>{agentsError}</p>
+              <button type="button" onClick={() => void loadAgents()} className="mt-3 rounded border border-border px-3 py-1.5 hover:bg-surface">
+                Retry
+              </button>
+            </div>
           ) : agentsEnabled &&
             agentsAvailable &&
+            !agentsBooting &&
             activeAgentId == null &&
-            !agentComposerOpen &&
-            (agents?.length ?? 0) > 0 ? (
-            // Nothing selected + a live fleet → the control-tower dashboard is
-            // the default agents view (not an empty start composer).
+            !agentComposerOpen ? (
             <AgentDashboard
               agents={agents ?? []}
-              onSelect={(id) => setActiveAgentId(id)}
+              onSelect={(id) => void openAgent(id)}
               onNew={() => setAgentComposerOpen(true)}
               onImported={(result) => {
                 void loadAgents();
-                if (result.agent_id != null) setActiveAgentId(result.agent_id);
+                if (result.agent_id != null) void openAgent(result.agent_id);
               }}
-              onOpenWorkflow={(workflowId) => {
-                setActiveWorkflowId(workflowId);
-                setActiveWorkflowRunSeg(null);
-                changeMode("workflows");
-              }}
+              onOpenWorkflow={(id) => void openWorkflow(id)}
             />
           ) : (
             <AgentView
@@ -3023,7 +3074,7 @@ export default function App() {
               available={agentsAvailable}
               unavailableReason={agentsUnavailableReason}
               onReload={() => void loadAgents()}
-              onSelect={(id) => setActiveAgentId(id)}
+              onSelect={(id) => void openAgent(id)}
               onOpenSettings={openAgentSettings}
               draftTopicId={agentDraftTopicId}
             />
@@ -3113,9 +3164,7 @@ export default function App() {
           }}
           onOpenWorkflow={(workflowId) => {
             setAgentSettingsOpen(false);
-            setActiveWorkflowId(workflowId);
-            setActiveWorkflowRunSeg(null);
-            changeMode("workflows");
+            void openWorkflow(workflowId);
           }}
         />
       )}

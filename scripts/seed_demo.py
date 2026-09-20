@@ -43,6 +43,11 @@ from precursor.backend.db import SessionLocal, init_db  # noqa: E402
 from precursor.backend.models.agent_session import AgentSession  # noqa: E402
 from precursor.backend.models.chat import Chat  # noqa: E402
 from precursor.backend.models.collection import Collection  # noqa: E402
+from precursor.backend.models.meeting import (  # noqa: E402
+    MeetingInsight,
+    MeetingSegment,
+    MeetingSession,
+)
 from precursor.backend.models.memory import Memory  # noqa: E402
 from precursor.backend.models.message import Message, MessageRole  # noqa: E402
 from precursor.backend.models.role import Role  # noqa: E402
@@ -56,6 +61,7 @@ from precursor.backend.models.workflow import (  # noqa: E402
     WorkflowStep,
 )
 from precursor.backend.models.workflow_state import WorkflowState  # noqa: E402
+from precursor.backend.models.workspace import Workspace  # noqa: E402
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
 
 NOW = datetime.now(UTC)
@@ -711,6 +717,49 @@ async def seed() -> None:
                 ),
             ]
         )
+
+        meeting = MeetingSession(
+            title="Weekly platform sync",
+            slug="weekly-platform-sync",
+            status="ended",
+            language="en-US",
+            started_at=ago(hours=2),
+            ended_at=ago(hours=1),
+            speaker_names_json='{"Guest-1":"Alex","Guest-2":"Sam"}',
+            summary="Add bounded retries and publish the release checklist.",
+        )
+        s.add(meeting)
+        await s.flush()
+        for offset, speaker, text in [
+            (0, "Guest-1", "Let's review the latency regression and agree on next steps."),
+            (14000, "Guest-2", "The retries amplify load when the gateway is slow."),
+            (41000, "Guest-1", "Let's cap the retries and add jitter to the backoff."),
+            (55000, "Guest-2", "I'll add the regression test and update the release checklist."),
+        ]:
+            s.add(
+                MeetingSegment(
+                    session_id=meeting.id, speaker_label=speaker, text=text, offset_ms=offset
+                )
+            )
+        s.add(
+            MeetingInsight(
+                session_id=meeting.id,
+                kind="action_item",
+                content="Sam: add a bounded-retry regression test and update the release checklist.",
+            )
+        )
+        workspace_dir = Path(os.environ["PRECURSOR_DATA_DIR"]) / "workspaces" / "design-notes"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        (workspace_dir / "README.md").write_text(
+            "# Design notes\n\n"
+            "Working notes for the platform, kept alongside the topics that drive decisions.\n\n"
+            "## Release checklist\n\n"
+            "- Review the latency regression.\n"
+            "- Bound retries and add jitter.\n"
+            "- Publish the engineering digest.\n",
+            encoding="utf-8",
+        )
+        s.add(Workspace(name="Design notes", slug="design-notes", kind="local"))
 
         await s.commit()
 

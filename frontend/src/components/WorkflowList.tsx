@@ -52,7 +52,7 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
         <div>
           <h1 className="text-lg font-semibold text-fg">Workflows</h1>
           <p className="text-xs text-muted">Reusable pipelines that chain your agents.</p>
@@ -106,7 +106,7 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3">
             {workflows.map((wf) => {
               const progress = workflowProgress(wf);
               const total = wf.steps.length;
