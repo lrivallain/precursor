@@ -106,6 +106,11 @@ export function agentIsActive(agent: AgentSession): boolean {
   return agent.status === "running" || agent.status === "pending";
 }
 
+/** Interrupted turns must be resumed, not replaced with a fresh objective run. */
+export function agentCanStart(agent: AgentSession): boolean {
+  return !["pending", "running", "needs_approval", "interrupted"].includes(agent.status);
+}
+
 /**
  * Attention-router ordering: most urgent first, then unread replies, then most
  * recently active, then newest. Stable enough that the list/dashboard don't
