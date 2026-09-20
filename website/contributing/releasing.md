@@ -20,39 +20,76 @@ Examples: first June 2026 release `2026.6.0`, a follow-up the same month
 440 (Python) and semver (npm), sorts chronologically, and is human-readable.
 Untagged/dev builds get a suffix, e.g. `2026.6.1.dev3+g0f3ad9f.d20260615`.
 
-## Cutting a release
+## Autonomous stable releases
 
-1. Make sure `main` is green and `CHANGELOG.md`'s `[Unreleased]` section captures
-   what's shipping.
-2. Pick the next CalVer per the policy above, and verify what the build would
-   produce:
+Every night at **01:17 UTC** (02:17/03:17 in Paris), the **Release** workflow
+ships unreleased changes from `main`. Merging into `main` is the ship decision;
+unmerged branches are never released. Documentation and dependency changes
+are eligible too.
 
-   ```bash
-   uv version    # or: uv run python -c "from precursor import __version__; print(__version__)"
-   ```
+1. Capture the exact `main` commit and compare it with the last successful
+   stable release, ignoring the rolling `nightly` tag. No changes means no tag.
+2. Require a successful **CI** push run on `main` for that exact commit. Missing,
+   pending, cancelled or failing CI stops the release.
+3. Choose the next CalVer and build the wheel and sdist, including the SPA and
+   in-app documentation. uv runs with `UV_FROZEN=1`.
+4. Exercise a fresh Python 3.12 wheel installation outside the checkout, with
+   newly resolved dependencies: installed version, startup, migrations in a
+   disposable database, API, SPA and docs. No real credentials or Node.js
+   runtime are needed.
+5. Create the immutable tag and a **draft** GitHub Release. Stage the original
+   artifacts and their SHA-256 manifest, publish them to PyPI via OIDC, then
+   make the GitHub Release public and **latest**.
 
-3. Promote the `[Unreleased]` changelog section to a dated release heading and
-   commit it:
+The comparison spans all commits since the last successful release, not just
+"today", so missed runs do not lose changes. GitHub's scheduler is best-effort:
+runs may start late and inactive public repositories may have schedules disabled.
 
-   ```markdown
-   ## [2026.6.0] - 2026-06-15
-   ```
+The automation does not push commits to `main` or require a PAT. Tag creation
+and publishing run in the same workflow because a tag pushed by `GITHUB_TOKEN`
+does not start another push-triggered workflow.
 
-4. Tag and push — the **leading `v`** is required (the release workflow triggers
-   on `v*`):
+### Release now or preview
 
-   ```bash
-   git tag v2026.6.0
-   git push origin v2026.6.0
-   ```
+Use **Actions → Release → Run workflow** on **main**. Check **dry_run** for a
+planning-only run: it computes the candidate and enforces the CI gate but
+does not build, tag or publish.
 
-5. The **Release** workflow (`.github/workflows/release.yml`) then:
-   - builds the frontend and bundles it into the wheel,
-   - runs `uv build` (hatch-vcs stamps the version from the tag),
-   - verifies the built version matches the tag,
-   - creates a GitHub Release with the wheel + sdist and auto-generated notes, and
-   - **publishes the wheel + sdist to [PyPI](https://pypi.org/project/precursor-ai/)**
-     via Trusted Publishing (OIDC — no API token).
+```bash
+gh workflow run release.yml --ref main -f dry_run=true
+gh workflow run release.yml --ref main
+```
+
+Manual `v<version>` tag pushes still work, with the same CI and ancestry gates.
+Tags must use canonical CalVer and point to a commit with successful main-push
+CI. Prefer the workflow button to avoid choosing the counter yourself.
+
+### Notes and recovery
+
+**GitHub Release notes are the per-version history**, generated from merged PRs
+since the previous stable tag. Contributors continue updating the changelog's
+`[Unreleased]` development notes and feature documentation in their PRs. The
+release does not promote that section or require a changelog commit.
+
+All stable runs share one concurrency group. Once a tag is reserved, retries
+finish that tag and commit before releasing newer changes. A completed draft's
+artifacts are downloaded, not rebuilt. `release-manifest.json` records the full
+commit and SHA-256 hashes; it is uploaded last as the staging completion marker.
+An unfinished manifest upload can be retried before any files reach PyPI,
+but a completed manifest is never replaced.
+
+Partial PyPI uploads resume with only the missing files. Already-uploaded files
+must match the manifest; hash conflicts, yanked files and multiple unfinished
+stable tags stop the run for maintainer attention. A GitHub finalization failure
+after PyPI publication is also recoverable by rerunning. Do not delete/move
+stable tags or overwrite completed draft assets to force a retry.
+
+Failures surface in Actions and its workflow notifications. Fix CI and rerun,
+or let the next scheduled run retry. A bad published release needs a new version.
+
+The rolling `nightly` prerelease still follows every push independently.
+Publishing a release does not automatically update running installations or
+change the installer's default rolling channel.
 
 ## PyPI Trusted Publishing (one-time setup)
 
@@ -65,18 +102,23 @@ once:
    **Owner** `lrivallain`, **Repository** `precursor`, **Workflow** `release.yml`,
    **Environment** `pypi`.
 2. In this repo, add a GitHub **Environment** named `pypi`
-   (**Settings → Environments**); optionally require a reviewer to approve each
-   publish.
+   (**Settings → Environments**). **Remove required reviewers and wait timers**
+   for unattended releases. Deployment restrictions, if enabled, must allow
+   both `main` (scheduled/manual runs) and `v*` tags (manual tag runs).
 
-The `pypi-publish` job runs in the `pypi` environment and requests an
+The `publish` job runs in the `pypi` environment and requests an
 `id-token` — both must match the publisher registered on PyPI.
+The workflow name remains `release.yml`; tag rules must allow it to create
+`v*` tags. It does not need a bypass of `main`'s branch protection.
 
 ## Verifying a build locally
 
 ```bash
 make wheel          # builds the SPA, then `uv build` → dist/*.whl + *.tar.gz
 # or by hand:
-cd frontend && npm ci && npm run build && cd ..
+export UV_FROZEN=1
+npm --prefix frontend ci && npm --prefix frontend run build
+npm --prefix website ci && DOCS_BASE=/docs/ npm --prefix website run docs:build
 uv build
 ```
 

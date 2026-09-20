@@ -18,40 +18,92 @@ This format is valid under both PEP 440 (Python) and semver (npm), sorts
 chronologically, and is human-readable. Untagged/dev builds get a suffix, e.g.
 `2026.6.1.dev3+g0f3ad9f.d20260615`.
 
-## Cutting a release
+## Autonomous stable releases
 
-1. Make sure `main` is green (CI passes) and `CHANGELOG.md` `[Unreleased]`
-   captures what's shipping.
-2. Pick the next CalVer per the policy above. Verify what the build would
-   produce locally:
+The **Release** workflow (`.github/workflows/release.yml`) runs every night at
+**01:17 UTC** (02:17 in Paris in winter, 03:17 in summer). Merging into `main`
+is the ship decision: all unreleased commits are eligible, including docs and
+dependency changes. Nothing is released from unmerged branches.
 
-   ```bash
-   uv version    # or: uv run python -c "from precursor import __version__; print(__version__)"
-   ```
+Each run:
 
-3. Promote the `[Unreleased]` changelog section to a dated release heading and
-   commit it:
+1. Captures an immutable `main` SHA and compares it with the last published
+   stable release. No new commits means no new version, even in a new month.
+   The moving `nightly` tag is ignored.
+2. Requires the latest **CI** push run on `main` for that exact SHA to have
+   completed successfully. Missing, pending, cancelled or failing CI stops the
+   release; it never falls back to a different green revision.
+3. Chooses the next CalVer, builds the frontend **and in-app docs**, and builds
+   the wheel and sdist with the intended tag locally. All uv commands run with
+   `UV_FROZEN=1`.
+4. Installs the wheel into a fresh Python 3.12 environment with freshly resolved
+   runtime dependencies, outside the checkout. Checks the installed version,
+   startup/migrations against a disposable SQLite database, API, SPA and docs,
+   without real credentials or a Node.js runtime.
+5. Creates the immutable remote tag and a **draft** GitHub Release. Uploads the
+   wheel and sdist, then a `release-manifest.json` containing their SHA-256
+   hashes and the full source commit.
+6. Publishes the artifacts to PyPI using OIDC. Only after PyPI confirms both
+   files and their hashes does the GitHub Release become public and **latest**.
 
-   ```markdown
-   ## [2026.6.0] - 2026-06-15
-   ```
+Eligibility is based on commits since the last successful stable release, not
+the previous calendar day. Missed schedules or failed releases therefore do not
+lose changes. GitHub schedules are best-effort and can run late; inactive public
+repositories may have their schedules disabled by GitHub.
 
-4. Tag and push (the **leading `v`** is required — the release workflow triggers
-   on `v*`):
+One concurrency group serializes scheduled releases, manual runs and manual
+tags. The workflow never pushes commits to protected `main`. It creates tags
+with `GITHUB_TOKEN` and continues publishing in the **same workflow**: a tag
+created by that token does not trigger another push workflow. No PAT is needed.
 
-   ```bash
-   git tag v2026.6.0
-   git push origin v2026.6.0
-   ```
+### Run now or preview
 
-5. The **Release** workflow (`.github/workflows/release.yml`) then:
-   - builds the frontend and bundles it into the wheel,
-   - runs `uv build` (hatch-vcs stamps the version from the tag),
-   - verifies the built version matches the tag,
-   - creates a GitHub Release with the wheel + sdist and auto-generated notes,
-   - **publishes them to [PyPI](https://pypi.org/project/precursor-ai/)**
-     via [Trusted Publishing](#pypi-trusted-publishing-one-time-setup) (OIDC — no
-     API token).
+In **Actions → Release → Run workflow**, select **main**. Leave `dry_run`
+unchecked to release now, or check it to compute the candidate and enforce the
+CI gate without building, tagging or publishing.
+
+```bash
+gh workflow run release.yml --ref main -f dry_run=true
+gh workflow run release.yml --ref main
+```
+
+Manual `v<version>` tags still trigger the same gated pipeline. They must point
+to a commit on `main` with a successful main-push CI run, use canonical CalVer,
+and not supersede an unfinished release. Prefer **Run workflow** so the
+version counter is chosen automatically.
+
+### Release notes and changelog
+
+GitHub Release notes, generated from merged PRs since the previous stable tag,
+are the **per-version history**. Contributors still add development notes to
+`CHANGELOG.md` under `[Unreleased]` and update relevant docs in their PR.
+Release automation does **not** promote that section, rewrite the changelog,
+or require a release-preparation commit or approval PR. Existing dated
+changelog sections remain as historical records.
+
+### Failures and retries
+
+The failed Actions run reports the failing step; use GitHub's workflow failure
+notifications for alerts. A CI failure creates no automatic tag. Fix `main`
+and let the next nightly run pick it up, or run the release manually.
+
+Once a tag is reserved, the next run resumes that tag and SHA **before** any
+newer changes, even across a month boundary. After staging completes, retries
+download the original draft artifacts rather than rebuilding the same version.
+The manifest is uploaded last as a durable completion marker.
+An unfinished GitHub upload placeholder is retried only before that version
+has any files on PyPI; a completed manifest is never replaced.
+
+For a partial PyPI upload, only missing files are uploaded. Existing files must
+match the manifest exactly; conflicting hashes or yanked files stop the run.
+If PyPI succeeded but finalizing GitHub failed, rerunning finishes the same
+release. Newer `main` changes then ship on a subsequent run. Multiple pending
+stable tags require manual attention rather than silently choosing one.
+
+Never delete/move published stable tags, overwrite a completed draft's assets,
+or delete its manifest to force a retry. A bad published release needs a new
+CalVer version. Hash conflicts or a deliberately withdrawn pending release
+need maintainer investigation; the workflow fails closed.
 
 ## PyPI Trusted Publishing (one-time setup)
 
@@ -67,22 +119,29 @@ Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishe
    - **Workflow name**: `release.yml`
    - **Environment**: `pypi`
 2. In this repo, add a GitHub **Environment** named `pypi`
-   (**Settings → Environments → New environment**). Optionally add required
-   reviewers so a human approves each publish.
+   (**Settings → Environments → New environment**). For autonomous releases,
+   **remove required reviewers and wait timers**. If deployment branch/tag
+   restrictions are enabled, allow both `main` (scheduled/manual runs) and
+   `v*` tags (manual tag runs).
 
 This repository publishes one distribution, `precursor-ai`. Plugins —
 `precursor-kanban` included — live in their own repositories and set up their
 own publisher there.
 
-The `pypi-publish` job requests an `id-token` and runs in the `pypi` environment;
+The `publish` job requests an `id-token` and runs in the `pypi` environment;
 those two values must match the publisher configured on PyPI.
+Keep the trusted publisher's workflow name as `release.yml`. The repository's
+tag rules must allow this workflow to create `v*` tags; no bypass of `main`'s
+branch protection is needed.
 
 ## Verifying a build locally
 
 ```bash
 make wheel          # builds the SPA, then `uv build` → dist/*.whl + *.tar.gz
 # or by hand:
-cd frontend && npm ci && npm run build && cd ..
+export UV_FROZEN=1
+npm --prefix frontend ci && npm --prefix frontend run build
+npm --prefix website ci && DOCS_BASE=/docs/ npm --prefix website run docs:build
 uv build
 ```
 
@@ -135,8 +194,10 @@ Two consequences worth knowing:
 - The release is **deleted and recreated** each run (`--cleanup-tag`) so the tag
   follows `main` and no stale wheel is left for a client to resolve.
 
-Nothing here interacts with tagging: cutting a release is exactly the process
-above, and the nightly tag is never a release candidate.
+The rolling channel remains independent from scheduled stable releases; the
+nightly tag is never promoted or used as a release candidate. Neither pipeline
+automatically installs updates on running instances. The installer continues to
+default to the rolling channel; tagged installations normally follow stable.
 
 ## Notes & known follow-ups
 

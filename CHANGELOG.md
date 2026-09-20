@@ -7,9 +7,21 @@ Precursor uses **CalVer** (`YYYY.M.MICRO`); the version is derived from the
 latest git tag (`v<version>`) by hatch-vcs at build time. See
 [RELEASING.md](RELEASING.md).
 
+The development notes below are maintained with each change. For automated
+releases, the [GitHub Release notes](https://github.com/lrivallain/precursor/releases)
+are the per-version history; releasing does not rewrite this file.
+
 ## [Unreleased]
 
 ### Added
+
+- **Autonomous stable releases every night at 01:17 UTC.** Unreleased changes
+  on `main` receive the next CalVer tag once CI passes on that exact revision.
+  The release includes the SPA and in-app docs, exercises a fresh wheel
+  installation, and publishes to PyPI before becoming the latest GitHub
+  Release. Unchanged revisions are skipped; interrupted releases resume the
+  same tag and checksum-pinned artifacts. Manual runs, planning-only dry runs,
+  and manual tags remain available alongside the rolling nightly channel.
 
 - **Topics carry an editable summary.** Coming back to a long topic meant
   re-reading the transcript to work out where it stood and what was still open.
