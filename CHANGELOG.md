@@ -37,7 +37,8 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   for empty topics; editing tools stay out of the way when collapsed. Actions
   can be checked directly in view mode, and manual edits autosave after a short
   pause with saving/error feedback. Both count as user edits, and stale saves
-  remain protected by the same revision checks.
+  remain protected by the same revision checks. Double-clicking summary text
+  opens the editor with the caret at the corresponding Markdown position.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card

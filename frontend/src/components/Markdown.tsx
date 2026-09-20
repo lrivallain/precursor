@@ -18,6 +18,7 @@ import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
 import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
+import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 
 interface MarkdownProps {
   children: string;
@@ -26,6 +27,7 @@ interface MarkdownProps {
   /** Opt-in task editing; ordinary transcript Markdown remains read-only. */
   onTaskChange?: (markdown: string) => void;
   tasksDisabled?: boolean;
+  onTextDoubleClick?: (sourceOffset: number) => void;
 }
 
 interface TaskListOptions {
@@ -226,7 +228,7 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * caused visible layout thrash / scrollbar flicker on content-heavy topics.
  */
 export const Markdown = memo(function Markdown({
-  children, className, onTaskChange, tasksDisabled = false,
+  children, className, onTaskChange, tasksDisabled = false, onTextDoubleClick,
 }: MarkdownProps) {
   // A non-empty highlight term (set when a content-search hit is opened) adds a
   // rehype pass that wraps matches in <mark>. Kept off the plugin list entirely
@@ -240,8 +242,22 @@ export const Markdown = memo(function Markdown({
         makeHighlightRehype(highlight),
       ]
     : [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+  if (onTextDoubleClick) {
+    rehypePlugins.unshift(makeMarkdownCaretRehype((offset) => offset - insertions.reduce(
+      (sum, insertion) => sum + Math.min(insertion.length, Math.max(0, offset - insertion.offset)), 0,
+    )));
+  }
   return (
-    <div className={className ? `markdown ${className}` : "markdown"}>
+    <div
+      className={className ? `markdown ${className}` : "markdown"}
+      onDoubleClick={onTextDoubleClick ? (event) => {
+        const offset = markdownCaretAtPoint(event.currentTarget, event.nativeEvent, children);
+        if (offset == null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onTextDoubleClick(offset);
+      } : undefined}
+    >
       <TaskListContext.Provider value={onTaskChange ? {
         source: children, rendered, insertions, onChange: onTaskChange, disabled: tasksDisabled,
       } : null}>

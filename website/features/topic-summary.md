@@ -76,7 +76,9 @@ Check or uncheck an action **directly in view mode** to mark it done or reopen
 it. The checkbox change is saved immediately; task lists elsewhere in the
 conversation remain read-only.
 
-Press the ✎ button to edit the markdown directly. Changes **autosave after a
+Double-click the summary text to edit its Markdown **at the clicked position**,
+or use the ✎ button. Links, action checkboxes and other controls keep their
+normal behavior. Changes **autosave after a
 1.2-second pause**, with **Saving…**, **Saved**, or **Not saved** feedback.
 You can keep typing while a save is in flight. **Done** returns to view mode;
 leaving the editor, collapsing the panel, or navigating to another topic also

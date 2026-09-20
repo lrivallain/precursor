@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -12,6 +12,7 @@ import {
 import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import { useTopicSummaryDraft } from "../lib/useTopicSummaryDraft";
+import { focusTextareaAt } from "../lib/markdownCaret";
 import type { TopicSummary, TopicSummaryHunk } from "../lib/types";
 
 interface Props {
@@ -55,6 +56,8 @@ export function TopicSummaryPanel({
   const draft = useTopicSummaryDraft(topicId, summary, onSave);
   const contentId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const editOffsetRef = useRef<number | null>(null);
   const confirm = useConfirm();
 
   const suggestion = summary?.suggestion;
@@ -79,9 +82,19 @@ export function TopicSummaryPanel({
     if (!summary) setEditing(false);
   }, [summary]);
 
-  useEffect(() => {
-    if (editing) textareaRef.current?.focus();
+  useLayoutEffect(() => {
+    if (!editing || !textareaRef.current) return;
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    if (editOffsetRef.current === null) textareaRef.current.focus({ preventScroll: true });
+    else focusTextareaAt(textareaRef.current, editOffsetRef.current);
+    editOffsetRef.current = null;
   }, [editing]);
+
+  function beginEditing(offset: number | null = null): void {
+    if (busy) return;
+    editOffsetRef.current = offset;
+    setEditing(true);
+  }
 
   async function finishEditing(): Promise<void> {
     if (await draft.flush()) setEditing(false);
@@ -206,9 +219,9 @@ export function TopicSummaryPanel({
               type="button"
               className="summary-action rounded p-1.5 hover:bg-surface disabled:opacity-50"
               aria-label="Edit summary"
-              data-tooltip="Edit the summary"
+              data-tooltip="Edit the summary (or double-click its text)"
               disabled={busy}
-              onClick={() => setEditing(true)}
+              onClick={() => beginEditing()}
             >
               <Pencil size={14} />
             </button>
@@ -226,7 +239,7 @@ export function TopicSummaryPanel({
         )}
 
         {summary && (
-          <div className={`max-h-[40vh] overflow-y-auto px-3 pb-3 ${editing ? "border-t border-border/60 pt-3" : ""}`}>
+          <div ref={bodyRef} className={`max-h-[40vh] overflow-y-auto px-3 pb-3 ${editing ? "border-t border-border/60 pt-3" : ""}`}>
             {editing ? (
               <div className="space-y-2">
                 <textarea
@@ -261,6 +274,7 @@ export function TopicSummaryPanel({
               <Markdown
                 className="summary-markdown text-[13px]"
                 tasksDisabled={busy}
+                onTextDoubleClick={busy ? undefined : beginEditing}
                 onTaskChange={(content) => {
                   draft.change(content);
                   void draft.flush();
