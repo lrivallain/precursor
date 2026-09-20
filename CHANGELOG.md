@@ -49,6 +49,41 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   vertically resizable with a remembered height, pointer/keyboard controls and
   scrolling for the complete summary and review.
 
+- **Workflow agents have their own section in the Agents overview and sidebar.**
+  Reusable agents referenced by non-archived workflows are grouped separately
+  from standalone agents, without duplicating shared agents. Untick **Show
+  workflow agents** in either view to focus on standalone agents; the shared
+  filter also scopes the overview's KPI counts and inbox, while direct links and
+  fleet-wide totals remain available.
+
+- **Agents and Workflows now share the standard sidebar.** Both sections have
+  searchable item lists and an **Overview** entry alongside their existing card
+  dashboards. Section navigation always opens the overview; rows, cards and
+  direct links open individual items. Workflow rows and cards share live
+  progress, and creation is an explicit **New** action even in empty sections.
+  The sidebar can resize or collapse in every section without shifting the
+  navigation rail's icons or account controls, and the lists work in the mobile
+  drawer too.
+
+- **Agents have a Run play button in their header.** Start a parked agent or
+  rerun its saved task without opening settings or sending a follow-up. The
+  button shows launch progress, surfaces errors, and is disabled for active or
+  interrupted agents and when the runtime is unavailable.
+
+- **Selectable reading font, including dyslexia-friendly options.** Settings →
+  Appearance now has a *Reading font* picker alongside the existing theme
+  toggle: the default Inter stack, **OpenDyslexic** (wide, weighted letterforms
+  designed to reduce letter confusion), **Atkinson Hyperlegible** (the Braille
+  Institute's typeface tuned for character legibility), or **Lexend** (a
+  reading-fluency typeface shown in independent studies to speed up reading for
+  low-proficiency and dyslexic readers). All three fonts are bundled as local
+  `@font-face` assets, so the feature works offline and needs nothing installed
+  on the OS. The choice applies instantly app-wide, persists across reloads
+  (`precursor:font` in local storage, mirroring the theme toggle), and is
+  mirrored to the new `font_family` setting so it round-trips with the rest of
+  your preferences. See the new [Accessibility](/features/accessibility) page.
+  Closes #319.
+
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card
   offered a `2/5` badge derived from its step agents' *current* statuses — which
@@ -318,6 +353,13 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   (everything it needs — the script location and the database URL — was already
   set programmatically), and the migration environment ignores a config file
   that isn't there.
+
+- **Enabling plugin tools no longer makes the model reject the request.**
+  Plugin server IDs such as `kanban.board` introduced dots into the tool names
+  sent to the model. Core now generates stable, provider-safe aliases with
+  length limits and collision protection, while routing calls to the original
+  MCP server and tool. Existing unambiguous, provider-safe names stay unchanged;
+  plugin IDs and saved enable toggles do not change.
 
 - **Opening Agents or Workflows briefly claimed the feature was off.** Both
   cockpits read `agents_enabled` straight from the settings store, which is

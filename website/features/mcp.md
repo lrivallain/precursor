@@ -39,6 +39,13 @@ You can also add **your own** servers (stdio or streamable-HTTP). A
 host-dependency **preflight** gates enabling a server — `cmd-runner` needs Docker
 when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
 
+Plugins can contribute servers too, such as Kanban's `kanban.board`. Core maps
+server/tool pairs to stable model-facing names containing only ASCII letters,
+digits, underscores and hyphens, capped at 64 characters for compatibility
+across providers. Names that need conversion receive a hash suffix to distinguish
+otherwise identical normalized or shortened names. Calls still reach the
+original MCP server and tool; server IDs and saved enable toggles are unchanged.
+
 ::: tip Narrow the catalogue per workflow step
 Enabling a server here offers it to everything. Tool schemas are re-sent on
 every turn, so a large registry is a standing context cost. A

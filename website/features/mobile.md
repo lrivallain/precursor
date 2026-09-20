@@ -30,9 +30,10 @@ when you aren't using it.
 It closes itself the moment you **pick something** — a topic, chat, session,
 workspace or the home launcher — so you land straight on the content instead of
 having to dismiss it. Switching *section* leaves it open, because you'll usually
-want to choose from that section's list next. The two sections whose list lives
-in the main pane rather than the sidebar (**Agents** and **Workflows**) close it
-too, since there'd be nothing left to browse.
+want to choose from that section's list next. **Agents** and **Workflows**
+explicitly open their card overview when selected, so those section buttons
+close it too. Reopen the drawer to browse their searchable lists; selecting a
+row or **Overview** also closes it.
 
 On the **home launcher**, the drawer replaces the standalone section rail
 entirely, so there's exactly one navigation affordance to learn.

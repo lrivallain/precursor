@@ -16,8 +16,9 @@
 // into website/public/screenshots/ at deviceScaleFactor 2, matching the
 // convention the <Screenshot> component expects (see website/features/AGENTS.md).
 //
-// The target must be the DEMO instance on :8899, whose persona resolves to
-// "Guest / Not connected" because its server runs with `gh` off PATH.
+// The target must be the DEMO instance, whose persona resolves to "Guest / Not
+// connected" because its server runs with `gh` off PATH. If :8899 is occupied,
+// launch with DEMO_PORT=<port> and capture with DEMO_BASE=http://127.0.0.1:<port>.
 
 let chromium;
 try {
@@ -32,8 +33,8 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
+const { BASE, prepareDemoPage } = require("./demo_browser");
 
-const BASE = process.env.DEMO_BASE || "http://127.0.0.1:8899";
 const OUT = path.resolve(__dirname, "..", "website", "public", "screenshots");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -112,6 +113,88 @@ async function openSettings(page, tab) {
 // natural heights; the clip trims whatever is left over.
 // --------------------------------------------------------------------------
 const scenes = {
+  home: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      return undefined;
+    },
+  },
+
+  topics: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/onboarding-checklist`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Topic settings", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  chats: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
+      await page.getByText("Regex for semver tags", { exact: true }).first().waitFor();
+      return undefined;
+    },
+  },
+
+  live: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/live/weekly-platform-sync`, { waitUntil: "networkidle" });
+      await page.getByText("Let's review the latency regression and agree on next steps.", { exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  workspaces: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Release checklist", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  "agents-overview": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/agents`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Agent fleet" }).waitFor();
+      await page.locator("main").getByRole("region", { name: "Standalone agents", exact: true }).waitFor();
+      await page.locator("main").getByRole("region", { name: "Workflow agents", exact: true }).waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      return undefined;
+    },
+  },
+
+  agents: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      const response = await page.request.get(`${BASE}/api/agents`);
+      const agents = await response.json();
+      const agent = agents.find((item) => item.title === "Digest writer");
+      if (!agent) throw new Error("Seed the demo Digest writer before capturing agents.");
+      await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Run agent", exact: true }).waitFor();
+      await page.getByText("The draft is ready for review before publishing.").waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      await sleep(800);
+      return undefined;
+    },
+  },
+
+  "workflows-overview": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/workflows`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Workflows", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "Weekly release digest", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
   // The workflow detail board: the step strip with all four step kinds.
   workflows: {
     viewport: { width: 1440, height: 1750 },
@@ -242,6 +325,17 @@ const scenes = {
     },
   },
 
+  // Settings → Appearance: theme toggle + the reading-font picker (dyslexia /
+  // low-vision friendly options).
+  accessibility: {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Appearance");
+      return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
   // Phone layout: a conversation with the whole screen to itself. `isMobile`
   // makes Chromium report `hover: none` / `pointer: coarse`, which is what
   // reveals the touch affordances, so it can't be faked with a narrow viewport.
@@ -358,6 +452,7 @@ async function run(names) {
           ...(scene.context ?? {}),
         });
         const page = await ctx.newPage();
+        await prepareDemoPage(page);
         const clip = await scene.go(page, theme);
         await page.addStyleTag({ content: STABILISE_CSS }).catch(() => {});
         await sleep(200);

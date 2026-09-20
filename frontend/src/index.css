@@ -4,6 +4,67 @@
    OS preference — so override Tailwind v4's default media-based dark variant. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Accessible reading-font faces (see lib/font.ts and Settings → Appearance).
+   Bundled locally so the feature works offline — see public/fonts/LICENSE.md
+   for attribution (both OFL-licensed). Only loaded when actually referenced by
+   a `--font-sans` override below, so picking "System" never pays their cost. */
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/OpenDyslexic-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/OpenDyslexic-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/OpenDyslexic-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("/fonts/AtkinsonHyperlegible-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("/fonts/AtkinsonHyperlegible-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("/fonts/AtkinsonHyperlegible-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lexend";
+  src: url("/fonts/Lexend-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lexend";
+  src: url("/fonts/Lexend-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Theme tokens. Defined as @theme so Tailwind generates the matching utilities
    (bg-bg, text-muted, border-border, …). The values are CSS variables so the
    .dark block below can swap them at runtime without regenerating utilities. */
@@ -37,6 +98,21 @@
   --accent: #60a5fa;
 }
 
+/* Reading font override. A `.font-<id>` class is set on <html> (see
+   lib/font.ts, mirrors the `.dark` toggle above) to swap the app-wide
+   `--font-sans` — which both the `font-sans` utility and `body` below read —
+   without regenerating Tailwind's utilities. "system" (the default) sets no
+   class, leaving the Inter stack from the @theme block untouched. */
+.font-opendyslexic {
+  --font-sans: "OpenDyslexic", "Comic Sans MS", sans-serif;
+}
+.font-atkinson-hyperlegible {
+  --font-sans: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+}
+.font-lexend {
+  --font-sans: "Lexend", system-ui, -apple-system, sans-serif;
+}
+
 /* Per-section accent. A `.section-<mode>` class is set on an ancestor (the app
    root, keyed to the active sidebar mode, and the home start surfaces) so
    descendants can tint themselves to the current section via the helpers below
@@ -48,11 +124,13 @@
 .section-chats { --section-accent: #059669; }
 .section-live { --section-accent: #e11d48; }
 .section-agents { --section-accent: #7c3aed; }
+.section-workflows { --section-accent: #4f46e5; }
 .section-workspaces { --section-accent: #d97706; }
 .dark .section-topics { --section-accent: #38bdf8; }
 .dark .section-chats { --section-accent: #34d399; }
 .dark .section-live { --section-accent: #fb7185; }
 .dark .section-agents { --section-accent: #a78bfa; }
+.dark .section-workflows { --section-accent: #818cf8; }
 .dark .section-workspaces { --section-accent: #fbbf24; }
 
 /* Home start-surface ("wizard") panel. Revealed under the section cards when a

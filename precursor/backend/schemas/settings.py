@@ -7,6 +7,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Theme = Literal["light", "dark", "system"]
+# Reading font applied app-wide, incl. dyslexia/low-vision-friendly options —
+# see frontend/src/lib/font.ts for the matching CSS class per id.
+FontFamily = Literal["system", "opendyslexic", "atkinson-hyperlegible", "lexend"]
 GitHubTokenSource = Literal["env", "gh-cli", "settings", "none"]
 
 
@@ -14,6 +17,7 @@ class SettingsPayload(BaseModel):
     """Partial update — every field is optional."""
 
     theme: Theme | None = None
+    font_family: FontFamily | None = None
     llm_model: str | None = None
     # Reasoning effort hint for reasoning-capable models: "" (auto/off — the
     # param is omitted), "low", "medium", or "high".
@@ -111,6 +115,7 @@ class SettingsPayload(BaseModel):
 
 class SettingsRead(BaseModel):
     theme: Theme = "system"
+    font_family: FontFamily = "system"
     # "" until resolved against the provider catalogue — no id is pinned here
     # because a literal is only correct until the provider retires it.
     llm_model: str = ""

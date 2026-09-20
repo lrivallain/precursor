@@ -29,7 +29,7 @@ issue from the topic. Once linked, the issue's body, comments, and labels become
 live context on every turn — newer comments are preferred over older ones, so the
 assistant always reasons over the current state.
 
-<Screenshot src="/screenshots/topics.png" alt="A topic linked to a GitHub issue, with the issue's labels shown as tags" />
+<Screenshot src="/screenshots/topics.png" alt="An onboarding topic beside the collection picker and topic tree" />
 
 ## 3. Chat
 

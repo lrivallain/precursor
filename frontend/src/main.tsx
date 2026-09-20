@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ConfirmProvider } from "./components/ConfirmDialog";
 import "./index.css";
+import { applyInitialFont } from "./lib/font";
 import { applyInitialTheme } from "./lib/theme";
 // Side-effect import: registers every bundled plugin's frontend half before
 // the app mounts, so a section is available the moment its backend
@@ -10,6 +11,7 @@ import { applyInitialTheme } from "./lib/theme";
 import "./plugins";
 
 applyInitialTheme();
+applyInitialFont();
 
 // Register the PWA service worker in production builds only. It enables
 // "install to home screen" / standalone-window launch; it does no caching, so

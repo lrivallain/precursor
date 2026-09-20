@@ -1053,6 +1053,17 @@ def test_chat_messages_cursor_pagination() -> None:
         )
 
 
+def test_font_family_setting_round_trips() -> None:
+    """The reading-font preference defaults to "system" and persists via PUT."""
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/settings").json()["font_family"] == "system"
+
+        updated = client.put("/api/settings", json={"font_family": "opendyslexic"}).json()
+        assert updated["font_family"] == "opendyslexic"
+        assert client.get("/api/settings").json()["font_family"] == "opendyslexic"
+
+
 def test_unknown_provider_degrades_gracefully() -> None:
     """A stored provider id that no longer exists must not break the app.
 

@@ -40,12 +40,20 @@ def _guard() -> None:
 _guard()
 
 from precursor.backend.db import SessionLocal, init_db  # noqa: E402
+from precursor.backend.models.agent_event import AgentEventRecord  # noqa: E402
+from precursor.backend.models.agent_run import AgentRun  # noqa: E402
 from precursor.backend.models.agent_session import AgentSession  # noqa: E402
 from precursor.backend.models.chat import Chat  # noqa: E402
 from precursor.backend.models.collection import Collection  # noqa: E402
+from precursor.backend.models.meeting import (  # noqa: E402
+    MeetingInsight,
+    MeetingSegment,
+    MeetingSession,
+)
 from precursor.backend.models.memory import Memory  # noqa: E402
 from precursor.backend.models.message import Message, MessageRole  # noqa: E402
 from precursor.backend.models.role import Role  # noqa: E402
+from precursor.backend.models.settings import AppSetting  # noqa: E402
 from precursor.backend.models.skill import Skill  # noqa: E402
 from precursor.backend.models.topic import Topic  # noqa: E402
 from precursor.backend.models.topic_schedule import TopicSchedule  # noqa: E402
@@ -57,6 +65,8 @@ from precursor.backend.models.workflow import (  # noqa: E402
     WorkflowStep,
 )
 from precursor.backend.models.workflow_state import WorkflowState  # noqa: E402
+from precursor.backend.models.workspace import Workspace  # noqa: E402
+from precursor.backend.schemas.agent import AgentEvent  # noqa: E402
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
 
 NOW = datetime.now(UTC)
@@ -110,6 +120,9 @@ async def seed() -> None:
     await init_db()
 
     async with SessionLocal() as s:
+        # Screenshots render archived fixtures, never a real Copilot session.
+        await s.merge(AppSetting(key="agents_enabled", value="false"))
+
         # ---------------- roles ----------------
         # The built-in `default` role is seeded by a migration; only add extras.
         s.add_all(
@@ -451,6 +464,14 @@ async def seed() -> None:
             total_output_tokens=2_100,
             last_activity_at=ago(hours=5),
         )
+        a_standalone = AgentSession(
+            title="Release notes helper",
+            task_prompt="Summarise the user-facing changes in a release.",
+            status="completed",
+            model="gpt-5-mini",
+            result_summary="The release notes are ready, grouped by user impact.",
+            last_activity_at=ago(hours=2),
+        )
         # Private vessels behind the two inline steps — hidden from the roster.
         v_publish = AgentSession(
             title="Publish",
@@ -473,8 +494,60 @@ async def seed() -> None:
             status="idle",
             model="gpt-5-mini",
         )
-        s.add_all([a_survey, a_writer, a_editor, a_owner, v_publish, v_classify, v_reply])
+        s.add_all(
+            [a_survey, a_writer, a_editor, a_owner, a_standalone, v_publish, v_classify, v_reply]
+        )
         await s.flush()
+
+        writer_run = AgentRun(
+            agent_id=a_writer.id,
+            status="idle",
+            model=a_writer.model,
+            started_at=ago(days=1, minutes=2),
+            finished_at=ago(days=1),
+            last_activity_at=ago(days=1),
+        )
+        s.add(writer_run)
+        await s.flush()
+        a_writer.current_run_id = writer_run.id
+
+        for event in [
+            AgentEvent(
+                kind="user_message",
+                text="Draft this week's engineering digest from the release survey.",
+                at=ago(days=1, minutes=2),
+            ),
+            AgentEvent(
+                kind="assistant_reasoning",
+                text=(
+                    "I will group the survey by user impact, distinguish shipped changes "
+                    "from investigations, and keep the digest short."
+                ),
+                at=ago(days=1, minutes=1),
+            ),
+            AgentEvent(
+                kind="assistant_message",
+                text=(
+                    "## This week in the platform\n\n"
+                    "- **Tool scoping:** each agent can now use a focused set of MCP servers.\n"
+                    "- **Workflow replay:** revisit a step without advancing the pipeline.\n"
+                    "- **Search performance:** the regression is diagnosed; a fix is still "
+                    "in progress.\n\n"
+                    "The draft is ready for review before publishing.\n\n"
+                    "```suggest\nMake it shorter\nAdd a next-steps section\n```"
+                ),
+                at=ago(days=1),
+            ),
+        ]:
+            event.agent_run_id = writer_run.id
+            s.add(
+                AgentEventRecord(
+                    agent_session_id=a_writer.id,
+                    agent_run_id=writer_run.id,
+                    payload=event.model_dump_json(),
+                    created_at=event.at,
+                )
+            )
 
         wf = Workflow(
             name="Weekly release digest",
@@ -752,6 +825,49 @@ async def seed() -> None:
                 ),
             ]
         )
+
+        meeting = MeetingSession(
+            title="Weekly platform sync",
+            slug="weekly-platform-sync",
+            status="ended",
+            language="en-US",
+            started_at=ago(hours=2),
+            ended_at=ago(hours=1),
+            speaker_names_json='{"Guest-1":"Alex","Guest-2":"Sam"}',
+            summary="Add bounded retries and publish the release checklist.",
+        )
+        s.add(meeting)
+        await s.flush()
+        for offset, speaker, text in [
+            (0, "Guest-1", "Let's review the latency regression and agree on next steps."),
+            (14000, "Guest-2", "The retries amplify load when the gateway is slow."),
+            (41000, "Guest-1", "Let's cap the retries and add jitter to the backoff."),
+            (55000, "Guest-2", "I'll add the regression test and update the release checklist."),
+        ]:
+            s.add(
+                MeetingSegment(
+                    session_id=meeting.id, speaker_label=speaker, text=text, offset_ms=offset
+                )
+            )
+        s.add(
+            MeetingInsight(
+                session_id=meeting.id,
+                kind="action_item",
+                content="Sam: add a bounded-retry regression test and update the release checklist.",
+            )
+        )
+        workspace_dir = Path(os.environ["PRECURSOR_DATA_DIR"]) / "workspaces" / "design-notes"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        (workspace_dir / "README.md").write_text(
+            "# Design notes\n\n"
+            "Working notes for the platform, kept alongside the topics that drive decisions.\n\n"
+            "## Release checklist\n\n"
+            "- Review the latency regression.\n"
+            "- Bound retries and add jitter.\n"
+            "- Publish the engineering digest.\n",
+            encoding="utf-8",
+        )
+        s.add(Workspace(name="Design notes", slug="design-notes", kind="local"))
 
         await s.commit()
 

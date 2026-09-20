@@ -93,6 +93,7 @@ def _as_read(
     api_keys = data.get("api_keys") or {}
     return SettingsRead(
         theme=data.get("theme", "system"),
+        font_family=data.get("font_family", "system"),
         # Resolved, not raw: nothing is stored on a fresh install and a stored
         # id may have been retired, so this is what a turn would actually use.
         llm_model=llm_model,
