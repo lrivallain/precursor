@@ -414,3 +414,36 @@ def test_agent_run_split_downgrade_folds_the_newest_run_back() -> None:
     finally:
         engine.dispose()
         os.unlink(db_path)
+
+
+# --- installed-wheel layout --------------------------------------------------
+
+
+def test_migrations_run_without_alembic_ini(monkeypatch: Any, tmp_path: Path) -> None:
+    """An installed wheel ships no ``alembic.ini`` (it configures the CLI only).
+
+    Pointing Alembic's ``Config`` at the missing path is not inert: ``env.py``
+    sees a non-None ``config_file_name`` and ``fileConfig()`` raises
+    ``FileNotFoundError``, which took startup down for `uv tool install` builds.
+    """
+    from alembic import command
+
+    from precursor.backend import db as db_module
+
+    monkeypatch.setattr(db_module, "_alembic_ini_path", lambda: tmp_path / "nope.ini")
+
+    cfg = db_module._alembic_config()
+    assert cfg.config_file_name is None
+    assert Path(cfg.get_main_option("script_location") or "").is_dir()
+    # Revisions still resolve, and env.py runs (the test DB is already at head,
+    # so the upgrade is a no-op) instead of blowing up on the missing file.
+    assert db_module._known_revisions()
+    command.upgrade(cfg, "head")
+
+    # env.py is defensive on its own too: a config that *does* name a missing
+    # ini (e.g. a stale CLI invocation) must not take the migration down.
+    from alembic.config import Config
+
+    stale = Config(str(tmp_path / "nope.ini"))
+    stale.set_main_option("script_location", cfg.get_main_option("script_location") or "")
+    command.upgrade(stale, "head")

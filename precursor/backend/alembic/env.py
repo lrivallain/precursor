@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import pool
@@ -23,7 +24,14 @@ config = context.config
 # the unified handler/formatter and drops the root level to ``WARN``. That turned
 # the app quiet from the first migration onwards. So: skip it entirely when the
 # app owns logging, and never disable existing loggers even from the CLI.
-if config.config_file_name is not None and not logging_is_configured():
+# Also defensive about the file's *existence*: an installed wheel has none (it
+# configures the CLI only) and ``fileConfig`` raises on a missing path, which
+# used to take application startup down on the first migration.
+if (
+    config.config_file_name is not None
+    and not logging_is_configured()
+    and Path(config.config_file_name).is_file()
+):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Inject runtime DB URL.

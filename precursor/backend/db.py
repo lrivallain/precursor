@@ -111,12 +111,24 @@ def _inspect_alembic_state(sync_conn: Connection) -> tuple[bool, bool, str | Non
     return has_version, has_tables, stored
 
 
+def _alembic_ini_path() -> Path:
+    """Source-tree ``alembic.ini``. Absent from an installed wheel."""
+    return Path(__file__).resolve().parents[2] / "alembic.ini"
+
+
 def _alembic_config() -> Config:
     from alembic.config import Config
 
-    repo_root = Path(__file__).resolve().parents[2]
-    cfg = Config(str(repo_root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(repo_root / "precursor" / "backend" / "alembic"))
+    # `alembic.ini` only exists in the source tree — it configures the *CLI*
+    # (logging, autogenerate hooks) and is not shipped in the wheel. Pointing
+    # Config at a missing path is not inert: `env.py` then sees a non-None
+    # `config_file_name` and `fileConfig()` raises FileNotFoundError, which took
+    # startup down for installed builds. Everything the runtime needs is set
+    # programmatically here (and the DB URL in env.py), so fall back to an empty
+    # config when the file isn't there.
+    ini = _alembic_ini_path()
+    cfg = Config(str(ini)) if ini.is_file() else Config()
+    cfg.set_main_option("script_location", str(Path(__file__).resolve().parent / "alembic"))
     return cfg
 
 

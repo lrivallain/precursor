@@ -284,6 +284,19 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
 
 ### Fixed
 
+- **An installed Precursor failed to start on the migration step.** Startup
+  runs `alembic upgrade head`, and the config it built pointed at the
+  repository's `alembic.ini` — a file that configures the *CLI* (logging,
+  autogenerate hooks) and is deliberately not shipped in the wheel. The missing
+  path was not inert: the migration environment saw a config file name, tried
+  to apply its logging section and died with
+  `FileNotFoundError: …/site-packages/alembic.ini doesn't exist`, taking the
+  whole application startup with it. `uv tool install precursor-ai` / `uvx`
+  installs could not boot. The runtime now falls back to an in-memory config
+  (everything it needs — the script location and the database URL — was already
+  set programmatically), and the migration environment ignores a config file
+  that isn't there.
+
 - **Opening Agents or Workflows briefly claimed the feature was off.** Both
   cockpits read `agents_enabled` straight from the settings store, which is
   `null` until its first fetch resolves — so for the width of that request the
