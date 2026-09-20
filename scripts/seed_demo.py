@@ -423,6 +423,14 @@ async def seed() -> None:
             total_output_tokens=2_100,
             last_activity_at=ago(hours=5),
         )
+        a_standalone = AgentSession(
+            title="Release notes helper",
+            task_prompt="Summarise the user-facing changes in a release.",
+            status="completed",
+            model="gpt-5-mini",
+            result_summary="The release notes are ready, grouped by user impact.",
+            last_activity_at=ago(hours=2),
+        )
         # Private vessels behind the two inline steps — hidden from the roster.
         v_publish = AgentSession(
             title="Publish",
@@ -445,7 +453,9 @@ async def seed() -> None:
             status="idle",
             model="gpt-5-mini",
         )
-        s.add_all([a_survey, a_writer, a_editor, a_owner, v_publish, v_classify, v_reply])
+        s.add_all(
+            [a_survey, a_writer, a_editor, a_owner, a_standalone, v_publish, v_classify, v_reply]
+        )
         await s.flush()
 
         writer_run = AgentRun(

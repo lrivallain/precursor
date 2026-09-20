@@ -16,7 +16,9 @@ async function run() {
     const agents = await (await page.request.get(`${BASE}/api/agents`)).json();
     const workflows = await (await page.request.get(`${BASE}/api/workflows`)).json();
     assert.ok(agents.length >= 2 && workflows.length >= 2, "Seed the demo first.");
-    const agent = agents[0];
+    const agent = agents.find((item) => item.workflow_count > 0);
+    const standalone = agents.filter((item) => item.workflow_count === 0);
+    assert.ok(agent && standalone.length > 0, "Seed both standalone and workflow agents.");
     const workflow = workflows[0];
     const sections = page.getByRole("navigation", { name: "Sections", exact: true });
     const agentList = page.getByRole("navigation", { name: "Agents list", exact: true });
@@ -38,6 +40,42 @@ async function run() {
     await page.getByRole("heading", { name: "Agent fleet" }).waitFor();
     await current(agentList, "Overview");
     assert.deepEqual(await sections.getByRole("button", { name: "Agents", exact: true }).boundingBox(), railBefore);
+    const main = page.locator("main");
+    const membership = (container, name) => container.getByRole("region", { name, exact: true });
+    const workflowToggle = (container) =>
+      container.getByRole("checkbox", { name: "Show workflow agents", exact: true });
+    for (const container of [agentList, main]) {
+      await membership(container, "Workflow agents").waitFor();
+      assert.equal(await membership(container, "Standalone agents").locator("li").count(), standalone.length);
+      assert.equal(await membership(container, "Workflow agents").locator("li").count(), agents.length - standalone.length);
+      assert.equal(await container.locator("li").count(), agents.length, "No duplicate shared agents");
+    }
+    await workflowToggle(agentList).uncheck();
+    await membership(main, "Workflow agents").waitFor({ state: "detached" });
+    assert.equal(await workflowToggle(main).isChecked(), false);
+    assert.equal(await agentList.locator("li").count(), standalone.length);
+    await main.getByRole("button", { name: new RegExp(`^${standalone.length}\\s*Idle · done$`) }).waitFor();
+    await agentList.getByRole("searchbox").fill(agent.title);
+    await agentList.getByText("No matching agents.").waitFor();
+    await agentList.getByRole("button", { name: "Clear search" }).click();
+    assert.equal(await workflowToggle(agentList).isChecked(), false, "Clearing search preserves membership filter");
+    await row(agentList, standalone[0].title).click();
+    await overview(agentList).click();
+    assert.equal(await workflowToggle(main).isChecked(), false, "Choice survives opening an agent");
+    await main.getByRole("textbox", { name: "Filter agents by name" }).fill(agent.title);
+    await main.getByText("No agents match", { exact: false }).waitFor();
+    await main.getByRole("button", { name: "Clear filters", exact: true }).click();
+    await membership(main, "Workflow agents").waitFor();
+    assert.equal(await workflowToggle(agentList).isChecked(), true);
+    await row(agentList, agent.title).click();
+    await workflowToggle(agentList).uncheck();
+    await page.waitForURL(`${BASE}/agents/${agent.public_id}`);
+    await page.getByRole("button", { name: "Run agent", exact: true }).waitFor();
+    assert.equal(await row(agentList, agent.title).count(), 0, "Filtering does not close an open workflow agent");
+    await overview(agentList).click();
+    await workflowToggle(main).check();
+    await membership(agentList, "Workflow agents").waitFor();
+    console.log("Workflow agents: separate groups, shared visibility, search, counts and stable selection.");
     await agentList.getByRole("searchbox").fill("NO SUCH AGENT");
     await agentList.getByText("No matching agents.").waitFor();
     await agentList.getByRole("button", { name: "Clear search" }).click();
@@ -115,6 +153,56 @@ async function run() {
     await page.getByRole("button", { name: "Use rail navigation", exact: true }).click();
     console.log("Deep links and the tab-navigation preference are preserved.");
 
+    // Local responses exercise cross-lane filters and an all-workflow empty state.
+    const groupedAgents = agents.map((item) => ({
+      ...item,
+      status: item.workflow_count > 0 ? "needs_approval" : "blocked",
+      schedule: { enabled: true },
+    }));
+    await page.route("**/api/agents", (route) => route.fulfill({ json: groupedAgents }));
+    await page.route("**/api/agents/inbox", (route) => route.fulfill({
+      json: [
+        { kind: "blocked", agent_id: standalone[0].id, title: standalone[0].title, detail: "Standalone question" },
+        { kind: "needs_approval", agent_id: agent.id, title: agent.title, detail: "Workflow permission" },
+      ],
+    }));
+    await page.goto(`${BASE}/agents`);
+    await main.getByRole("button", { name: `Approve ${agent.title}`, exact: true }).waitFor();
+    await workflowToggle(main).uncheck();
+    await main.getByRole("button", { name: `Approve ${agent.title}`, exact: true }).waitFor({ state: "detached" });
+    await main.getByRole("button", { name: `Answer ${standalone[0].title}`, exact: true }).waitFor();
+    await main.getByRole("button", { name: new RegExp(`^${standalone.length}\\s*Need you$`) }).click();
+    assert.equal(await membership(main, "Standalone agents").locator("li").count(), standalone.length);
+    await main.getByRole("button", { name: new RegExp(`^${standalone.length}\\s*Scheduled$`) }).click();
+    await main.getByRole("textbox", { name: "Filter agents by name" }).fill(standalone[0].title.toUpperCase());
+    assert.equal(await membership(main, "Standalone agents").locator("li").count(), 1);
+    await main.getByRole("textbox", { name: "Filter agents by name" }).fill("");
+    await workflowToggle(main).check();
+    await membership(main, "Workflow agents").waitFor();
+    assert.equal(await membership(main, "Workflow agents").locator("li").count(), agents.length - standalone.length);
+    await page.unroute("**/api/agents/inbox");
+    await page.unroute("**/api/agents");
+    await page.route("**/api/agents", (route) => route.fulfill({
+      json: agents.map((item) => ({ ...item, workflow_count: 2 })),
+    }));
+    await page.goto(`${BASE}/agents`);
+    await membership(agentList, "Workflow agents").waitFor();
+    await workflowToggle(agentList).uncheck();
+    await agentList.getByText("No standalone agents.", { exact: false }).waitFor();
+    await main.getByText("No agents match", { exact: false }).waitFor();
+    await main.getByRole("button", { name: "Clear filters", exact: true }).click();
+    assert.equal(await membership(main, "Workflow agents").locator("li").count(), agents.length);
+    await page.unroute("**/api/agents");
+    await page.route("**/api/agents", (route) => route.fulfill({
+      json: agents.map((item) => ({ ...item, workflow_count: 0 })),
+    }));
+    await page.goto(`${BASE}/agents`);
+    await membership(main, "Standalone agents").waitFor();
+    assert.equal(await membership(main, "Standalone agents").locator("li").count(), agents.length);
+    assert.equal(await membership(main, "Workflow agents").count(), 0);
+    await page.unroute("**/api/agents");
+    console.log("Membership filters compose with urgency/schedule/name, scope inbox, and handle all/none workflow fleets.");
+
     // Keep the data responses local: exercise running progress without executing a pipeline.
     let polls = 0;
     await page.route("**/api/workflows", async (route) => {
@@ -161,6 +249,10 @@ async function run() {
     await page.goto(`${BASE}/agents`);
     await page.getByRole("heading", { name: "Agent fleet" }).waitFor();
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await workflowToggle(agentList).uncheck();
+    await membership(agentList, "Workflow agents").waitFor({ state: "detached" });
+    await workflowToggle(agentList).check();
+    await membership(agentList, "Workflow agents").waitFor();
     await row(agentList, agent.title).click();
     await page.waitForURL(`${BASE}/agents/${agent.public_id}`);
     assert.equal(await page.locator("[inert]").count(), 1);

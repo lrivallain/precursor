@@ -131,6 +131,26 @@ export function sortAgentsByUrgency(agents: readonly AgentSession[]): AgentSessi
   return [...agents].sort(compareAgentsByUrgency);
 }
 
+/** Membership follows live workflow references, not the agent's last run trigger. */
+export function groupAgentsByWorkflow(
+  agents: readonly AgentSession[],
+  showWorkflowAgents: boolean,
+): { key: string; label: string; agents: AgentSession[] }[] {
+  const ordered = sortAgentsByUrgency(agents);
+  return [
+    {
+      key: "standalone",
+      label: "Standalone agents",
+      agents: ordered.filter((agent) => agent.workflow_count === 0),
+    },
+    {
+      key: "workflow",
+      label: "Workflow agents",
+      agents: showWorkflowAgents ? ordered.filter((agent) => agent.workflow_count > 0) : [],
+    },
+  ].filter((group) => group.agents.length > 0);
+}
+
 /** Count of agents currently blocked on the human (drives tab-title + palette). */
 export function agentsWaitingCount(agents: readonly AgentSession[]): number {
   return agents.reduce(
