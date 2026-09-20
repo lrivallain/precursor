@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { coalesce, eventBus } from "./events";
 import type { TopicSummary } from "./types";
 
 export interface TopicSummaryController {
@@ -7,81 +8,107 @@ export interface TopicSummaryController {
   busy: boolean;
   error: string | null;
   clearError: () => void;
-  /** Surface a failure raised by a mutation the panel owns. */
-  fail: (message: string) => void;
-  /** Replace the local copy after an edit / review (null = deleted). */
-  apply: (summary: TopicSummary | null) => void;
-  /** Regenerate from the conversation, notes and attachments. */
-  refresh: (instruction?: string) => Promise<void>;
-  setVisible: (visible: boolean) => Promise<void>;
-  toggleVisible: () => Promise<void>;
-  addItem: (kind: "todo" | "important", text: string) => Promise<void>;
+  refresh: (instruction?: string) => Promise<boolean>;
+  setVisible: (visible: boolean) => Promise<boolean>;
+  toggleVisible: () => Promise<boolean>;
+  addItem: (kind: "todo" | "important", text: string) => Promise<boolean>;
+  save: (content: string, revision: string) => Promise<boolean>;
+  resolve: (accepted: number[], revision: string) => Promise<boolean>;
+  remove: (revision: string) => Promise<boolean>;
 }
 
-/**
- * Loads and mutates a topic's editable summary.
- *
- * A topic has no summary until one is asked for, so `summary` stays null until
- * the user runs `/update-summary`, adds an item, or opens the panel from the
- * header — which is why every mutation returns the freshly-created row.
- */
 export function useTopicSummary(topicId: number): TopicSummaryController {
   const [summary, setSummary] = useState<TopicSummary | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const state = useMemo(() => ({
+    active: false,
+    sequence: 0,
+    pending: 0,
+    invalidated: false,
+    queue: Promise.resolve(),
+  }), [topicId]);
+
+  const load = useCallback(async (): Promise<void> => {
+    if (state.pending) {
+      state.invalidated = true;
+      return;
+    }
+    const sequence = ++state.sequence;
+    try {
+      const loaded = await api.topicSummary.get(topicId);
+      if (state.active && sequence === state.sequence) setSummary(loaded);
+    } catch (err) {
+      if (state.active && sequence === state.sequence) setError((err as Error).message);
+    } finally {
+      if (state.active && sequence === state.sequence) setBusy(false);
+    }
+  }, [state, topicId]);
 
   useEffect(() => {
-    let cancelled = false;
+    state.active = true;
     setSummary(null);
     setError(null);
-    void (async () => {
-      try {
-        const loaded = await api.topicSummary.get(topicId);
-        if (!cancelled) setSummary(loaded);
-      } catch {
-        // Unreachable API — behave as "no summary" rather than blocking chat.
-      }
-    })();
+    setBusy(true);
+    void load();
+    const reload = coalesce(load);
+    const unsubscribe = eventBus.subscribe((event) => {
+      if (event.type === "topic-summary.changed" && event.topic_id === topicId) reload();
+    });
     return () => {
-      cancelled = true;
+      state.active = false;
+      ++state.sequence;
+      reload.cancel();
+      unsubscribe();
     };
-  }, [topicId]);
+  }, [load, state, topicId]);
 
+  // All mutations share one queue. An initial fetch or cross-window reload
+  // cannot overwrite a mutation response, and one completion cannot clear the
+  // busy flag while another operation is still waiting.
   const run = useCallback(
-    async (action: () => Promise<TopicSummary | null>): Promise<void> => {
+    (action: () => Promise<TopicSummary | null>): Promise<boolean> => {
+      ++state.pending;
+      ++state.sequence;
       setBusy(true);
-      setError(null);
-      try {
-        setSummary(await action());
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setBusy(false);
-      }
+      const result = state.queue.then(async () => {
+        if (!state.active) {
+          --state.pending;
+          return false;
+        }
+        setError(null);
+        try {
+          const updated = await action();
+          if (state.active) setSummary(updated);
+          return true;
+        } catch (err) {
+          if (state.active) setError((err as Error).message);
+          state.invalidated = true;
+          return false;
+        } finally {
+          --state.pending;
+          if (state.active && !state.pending) {
+            setBusy(false);
+            if (state.invalidated) {
+              state.invalidated = false;
+              void load();
+            }
+          }
+        }
+      });
+      state.queue = result.then(() => undefined);
+      return result;
     },
-    [],
-  );
-
-  const refresh = useCallback(
-    (instruction?: string) =>
-      run(() => api.topicSummary.generate(topicId, instruction)),
-    [run, topicId],
+    [load, state],
   );
 
   const setVisible = useCallback(
     (visible: boolean) => run(() => api.topicSummary.setVisible(topicId, visible)),
     [run, topicId],
   );
-
   const toggleVisible = useCallback(
     () => setVisible(!(summary?.visible ?? false)),
     [setVisible, summary?.visible],
-  );
-
-  const addItem = useCallback(
-    (kind: "todo" | "important", text: string) =>
-      run(() => api.topicSummary.addItem(topicId, kind, text)),
-    [run, topicId],
   );
 
   return {
@@ -89,11 +116,15 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
     busy,
     error,
     clearError: () => setError(null),
-    fail: setError,
-    apply: setSummary,
-    refresh,
+    refresh: (instruction) => run(() => api.topicSummary.generate(topicId, instruction)),
     setVisible,
     toggleVisible,
-    addItem,
+    addItem: (kind, text) => run(() => api.topicSummary.addItem(topicId, kind, text)),
+    save: (content, revision) => run(() => api.topicSummary.save(topicId, content, revision)),
+    resolve: (accepted, revision) => run(() => api.topicSummary.resolve(topicId, accepted, revision)),
+    remove: (revision) => run(async () => {
+      await api.topicSummary.remove(topicId, revision);
+      return null;
+    }),
   };
 }

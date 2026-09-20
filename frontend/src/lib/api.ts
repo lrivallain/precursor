@@ -1359,10 +1359,10 @@ export const api = {
     // topic has never had one — generation is always user-initiated.
     get: (topicId: number) =>
       request<TopicSummary | null>(`/api/topics/${topicId}/topic-summary`),
-    save: (topicId: number, content: string, visible?: boolean) =>
+    save: (topicId: number, content: string, revision: string) =>
       request<TopicSummary>(`/api/topics/${topicId}/topic-summary`, {
         method: "PUT",
-        body: JSON.stringify({ content, visible: visible ?? null }),
+        body: JSON.stringify({ content, revision }),
       }),
     // Hiding a topic that never had a summary resolves to null: nothing is
     // created just to be collapsed.
@@ -1379,18 +1379,20 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ instruction: instruction ?? null }),
       }),
-    resolve: (topicId: number, accepted: number[]) =>
+    resolve: (topicId: number, accepted: number[], revision: string) =>
       request<TopicSummary>(`/api/topics/${topicId}/topic-summary/resolve`, {
         method: "POST",
-        body: JSON.stringify({ accepted }),
+        body: JSON.stringify({ accepted, revision }),
       }),
     addItem: (topicId: number, kind: "todo" | "important", text: string) =>
       request<TopicSummary>(`/api/topics/${topicId}/topic-summary/items`, {
         method: "POST",
         body: JSON.stringify({ kind, text }),
       }),
-    remove: (topicId: number) =>
-      request<void>(`/api/topics/${topicId}/topic-summary`, { method: "DELETE" }),
+    remove: (topicId: number, revision: string) =>
+      request<void>(`/api/topics/${topicId}/topic-summary?revision=${encodeURIComponent(revision)}`, {
+        method: "DELETE",
+      }),
   },
 
   ai: {

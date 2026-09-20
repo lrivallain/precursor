@@ -26,6 +26,7 @@ class SummarySuggestionRead(BaseModel):
 
 
 class TopicSummaryRead(BaseModel):
+    revision: str
     content: str
     visible: bool
     user_edited: bool
@@ -40,6 +41,7 @@ class TopicSummarySave(BaseModel):
 
     content: str
     visible: bool | None = None
+    revision: str | None = None
 
 
 class TopicSummaryVisibility(BaseModel):
@@ -55,6 +57,7 @@ class TopicSummaryGenerate(BaseModel):
 class TopicSummaryResolve(BaseModel):
     """Per-change verdict on a pending suggestion (indices to accept)."""
 
+    revision: str
     accepted: list[int] = Field(default_factory=list)
 
 

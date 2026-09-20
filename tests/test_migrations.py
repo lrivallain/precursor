@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
+import pytest
 import sqlalchemy as sa
 
 _VERSIONS = Path(__file__).resolve().parents[1] / "precursor" / "backend" / "alembic" / "versions"
@@ -419,30 +422,42 @@ def test_agent_run_split_downgrade_folds_the_newest_run_back() -> None:
 # --- installed-wheel layout --------------------------------------------------
 
 
-def test_migrations_run_without_alembic_ini(monkeypatch: Any, tmp_path: Path) -> None:
-    """An installed wheel ships no ``alembic.ini`` (it configures the CLI only).
-
-    Pointing Alembic's ``Config`` at the missing path is not inert: ``env.py``
-    sees a non-None ``config_file_name`` and ``fileConfig()`` raises
-    ``FileNotFoundError``, which took startup down for `uv tool install` builds.
-    """
+def test_migrations_run_without_alembic_ini(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from alembic import command
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
 
+    from precursor.backend import config, logging_config
     from precursor.backend import db as db_module
 
-    monkeypatch.setattr(db_module, "_alembic_ini_path", lambda: tmp_path / "nope.ini")
+    installed_backend = tmp_path / "site-packages" / "precursor" / "backend"
+    shutil.copytree(_VERSIONS.parent, installed_backend / "alembic")
+    monkeypatch.setattr(db_module, "__file__", str(installed_backend / "db.py"))
+    database = tmp_path / "installed.db"
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(database_url=f"sqlite+aiosqlite:///{database}"),
+    )
+    monkeypatch.setattr(logging_config, "logging_is_configured", lambda: False)
 
     cfg = db_module._alembic_config()
     assert cfg.config_file_name is None
-    assert Path(cfg.get_main_option("script_location") or "").is_dir()
-    # Revisions still resolve, and env.py runs (the test DB is already at head,
-    # so the upgrade is a no-op) instead of blowing up on the missing file.
+    assert Path(cfg.get_main_option("script_location") or "") == installed_backend / "alembic"
     assert db_module._known_revisions()
     command.upgrade(cfg, "head")
 
-    # env.py is defensive on its own too: a config that *does* name a missing
-    # ini (e.g. a stale CLI invocation) must not take the migration down.
-    from alembic.config import Config
+    engine = sa.create_engine(f"sqlite:///{database}")
+    try:
+        assert "topic_summaries" in sa.inspect(engine).get_table_names()
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == (
+                ScriptDirectory.from_config(cfg).get_current_head()
+            )
+    finally:
+        engine.dispose()
 
     stale = Config(str(tmp_path / "nope.ini"))
     stale.set_main_option("script_location", cfg.get_main_option("script_location") or "")

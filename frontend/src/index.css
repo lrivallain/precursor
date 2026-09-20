@@ -244,7 +244,7 @@ body {
 
 /* Topic summary brief: a dense status panel, not an article — shrink the
    fixed section headings so Status / Actions / Key information read as labels. */
-.summary-markdown :where(h1, h2, h3) {
+.markdown.summary-markdown :where(h1, h2, h3) {
   font-size: 1em;
   margin-top: 0.9em;
   padding-bottom: 0;

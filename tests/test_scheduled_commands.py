@@ -51,6 +51,36 @@ def test_parse_command_ignores_plain_text() -> None:
     assert sc.parse_command("not /a command") is None
 
 
+def test_scheduled_summary_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from precursor.backend.services import topic_summary
+
+    monkeypatch.setattr(
+        topic_summary, "generate_summary", AsyncMock(return_value=("refreshed", "test"))
+    )
+    with TestClient(create_app()) as client:
+        topic_id = _make_topic(client)
+        path = f"/api/topics/{topic_id}/topic-summary"
+        _run_prompt(topic_id, "/hide-summary")
+        assert client.get(path).json() is None
+        _run_prompt(topic_id, "/show-summary")
+        assert client.get(path).json()["visible"]
+        _run_prompt(topic_id, "/todo-summary follow up")
+        _run_prompt(topic_id, "/important-summary keep this fact")
+        content = client.get(path).json()["content"]
+        assert "- [ ] follow up" in content and "- keep this fact" in content
+        _run_prompt(topic_id, "/update-summary focus on blockers")
+        result = client.get(path).json()
+        assert result["content"] == content
+        assert result["suggestion"]["content"] == "refreshed"
+        assert any(
+            "Summary refresh ready" in str(m["content"]) for m in _messages(client, topic_id)
+        )
+        _run_prompt(topic_id, "/hide-summary")
+        assert client.get(path).json()["visible"] is False
+
+
 # ---------------------------------------------------------------------------
 # Plain prompts still go to the LLM turn
 # ---------------------------------------------------------------------------

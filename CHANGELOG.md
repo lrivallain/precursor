@@ -25,7 +25,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   the prompt is told to treat your wording as authoritative. `/todo-summary`
   and `/important-summary` append an action or a fact, `/hide-summary`
   collapses the panel without discarding the text, and all five commands work
-  from a scheduled run.
+  from a scheduled run. Updates synchronize across open windows; stale edits
+  and reviews are rejected instead of overwriting newer work. Manual Markdown
+  formatting is preserved, first-use failures are visible, and generation does
+  not hold the database write lock while waiting for the model.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card

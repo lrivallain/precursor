@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -10,17 +10,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { api } from "../lib/api";
+import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import type { TopicSummary, TopicSummaryHunk } from "../lib/types";
 
 interface Props {
-  topicId: number;
   summary: TopicSummary;
   busy: boolean;
   error: string | null;
-  onChanged: (summary: TopicSummary | null) => void;
-  onFailed: (message: string) => void;
+  onSave: (content: string, revision: string) => Promise<boolean>;
+  onResolve: (accepted: number[], revision: string) => Promise<boolean>;
+  onRemove: (revision: string) => Promise<boolean>;
   onRefresh: () => void;
   onToggleVisible: () => void;
   onDismissError: () => void;
@@ -39,89 +39,42 @@ interface Props {
  *    anything is written.
  */
 export function TopicSummaryPanel({
-  topicId,
   summary,
   busy,
   error,
-  onChanged,
-  onFailed,
+  onSave,
+  onResolve,
+  onRemove,
   onRefresh,
   onToggleVisible,
   onDismissError,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(summary.content);
-  const [saving, setSaving] = useState(false);
-  const [accepted, setAccepted] = useState<Set<number>>(new Set());
-  const [resolving, setResolving] = useState(false);
+  const [draftRevision, setDraftRevision] = useState(summary.revision);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const confirm = useConfirm();
 
   const suggestion = summary.suggestion;
   const hunks = suggestion?.hunks ?? [];
-
-  // A fresh proposal starts with every change accepted: the common case is
-  // "yes, take the update", and refusing one is a single click.
-  useEffect(() => {
-    setAccepted(new Set(hunks.map((h) => h.index)));
-    // Keyed on the proposed text: two refreshes can land in the same second
-    // with the same number of changes, and stale selections would then point
-    // at different hunks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestion?.content]);
-
-  useEffect(() => {
-    if (!editing) setDraft(summary.content);
-  }, [summary.content, editing]);
 
   useEffect(() => {
     if (editing) textareaRef.current?.focus();
   }, [editing]);
 
-  const save = useCallback(async (): Promise<void> => {
-    setSaving(true);
-    try {
-      onChanged(await api.topicSummary.save(topicId, draft));
-      setEditing(false);
-    } catch (err) {
-      onFailed((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }, [draft, onChanged, onFailed, topicId]);
-
-  async function resolve(all: "accept" | "refuse" | null): Promise<void> {
-    const indices =
-      all === "accept"
-        ? hunks.map((h) => h.index)
-        : all === "refuse"
-          ? []
-          : [...accepted];
-    setResolving(true);
-    try {
-      onChanged(await api.topicSummary.resolve(topicId, indices));
-    } catch (err) {
-      onFailed((err as Error).message);
-    } finally {
-      setResolving(false);
-    }
+  async function save(): Promise<void> {
+    if (await onSave(draft, draftRevision)) setEditing(false);
   }
 
   async function remove(): Promise<void> {
-    try {
-      await api.topicSummary.remove(topicId);
-      onChanged(null);
-    } catch (err) {
-      onFailed((err as Error).message);
+    if (await confirm({
+      title: "Delete summary?",
+      message: "The summary and any pending suggestions will be permanently deleted.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    })) {
+      await onRemove(summary.revision);
     }
-  }
-
-  function toggleHunk(hunk: TopicSummaryHunk): void {
-    setAccepted((prev) => {
-      const next = new Set(prev);
-      if (next.has(hunk.index)) next.delete(hunk.index);
-      else next.add(hunk.index);
-      return next;
-    });
   }
 
   const collapsed = !summary.visible;
@@ -132,6 +85,7 @@ export function TopicSummaryPanel({
         <button
           type="button"
           onClick={onToggleVisible}
+          disabled={busy}
           aria-expanded={summary.visible}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[11px] uppercase tracking-wide text-muted hover:text-fg"
         >
@@ -165,7 +119,12 @@ export function TopicSummaryPanel({
               className="rounded p-1.5 hover:bg-surface"
               aria-label="Edit summary"
               data-tooltip="Edit the summary"
-              onClick={() => setEditing(true)}
+              disabled={busy}
+              onClick={() => {
+                setDraft(summary.content);
+                setDraftRevision(summary.revision);
+                setEditing(true);
+              }}
             >
               <Pencil size={14} />
             </button>
@@ -174,6 +133,7 @@ export function TopicSummaryPanel({
               className="rounded p-1.5 hover:bg-surface"
               aria-label="Delete summary"
               data-tooltip="Delete the summary"
+              disabled={busy}
               onClick={() => void remove()}
             >
               <Trash2 size={14} />
@@ -183,7 +143,7 @@ export function TopicSummaryPanel({
       </div>
 
       {error && (
-        <div className="mx-3 mb-2 flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[12px] text-red-500">
+        <div role="alert" className="mx-3 mb-2 flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-[12px] text-red-500">
           <span className="min-w-0 flex-1">{error}</span>
           <button type="button" aria-label="Dismiss error" onClick={onDismissError}>
             <X size={12} />
@@ -197,6 +157,8 @@ export function TopicSummaryPanel({
             <div className="space-y-2">
               <textarea
                 ref={textareaRef}
+                aria-label="Summary markdown"
+                disabled={busy}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 rows={10}
@@ -206,15 +168,16 @@ export function TopicSummaryPanel({
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
-                  disabled={saving}
+                  disabled={busy}
                   onClick={() => void save()}
                 >
-                  {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                  {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
                   Save
                 </button>
                 <button
                   type="button"
                   className="rounded border border-border px-2 py-1 text-[12px]"
+                  disabled={busy}
                   onClick={() => {
                     setDraft(summary.content);
                     setEditing(false);
@@ -238,13 +201,10 @@ export function TopicSummaryPanel({
 
           {suggestion && !editing && (
             <SuggestionReview
+              key={summary.revision}
               hunks={hunks}
-              accepted={accepted}
-              busy={resolving}
-              onToggle={toggleHunk}
-              onApply={() => void resolve(null)}
-              onAcceptAll={() => void resolve("accept")}
-              onRefuseAll={() => void resolve("refuse")}
+              busy={busy}
+              onResolve={(indices) => void onResolve(indices, summary.revision)}
             />
           )}
         </div>
@@ -260,21 +220,24 @@ export function TopicSummaryPanel({
  */
 function SuggestionReview({
   hunks,
-  accepted,
   busy,
-  onToggle,
-  onApply,
-  onAcceptAll,
-  onRefuseAll,
+  onResolve,
 }: {
   hunks: TopicSummaryHunk[];
-  accepted: Set<number>;
   busy: boolean;
-  onToggle: (hunk: TopicSummaryHunk) => void;
-  onApply: () => void;
-  onAcceptAll: () => void;
-  onRefuseAll: () => void;
+  onResolve: (accepted: number[]) => void;
 }) {
+  const [accepted, setAccepted] = useState(() => new Set(hunks.map((h) => h.index)));
+
+  function toggleHunk(index: number): void {
+    setAccepted((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
   return (
     <div className="mt-3 rounded border border-accent/40">
       <div className="flex flex-wrap items-center gap-2 border-b border-accent/30 bg-accent/10 px-2 py-1.5">
@@ -286,7 +249,7 @@ function SuggestionReview({
           type="button"
           className="inline-flex items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-white disabled:opacity-50"
           disabled={busy}
-          onClick={onApply}
+          onClick={() => onResolve([...accepted])}
         >
           {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
           Apply selected
@@ -295,7 +258,7 @@ function SuggestionReview({
           type="button"
           className="rounded border border-border px-2 py-1 text-[12px]"
           disabled={busy}
-          onClick={onAcceptAll}
+          onClick={() => onResolve(hunks.map((h) => h.index))}
         >
           Accept all
         </button>
@@ -303,7 +266,7 @@ function SuggestionReview({
           type="button"
           className="rounded border border-border px-2 py-1 text-[12px]"
           disabled={busy}
-          onClick={onRefuseAll}
+          onClick={() => onResolve([])}
         >
           Refuse all
         </button>
@@ -317,7 +280,8 @@ function SuggestionReview({
                 <input
                   type="checkbox"
                   checked={isAccepted}
-                  onChange={() => onToggle(hunk)}
+                  disabled={busy}
+                  onChange={() => toggleHunk(hunk.index)}
                   aria-label={`Accept change ${hunk.index + 1}`}
                 />
                 Accept

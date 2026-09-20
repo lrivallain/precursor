@@ -16,20 +16,22 @@ and so a regeneration produces a diff the user can read.
 from __future__ import annotations
 
 import difflib
-import logging
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import Attachment, Message, MessageRole, NoteDraft, TopicSummary
 from precursor.backend.services.app_settings import resolve_llm_model
+from precursor.backend.services.events import publish_topic_summary_changed
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.usage_stats import record_usage
-
-logger = logging.getLogger(__name__)
 
 #: Ledger source for the generation round-trip.
 USAGE_SOURCE = "/update-summary"
@@ -42,6 +44,97 @@ INFO_HEADING = "## Key information"
 _MAX_TURNS = 40
 _MAX_TURN_CHARS = 2000
 _MAX_NOTES_CHARS = 4000
+_MAX_ATTACHMENTS = 100
+
+# Visibility is independent of the text under review: collapsing a panel must
+# neither invalidate a review nor let an old editor overwrite newer content.
+_STATE_FIELDS = (
+    "id",
+    "created_at",
+    "content",
+    "user_edited",
+    "model",
+    "generated_at",
+    "pending_content",
+    "pending_model",
+    "pending_generated_at",
+)
+CLEAR_SUGGESTION = {
+    "pending_content": None,
+    "pending_model": None,
+    "pending_generated_at": None,
+}
+
+
+class SummaryConflict(Exception):
+    """The summary changed after the operation read it."""
+
+
+def snapshot(row: TopicSummary | None) -> dict[str, Any] | None:
+    return None if row is None else {name: getattr(row, name) for name in _STATE_FIELDS}
+
+
+def revision(row: TopicSummary) -> str:
+    state = json.dumps(snapshot(row), sort_keys=True, default=str)
+    return hashlib.sha256(state.encode()).hexdigest()
+
+
+async def write_summary(
+    session: AsyncSession,
+    topic_id: int,
+    expected: dict[str, Any] | None,
+    changes: dict[str, Any],
+) -> TopicSummary:
+    """Compare-and-swap a brief; no transaction spans the model round-trip."""
+    if expected is None:
+        row = TopicSummary(topic_id=topic_id, **changes)
+        session.add(row)
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            await session.rollback()
+            if await get_summary(session, topic_id) is not None:
+                raise SummaryConflict from exc
+            raise
+    else:
+        result = await session.execute(
+            update(TopicSummary)
+            .where(
+                TopicSummary.topic_id == topic_id,
+                *(getattr(TopicSummary, name) == value for name, value in expected.items()),
+            )
+            .values(**changes)
+            .returning(TopicSummary.id)
+            .execution_options(synchronize_session=False)
+        )
+        row_id = result.scalar_one_or_none()
+        if row_id is None:
+            await session.rollback()
+            raise SummaryConflict
+        loaded = await session.get(TopicSummary, row_id)
+        assert loaded is not None
+        row = loaded
+    await session.commit()
+    await session.refresh(row)
+    await publish_topic_summary_changed(topic_id)
+    return row
+
+
+async def delete_summary(session: AsyncSession, row: TopicSummary) -> None:
+    expected = snapshot(row)
+    assert expected is not None
+    result = await session.execute(
+        delete(TopicSummary)
+        .where(*(getattr(TopicSummary, name) == value for name, value in expected.items()))
+        .returning(TopicSummary.id)
+        .execution_options(synchronize_session=False)
+    )
+    if result.scalar_one_or_none() is None:
+        await session.rollback()
+        raise SummaryConflict
+    await session.commit()
+    await publish_topic_summary_changed(row.topic_id)
+
 
 _SYSTEM_BASE = (
     "You maintain a short status brief for a working topic. The brief is what "
@@ -112,6 +205,8 @@ def diff_hunks(base: str, proposed: str) -> list[SummaryHunk]:
 
 def apply_hunks(base: str, hunks: list[SummaryHunk], accepted: set[int]) -> str:
     """Rebuild the summary, taking the proposal only for accepted hunks."""
+    if not accepted:
+        return base
     base_lines = _lines(base)
     out: list[str] = []
     cursor = 0
@@ -123,7 +218,7 @@ def apply_hunks(base: str, hunks: list[SummaryHunk], accepted: set[int]) -> str:
             out.extend(hunk.removed)
         cursor = hunk.base_end
     out.extend(base_lines[cursor:])
-    return "\n".join(out).strip() + "\n" if any(line.strip() for line in out) else ""
+    return "\n".join(out)
 
 
 def _split_sections(content: str) -> list[tuple[str | None, list[str]]]:
@@ -166,7 +261,7 @@ def append_item(content: str, *, heading: str, item: str) -> str:
     sections = _split_sections(content)
     for _, body in sections:
         if any(existing.strip() == line for existing in body):
-            return _render_sections(sections)
+            return content
     for position, (existing_heading, body) in enumerate(sections):
         if existing_heading == heading:
             trimmed = list(body)
@@ -174,7 +269,18 @@ def append_item(content: str, *, heading: str, item: str) -> str:
                 trimmed.pop()
             sections[position] = (existing_heading, [*trimmed, line])
             return _render_sections(sections)
-    sections.append((heading, [line]))
+    order = [STATUS_HEADING, ACTIONS_HEADING, INFO_HEADING]
+    position = len(sections)
+    if heading in order:
+        position = next(
+            (
+                i
+                for i, (other, _) in enumerate(sections)
+                if other in order and order.index(other) > order.index(heading)
+            ),
+            position,
+        )
+    sections.insert(position, (heading, [line]))
     return _render_sections(sections)
 
 
@@ -199,15 +305,6 @@ async def get_summary(session: AsyncSession, topic_id: int) -> TopicSummary | No
     return result.scalar_one_or_none()
 
 
-async def get_or_create_summary(session: AsyncSession, topic_id: int) -> TopicSummary:
-    summary = await get_summary(session, topic_id)
-    if summary is None:
-        summary = TopicSummary(topic_id=topic_id, content="", visible=True)
-        session.add(summary)
-        await session.flush()
-    return summary
-
-
 async def build_context(session: AsyncSession, topic_id: int, title: str) -> str:
     """Assemble the material the summary is generated from.
 
@@ -216,22 +313,22 @@ async def build_context(session: AsyncSession, topic_id: int, title: str) -> str
     consider.
     """
     result = await session.execute(
-        select(Message)
+        select(Message.role, Message.content)
         .where(Message.topic_id == topic_id, Message.role != MessageRole.TOOL)
         .order_by(Message.id.desc())
         .limit(_MAX_TURNS)
     )
-    messages = list(reversed(result.scalars().all()))
+    messages = list(reversed(result.all()))
 
     parts: list[str] = [f"Topic: {title}"]
     transcript: list[str] = []
-    for message in messages:
-        content = (message.content or "").strip()
+    for role, message_content in messages:
+        content = (message_content or "").strip()
         if not content:
             continue
         if len(content) > _MAX_TURN_CHARS:
             content = f"{content[:_MAX_TURN_CHARS]}…"
-        transcript.append(f"{message.role.value}: {content}")
+        transcript.append(f"{role.value}: {content}")
     parts.append("Conversation:\n" + ("\n\n".join(transcript) or "(no messages yet)"))
 
     note = (
@@ -243,15 +340,16 @@ async def build_context(session: AsyncSession, topic_id: int, title: str) -> str
     attachments = (
         (
             await session.execute(
-                select(Attachment)
+                select(Attachment.original_filename)
                 .where(Attachment.topic_id == topic_id, Attachment.message_id.is_not(None))
-                .order_by(Attachment.id)
+                .order_by(Attachment.id.desc())
+                .limit(_MAX_ATTACHMENTS)
             )
         )
         .scalars()
         .all()
     )
-    names = [a.original_filename for a in attachments if a.original_filename]
+    names = [name for name in reversed(attachments) if name]
     if names:
         parts.append("Attached files: " + ", ".join(names))
 
@@ -283,6 +381,8 @@ async def generate_summary(
 
     provider = await get_llm_provider(session)
     model = await resolve_llm_model(session)
+    # Release the read connection too: slow providers must not exhaust the pool.
+    await session.commit()
     text, usage = await complete_text_with_usage(
         provider,
         model=model,
@@ -301,7 +401,10 @@ async def generate_summary(
             model=model,
             topic_id=topic_id,
         )
-    return sanitize_summary(text), model
+    text = sanitize_summary(text)
+    if not text:
+        raise ValueError("The provider returned an empty summary")
+    return text, model
 
 
 def sanitize_summary(raw: str) -> str:

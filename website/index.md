@@ -26,6 +26,14 @@ features:
       and labels become live context — newer updates outweigh older ones.
     link: /features/topics
     linkText: About topics
+  - icon: 📝
+    title: Editable topic summaries
+    details: >-
+      Keep status, open actions and key information above each topic's
+      transcript. Refresh on demand and review changes individually without
+      letting the model overwrite your edits.
+    link: /features/topic-summary
+    linkText: About topic summaries
   - icon: 💬
     title: Quick chats
     details: >-

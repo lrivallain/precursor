@@ -1023,6 +1023,7 @@ export interface Message {
  * item is added to it, so the API resolves to `null` rather than 404.
  */
 export interface TopicSummary {
+  revision: string;
   content: string;
   visible: boolean;
   user_edited: boolean;

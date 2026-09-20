@@ -10,6 +10,7 @@ per-change review when it has been hand-edited (see
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +44,7 @@ def _to_read(row: TopicSummary) -> TopicSummaryRead:
             hunks=[SummaryHunkRead(index=h.index, removed=h.removed, added=h.added) for h in hunks],
         )
     return TopicSummaryRead(
+        revision=summary_service.revision(row),
         content=row.content,
         visible=row.visible,
         user_edited=row.user_edited,
@@ -58,6 +60,30 @@ async def _require_topic(session: AsyncSession, topic_id: int) -> Topic:
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     return topic
+
+
+def _conflict() -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT,
+        "The summary changed. Reload it and review your changes before retrying.",
+    )
+
+
+def _check_revision(row: TopicSummary | None, revision: str | None) -> None:
+    if revision is not None and (row is None or revision != summary_service.revision(row)):
+        raise _conflict()
+
+
+async def _write(
+    session: AsyncSession,
+    topic_id: int,
+    expected: dict[str, Any] | None,
+    **changes: Any,
+) -> TopicSummaryRead:
+    try:
+        return _to_read(await summary_service.write_summary(session, topic_id, expected, changes))
+    except summary_service.SummaryConflict as exc:
+        raise _conflict() from exc
 
 
 @router.get("", response_model=TopicSummaryRead | None)
@@ -79,18 +105,17 @@ async def save_summary(
 ) -> TopicSummaryRead:
     """Persist a manual edit, marking the summary as user-owned."""
     await _require_topic(session, topic_id)
-    row = await summary_service.get_or_create_summary(session, topic_id)
-    row.content = summary_service.sanitize_summary(payload.content)
-    row.user_edited = True
-    if payload.visible is not None:
-        row.visible = payload.visible
-    # A manual edit supersedes any proposal the user hadn't reviewed.
-    row.pending_content = None
-    row.pending_model = None
-    row.pending_generated_at = None
-    await session.commit()
-    await session.refresh(row)
-    return _to_read(row)
+    row = await summary_service.get_summary(session, topic_id)
+    _check_revision(row, payload.revision)
+    return await _write(
+        session,
+        topic_id,
+        summary_service.snapshot(row),
+        content=payload.content,
+        user_edited=True,
+        **({"visible": payload.visible} if payload.visible is not None else {}),
+        **summary_service.CLEAR_SUGGESTION,
+    )
 
 
 @router.post("/visibility", response_model=TopicSummaryRead | None)
@@ -105,30 +130,27 @@ async def set_visibility(
     summary the user then has to delete.
     """
     await _require_topic(session, topic_id)
-    row: TopicSummary | None
-    if payload.visible:
-        row = await summary_service.get_or_create_summary(session, topic_id)
-    else:
-        row = await summary_service.get_summary(session, topic_id)
-        if row is None:
-            return None
-    row.visible = payload.visible
-    await session.commit()
-    await session.refresh(row)
-    return _to_read(row)
+    row = await summary_service.get_summary(session, topic_id)
+    if row is None and not payload.visible:
+        return None
+    return await _write(session, topic_id, summary_service.snapshot(row), visible=payload.visible)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_summary(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
+    revision: str | None = None,
 ) -> None:
     """Drop the summary entirely, returning the topic to having none."""
     await _require_topic(session, topic_id)
     row = await summary_service.get_summary(session, topic_id)
+    _check_revision(row, revision)
     if row is not None:
-        await session.delete(row)
-        await session.commit()
+        try:
+            await summary_service.delete_summary(session, row)
+        except summary_service.SummaryConflict as exc:
+            raise _conflict() from exc
 
 
 @router.post("/generate", response_model=TopicSummaryRead)
@@ -144,14 +166,16 @@ async def generate_summary(
     top of user text is always visible and opt-in.
     """
     topic = await _require_topic(session, topic_id)
-    row = await summary_service.get_or_create_summary(session, topic_id)
-    review = row.user_edited and bool(row.content.strip())
+    row = await summary_service.get_summary(session, topic_id)
+    expected = summary_service.snapshot(row)
+    existing = row.content if row else ""
+    review = row.user_edited if row else False
     try:
         text, model = await summary_service.generate_summary(
             session,
             topic_id=topic_id,
             title=topic.title,
-            existing=row.content,
+            existing=existing,
             preserve=review,
             instruction=payload.instruction if payload else None,
         )
@@ -162,22 +186,16 @@ async def generate_summary(
             "Summary generation failed, please try again.",
         ) from exc
 
+    # The topic may have been deleted while the provider was running.
+    if await session.get(Topic, topic_id, populate_existing=True) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     now = summary_service.utcnow()
-    row.visible = True
-    if review:
-        row.pending_content = text
-        row.pending_model = model
-        row.pending_generated_at = now
-    else:
-        row.content = text
-        row.model = model
-        row.generated_at = now
-        row.pending_content = None
-        row.pending_model = None
-        row.pending_generated_at = None
-    await session.commit()
-    await session.refresh(row)
-    return _to_read(row)
+    changes: dict[str, Any] = {"visible": True, **summary_service.CLEAR_SUGGESTION}
+    if review and text != existing:
+        changes.update(pending_content=text, pending_model=model, pending_generated_at=now)
+    elif not review:
+        changes.update(content=text, model=model, generated_at=now)
+    return await _write(session, topic_id, expected, **changes)
 
 
 @router.post("/resolve", response_model=TopicSummaryRead)
@@ -191,19 +209,24 @@ async def resolve_suggestion(
     row = await summary_service.get_summary(session, topic_id)
     if row is None or row.pending_content is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No suggestion to review")
+    _check_revision(row, payload.revision)
     hunks = summary_service.diff_hunks(row.content, row.pending_content)
-    accepted = {index for index in payload.accepted if 0 <= index < len(hunks)}
+    accepted = set(payload.accepted)
+    if not accepted <= {h.index for h in hunks}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown change index")
     merged = summary_service.apply_hunks(row.content, hunks, accepted)
-    row.content = merged.strip()
-    if accepted:
-        row.model = row.pending_model
-        row.generated_at = row.pending_generated_at
-    row.pending_content = None
-    row.pending_model = None
-    row.pending_generated_at = None
-    await session.commit()
-    await session.refresh(row)
-    return _to_read(row)
+    return await _write(
+        session,
+        topic_id,
+        summary_service.snapshot(row),
+        content=merged,
+        **(
+            {"model": row.pending_model, "generated_at": row.pending_generated_at}
+            if accepted
+            else {}
+        ),
+        **summary_service.CLEAR_SUGGESTION,
+    )
 
 
 @router.post("/items", response_model=TopicSummaryRead)
@@ -214,16 +237,21 @@ async def add_item(
 ) -> TopicSummaryRead:
     """Append a pending action or a key fact to the brief."""
     await _require_topic(session, topic_id)
-    row = await summary_service.get_or_create_summary(session, topic_id)
+    row = await summary_service.get_summary(session, topic_id)
+    if not payload.text.strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "An item cannot be blank")
     if payload.kind == "todo":
         heading = summary_service.ACTIONS_HEADING
         line = summary_service.format_todo(payload.text)
     else:
         heading = summary_service.INFO_HEADING
         line = summary_service.format_important(payload.text)
-    row.content = summary_service.append_item(row.content, heading=heading, item=line).strip()
-    row.user_edited = True
-    row.visible = True
-    await session.commit()
-    await session.refresh(row)
-    return _to_read(row)
+    return await _write(
+        session,
+        topic_id,
+        summary_service.snapshot(row),
+        content=summary_service.append_item(row.content if row else "", heading=heading, item=line),
+        user_edited=True,
+        visible=True,
+        **summary_service.CLEAR_SUGGESTION,
+    )

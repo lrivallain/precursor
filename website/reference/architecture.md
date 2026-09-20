@@ -112,6 +112,21 @@ instance comes up on doesn't depend on the caller's working directory.
 Scheduled topics run the *same* turn logic off the request path via
 `services/turn.py`, driven by the scheduler instead of an HTTP request.
 
+## Request flow: editable topic summary
+
+`POST /api/topics/{id}/topic-summary/generate` snapshots the brief and assembles
+bounded conversation, scratchpad and filename context. It releases the database
+connection before waiting for the model; no summary row is inserted until the
+generation succeeds. A compare-and-swap write rejects concurrent changes with
+`409`. User-owned briefs receive a proposal rather than an overwrite.
+
+Reads include a content revision covering both the brief and the proposal.
+Review submissions must echo that revision so change indices cannot silently
+apply to different text. Manual saves and item appends invalidate old proposals.
+Committed mutations emit `topic-summary.changed` for cross-window and scheduled
+updates without reloading the transcript. This is separate from the GitHub issue
+summary at `/api/topics/{id}/summary`.
+
 ## Database
 
 Models live in `precursor/backend/models/`; async SQLAlchemy 2 via `AsyncSession`.

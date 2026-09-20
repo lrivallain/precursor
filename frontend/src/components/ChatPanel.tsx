@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowRightCircle } from "lucide-react";
+import { ArrowRightCircle, X } from "lucide-react";
 import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
@@ -997,16 +997,31 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         )}
         {summary.summary && (
           <TopicSummaryPanel
-            topicId={topic.id}
             summary={summary.summary}
             busy={summary.busy}
             error={summary.error}
-            onChanged={summary.apply}
-            onFailed={summary.fail}
+            onSave={summary.save}
+            onResolve={summary.resolve}
+            onRemove={summary.remove}
             onRefresh={() => void summary.refresh()}
             onToggleVisible={() => void summary.toggleVisible()}
             onDismissError={summary.clearError}
           />
+        )}
+        {!summary.summary && (summary.busy || summary.error) && (
+          <div
+            role={summary.error ? "alert" : "status"}
+            className="flex items-center gap-2 border-b border-border px-3 py-2 text-[12px]"
+          >
+            <span className="flex-1">
+              {summary.error ?? "Loading or updating summary…"}
+            </span>
+            {summary.error && (
+              <button type="button" onClick={summary.clearError} aria-label="Dismiss summary error">
+                <X size={14} />
+              </button>
+            )}
+          </div>
         )}
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
           <div

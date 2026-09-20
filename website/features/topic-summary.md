@@ -26,6 +26,11 @@ topic's **conversation**, its [`/notes` scratchpad](/features/topics) and the
 names of the files [attached](/features/attachments) to it. Add an instruction
 to steer it — `/update-summary focus on what blocks the release`.
 
+The prompt uses the latest 40 non-tool messages (up to 2,000 characters each),
+up to 4,000 characters of scratchpad notes, and the latest 100 attached filenames.
+It does not independently read attachment contents. Empty or failed model
+responses leave the existing brief unchanged and display an error.
+
 The brief always has the same three sections, so it stays scannable and
 diffable:
 
@@ -59,7 +64,14 @@ Press the ✎ button to edit the markdown directly; saving marks the summary as
   leaves the brief untouched.
 
 Everything is persisted server-side, so the brief (and whether the panel is
-expanded) survives reloads and follows you between windows.
+expanded) survives reloads and updates other open windows immediately.
+Saving an edit or appending an item discards the old proposal because it was
+based on different text. A refresh with no changes creates no review.
+
+If another window or scheduled run changes the brief while you are editing,
+generating, or reviewing it, the stale write is rejected rather than overwriting
+newer work. An unsaved editor draft stays available; cancel and reopen the editor
+to work from the latest version.
 
 ## Slash commands
 
@@ -71,7 +83,8 @@ expanded) survives reloads and follows you between windows.
 | `/todo-summary <action>` | Add a pending action to **Actions**. |
 | `/important-summary <information>` | Add a fact to **Key information** so it survives future refreshes. |
 
-The 🗑 button drops the summary entirely, returning the topic to having none.
+The 🗑 button asks for confirmation, then drops the summary entirely, returning
+the topic to having none.
 
 All five commands also work from a [scheduled](/features/scheduler) topic
 prompt, so a recurring run can keep a brief up to date on its own — a refresh
