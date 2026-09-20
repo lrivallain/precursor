@@ -12,7 +12,7 @@ export interface TopicSummaryController {
   setVisible: (visible: boolean) => Promise<boolean>;
   toggleVisible: () => Promise<boolean>;
   addItem: (kind: "todo" | "important", text: string) => Promise<boolean>;
-  save: (content: string, revision: string) => Promise<boolean>;
+  save: (content: string, revision: string) => Promise<TopicSummary | null>;
   resolve: (accepted: number[], revision: string) => Promise<boolean>;
   remove: (revision: string) => Promise<boolean>;
 }
@@ -25,6 +25,7 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
     active: false,
     sequence: 0,
     pending: 0,
+    blocking: 0,
     invalidated: false,
     queue: Promise.resolve(),
   }), [topicId]);
@@ -67,16 +68,19 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
   // cannot overwrite a mutation response, and one completion cannot clear the
   // busy flag while another operation is still waiting.
   const run = useCallback(
-    (action: () => Promise<TopicSummary | null>): Promise<boolean> => {
+    (action: () => Promise<TopicSummary | null>, background = false): Promise<boolean> => {
       ++state.pending;
       ++state.sequence;
-      setBusy(true);
+      if (!background) ++state.blocking;
+      if (state.active && !background) setBusy(true);
       const result = state.queue.then(async () => {
-        if (!state.active) {
+        // Autosaves must finish even when navigation has unmounted the panel.
+        if (!state.active && !background) {
           --state.pending;
+          --state.blocking;
           return false;
         }
-        setError(null);
+        if (state.active) setError(null);
         try {
           const updated = await action();
           if (state.active) setSummary(updated);
@@ -87,9 +91,10 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
           return false;
         } finally {
           --state.pending;
-          if (state.active && !state.pending) {
-            setBusy(false);
-            if (state.invalidated) {
+          if (!background) --state.blocking;
+          if (state.active) {
+            setBusy(state.blocking > 0);
+            if (!state.pending && state.invalidated) {
               state.invalidated = false;
               void load();
             }
@@ -120,7 +125,14 @@ export function useTopicSummary(topicId: number): TopicSummaryController {
     setVisible,
     toggleVisible,
     addItem: (kind, text) => run(() => api.topicSummary.addItem(topicId, kind, text)),
-    save: (content, revision) => run(() => api.topicSummary.save(topicId, content, revision)),
+    save: async (content, revision) => {
+      let saved: TopicSummary | null = null;
+      await run(async () => {
+        saved = await api.topicSummary.save(topicId, content, revision);
+        return saved;
+      }, true);
+      return saved;
+    },
     resolve: (accepted, revision) => run(() => api.topicSummary.resolve(topicId, accepted, revision)),
     remove: (revision) => run(async () => {
       await api.topicSummary.remove(topicId, revision);

@@ -273,6 +273,19 @@ const scenes = {
     },
   },
 
+  "topic-summary-editing": {
+    viewport: { width: 1440, height: 1250 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
+      const expand = page.getByRole("button", { name: "Expand topic summary", exact: true });
+      if (await expand.isVisible()) await expand.click();
+      await page.getByRole("button", { name: "Edit summary", exact: true }).click();
+      await page.getByRole("textbox", { name: "Summary markdown" }).waitFor();
+      await page.mouse.move(0, 0);
+      return clipOf(page, "[data-summary-panel]");
+    },
+  },
+
   "topic-summary-collapsed": {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

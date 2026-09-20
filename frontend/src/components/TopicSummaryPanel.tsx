@@ -11,13 +11,15 @@ import {
 } from "lucide-react";
 import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
+import { useTopicSummaryDraft } from "../lib/useTopicSummaryDraft";
 import type { TopicSummary, TopicSummaryHunk } from "../lib/types";
 
 interface Props {
+  topicId: number;
   summary: TopicSummary | null;
   busy: boolean;
   error: string | null;
-  onSave: (content: string, revision: string) => Promise<boolean>;
+  onSave: (content: string, revision: string) => Promise<TopicSummary | null>;
   onResolve: (accepted: number[], revision: string) => Promise<boolean>;
   onRemove: (revision: string) => Promise<boolean>;
   onRefresh: () => void;
@@ -30,14 +32,15 @@ interface Props {
  * where the topic stands, its open actions and the information needed to act.
  *
  * Three states in one panel:
- *  - *read* — rendered markdown, with refresh / edit / delete actions;
- *  - *edit* — a plain textarea; saving marks the brief as user-owned so a later
- *    refresh can never silently overwrite it;
+ *  - *read* — rendered markdown with directly checkable actions;
+ *  - *edit* — an autosaving textarea; manual changes mark the brief as
+ *    user-owned so a later refresh can never silently overwrite it;
  *  - *review* — when a refresh lands on a user-edited brief the model's version
  *    arrives as a list of changes, each accepted or refused on its own before
  *    anything is written.
  */
 export function TopicSummaryPanel({
+  topicId,
   summary,
   busy,
   error,
@@ -49,8 +52,7 @@ export function TopicSummaryPanel({
   onDismissError,
 }: Props) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(summary?.content ?? "");
-  const [draftRevision, setDraftRevision] = useState(summary?.revision ?? "");
+  const draft = useTopicSummaryDraft(topicId, summary, onSave);
   const contentId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const confirm = useConfirm();
@@ -58,7 +60,20 @@ export function TopicSummaryPanel({
   const suggestion = summary?.suggestion;
   const hunks = suggestion?.hunks ?? [];
   const collapsed = !summary?.visible;
-  const hasContent = Boolean(summary?.content.trim());
+  const hasContent = Boolean(draft.content.trim());
+  const savingStatus = (
+    <span role="status" className="inline-flex items-center gap-1 text-[11px] text-muted">
+      {draft.saving ? (
+        <><Loader2 size={11} className="animate-spin" /> Saving…</>
+      ) : draft.failed ? (
+        "Not saved"
+      ) : draft.dirty ? (
+        "Unsaved changes"
+      ) : (
+        <><Check size={11} /> Saved</>
+      )}
+    </span>
+  );
 
   useEffect(() => {
     if (!summary) setEditing(false);
@@ -68,8 +83,25 @@ export function TopicSummaryPanel({
     if (editing) textareaRef.current?.focus();
   }, [editing]);
 
-  async function save(): Promise<void> {
-    if (await onSave(draft, draftRevision)) setEditing(false);
+  async function finishEditing(): Promise<void> {
+    if (await draft.flush()) setEditing(false);
+  }
+
+  async function toggleVisible(): Promise<void> {
+    if (!collapsed && !await draft.flush()) return;
+    onToggleVisible();
+  }
+
+  async function reloadLatest(): Promise<void> {
+    if (await confirm({
+      title: "Reload saved summary?",
+      message: "Discard your unsaved local changes and use the latest saved summary?",
+      confirmLabel: "Reload latest",
+      variant: "warning",
+    })) {
+      draft.discard();
+      onDismissError();
+    }
   }
 
   async function remove(): Promise<void> {
@@ -88,7 +120,7 @@ export function TopicSummaryPanel({
     <div data-summary-panel aria-busy={busy} className="shrink-0 border-b border-border bg-surface/40">
       <button
         type="button"
-        onClick={onToggleVisible}
+        onClick={() => void toggleVisible()}
         disabled={busy}
         aria-label={collapsed ? "Expand topic summary" : "Collapse topic summary"}
         aria-expanded={!collapsed}
@@ -132,17 +164,39 @@ export function TopicSummaryPanel({
           </button>
         </div>
       )}
+      {draft.failed && (
+        <div className="mx-3 my-2 flex flex-wrap items-center gap-2 text-[12px]">
+          <span>Your changes are kept here but have not been saved.</span>
+          <button
+            type="button"
+            className="summary-action rounded border border-border px-2 py-1"
+            disabled={busy || draft.saving}
+            onClick={() => void draft.flush()}
+          >
+            Retry save
+          </button>
+          <button
+            type="button"
+            className="summary-action rounded border border-border px-2 py-1"
+            disabled={busy || draft.saving}
+            onClick={() => void reloadLatest()}
+          >
+            Reload latest
+          </button>
+        </div>
+      )}
 
       <div id={contentId} role="region" aria-label="Topic summary" hidden={collapsed}>
         {summary && !editing && (
           <div className="flex items-center justify-end gap-1 border-t border-border/60 px-3 py-1">
+            <div className="mr-auto">{savingStatus}</div>
             {hasContent && (
               <button
                 type="button"
                 className="summary-action rounded p-1.5 hover:bg-surface disabled:opacity-50"
                 aria-label="Refresh summary"
                 data-tooltip="Regenerate from the conversation, notes and attachments"
-                disabled={busy}
+                disabled={busy || draft.dirty || draft.saving}
                 onClick={onRefresh}
               >
                 <RefreshCw size={14} />
@@ -154,11 +208,7 @@ export function TopicSummaryPanel({
               aria-label="Edit summary"
               data-tooltip="Edit the summary"
               disabled={busy}
-              onClick={() => {
-                setDraft(summary.content);
-                setDraftRevision(summary.revision);
-                setEditing(true);
-              }}
+              onClick={() => setEditing(true)}
             >
               <Pencil size={14} />
             </button>
@@ -167,7 +217,7 @@ export function TopicSummaryPanel({
               className="summary-action rounded p-1.5 hover:bg-surface disabled:opacity-50"
               aria-label="Delete summary"
               data-tooltip="Delete the summary"
-              disabled={busy}
+              disabled={busy || draft.dirty || draft.saving}
               onClick={() => void remove()}
             >
               <Trash2 size={14} />
@@ -183,8 +233,11 @@ export function TopicSummaryPanel({
                   ref={textareaRef}
                   aria-label="Summary markdown"
                   disabled={busy}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  value={draft.content}
+                  onChange={(e) => draft.change(e.target.value)}
+                  onBlur={() => {
+                    if (!draft.failed) void draft.flush();
+                  }}
                   rows={10}
                   className="w-full resize-y rounded border border-border bg-bg p-2 font-mono text-[12px] outline-none focus:border-accent/60"
                 />
@@ -193,29 +246,28 @@ export function TopicSummaryPanel({
                     type="button"
                     className="summary-action inline-flex items-center gap-1 rounded bg-accent px-2 py-1 text-[12px] text-bg disabled:opacity-50"
                     disabled={busy}
-                    onClick={() => void save()}
+                    onClick={() => void finishEditing()}
                   >
-                    {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                    Save
+                    <Check size={11} />
+                    Done
                   </button>
-                  <button
-                    type="button"
-                    className="summary-action rounded border border-border px-2 py-1 text-[12px]"
-                    disabled={busy}
-                    onClick={() => {
-                      setDraft(summary.content);
-                      setEditing(false);
-                    }}
-                  >
-                    Cancel
-                  </button>
+                  {savingStatus}
                   <span className="text-[11px] text-muted">
-                    Saved edits are preserved when the summary is refreshed.
+                    Edits save automatically and are preserved on refresh.
                   </span>
                 </div>
               </div>
             ) : hasContent ? (
-              <Markdown className="summary-markdown text-[13px]">{summary.content}</Markdown>
+              <Markdown
+                className="summary-markdown text-[13px]"
+                tasksDisabled={busy}
+                onTaskChange={(content) => {
+                  draft.change(content);
+                  void draft.flush();
+                }}
+              >
+                {draft.content}
+              </Markdown>
             ) : (
               <div className="space-y-3 pb-1">
                 <p className="text-[12px] text-muted">
@@ -234,7 +286,7 @@ export function TopicSummaryPanel({
               </div>
             )}
 
-            {suggestion && !editing && (
+            {suggestion && !editing && !draft.dirty && !draft.saving && (
               <SuggestionReview
                 key={summary.revision}
                 hunks={hunks}

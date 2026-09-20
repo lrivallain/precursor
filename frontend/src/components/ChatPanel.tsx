@@ -996,6 +996,8 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           />
         )}
         <TopicSummaryPanel
+          key={topic.id}
+          topicId={topic.id}
           summary={summary.summary}
           busy={summary.busy}
           error={summary.error}

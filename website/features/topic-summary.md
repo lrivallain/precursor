@@ -72,8 +72,23 @@ accepting them.
 
 ## Editing, and what happens next
 
-Press the ✎ button to edit the markdown directly; saving marks the summary as
-**yours**. From then on:
+Check or uncheck an action **directly in view mode** to mark it done or reopen
+it. The checkbox change is saved immediately; task lists elsewhere in the
+conversation remain read-only.
+
+Press the ✎ button to edit the markdown directly. Changes **autosave after a
+1.2-second pause**, with **Saving…**, **Saved**, or **Not saved** feedback.
+You can keep typing while a save is in flight. **Done** returns to view mode;
+leaving the editor, collapsing the panel, or navigating to another topic also
+flushes pending edits. There is no separate Save or Cancel step.
+
+<Screenshot
+  src="/screenshots/topic-summary-editing.png"
+  alt="The summary markdown editor with a Done button and Saved status"
+  caption="Edit the Markdown directly; changes save automatically without leaving the editor."
+/>
+
+Both manual edits and checkbox changes mark the summary as **yours**. From then on:
 
 - a refresh is told to treat your wording as authoritative and to keep it
   wherever it is still accurate — your edits carry more weight than the model's
@@ -91,8 +106,12 @@ based on different text. A refresh with no changes creates no review.
 
 If another window or scheduled run changes the brief while you are editing,
 generating, or reviewing it, the stale write is rejected rather than overwriting
-newer work. An unsaved editor draft stays available; cancel and reopen the editor
-to work from the latest version.
+newer work. A failed save keeps your local changes visible. Use **Retry save**
+after a connection error, or copy any text you want to keep and choose
+**Reload latest** to explicitly discard the unsaved draft and use the latest
+server version. Unsaved drafts are also cached in the current tab so a failed
+save is recoverable after navigation or reload. Closing the browser tab with
+unsaved edits prompts a warning.
 
 ## Slash commands
 

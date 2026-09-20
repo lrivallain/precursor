@@ -34,7 +34,10 @@ latest git tag (`v<version>`) by hatch-vcs at build time. See
   user-edited or originally generated. An always-visible, slim **Summary** bar
   below the topic header expands or collapses the brief, with a centered
   chevron, a pending-change count and an explicit **Generate summary** action
-  for empty topics; editing tools stay out of the way when collapsed.
+  for empty topics; editing tools stay out of the way when collapsed. Actions
+  can be checked directly in view mode, and manual edits autosave after a short
+  pause with saving/error feedback. Both count as user edits, and stale saves
+  remain protected by the same revision checks.
 
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card
