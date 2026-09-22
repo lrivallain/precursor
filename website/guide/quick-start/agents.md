@@ -9,16 +9,23 @@ that works in the **background** while you do something else.
 
 ## Enable them first
 
-Nothing to install: the Copilot SDK is a normal dependency. What agents *drive*
-is a ~90 MB native runtime, and that stays opt-in — open **Settings → Agents**
-and click **Install the Copilot CLI**. It downloads in the background while you
-keep working, and starts the runtime without a restart.
+The Copilot SDK is a normal dependency. What agents *drive* is a ~90 MB native
+runtime, and downloading it stays opt-in. Open **Agents** and click **Install
+the Copilot CLI**, then confirm the download. **Settings → Agents** and the
+Home launcher's **New agent** surface offer the same setup. Progress and any
+errors appear in place while you keep working.
 
 If you already have a `copilot` on your `PATH` (Homebrew, npm, the official
 installer), Precursor picks it up and there is nothing to install at all.
 
-Agents come on once the runtime resolves; **Settings → Agents** is the switch on
-top of that, and reports whether the runtime actually started.
+Without a saved preference, Agents come on once the runtime resolves. If you
+previously turned Agents off, installing the CLI leaves that choice unchanged;
+enable it in **Settings → Agents** — the checkbox unlocks as soon as a runtime
+is there. A runtime that is installed but failed to start offers restart
+guidance, not another download.
+
+Agents stays visible in navigation and the command palette throughout setup
+and recovery.
 
 ## Run your first agent
 

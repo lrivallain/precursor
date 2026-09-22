@@ -33,7 +33,7 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
-const { BASE, prepareDemoPage } = require("./demo_browser");
+const { BASE, prepareDemoPage, mockAgentRuntime } = require("./demo_browser");
 
 const OUT = path.resolve(__dirname, "..", "website", "public", "screenshots");
 
@@ -154,6 +154,17 @@ const scenes = {
       await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
       await page.getByRole("heading", { name: "Release checklist", exact: true }).waitFor();
       return undefined;
+    },
+  },
+
+  "agents-setup": {
+    viewport: { width: 1200, height: 800 },
+    async go(page) {
+      await mockAgentRuntime(page);
+      await page.goto(`${BASE}/agents`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Install the Copilot CLI (~90 MB)", exact: true }).waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      return clipOf(page, "main .max-w-xl", 16);
     },
   },
 

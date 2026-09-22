@@ -37,6 +37,7 @@ import { subscribeAgentChanged } from "../lib/events";
 import { mcpAuthStore } from "../lib/mcpAuth";
 import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
+import { useAgentRuntime } from "../lib/useAgentRuntime";
 import {
   normalizeArtifactMarkdown,
   parseAgentDirectives,
@@ -55,6 +56,7 @@ import { SectionLoading } from "./SectionLoading";
 import { TopicPicker } from "./TopicPicker";
 import { Select } from "./Select";
 import { APPROVAL_POLICIES } from "./AgentsSettings";
+import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
 import { AgentUsageSection } from "./AgentUsage";
 import { PermissionBody } from "./AgentPermissionBody";
 import {
@@ -89,7 +91,7 @@ interface AgentViewProps {
    */
   loading?: boolean;
   available: boolean;
-  unavailableReason: string | null;
+  runtimeStarted: boolean;
   /** Re-fetch the session list in the parent (status changed, created, deleted). */
   onReload: () => void;
   /** Select a session (or clear with null to show the start form). */
@@ -1720,12 +1722,15 @@ export function AgentView({
   enabled,
   loading = false,
   available,
-  unavailableReason,
+  runtimeStarted,
   onReload,
   onSelect,
   onOpenSettings,
   draftTopicId,
 }: AgentViewProps) {
+  const needsRuntime = !available || (enabled && !runtimeStarted);
+  const runtimeState = useAgentRuntime(!loading && needsRuntime);
+  const runtimeReady = enabled && available && runtimeStarted;
   const [events, setEvents] = useState<AgentEvent[]>([]);
   // Narrows the transcript to a single execution. A reusable agent driven by two
   // workflows at once produces two conversations in one archive; reading them
@@ -2266,8 +2271,45 @@ export function AgentView({
     return <SectionLoading label="Loading agents…" />;
   }
 
+  const runtimeCard = (
+    <AgentsRuntimeCard
+      status={runtimeState.runtime}
+      enabled={enabled}
+      loading={runtimeState.loading}
+      error={runtimeState.error}
+      onRefresh={runtimeState.refresh}
+      onUpdate={runtimeState.update}
+    />
+  );
+
+  if (!selected && needsRuntime) {
+    return (
+      <div className="flex h-full overflow-y-auto">
+        <div className="m-auto w-full max-w-xl space-y-4 p-6 sm:p-8">
+          <div className="space-y-2">
+            <h2 className="flex items-center gap-2 text-sm font-medium">
+              <Bot size={18} /> {available ? "Recover Agents" : "Set up Agents"}
+            </h2>
+            <p className="text-[12px] text-muted">
+              Hand long-running tasks to an autonomous Copilot agent.
+              Get the runtime ready here without leaving Precursor.
+            </p>
+          </div>
+          {runtimeCard}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-sm hover:bg-surface"
+          >
+            <SettingsIcon size={14} /> Open Settings
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Disabled: send the user to Settings to turn the feature on.
-  if (!enabled) {
+  if (!enabled && !selected) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
         <Bot size={28} className="text-muted" />
@@ -2301,12 +2343,6 @@ export function AgentView({
           Describe a task to hand off. The agent runs on its own and posts results
           back to a topic or chat when you attach one.
         </p>
-        {!available && (
-          <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-600 dark:text-amber-400">
-            The Copilot runtime isn&apos;t available yet
-            {unavailableReason ? `: ${unavailableReason}` : "."}
-          </div>
-        )}
         <label className="flex items-center gap-2 text-[12px] text-muted">
           Associate with topic
           <TopicPicker
@@ -2443,6 +2479,15 @@ export function AgentView({
   return (
     <div className="flex h-full min-h-0 w-full">
       <div className="mx-auto flex h-full min-w-0 w-full max-w-3xl flex-col">
+        {(needsRuntime || !enabled) && (
+          <div className="max-h-[50%] shrink-0 space-y-2 overflow-y-auto px-5 py-3">
+            {needsRuntime && runtimeCard}
+            {!enabled && <p className="text-[12px] text-muted">Agents mode is off. Your timeline is still available.</p>}
+            <button type="button" onClick={onOpenSettings} className="text-[12px] text-accent">
+              Open Settings
+            </button>
+          </div>
+        )}
         {/* Scrollable workflow region. */}
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-5 py-3">
           <div ref={innerRef}>
@@ -2536,7 +2581,7 @@ export function AgentView({
             <button
               type="button"
               onClick={() => void startNow()}
-              disabled={busy}
+              disabled={busy || !runtimeReady}
               className="flex items-center gap-1 rounded bg-slate-500/20 px-2 py-0.5 font-medium text-slate-800 hover:bg-slate-500/30 disabled:opacity-50 dark:text-slate-200"
             >
               <PlayCircle size={12} /> Start now
@@ -2554,7 +2599,7 @@ export function AgentView({
               <button
                 type="button"
                 onClick={() => void resume()}
-                disabled={busy}
+                disabled={busy || !runtimeReady}
                 className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 font-medium text-amber-800 hover:bg-amber-500/30 disabled:opacity-50 dark:text-amber-300"
               >
                 <PlayCircle size={12} /> Resume
@@ -2619,7 +2664,7 @@ export function AgentView({
                     {seg.row.type === "tool" ? (
                       <ToolBox
                         step={seg.row.step}
-                        busy={busy}
+                        busy={busy || !runtimeReady}
                         onDecision={approve}
                       />
                     ) : seg.row.type === "node" ? (
@@ -2634,6 +2679,7 @@ export function AgentView({
                         onPickSuggestion={(text) => void sendFollowUp(text)}
                         onReply={focusComposer}
                         suggestionsDisabled={
+                          !runtimeReady ||
                           selected.status === "running" ||
                           selected.status === "pending" ||
                           selected.status === "needs_approval"
@@ -2694,7 +2740,7 @@ export function AgentView({
               onSend={() => void sendFollowUp()}
               onStop={() => void stopAgent()}
               streaming={turnActive}
-              disabled={turnActive || sending}
+              disabled={!runtimeReady || turnActive || sending}
               suggestions={followUpSuggestions}
               userHistory={userHistory}
               speech={speech}

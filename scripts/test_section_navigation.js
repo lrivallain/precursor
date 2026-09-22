@@ -4,6 +4,7 @@
 const assert = require("node:assert/strict");
 const { chromium } = require("playwright");
 const { BASE, prepareDemoPage } = require("./demo_browser");
+const { testAgentRuntimeSetup } = require("./test_agent_runtime_setup");
 
 async function run() {
   const browser = await chromium.launch();
@@ -269,6 +270,7 @@ async function run() {
     console.log("Mobile list/overview selections close the drawer without page overflow.");
     assert.deepEqual(errors, [], "Browser runtime errors");
     await context.close();
+    await testAgentRuntimeSetup(browser);
   } finally {
     await browser.close();
   }
