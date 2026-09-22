@@ -15,6 +15,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Install the Copilot CLI directly from Agents.** The Agents section and Home
+  launcher share Settings' confirmed download, progress, and recovery actions
+  instead of presenting an unusable task form. Setup remains available while
+  Agents is off without changing the saved preference. Navigation stays visible,
+  startup failures offer restart guidance, and existing timelines remain
+  accessible during recovery. **Enable Agents mode** can no longer be switched
+  on while no runtime resolves — the backend rejects those requests anyway —
+  while an already-saved *on* survives an outage untouched.
+
 - **Autonomous stable releases every night at 01:17 UTC.** Unreleased changes
   on `main` receive the next CalVer tag once CI passes on that exact revision.
   The release includes the SPA and in-app docs, exercises a fresh wheel

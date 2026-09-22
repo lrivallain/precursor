@@ -6,8 +6,9 @@ title: Agents
 
 **Agents mode** hands a long-running task to an autonomous **Copilot SDK** agent
 attached to a topic or chat, then lets it run in the **background** while you
-monitor the whole fleet from a **control-tower dashboard**. It is **opt-in and
-off by default**.
+monitor the whole fleet from a **control-tower dashboard**. Without a saved
+preference, Agents mode follows runtime availability; downloading a missing CLI
+is always opt-in.
 
 <Screenshot src="/screenshots/agents-overview.png" alt="The agent fleet overview with monitoring cards beside a searchable agent sidebar" caption="The sidebar is for switching agents; Overview keeps the whole fleet in view." />
 
@@ -50,19 +51,37 @@ and browser Back/Forward continue to select the requested agent.
 
 ## Enabling agents
 
-**Settings → Agents** turns it on, and that is the whole procedure. There is no
-install command to go and find: the Copilot SDK is a normal dependency, and the
-one thing that can be missing — the native CLI — is a button in that panel.
+**Agents stays visible** in the sidebar, command palette, and Home launcher,
+even when its runtime is missing or you have turned it off. Open **Agents** to
+install the native Copilot CLI directly, or use **Settings → Agents**. The Home
+launcher's **New agent** surface offers the same setup. The Copilot SDK is a
+normal dependency, so there is no package extra to install.
 
-Until the runtime resolves, the panel shows **one** action, *Install the Copilot
-CLI*, instead of a wall of controls that cannot do anything. It asks before
-downloading, streams progress while it works, and reports the real error if it
-fails. On success it starts the runtime in place; only if that doesn't take does
-it ask for a restart.
+Until the runtime resolves, setup offers **Install the Copilot CLI** instead of
+an unusable task form. Both entry points share the same download confirmation,
+progress, and error details. You can leave while the download runs and return
+to its progress. A failed status or settings refresh has an explicit retry.
 
-The same rule applies to the switch itself: with Agents mode **off**, the panel is
-just the toggle — no runtime warnings about something you deliberately stopped, no
-blueprints you cannot instantiate.
+<Screenshot src="/screenshots/agents-setup.png" alt="Agents setup with an explicit Install the Copilot CLI action" caption="Install directly from Agents, without hiding the section or leaving the app." />
+
+Installing does **not** change your saved enable/disable preference. With no
+saved preference, Agents comes on when the CLI resolves. If you explicitly
+turned it **off**, it stays off after installation; use **Settings → Agents**
+to enable it. The installer remains available while the CLI is missing, but an
+installed runtime deliberately left off produces no startup warning.
+
+**Enable Agents mode** is unavailable until a runtime resolves, because the
+backend rejects agent requests without one — a checked box over a missing CLI
+would promise something Precursor cannot deliver. An already-saved *on* is
+never revoked by an outage: it stays checked, stays switchable back off, and
+starts working again as soon as the runtime returns.
+
+If Agents is enabled but the installed runtime failed to start, setup offers
+restart guidance rather than another download. Restarting requires a separate
+confirmation; unsupervised instances show the manual command instead. Existing
+agent timelines remain accessible during recovery.
+
+Runtime-dependent settings and blueprints stay hidden while Agents is off.
 
 The one thing that can outlive the switch is
 [timeline retention](/features/storage). Its sweep runs on the scheduler, not on

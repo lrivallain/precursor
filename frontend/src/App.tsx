@@ -437,9 +437,8 @@ export default function App() {
   const [settingsCategory, setSettingsCategory] = useState<string | undefined>(
     undefined,
   );
-  // AgentView's "Open Settings" only ever appears in its "Agents mode is off"
-  // state, so it lands on the Agents category rather than making the user hunt
-  // for the toggle it just told them to flip.
+  // Agent setup and recovery land on the Agents category rather than making
+  // the user hunt for the relevant toggle or runtime controls.
   const openAgentSettings = useCallback(() => {
     setSettingsCategory("agents");
     setGlobalSettingsOpen(true);
@@ -600,6 +599,7 @@ export default function App() {
   const liveEnabled = settings?.live_enabled ?? true;
   const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
   const agentsAvailable = settings?.agents_available ?? false;
+  const agentsRuntimeStarted = settings?.agents_runtime_started ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
   // Two async gaps sit between opening an agents surface and having something
   // to show: settings (which decide whether the feature is on at all) and the
@@ -623,13 +623,15 @@ export default function App() {
     ? "Agents mode is off"
     : !agentsAvailable
       ? agentsUnavailableReason || "The Copilot runtime is unavailable"
-      : activeAgent && startingAgentIds.has(activeAgent.id)
-        ? "Starting agent..."
-        : activeAgent?.status === "interrupted"
-          ? "Resume the interrupted turn from the timeline"
-          : activeAgent && !agentCanStart(activeAgent)
-            ? "Agent is already active"
-            : null;
+      : !agentsRuntimeStarted
+        ? "The Copilot runtime did not start. Open Settings to recover it."
+        : activeAgent && startingAgentIds.has(activeAgent.id)
+          ? "Starting agent..."
+          : activeAgent?.status === "interrupted"
+            ? "Resume the interrupted turn from the timeline"
+            : activeAgent && !agentCanStart(activeAgent)
+              ? "Agent is already active"
+              : null;
 
   // Mirror activeTopic into a ref so the onComplete callback (set up once)
   // can read the current value without resubscribing on every change.
@@ -2966,7 +2968,7 @@ export default function App() {
                   enabled={agentsEnabled}
                   loading={agentsBooting}
                   available={agentsAvailable}
-                  unavailableReason={agentsUnavailableReason}
+                  runtimeStarted={agentsRuntimeStarted}
                   onReload={() => void loadAgents()}
                   onSelect={selectAgentFromHome}
                   onOpenSettings={openAgentSettings}
@@ -3131,6 +3133,7 @@ export default function App() {
             </div>
           ) : agentsEnabled &&
             agentsAvailable &&
+            agentsRuntimeStarted &&
             !agentsBooting &&
             activeAgentId == null &&
             !agentComposerOpen ? (
@@ -3153,7 +3156,7 @@ export default function App() {
               enabled={agentsEnabled}
               loading={agentsBooting}
               available={agentsAvailable}
-              unavailableReason={agentsUnavailableReason}
+              runtimeStarted={agentsRuntimeStarted}
               onReload={() => void loadAgents()}
               onSelect={(id) => void openAgent(id)}
               onOpenSettings={openAgentSettings}
