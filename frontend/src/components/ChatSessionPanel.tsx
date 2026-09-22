@@ -45,6 +45,7 @@ import type {
 } from "../lib/types";
 import { Z_INDEX } from "../lib/constants";
 import { Modal } from "./Modal";
+import { RoleSelector } from "./RoleSelector";
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -56,8 +57,6 @@ interface ChatSessionPanelProps {
   onRemindersChanged?: () => void;
   /** Persist a role change for this chat (null = default). */
   onSetRole?: (roleId: number | null) => Promise<void>;
-  /** Open the header role selector (used by bare `/role`). */
-  onOpenRoleSelector?: () => void;
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands, the
@@ -73,7 +72,6 @@ export function ChatSessionPanel({
   onArchived,
   onRemindersChanged,
   onSetRole,
-  onOpenRoleSelector,
 }: ChatSessionPanelProps) {
   const confirmAction = useConfirm();
   const fetchPage = useCallback(
@@ -99,6 +97,7 @@ export function ChatSessionPanel({
     setPersisted,
   });
   const [draft, setDraft] = useState("");
+  const [roleOpen, setRoleOpen] = useState(false);
   const stoppingRef = useRef(false);
 
   useStreamVersion();
@@ -424,7 +423,7 @@ export function ChatSessionPanel({
     if (name === "role") {
       const arg = argument.trim();
       if (!arg) {
-        onOpenRoleSelector?.();
+        setRoleOpen(true);
         return;
       }
       await rolesStore.ensureLoaded();
@@ -738,7 +737,17 @@ export function ChatSessionPanel({
               interimText={interimText}
               height={composerHeight}
               onResizeStart={onComposerResize}
-              toolbarStart={<ComposerModelControls />}
+              toolbarStart={
+                <>
+                  <ComposerModelControls />
+                  <RoleSelector
+                    value={chat.role_id ?? null}
+                    onChange={(roleId) => void onSetRole?.(roleId)}
+                    open={roleOpen}
+                    onOpenChange={setRoleOpen}
+                  />
+                </>
+              }
               attachments={{
                 pending: pendingAttachments,
                 uploadingCount,

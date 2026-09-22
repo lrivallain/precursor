@@ -51,6 +51,7 @@ import type {
 } from "../lib/types";
 import { TIMING, Z_INDEX } from "../lib/constants";
 import { Modal } from "./Modal";
+import { RoleSelector } from "./RoleSelector";
 
 interface ChatPanelProps {
   topic: Topic;
@@ -63,8 +64,6 @@ interface ChatPanelProps {
   onRemindersChanged?: () => void;
   /** Persist a role change for this topic (null = default). */
   onSetRole?: (roleId: number | null) => Promise<void>;
-  /** Open the header role selector (used by bare `/role`). */
-  onOpenRoleSelector?: () => void;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -135,7 +134,7 @@ function cardConfirmHint(kind: PendingKind): string | undefined {
   return undefined;
 }
 
-export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, onOpenRoleSelector }: ChatPanelProps) {
+export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole }: ChatPanelProps) {
   const confirmAction = useConfirm();
   const fetchPage = useCallback(
     (opts: { limit: number; beforeId?: number }) => api.messages.list(topic.id, opts),
@@ -160,6 +159,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     setPersisted,
   });
   const [draft, setDraft] = useState("");
+  const [roleOpen, setRoleOpen] = useState(false);
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   // Set while we handle a user-initiated Stop so the streaming→done effect
@@ -655,7 +655,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   async function runRole(argument: string): Promise<void> {
     const arg = argument.trim();
     if (!arg) {
-      onOpenRoleSelector?.();
+      setRoleOpen(true);
       return;
     }
     await rolesStore.ensureLoaded();
@@ -1280,7 +1280,17 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             height={composerHeight}
             onResizeStart={onComposerResize}
             focusToken={composerFocusToken}
-            toolbarStart={<ComposerModelControls />}
+            toolbarStart={
+              <>
+                <ComposerModelControls />
+                <RoleSelector
+                  value={topic.role_id ?? null}
+                  onChange={(roleId) => void onSetRole?.(roleId)}
+                  open={roleOpen}
+                  onOpenChange={setRoleOpen}
+                />
+              </>
+            }
             attachments={{
               pending: pendingAttachments,
               uploadingCount,

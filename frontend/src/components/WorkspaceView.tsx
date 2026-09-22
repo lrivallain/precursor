@@ -88,14 +88,12 @@ export function WorkspaceView({
   onPathChange,
   onDeleted,
   onSetRole,
-  onOpenRoleSelector,
 }: {
   workspace: Workspace;
   initialPath: string | null;
   onPathChange: (path: string | null) => void;
   onDeleted: () => void;
   onSetRole?: (roleId: number | null) => Promise<void>;
-  onOpenRoleSelector?: () => void;
 }) {
   const confirmAction = useConfirm();
   const area = workspace;
@@ -547,12 +545,7 @@ export function WorkspaceView({
         </section>
         )}
 
-        <WorkspaceChat
-          area={area}
-          activePath={activePath}
-          onSetRole={onSetRole}
-          onOpenRoleSelector={onOpenRoleSelector}
-        />
+        <WorkspaceChat area={area} activePath={activePath} onSetRole={onSetRole} />
       </div>
     </div>
   );

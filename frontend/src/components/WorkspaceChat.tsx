@@ -8,7 +8,7 @@ import {
   Loader2,
   MessageSquare,
 } from "lucide-react";
-import { parseSlashCommand, SLASH_COMMANDS } from "../lib/commands";
+import { commandsForSurface, parseSlashCommand, SLASH_COMMANDS } from "../lib/commands";
 import type { SlashCommand } from "../lib/commands";
 import { mcpAuthStore } from "../lib/mcpAuth";
 import { skillsStore, useSkills } from "../lib/skillsStore";
@@ -25,6 +25,7 @@ import { Z_INDEX } from "../lib/constants";
 import { ResizeHandle } from "./ResizeHandle";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
+import { RoleSelector } from "./RoleSelector";
 import { Markdown } from "./Markdown";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
@@ -49,15 +50,14 @@ export function WorkspaceChat({
   area,
   activePath,
   onSetRole,
-  onOpenRoleSelector,
 }: {
   area: Workspace;
   activePath: string | null;
   onSetRole?: (roleId: number | null) => Promise<void>;
-  onOpenRoleSelector?: () => void;
 }) {
   const [messages, setMessages] = useState<WorkspaceChatItem[]>([]);
   const [input, setInput] = useState("");
+  const [roleOpen, setRoleOpen] = useState(false);
   const [pending, setPending] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,10 +117,12 @@ export function WorkspaceChat({
   }, [speech.listening]);
 
   // Autocomplete: only the commands this surface actually handles in `send`
-  // (skills + `/role`), so the picker never offers commands the backend rejects.
+  // (skills + whatever the catalog tags `workspace`), so the picker never
+  // offers commands the backend rejects.
   const skills = useSkills();
   const wsCommands = useMemo<SlashCommand[]>(() => {
-    const role = SLASH_COMMANDS.find((c) => c.name === "role");
+    const builtins = commandsForSurface("workspace");
+    const builtinCommands = SLASH_COMMANDS.filter((c) => builtins.has(c.name));
     const skillCommands: SlashCommand[] = skills
       .filter((s) => s.active)
       .map((s) => ({
@@ -130,7 +132,7 @@ export function WorkspaceChat({
         kind: "skill" as const,
         argumentHint: "input",
       }));
-    return [...(role ? [role] : []), ...skillCommands];
+    return [...builtinCommands, ...skillCommands];
   }, [skills]);
   const suggestions = useMemo<SlashCommand[]>(() => {
     if (!input.startsWith("/") || /\s/.test(input)) return [];
@@ -170,7 +172,7 @@ export function WorkspaceChat({
     if (cmd && cmd.name === "role") {
       const arg = cmd.argument.trim();
       if (!arg) {
-        onOpenRoleSelector?.();
+        setRoleOpen(true);
         return;
       }
       await rolesStore.ensureLoaded();
@@ -433,7 +435,17 @@ export function WorkspaceChat({
           height={composerHeight}
           onResizeStart={onComposerResize}
           placeholder={activePath ? `Improve ${activePath}…` : "Ask the assistant…"}
-          toolbarStart={<ComposerModelControls />}
+          toolbarStart={
+            <>
+              <ComposerModelControls />
+              <RoleSelector
+                value={area.role_id ?? null}
+                onChange={(roleId) => void onSetRole?.(roleId)}
+                open={roleOpen}
+                onOpenChange={setRoleOpen}
+              />
+            </>
+          }
         />
       </div>
     </aside>

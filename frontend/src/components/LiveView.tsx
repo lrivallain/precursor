@@ -33,6 +33,7 @@ import { LiveAudioHelp } from "./LiveAudioHelp";
 import { TopicPicker } from "./TopicPicker";
 import { DevicePicker } from "./DevicePicker";
 import { Select } from "./Select";
+import { RoleSelector } from "./RoleSelector";
 import { LivePanel, type LiveTab } from "./LivePanel";
 import { SummarySection } from "./SummarySection";
 import { NotesSection } from "./NotesSection";
@@ -199,6 +200,7 @@ export function LiveView({
   const [deviceId, setDeviceId] = useState<string>(readStoredDeviceId);
   const [captureMic, setCaptureMic] = useState<boolean>(readStoredCaptureMic);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [roleOpen, setRoleOpen] = useState(false);
 
   const [summaryText, setSummaryText] = useState(session.summary ?? "");
   const [summaryGenerating, setSummaryGenerating] = useState(false);
@@ -560,6 +562,10 @@ export function LiveView({
       restartRef.current = true;
       transcriber.stop();
     }
+  }
+
+  async function applyRole(roleId: number | null): Promise<void> {
+    onUpdated(await api.meetings.updateSession(session.id, { role_id: roleId }));
   }
 
   async function generateTopicSummary(): Promise<void> {
@@ -1049,6 +1055,14 @@ export function LiveView({
         options={LANGUAGES}
         ariaLabel="Meeting language"
         size="sm"
+      />
+
+      <RoleSelector
+        value={session.role_id ?? null}
+        onChange={(roleId) => void applyRole(roleId)}
+        open={roleOpen}
+        onOpenChange={setRoleOpen}
+        variant="toolbar"
       />
     </>
   );

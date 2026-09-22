@@ -100,6 +100,8 @@ interface AgentViewProps {
   onOpenSettings: () => void;
   /** Topic to preselect in the new-agent form (e.g. opened from a topic). */
   draftTopicId?: number | null;
+  /** Persist a role change for the open agent (null = default). */
+  onSetRole?: (roleId: number | null) => Promise<void>;
 }
 
 // One step in the workflow timeline.
@@ -1728,6 +1730,7 @@ export function AgentView({
   onSelect,
   onOpenSettings,
   draftTopicId,
+  onSetRole,
 }: AgentViewProps) {
   const needsRuntime = !available || (enabled && !runtimeStarted);
   const runtimeState = useAgentRuntime(!loading && needsRuntime);
@@ -2194,6 +2197,13 @@ export function AgentView({
     ) {
       return;
     }
+    // The bare form opens this composer's role picker, the way it does on every
+    // other surface; `/role <name>` goes through the backend command handler.
+    if (/^\/role\s*$/i.test(message)) {
+      if (explicit === undefined) setFollowUp("");
+      setRoleOpen(true);
+      return;
+    }
     setBusy(true);
     setError(null);
     // Clear the composer and echo the prompt immediately so it's obvious the
@@ -2484,7 +2494,6 @@ export function AgentView({
                 onChange={setNewRoleId}
                 open={roleOpen}
                 onOpenChange={setRoleOpen}
-                variant="composer"
                 disabled={!available || busy}
               />
             </>
@@ -2772,7 +2781,17 @@ export function AgentView({
                     ? "Sending…"
                     : "Send a follow-up message…"
               }
-              toolbarStart={<ComposerModelControls variant="agents" />}
+              toolbarStart={
+                <>
+                  <ComposerModelControls variant="agents" />
+                  <RoleSelector
+                    value={selected.role_id ?? null}
+                    onChange={(roleId) => void onSetRole?.(roleId)}
+                    open={roleOpen}
+                    onOpenChange={setRoleOpen}
+                  />
+                </>
+              }
             />
           </div>
         );

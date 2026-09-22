@@ -13,6 +13,33 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The assistant-role picker now lives in every composer toolbar, not in the
+  app header.** The header selector was an odd one out: a bordered pill floating
+  far from the text you were writing, duplicating a control that already existed
+  on the two creation surfaces.
+
+  Every prompt surface — a topic, a chat, a workspace assistant, a new agent
+  task, and a follow-up turn on a running agent — now carries the role picker in
+  its own composer toolbar, beside the model and context pills and rendered by
+  the same control. The follow-up composer gains one for the first time. On an
+  existing conversation the meaning is unchanged: picking a role **saves it to
+  that conversation**, exactly as the header did. `/role <name>` still works
+  everywhere, and a bare `/role` now opens the picker next to your cursor
+  instead of one in the header.
+
+  [Live sessions](https://lrivallain.github.io/precursor/features/live-sessions)
+  have no composer, so their picker sits in the capture toolbar next to the
+  meeting language, matching its neighbours.
+
+- **`/role` now works in agent sessions too.** The pill was there but the
+  command was not: agent slash commands are validated against a backend registry
+  that had no `role` entry, so typing it was rejected and the command palette
+  never offered it. The registry gains a handler, the palette gains the surface,
+  and a bare `/role` opens the follow-up composer's picker like it does
+  everywhere else.
+
 ### Added
 
 - **Pick an assistant role while creating a chat or an agent.** A role could

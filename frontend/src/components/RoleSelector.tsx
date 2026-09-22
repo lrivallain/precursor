@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Check, Drama } from "lucide-react";
+import { Check, ChevronDown, Drama } from "lucide-react";
 import { useRoles } from "../lib/rolesStore";
 import { ComposerSelectMenu } from "./ComposerSelectMenu";
 
@@ -10,10 +10,11 @@ interface Props {
   /** Controlled open state so `/role` (no args) can pop it open. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** "header" (default) is the pill in the app header; "composer" is the
-   *  borderless pill that sits in a composer toolbar beside the model and
-   *  context pickers — rendered by the very same control they are. */
-  variant?: "header" | "composer";
+  /** "composer" (default) is the borderless pill that sits in a composer
+   *  toolbar beside the model and context pickers — rendered by the very same
+   *  control they are. "toolbar" is the bordered pill that opens downward,
+   *  matching the picker row above the Live transcript. */
+  variant?: "toolbar" | "composer";
   /** Greys the trigger out and refuses to open it (create surfaces disable
    *  their controls while busy or while the runtime is unavailable). */
   disabled?: boolean;
@@ -24,14 +25,14 @@ export function RoleSelector({
   onChange,
   open,
   onOpenChange,
-  variant = "header",
+  variant = "composer",
   disabled = false,
 }: Props) {
   const roles = useRoles();
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!open || variant !== "header") return;
+    if (!open || variant !== "toolbar") return;
     function onDown(e: MouseEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         onOpenChange(false);
@@ -98,17 +99,18 @@ export function RoleSelector({
         aria-expanded={open}
         data-tooltip={`Assistant role: ${label}`}
         aria-label={`Assistant role: ${label}. Click to change.`}
-        className="flex items-center gap-1.5 max-w-[10rem] rounded border border-border px-2 py-1.5 text-sm hover:bg-surface text-muted hover:text-text disabled:opacity-50 disabled:hover:bg-transparent"
+        className="flex max-w-[15rem] items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[11px] text-text outline-none focus:border-accent disabled:opacity-60"
       >
-        <Drama size={15} className="shrink-0" />
-        <span className="truncate hidden sm:inline">{label}</span>
+        <Drama size={11} className="shrink-0 text-muted" />
+        <span className="flex-1 truncate text-left">{label}</span>
+        <ChevronDown size={11} className="shrink-0 text-muted" />
       </button>
 
       {open && (
         <div
           role="menu"
           aria-label="Select assistant role"
-          className="absolute right-0 top-full mt-1 z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 text-sm max-h-[60vh] overflow-y-auto"
+          className="absolute left-0 top-full mt-1 z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 text-sm max-h-[60vh] overflow-y-auto"
         >
           {roles.map((r) => {
             const isSelected = selected?.id === r.id;

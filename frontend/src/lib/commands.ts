@@ -17,8 +17,9 @@
  *  - `topic`: the topic chat composer (ChatPanel)
  *  - `chat`:  the flat chat-session composer (ChatSessionPanel)
  *  - `agent`: the agent-session composer (AgentView), intercepted by the backend
+ *  - `workspace`: the workspace assistant composer (WorkspaceChat)
  */
-export type CommandSurface = "topic" | "chat" | "agent";
+export type CommandSurface = "topic" | "chat" | "agent" | "workspace";
 
 export interface SlashCommand {
   name: string;
@@ -152,10 +153,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "role",
     label: "/role",
     description:
-      "Set the assistant role (persona) for this conversation. Pass a role name to switch directly, or run it bare to open the role picker.",
+      "Set the assistant role (persona) for this conversation. Pass a role name to switch directly, or run it bare to open the role picker in the toolbar below.",
     argumentHint: "role name (optional)",
     kind: "builtin",
-    surfaces: ["topic", "chat"],
+    surfaces: ["topic", "chat", "workspace", "agent"],
   },
   {
     name: "collection",

@@ -60,6 +60,7 @@ from precursor.backend.models import (
     Chat,
     Message,
     MessageRole,
+    Role,
     Topic,
 )
 from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
@@ -2342,6 +2343,22 @@ class AgentManager:
     async def _cmd_clear(self, agent_id: int, argument: str) -> None:
         await self.clear_session(agent_id)
 
+    async def _cmd_role(self, agent_id: int, argument: str) -> None:
+        name = " ".join(argument.split())
+        if not name:
+            # The bare form opens the composer's role picker client-side, so it
+            # normally never reaches here.
+            raise ValueError("Usage: /role <name>")
+        async with SessionLocal() as session:
+            role = (
+                await session.execute(select(Role).where(func.lower(Role.name) == name.lower()))
+            ).scalar_one_or_none()
+        if role is None:
+            raise ValueError(f'Unknown role "{name}". Manage roles in Settings → Roles.')
+        # The default role is persisted as NULL, never by its own id.
+        await self._patch(agent_id, role_id=None if role.is_default else role.id)
+        await self._publish(agent_id)
+
     async def _cmd_memory_store(self, agent_id: int, argument: str) -> None:
         from precursor.backend.services import memories as memory_service
 
@@ -2367,6 +2384,7 @@ class AgentManager:
         "rename": _cmd_rename,
         "archive": _cmd_archive,
         "clear": _cmd_clear,
+        "role": _cmd_role,
         "memory-store": _cmd_memory_store,
         "memory-update": _cmd_memory_update,
     }
