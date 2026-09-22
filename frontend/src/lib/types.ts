@@ -122,6 +122,8 @@ export interface ChatCreate {
   description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
+  /** Assistant Role to assign at creation. Null/omitted = the default role. */
+  role_id?: number | null;
   /**
    * Declares `title` a placeholder the client picked rather than something the
    * user typed, letting the server replace it with one derived from the first

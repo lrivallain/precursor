@@ -9,9 +9,22 @@ interface Props {
   /** Controlled open state so `/role` (no args) can pop it open. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Which way the menu opens. "up" suits a composer toolbar pinned to the
+   *  bottom of the surface; "down" (default) suits a header. */
+  placement?: "down" | "up";
+  /** Menu edge aligned with the trigger. Defaults to "right" (header controls
+   *  sit at the right edge); toolbar controls at the left want "left". */
+  align?: "left" | "right";
 }
 
-export function RoleSelector({ value, onChange, open, onOpenChange }: Props) {
+export function RoleSelector({
+  value,
+  onChange,
+  open,
+  onOpenChange,
+  placement = "down",
+  align = "right",
+}: Props) {
   const roles = useRoles();
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -63,7 +76,9 @@ export function RoleSelector({ value, onChange, open, onOpenChange }: Props) {
         <div
           role="menu"
           aria-label="Select assistant role"
-          className="absolute right-0 top-full mt-1 z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 text-sm max-h-[60vh] overflow-y-auto"
+          className={`absolute z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 text-sm max-h-[60vh] overflow-y-auto ${
+            align === "left" ? "left-0" : "right-0"
+          } ${placement === "up" ? "bottom-full mb-1" : "top-full mt-1"}`}
         >
           {roles.map((r) => {
             const isSelected = selected?.id === r.id;

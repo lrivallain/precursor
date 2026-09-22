@@ -92,6 +92,7 @@ async def create_chat(
         description=payload.description,
         description_as_system_prompt=payload.description_as_system_prompt,
         pinned=payload.pinned,
+        role_id=payload.role_id,
         autoname_pending=payload.autoname,
     )
     session.add(chat)
