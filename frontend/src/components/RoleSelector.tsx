@@ -15,6 +15,12 @@ interface Props {
   /** Menu edge aligned with the trigger. Defaults to "right" (header controls
    *  sit at the right edge); toolbar controls at the left want "left". */
   align?: "left" | "right";
+  /** "md" (default) matches the app header; "sm" matches the compact pickers
+   *  the create surfaces sit next to (`Select size="sm"`, `TopicPicker`). */
+  size?: "sm" | "md";
+  /** Greys the trigger out and refuses to open it (create forms disable their
+   *  fields while the surface is busy or the runtime is unavailable). */
+  disabled?: boolean;
 }
 
 export function RoleSelector({
@@ -24,6 +30,8 @@ export function RoleSelector({
   onOpenChange,
   placement = "down",
   align = "right",
+  size = "md",
+  disabled = false,
 }: Props) {
   const roles = useRoles();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -57,28 +65,37 @@ export function RoleSelector({
     onChange(roleId);
   }
 
+  const sm = size === "sm";
+
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
+        disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
         data-tooltip={`Assistant role: ${label}`}
         aria-label={`Assistant role: ${label}. Click to change.`}
-        className="flex items-center gap-1.5 max-w-[10rem] px-2 py-1.5 rounded border border-border hover:bg-surface text-sm text-muted hover:text-text"
+        className={`flex items-center gap-1.5 max-w-[10rem] rounded border border-border hover:bg-surface text-muted hover:text-text disabled:opacity-50 disabled:hover:bg-transparent ${
+          sm ? "px-2 py-1 text-[11px]" : "px-2 py-1.5 text-sm"
+        }`}
       >
-        <Drama size={15} className="shrink-0" />
-        <span className="truncate hidden sm:inline">{label}</span>
+        <Drama size={sm ? 12 : 15} className="shrink-0" />
+        {/* The compact variant labels a form field, so the current value must
+            stay readable at every width; the header variant sheds it. */}
+        <span className={`truncate ${sm ? "" : "hidden sm:inline"}`}>{label}</span>
       </button>
 
       {open && (
         <div
           role="menu"
           aria-label="Select assistant role"
-          className={`absolute z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 text-sm max-h-[60vh] overflow-y-auto ${
-            align === "left" ? "left-0" : "right-0"
-          } ${placement === "up" ? "bottom-full mb-1" : "top-full mt-1"}`}
+          className={`absolute z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 max-h-[60vh] overflow-y-auto ${
+            sm ? "text-[11px]" : "text-sm"
+          } ${align === "left" ? "left-0" : "right-0"} ${
+            placement === "up" ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
         >
           {roles.map((r) => {
             const isSelected = selected?.id === r.id;
@@ -89,16 +106,20 @@ export function RoleSelector({
                 role="menuitemradio"
                 aria-checked={isSelected}
                 onClick={() => choose(r.is_default ? null : r.id)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface"
+                className={`w-full flex items-center gap-2 text-left hover:bg-surface ${
+                  sm ? "px-2.5 py-1" : "px-3 py-1.5"
+                }`}
               >
                 <Check
-                  size={14}
+                  size={sm ? 12 : 14}
                   className={`shrink-0 ${isSelected ? "text-accent" : "opacity-0"}`}
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{r.name}</span>
                   {r.system_prompt && (
-                    <span className="block text-[11px] text-muted truncate">
+                    <span
+                      className={`block text-muted truncate ${sm ? "text-[10px]" : "text-[11px]"}`}
+                    >
                       {r.system_prompt}
                     </span>
                   )}

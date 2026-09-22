@@ -135,6 +135,8 @@ export function ChatStartHero({
               onOpenChange={setRoleOpen}
               placement="up"
               align="left"
+              size="sm"
+              disabled={busy}
             />
           </>
         }

@@ -103,10 +103,10 @@ seeds one built-in **`default`** role whose prompt is empty — so out of the bo
 role injects nothing. It can be edited but not renamed or deleted, which
 guarantees every discussion always has a fallback.
 
-They can also be chosen **up front, at creation**: the *Start a new chat* surface
-carries a role picker in its composer toolbar, and the *Start an agent task* form
-has an **Assistant role** field. Picking one there means the persona is in place
-for the very first turn, instead of being assigned after the fact.
+They can also be chosen **up front, at creation**: the same picker sits in the
+composer toolbar of the *Start a new chat* surface and in the **Assistant role**
+field of the *Start an agent task* form. Picking one there means the persona is
+in place for the very first turn, instead of being assigned after the fact.
 
 The same role can be adopted by a **topic**, a **chat**, a
 [workspace](/features/workspaces), an [agent](/features/agents-mode), a

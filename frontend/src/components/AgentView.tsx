@@ -37,7 +37,6 @@ import { subscribeAgentChanged } from "../lib/events";
 import { mcpAuthStore } from "../lib/mcpAuth";
 import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
-import { useRoles } from "../lib/rolesStore";
 import { useAgentRuntime } from "../lib/useAgentRuntime";
 import {
   normalizeArtifactMarkdown,
@@ -55,6 +54,7 @@ import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { SectionLoading } from "./SectionLoading";
 import { TopicPicker } from "./TopicPicker";
+import { RoleSelector } from "./RoleSelector";
 import { Select } from "./Select";
 import { APPROVAL_POLICIES } from "./AgentsSettings";
 import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
@@ -1757,19 +1757,7 @@ export function AgentView({
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
   // Assistant Role the new agent is created with. Null = the default role.
   const [newRoleId, setNewRoleId] = useState<number | null>(null);
-  const roles = useRoles();
-  // A null role_id resolves to the default role server-side, so the default
-  // role is offered as the empty option rather than under its own id. The
-  // fallback keeps the picker usable before /api/roles has answered.
-  const roleOptions = useMemo(() => {
-    const opts = roles.map((r) => ({
-      value: r.is_default ? "" : String(r.id),
-      label: r.name,
-    }));
-    return opts.some((o) => o.value === "")
-      ? opts
-      : [{ value: "", label: "default" }, ...opts];
-  }, [roles]);
+  const [roleOpen, setRoleOpen] = useState(false);
   // Autonomy opt-in for the next started agent: when on, it runs a goal loop
   // toward the objective and pauses only by exception (default off).
   const [newAutonomy, setNewAutonomy] = useState(false);
@@ -2373,13 +2361,14 @@ export function AgentView({
         </label>
         <label className="flex items-center gap-2 text-[12px] text-muted">
           Assistant role
-          <Select
+          <RoleSelector
+            value={newRoleId}
+            onChange={setNewRoleId}
+            open={roleOpen}
+            onOpenChange={setRoleOpen}
+            align="left"
             size="sm"
-            ariaLabel="Assistant role for this agent"
             disabled={!available || busy}
-            value={newRoleId == null ? "" : String(newRoleId)}
-            onChange={(v) => setNewRoleId(v ? Number(v) : null)}
-            options={roleOptions}
           />
         </label>
         {/* Autonomy opt-in: turn the one-shot task into a background mission. */}
