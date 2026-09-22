@@ -2359,18 +2359,6 @@ export function AgentView({
             collections={collections}
           />
         </label>
-        <label className="flex items-center gap-2 text-[12px] text-muted">
-          Assistant role
-          <RoleSelector
-            value={newRoleId}
-            onChange={setNewRoleId}
-            open={roleOpen}
-            onOpenChange={setRoleOpen}
-            align="left"
-            size="sm"
-            disabled={!available || busy}
-          />
-        </label>
         {/* Autonomy opt-in: turn the one-shot task into a background mission. */}
         <div className="rounded-lg border border-border bg-surface/50 p-2.5">
           <label className="flex items-start gap-2.5">
@@ -2488,7 +2476,21 @@ export function AgentView({
           onResizeStart={onComposerResize}
           autoFocus
           placeholder="e.g. Investigate the flaky CI test and propose a fix…"
-          toolbarStart={<ComposerModelControls variant="agents" />}
+          toolbarStart={
+            <>
+              <ComposerModelControls variant="agents" />
+              <RoleSelector
+                value={newRoleId}
+                onChange={setNewRoleId}
+                open={roleOpen}
+                onOpenChange={setRoleOpen}
+                placement="up"
+                align="left"
+                size="sm"
+                disabled={!available || busy}
+              />
+            </>
+          }
         />
       </div>
     );
