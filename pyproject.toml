@@ -45,7 +45,7 @@ dependencies = [
     # old names, so an uncapped floor resolves a wheel the app cannot import.
     # uv.lock protects dev and CI, but *end users of the published wheel*
     # resolve fresh — so an API-breaking major needs a real cap here.
-    "mcp>=1.28,<2",
+    "mcp>=1.28,<3",
     # Agents mode. The floor is *not* the usual "minimum API we rely on": 1.0.4
     # is where the SDK stopped shipping six platform-specific wheels that each
     # bundled the native Copilot CLI (~95 MB, ~145 MB unpacked) and became a
