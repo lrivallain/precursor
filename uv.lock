@@ -1062,7 +1062,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.138" },
     { name = "github-copilot-sdk", specifier = ">=1.0.4,<2" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "mcp", specifier = ">=1.28,<2" },
+    { name = "mcp", specifier = ">=1.28,<3" },
     { name = "openai", specifier = ">=2.43" },
     { name = "pillow", marker = "extra == 'tray'", specifier = ">=11.0" },
     { name = "precursor-kanban", marker = "extra == 'kanban'", specifier = ">=2026.9" },
