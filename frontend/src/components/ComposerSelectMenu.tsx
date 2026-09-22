@@ -117,7 +117,11 @@ export function ComposerSelectMenu({
   }
 
   return (
-    <div ref={rootRef} className="relative">
+    // A flex wrapper, so the trigger is a flex item rather than an inline box
+    // on a text baseline: an inline-flex box takes its baseline from its first
+    // child, so a leading glyph would otherwise sit the pill a fraction of a
+    // pixel higher than its icon-less neighbours.
+    <div ref={rootRef} className="relative flex">
       <button
         type="button"
         aria-label={ariaLabel}
