@@ -97,16 +97,33 @@ A **role** is a named, reusable **persona** — a system prompt injected into ev
 turn of whatever adopts it. Where a skill is a one-shot instruction you invoke, a
 role is *persistent*: assign it once and it re-applies until you change it.
 
-Roles are managed in **Settings → Roles**, and assigned either from a
-conversation's settings panel or with the `/role <name>` command. Every install
-seeds one built-in **`default`** role whose prompt is empty — so out of the box a
-role injects nothing. It can be edited but not renamed or deleted, which
-guarantees every discussion always has a fallback.
+Roles are managed in **Settings → Roles**. Every install seeds one built-in
+**`default`** role whose prompt is empty — so out of the box a role injects
+nothing. It can be edited but not renamed or deleted, which guarantees every
+discussion always has a fallback.
 
-They can also be chosen **up front, at creation**: the same picker sits in the
-composer toolbar of the *Start a new chat* and *Start an agent task* surfaces,
-next to the model controls. Picking one there means the persona is in place for
-the very first turn, instead of being assigned after the fact.
+### Picking a role where you type
+
+The role picker sits in the **composer toolbar**, next to the model controls, on
+every surface that has one: a topic, a chat, a [workspace](/features/workspaces)
+assistant, an [agent](/features/agents-mode) task, and the *Start a new chat* /
+*Start an agent task* screens. [Live sessions](/features/live-sessions) have no
+composer, so their picker sits in the capture toolbar beside the meeting
+language.
+
+What it means depends on where you are:
+
+- On the **creation** surfaces it chooses the role the new chat or agent task is
+  born with, so the persona is in place for the very first turn.
+- On an **existing** conversation it reassigns that conversation's role, and the
+  change is **saved to the conversation itself** — it is not a one-off override
+  for the next message. Reload the page and the new role is still there.
+
+The `/role <name>` command does exactly the same thing from the keyboard — on a
+topic, a chat, a [workspace](/features/workspaces) assistant and an
+[agent](/features/agents-mode) session — and a bare `/role` opens that surface's
+picker so you can browse what's available. [Live sessions](/features/live-sessions)
+have no composer to type it in, so they use the toolbar picker only.
 
 The same role can be adopted by a **topic**, a **chat**, a
 [workspace](/features/workspaces), an [agent](/features/agents-mode), a

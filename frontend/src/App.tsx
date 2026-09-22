@@ -57,7 +57,6 @@ import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
 import { toggleTopicSummary } from "./lib/summaryOpen";
 import { useConfirm } from "./components/ConfirmDialog";
-import { RoleSelector } from "./components/RoleSelector";
 import { TooltipProvider } from "./components/Tooltip";
 import { ReminderModal } from "./components/ReminderModal";
 import { api } from "./lib/api";
@@ -446,7 +445,6 @@ export default function App() {
   // Collections filter the topic tree; the selection is per-browser, not in the URL.
   const [collections, setCollections] = useState<Collection[]>([]);
   const [activeCollectionId, setActiveCollectionId] = useState<number | null>(null);
-  const [roleSelectorOpen, setRoleSelectorOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [wsRoute, setWsRoute] = useState<WsRoute>(parseWsRoute);
   // Workspaces are loaded lazily when the user first enters workspaces mode.
@@ -2139,9 +2137,11 @@ export default function App() {
     meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
 
   // ---- Assistant roles --------------------------------------------------
-  // The header role selector and the `/role` command both funnel through here.
-  // Selecting the default role persists null (which resolves to default
-  // server-side). Updates are persisted per-discussion and reflected locally.
+  // Each composer owns its own role pill; this is the shared persistence path
+  // they and the `/role` command funnel through. Selecting the default role
+  // persists null (which resolves to default server-side). Live sessions are
+  // absent on purpose — LiveView persists its own role from its capture
+  // toolbar, the way it already does for the meeting language.
   async function setRoleForActive(roleId: number | null): Promise<void> {
     if (sidebarMode === "topics" && activeTopic) {
       const updated = await api.topics.update(activeTopic.id, { role_id: roleId });
@@ -2156,11 +2156,6 @@ export default function App() {
       setWorkspaces((prev) =>
         prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
       );
-    } else if (sidebarMode === "live" && activeSession) {
-      const updated = await api.meetings.updateSession(activeSession.id, { role_id: roleId });
-      setMeetingSessions((prev) =>
-        prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
-      );
     } else if (sidebarMode === "agents" && activeAgent) {
       const updated = await api.agents.update(activeAgent.id, { role_id: roleId });
       setAgents((prev) =>
@@ -2168,26 +2163,6 @@ export default function App() {
       );
     }
   }
-
-  const activeRoleId =
-    sidebarMode === "topics"
-      ? (activeTopic?.role_id ?? null)
-      : sidebarMode === "chats"
-        ? (activeChat?.role_id ?? null)
-        : sidebarMode === "workspaces"
-          ? (activeWorkspace?.role_id ?? null)
-          : sidebarMode === "live"
-            ? (activeSession?.role_id ?? null)
-            : sidebarMode === "agents"
-              ? (activeAgent?.role_id ?? null)
-              : null;
-
-  const hasActiveDiscussion =
-    (sidebarMode === "topics" && !!activeTopic) ||
-    (sidebarMode === "chats" && !!activeChat) ||
-    (sidebarMode === "workspaces" && !!activeWorkspace) ||
-    (sidebarMode === "live" && !!activeSession) ||
-    (sidebarMode === "agents" && !!activeAgent);
 
   async function loadWorkspaces(): Promise<Workspace[]> {
     const list = await api.workspaces.list();
@@ -2893,14 +2868,6 @@ export default function App() {
               )}
             </>
           )}
-          {!atHome && hasActiveDiscussion && (
-            <RoleSelector
-              value={activeRoleId}
-              onChange={(roleId) => void setRoleForActive(roleId)}
-              open={roleSelectorOpen}
-              onOpenChange={setRoleSelectorOpen}
-            />
-          )}
         </header>
 
         {!atHome && sidebarMode === "agents" && agentRunError && agentRunError.agentId === activeAgent?.id && (
@@ -3014,7 +2981,6 @@ export default function App() {
                 }}
                 onRemindersChanged={loadReminders}
                 onSetRole={setRoleForActive}
-                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
               <TopicStartHero
@@ -3037,7 +3003,6 @@ export default function App() {
                 }}
                 onRemindersChanged={loadReminders}
                 onSetRole={setRoleForActive}
-                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
               <ChatStartHero onStart={handleStartChat} />
@@ -3058,7 +3023,6 @@ export default function App() {
                   navigateWorkspace(next?.slug ?? null, null);
                 }}
                 onSetRole={setRoleForActive}
-                onOpenRoleSelector={() => setRoleSelectorOpen(true)}
               />
             ) : (
               <EmptyHero label="No workspaces yet." />
@@ -3161,6 +3125,7 @@ export default function App() {
               onSelect={(id) => void openAgent(id)}
               onOpenSettings={openAgentSettings}
               draftTopicId={agentDraftTopicId}
+              onSetRole={setRoleForActive}
             />
           )}
           </SearchHighlightProvider>

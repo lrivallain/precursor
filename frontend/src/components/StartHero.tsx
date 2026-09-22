@@ -133,7 +133,6 @@ export function ChatStartHero({
               onChange={setRoleId}
               open={roleOpen}
               onOpenChange={setRoleOpen}
-              variant="composer"
               disabled={busy}
             />
           </>

@@ -931,6 +931,8 @@ async def test_notify_back_posts_full_answer_not_truncated_summary() -> None:
     # The pending answer is consumed so a repeated idle event won't double-post.
     assert live.pending_answer is None
 
+
+async def test_run_command_rejects_unknown_command() -> None:
     import pytest
 
     from precursor.backend.services.agents.manager import AgentManager
@@ -939,7 +941,48 @@ async def test_notify_back_posts_full_answer_not_truncated_summary() -> None:
     agent_id = await _make_agent()
 
     with pytest.raises(ValueError, match="isn't available"):
-        await AgentManager().run_command(agent_id, "role", "assistant")
+        await AgentManager().run_command(agent_id, "summarise", "please")
+
+
+async def test_run_command_role_assigns_by_name() -> None:
+    """`/role <name>` matches case-insensitively and persists on the session."""
+    import pytest
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Role
+    from precursor.backend.services.agents.manager import AgentManager
+
+    await _ensure_schema()
+    agent_id = await _make_agent()
+
+    async with SessionLocal() as session:
+        role = Role(name="Sceptic", system_prompt="Question everything.")
+        session.add(role)
+        await session.commit()
+        role_id = role.id
+        default_role = (
+            await session.scalars(select(Role).where(Role.is_default.is_(True)))
+        ).first()
+
+    mgr = AgentManager()
+    await mgr.run_command(agent_id, "role", "  sceptic ")
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.role_id == role_id
+
+    # The built-in default is stored as NULL, never by its own id.
+    assert default_role is not None
+    await mgr.run_command(agent_id, "role", default_role.name)
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        assert agent.role_id is None
+
+    with pytest.raises(ValueError, match="Unknown role"):
+        await mgr.run_command(agent_id, "role", "nope")
+    with pytest.raises(ValueError, match="Usage: /role"):
+        await mgr.run_command(agent_id, "role", "   ")
 
 
 def test_agent_command_registry_is_source_of_truth() -> None:
@@ -950,6 +993,7 @@ def test_agent_command_registry_is_source_of_truth() -> None:
         "rename",
         "archive",
         "clear",
+        "role",
         "memory-store",
         "memory-update",
     }
