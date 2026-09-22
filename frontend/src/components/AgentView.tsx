@@ -2484,9 +2484,7 @@ export function AgentView({
                 onChange={setNewRoleId}
                 open={roleOpen}
                 onOpenChange={setRoleOpen}
-                placement="up"
-                align="left"
-                size="sm"
+                variant="composer"
                 disabled={!available || busy}
               />
             </>
