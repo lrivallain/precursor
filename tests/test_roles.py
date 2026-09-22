@@ -92,6 +92,25 @@ def test_assign_role_to_chat_and_workspace() -> None:
         assert r.json()["role_id"] == role["id"]
 
 
+def test_creating_a_chat_with_a_role_assigns_it() -> None:
+    """The new-chat surface picks a role up front, so POST must honour it."""
+    app = create_app()
+    with TestClient(app) as client:
+        role = client.post(
+            "/api/roles", json={"name": "greeter", "system_prompt": "Say hello."}
+        ).json()
+
+        created = client.post("/api/chats", json={"title": "Kickoff", "role_id": role["id"]})
+        assert created.status_code == 201
+        assert created.json()["role_id"] == role["id"]
+        # And it survives a re-read rather than living only in the POST response.
+        assert client.get(f"/api/chats/{created.json()['id']}").json()["role_id"] == role["id"]
+
+        # Omitting role_id still means "default" (null).
+        plain = client.post("/api/chats", json={"title": "Plain"})
+        assert plain.json()["role_id"] is None
+
+
 def test_selecting_default_clears_role_id() -> None:
     """PATCHing role_id=null (the default selection) must clear an assigned role."""
     app = create_app()

@@ -15,6 +15,18 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Pick an assistant role while creating a chat or an agent.** A role could
+  only be assigned after the fact, so the very first turn — often the one that
+  sets the tone — always ran as the default persona.
+
+  The **Start a new chat** and **Start an agent task** surfaces now carry a role
+  picker in their composer toolbar, rendered by the same control as the model
+  and context pickers it sits beside — borderless pill, leading glyph, trailing
+  chevron, one popup style — so the toolbar reads as a single row. The chosen
+  role is applied at creation, so it is in force for the opening message.
+  Leaving it untouched still means the `default` role. `POST /api/chats` now
+  honours `role_id` (it was accepted but silently dropped).
+
 - **Install the Copilot CLI directly from Agents.** The Agents section and Home
   launcher share Settings' confirmed download, progress, and recovery actions
   instead of presenting an unusable task form. Setup remains available while

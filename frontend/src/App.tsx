@@ -1485,10 +1485,10 @@ export default function App() {
   }
 
   // The "New chat" card's inline composer: create + stream, then reveal the chat.
-  async function startChatFromHome(prompt: string): Promise<void> {
+  async function startChatFromHome(prompt: string, roleId: number | null = null): Promise<void> {
     setAtHome(false);
     setSidebarMode("chats");
-    await handleStartChat(prompt);
+    await handleStartChat(prompt, roleId);
   }
 
   // The "New live session" card's inline form: create, then reveal the session.
@@ -2026,10 +2026,10 @@ export default function App() {
   // switch to the newly-mounted ChatSessionPanel. `autoname` marks the title as
   // a placeholder, so the backend replaces it with one derived from this prompt
   // while the answer is still streaming.
-  async function handleStartChat(prompt: string): Promise<void> {
+  async function handleStartChat(prompt: string, roleId: number | null = null): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
-    const chat = await api.chats.create({ title: "New chat", autoname: true });
+    const chat = await api.chats.create({ title: "New chat", autoname: true, role_id: roleId });
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
     void streamStore.start(convKey("chat", chat.id), text);

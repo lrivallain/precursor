@@ -54,6 +54,7 @@ import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { SectionLoading } from "./SectionLoading";
 import { TopicPicker } from "./TopicPicker";
+import { RoleSelector } from "./RoleSelector";
 import { Select } from "./Select";
 import { APPROVAL_POLICIES } from "./AgentsSettings";
 import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
@@ -1754,6 +1755,9 @@ export function AgentView({
   const [me, setMe] = useState<Me | null>(null);
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
+  // Assistant Role the new agent is created with. Null = the default role.
+  const [newRoleId, setNewRoleId] = useState<number | null>(null);
+  const [roleOpen, setRoleOpen] = useState(false);
   // Autonomy opt-in for the next started agent: when on, it runs a goal loop
   // toward the objective and pauses only by exception (default off).
   const [newAutonomy, setNewAutonomy] = useState(false);
@@ -2154,6 +2158,7 @@ export function AgentView({
       const created = await api.agents.create({
         task: message,
         topic_id: newTopicId,
+        role_id: newRoleId,
         autonomy_enabled: newAutonomy,
         max_steps: newMaxSteps,
         approval_policy: newApprovalPolicy || null,
@@ -2166,6 +2171,7 @@ export function AgentView({
       if (newStart) setPending({ agentId: created.id, text: message });
       setTask("");
       setNewTopicId(null);
+      setNewRoleId(null);
       setNewStart(true);
       onReload();
       onSelect(created.id);
@@ -2470,7 +2476,19 @@ export function AgentView({
           onResizeStart={onComposerResize}
           autoFocus
           placeholder="e.g. Investigate the flaky CI test and propose a fix…"
-          toolbarStart={<ComposerModelControls variant="agents" />}
+          toolbarStart={
+            <>
+              <ComposerModelControls variant="agents" />
+              <RoleSelector
+                value={newRoleId}
+                onChange={setNewRoleId}
+                open={roleOpen}
+                onOpenChange={setRoleOpen}
+                variant="composer"
+                disabled={!available || busy}
+              />
+            </>
+          }
         />
       </div>
     );

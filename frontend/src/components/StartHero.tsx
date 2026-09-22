@@ -6,6 +6,7 @@ import { useAzureSpeech } from "../lib/useAzureSpeech";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
+import { RoleSelector } from "./RoleSelector";
 import { TopicCreateForm } from "./TopicCreateForm";
 import type { Topic, TopicNode } from "../lib/types";
 
@@ -53,11 +54,14 @@ export function TopicStartHero({
 export function ChatStartHero({
   onStart,
 }: {
-  onStart: (prompt: string) => void | Promise<void>;
+  onStart: (prompt: string, roleId: number | null) => void | Promise<void>;
 }) {
   const settings = useSettings();
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
+  // Assistant Role the new chat is created with. Null = the default role.
+  const [roleId, setRoleId] = useState<number | null>(null);
+  const [roleOpen, setRoleOpen] = useState(false);
   const { height: composerHeight, onMouseDown: onComposerResize } =
     useResizableHeight({
       storageKey: "precursor:chat-start-composer:height",
@@ -89,7 +93,7 @@ export function ChatStartHero({
     setBusy(true);
     if (speech.listening) speech.stop();
     try {
-      await onStart(text);
+      await onStart(text, roleId);
       setPrompt("");
     } finally {
       setBusy(false);
@@ -121,7 +125,19 @@ export function ChatStartHero({
         disabled={busy}
         autoFocus
         placeholder="e.g. Summarize the tradeoffs between REST and GraphQL…"
-        toolbarStart={<ComposerModelControls />}
+        toolbarStart={
+          <>
+            <ComposerModelControls />
+            <RoleSelector
+              value={roleId}
+              onChange={setRoleId}
+              open={roleOpen}
+              onOpenChange={setRoleOpen}
+              variant="composer"
+              disabled={busy}
+            />
+          </>
+        }
       />
     </div>
   );
