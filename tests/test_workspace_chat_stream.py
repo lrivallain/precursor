@@ -416,3 +416,128 @@ def test_tool_round_cap_ends_with_an_error_event(monkeypatch) -> None:
     assert rounds >= 1
     assert [n for n, _ in events].count("tool_calls") == rounds
     assert events[-1] == ("error", {"message": f"Stopped after {rounds} tool rounds."})
+
+
+# -- Drift fixed by running on the shared tool loop (#332) -------------------
+
+
+def test_every_metered_round_is_counted_in_usage_stats(monkeypatch) -> None:
+    provider = _ScriptedProvider(
+        _tool_round(_Call("call-1", "workspace-fs__read_file")),
+        _text_round("Counted."),
+    )
+    _install_provider(monkeypatch, provider)
+
+    async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
+        _ = server, raw_name, args
+        return SimpleNamespace(content=[SimpleNamespace(text="body")], isError=False)
+
+    _install_mcp(monkeypatch, tools=[_READ], handler=handler)
+
+    with TestClient(create_app()) as client:
+        ws = _workspace(client, "Metered")
+        before = client.get("/api/stats/usage").json()["totals"]
+        events = _stream(client, ws["id"], model="fake-model")
+        after = client.get("/api/stats/usage").json()["totals"]
+
+    assert events[-1][0] == "done"
+    # One ledger row per round: the tool round (5+3) and the answer (11+7).
+    assert after["message_count"] - before["message_count"] == 2
+    assert after["prompt_tokens"] - before["prompt_tokens"] == 16
+    assert after["completion_tokens"] - before["completion_tokens"] == 10
+
+
+async def test_usage_rows_are_tagged_as_workspace_traffic(monkeypatch) -> None:
+    from sqlalchemy import func, select
+
+    from precursor.backend.db import SessionLocal, init_db
+    from precursor.backend.models import UsageRecord
+    from precursor.backend.services.conversation_turn import TurnSettings
+    from precursor.backend.services.workspace_chat import run_workspace_stream
+
+    _install_mcp(monkeypatch)
+    await init_db()
+    async with SessionLocal() as session:
+        last_id = (await session.execute(select(func.max(UsageRecord.id)))).scalar() or 0
+
+    settings = TurnSettings(
+        model="fake-model",
+        reasoning_effort="",
+        max_tool_rounds=3,
+        max_input_tokens=100_000,
+        max_tool_result_tokens=10_000,
+        provider=_ScriptedProvider(_text_round("ok")),
+        github_token="",
+        enabled_servers=[],
+    )
+    _ = [
+        ev
+        async for ev in run_workspace_stream(
+            system_prompt="sys", history=[ChatMessage(role="user", content="hi")], settings=settings
+        )
+    ]
+
+    async with SessionLocal() as session:
+        rows = (
+            (await session.execute(select(UsageRecord).where(UsageRecord.id > last_id)))
+            .scalars()
+            .all()
+        )
+    assert [(r.source, r.model, r.topic_id, r.chat_id) for r in rows] == [
+        ("workspace", "fake-model", None, None)
+    ]
+
+
+def test_tool_result_carries_the_workspace_file_link(monkeypatch) -> None:
+    provider = _ScriptedProvider(
+        _tool_round(_Call("call-1", "workspace-fs__read_file", '{"path": "intro.md"}')),
+        _text_round("Linked."),
+    )
+    _install_provider(monkeypatch, provider)
+    slug: dict[str, str] = {}
+
+    async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
+        _ = server, raw_name, args
+        return _file_result(slug["value"], "intro.md", "# Intro")
+
+    _install_mcp(monkeypatch, tools=[_READ], handler=handler)
+
+    with TestClient(create_app()) as client:
+        ws = _workspace(client, "Linked")
+        slug["value"] = ws["slug"]
+        events = _stream(client, ws["id"])
+
+    result = next(d for n, d in events if n == "tool_result")
+    # What WorkspaceChat.tsx turns into an Open chip — the other streams always
+    # sent it; this one dropped it.
+    assert result["link"] == {"slug": ws["slug"], "path": "intro.md"}
+
+
+def test_tool_less_turn_is_trimmed_to_the_context_budget(monkeypatch) -> None:
+    from precursor.backend.services import conversation_turn
+
+    provider = _ScriptedProvider(_text_round("short"))
+    _install_provider(monkeypatch, provider)
+    _install_mcp(monkeypatch)
+
+    async def _tiny_budget(_session: object) -> int:
+        return 1
+
+    monkeypatch.setattr(conversation_turn, "resolve_llm_max_input_tokens", _tiny_budget)
+
+    with TestClient(create_app()) as client:
+        ws = _workspace(client, "Budget")
+        _stream(
+            client,
+            ws["id"],
+            content="latest question",
+            history=[
+                {"role": "user" if i % 2 == 0 else "assistant", "content": f"old turn {i} " * 50}
+                for i in range(10)
+            ],
+        )
+
+    # The budget keeps only the newest turn next to the system prompt; before,
+    # a turn with no tools enabled sent the whole history regardless.
+    sent = provider.calls[0]["messages"]
+    assert [(m.role, m.content) for m in sent[1:]] == [("user", "latest question")]
