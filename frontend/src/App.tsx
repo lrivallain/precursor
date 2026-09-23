@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUpRight,
-  Archive as ArchiveIcon,
-  ChevronLeft,
   ChevronRight,
   ExternalLink,
   FileText,
-  Loader2,
   Menu,
   MessagesSquare,
   Pin,
   PinOff,
-  Play,
   Search,
   Settings as SettingsIcon,
-  Square,
-  Trash2,
   X,
 } from "lucide-react";
 import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
@@ -45,11 +38,14 @@ import { WorkspaceList } from "./components/WorkspaceList";
 import { LiveList } from "./components/LiveList";
 import { LiveView } from "./components/LiveView";
 import { LiveStartHero } from "./components/LiveStartHero";
-import { AgentSettingsPanel } from "./components/AgentSettingsPanel";
-import { AgentStatusBadge } from "./components/AgentStatusBadge";
-import { AgentView } from "./components/AgentView";
-import { AgentDashboard } from "./components/AgentDashboard";
-import { AgentList } from "./components/AgentList";
+import {
+  AgentRunErrorBanner,
+  AgentSettingsModal,
+  AgentsHeader,
+  AgentsHomeSurface,
+  AgentsMain,
+  AgentsSidebarList,
+} from "./components/AgentsSection";
 import { WorkflowsSection } from "./components/WorkflowsSection";
 import { WorkflowSidebarList } from "./components/WorkflowSidebarList";
 import { PersonaMenu } from "./components/PersonaMenu";
@@ -62,9 +58,8 @@ import { ReminderModal } from "./components/ReminderModal";
 import { api } from "./lib/api";
 import { Z_INDEX } from "./lib/constants";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
-import { coalesce, eventBus } from "./lib/events";
+import { eventBus } from "./lib/events";
 import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
-import { agentCanStart, agentsWaitingCount } from "./lib/agents";
 import { skillsStore } from "./lib/skillsStore";
 import { rolesStore } from "./lib/rolesStore";
 import { useSettings, useSettingsReady } from "./lib/settingsStore";
@@ -73,10 +68,11 @@ import { useIssueContext } from "./lib/useIssueContext";
 import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { useWorkflowCollection } from "./lib/useWorkflowCollection";
+import { useAgentsController } from "./lib/useAgentsController";
+import { windowFocused } from "./lib/windowFocus";
 import { openNotes } from "./lib/notesOpen";
 import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLink";
 import type {
-  AgentSession,
   Chat,
   Collection,
   MeetingSession,
@@ -92,7 +88,6 @@ import {
   writeStoredCollectionId,
 } from "./lib/collections";
 import {
-  agentUrl,
   chatUrl,
   isHomePath,
   isPluginMode,
@@ -101,7 +96,6 @@ import {
   parseAppRoute,
   parseWsRoute,
   pluginSectionUrl,
-  resolveAgentRef,
   searchTermFromUrl,
   topicsModeUrl,
   topicUrl,
@@ -123,30 +117,6 @@ const WORKFLOW_NOTICES: Record<string, string> = {
   completed: "✅ Workflow finished.",
   failed: "⚠️ Workflow failed.",
 };
-
-// Agent statuses that represent a finished/paused turn (not actively running).
-// Used to re-mark the actively-viewed agent read once per turn rather than on
-// every streamed event.
-const AGENT_SETTLED_STATUSES = new Set([
-  "idle",
-  "completed",
-  "failed",
-  "cancelled",
-  "interrupted",
-  "needs_approval",
-]);
-
-// Auto-marking a conversation read on an *incoming* reply should only happen in
-// the tab the user is actually looking at. A tab merely left open on a
-// conversation in the background must not clear the unread for everyone (read
-// state is shared server-side) — otherwise a reply that arrives while you're in
-// another tab/app never shows as unread. Explicit actions (clicking a
-// conversation open) mark read regardless; this gate is only for event-driven
-// auto-marks. Mirrors the standard "unread accrues while the window isn't
-// focused" behaviour (and how maybeNotify already keys off focus).
-function windowFocused(): boolean {
-  return typeof document !== "undefined" && document.hasFocus();
-}
 
 // Bare-key shortcuts (like "/") must never steal a keystroke the user meant to
 // type, so they're ignored while focus sits in any editable control — including
@@ -186,7 +156,6 @@ export default function App() {
   const [chatListReloadKey, setChatListReloadKey] = useState(0);
   const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
-  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   // Core categories plus, via `SectionHost.openSettings`, a plugin page's tab id
   // (`plugin:<id>` — see SettingsPanel), which is why this isn't a closed union.
@@ -215,32 +184,6 @@ export default function App() {
     const r = parseAppRoute();
     return { segments: r.pluginSegments, hash: r.pluginHash };
   });
-  // Agents are loaded lazily when the user first enters agents mode.
-  const [agents, setAgents] = useState<AgentSession[] | null>(null);
-  const [showWorkflowAgents, setShowWorkflowAgents] = useState(true);
-  const [agentsError, setAgentsError] = useState<string | null>(null);
-  const [startingAgentIds, setStartingAgentIds] = useState<Set<number>>(() => new Set());
-  const [agentRunError, setAgentRunError] = useState<{ agentId: number; message: string } | null>(null);
-  const [activeAgentId, setActiveAgentId] = useState<number | null>(
-    // A legacy integer ref resolves immediately; a UUID waits for the list.
-    () => resolveAgentRef(parseAppRoute().agentRef, null),
-  );
-  // A URL UUID we couldn't resolve yet (agent list not loaded). Resolved once
-  // the sessions arrive. Initialised from the entry URL.
-  const pendingAgentRef = useRef<string | null>(
-    (() => {
-      const ref = parseAppRoute().agentRef;
-      return ref && !/^\d+$/.test(ref) ? ref : null;
-    })(),
-  );
-  // Topic to preselect in the new-agent form, set when "/agent" (no prompt) is
-  // run from a topic. Cleared once consumed.
-  const [agentDraftTopicId, setAgentDraftTopicId] = useState<number | null>(null);
-  // When nothing is selected, agents mode shows the fleet dashboard rather than
-  // the start composer. This flag flips to the composer when the user hits
-  // "New agent"; it resets to the dashboard whenever an agent is selected or we
-  // leave agents mode.
-  const [agentComposerOpen, setAgentComposerOpen] = useState(false);
   // Selection and editor state are shared by the workflow sidebar and main pane.
   const [activeWorkflowId, setActiveWorkflowId] = useState<number | null>(
     () => parseAppRoute().workflowRef,
@@ -293,13 +236,6 @@ export default function App() {
   // Total unread across chats, lifted from ChatList so the mode switcher can
   // badge the Chats tab even when that list isn't mounted.
   const [chatsUnread, setChatsUnread] = useState(0);
-  // Previous per-agent unread counts, so loadAgents can detect background
-  // completions and fire a browser notification for newly-unread sessions.
-  const agentUnreadRef = useRef<Map<number, number> | null>(null);
-  // Previous per-agent status, so loadAgents can detect a transition INTO
-  // needs_approval and fire the out-of-band "an agent is waiting for you"
-  // signal (idea 5) that deep-links to the blocked agent.
-  const agentStatusRef = useRef<Map<number, string> | null>(null);
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [sidebarReminder, setSidebarReminder] = useState<{
@@ -354,11 +290,6 @@ export default function App() {
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsRuntimeStarted = settings?.agents_runtime_started ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
-  // Two async gaps sit between opening an agents surface and having something
-  // to show: settings (which decide whether the feature is on at all) and the
-  // session list. Both default to "off"/"empty", so rendering them straight
-  // through flashes "Agents mode is off", then the start form, then the fleet.
-  const agentsBooting = !settingsReady || (agentsEnabled && agents === null && !agentsError);
   const workflowCollection = useWorkflowCollection(
     agentsEnabled && sidebarMode === "workflows" && !atHome,
     workflowReloadKey,
@@ -367,24 +298,6 @@ export default function App() {
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
 
   const confirmAction = useConfirm();
-  // The currently-selected agent session, surfaced in the shared header.
-  const activeAgent = useMemo(
-    () => (agents ?? []).find((a) => a.id === activeAgentId) ?? null,
-    [agents, activeAgentId],
-  );
-  const agentRunDisabledReason = !agentsEnabled
-    ? "Agents mode is off"
-    : !agentsAvailable
-      ? agentsUnavailableReason || "The Copilot runtime is unavailable"
-      : !agentsRuntimeStarted
-        ? "The Copilot runtime did not start. Open Settings to recover it."
-        : activeAgent && startingAgentIds.has(activeAgent.id)
-          ? "Starting agent..."
-          : activeAgent?.status === "interrupted"
-            ? "Resume the interrupted turn from the timeline"
-            : activeAgent && !agentCanStart(activeAgent)
-              ? "Agent is already active"
-              : null;
 
   // Mirror activeTopic into a ref so the onComplete callback (set up once)
   // can read the current value without resubscribing on every change.
@@ -398,24 +311,6 @@ export default function App() {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
-
-  // Mirror activeAgentId into a ref so changeMode can build the agents URL.
-  const activeAgentIdRef = useRef<number | null>(activeAgentId);
-  useEffect(() => {
-    activeAgentIdRef.current = activeAgentId;
-  }, [activeAgentId]);
-
-  // Selecting an agent (or landing on one via a deep link) drops the transient
-  // "start composer" state so returning to /agents shows the dashboard again.
-  useEffect(() => {
-    if (activeAgentId != null) setAgentComposerOpen(false);
-  }, [activeAgentId]);
-
-  // Leaving agents mode also resets the composer flag so the next visit to
-  // /agents starts from the fleet dashboard, not a stale composer.
-  useEffect(() => {
-    if (sidebarMode !== "agents") setAgentComposerOpen(false);
-  }, [sidebarMode]);
 
   // Editors are transient; returning to a section never revives an old draft.
   useEffect(() => {
@@ -463,8 +358,8 @@ export default function App() {
     if (mode === "chats" && activeChatRef.current) {
       return { kind: "chat", id: activeChatRef.current.id };
     }
-    if (mode === "agents" && activeAgentIdRef.current != null) {
-      return { kind: "agent", id: activeAgentIdRef.current };
+    if (mode === "agents" && agentsCtl.activeAgentIdRef.current != null) {
+      return { kind: "agent", id: agentsCtl.activeAgentIdRef.current };
     }
     return null;
   }, []);
@@ -475,24 +370,6 @@ export default function App() {
     },
     [currentlyViewed],
   );
-
-  // Mirror the loaded agent list into a ref so the mount-only URL sync handler
-  // can resolve a UUID segment without re-subscribing.
-  const agentsRef = useRef<AgentSession[] | null>(agents);
-  useEffect(() => {
-    agentsRef.current = agents;
-  }, [agents]);
-
-  // Once sessions load, resolve any UUID deep link that arrived before the list
-  // was available (e.g. opening /agents/<uuid> cold).
-  useEffect(() => {
-    if (!pendingAgentRef.current || agents == null) return;
-    const id = resolveAgentRef(pendingAgentRef.current, agents);
-    if (id != null) {
-      pendingAgentRef.current = null;
-      setActiveAgentId(id);
-    }
-  }, [agents]);
 
   // `tree` holds *every* topic, not just the active collection's: it doubles as
   // the app-wide topic lookup (unread totals, notification titles, URL slug
@@ -625,32 +502,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTopic?.collection_id]);
 
-  // Reflect the total unread count in the tab title (always, independent of the
-  // notification permission/setting). Cleared title falls back to the base.
-  const topicsUnread = useMemo(() => totalUnread(tree), [tree]);
-  // Exclude the agent you're actively viewing (agents mode) from the tab total:
-  // unlike topics/chats it isn't re-marked read on every incoming event, so its
-  // backend count would otherwise keep the Agents tab badged while you watch it.
-  const agentsUnread = useMemo(() => {
-    const viewingId = sidebarMode === "agents" ? activeAgentId : null;
-    return (agents ?? []).reduce(
-      (n, a) => n + (a.id === viewingId ? 0 : (a.unread_count ?? 0)),
-      0,
-    );
-  }, [agents, activeAgentId, sidebarMode]);
-  const unreadByMode = useMemo(
-    () => ({ topics: topicsUnread, chats: chatsUnread, agents: agentsUnread }),
-    [topicsUnread, chatsUnread, agentsUnread],
-  );
-  // Agents blocked waiting for the human — surfaced as a bell in the tab title
-  // so a background approval request is visible from any other tab.
-  const agentsWaiting = useMemo(() => agentsWaitingCount(agents ?? []), [agents]);
-  useEffect(() => {
-    const n = topicsUnread + chatsUnread + agentsUnread;
-    const bell = agentsWaiting > 0 ? "🔔 " : "";
-    document.title = n > 0 ? `${bell}(${n}) ${BASE_TITLE}` : `${bell}${BASE_TITLE}`;
-  }, [topicsUnread, chatsUnread, agentsUnread, agentsWaiting]);
-
   // Mirror tree + notification setting into refs so the completion callbacks
   // (registered once) read current values without re-subscribing.
   const treeRef = useRef<TopicNode[]>(tree);
@@ -744,7 +595,7 @@ export default function App() {
 
   useEffect(() => {
     const syncFromUrl = (): void => {
-      setAgentComposerOpen(false);
+      agentsCtl.setAgentComposerOpen(false);
       setWorkflowEditor(null);
       closeMobileNav();
       // Keep the highlight term in step with the URL for reloads / back-forward.
@@ -799,14 +650,7 @@ export default function App() {
         return;
       }
       if (r.mode === "agents") {
-        const id = resolveAgentRef(r.agentRef, agentsRef.current);
-        setActiveAgentId(id);
-        if (id != null) {
-          pendingAgentRef.current = null;
-        } else {
-          // UUID not resolvable yet — stash it for the agents-load effect.
-          pendingAgentRef.current = r.agentRef;
-        }
+        agentsCtl.syncFromRoute(r);
         return;
       }
       if (r.mode === "topics") {
@@ -883,6 +727,43 @@ export default function App() {
     return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
 
+  // ---- Agents -----------------------------------------------------------
+  // Called after the mount `syncFromUrl` above so its `/agents` URL effect still
+  // runs after it: navigating first would drop `?q=` before the sync reads it.
+  // The other sections' URL effects are mode-exclusive, so running ahead of them
+  // changes nothing. The rest of the file reaches the section through this.
+  const agentsCtl = useAgentsController({
+    sidebarMode,
+    atHome,
+    settingsReady,
+    agentsEnabled,
+    agentsAvailable,
+    agentsRuntimeStarted,
+    agentsUnavailableReason,
+    notificationsEnabledRef,
+    isViewing,
+    setSidebarMode,
+    setAtHome,
+    setWsRoute,
+    closeMobileNav,
+    confirmAction,
+    confirmLeaveRecording,
+  });
+  const { activeAgentId, agentsUnread, agentsWaiting } = agentsCtl;
+
+  // Reflect the total unread count in the tab title (always, independent of the
+  // notification permission/setting). Cleared title falls back to the base.
+  const topicsUnread = useMemo(() => totalUnread(tree), [tree]);
+  const unreadByMode = useMemo(
+    () => ({ topics: topicsUnread, chats: chatsUnread, agents: agentsUnread }),
+    [topicsUnread, chatsUnread, agentsUnread],
+  );
+  useEffect(() => {
+    const n = topicsUnread + chatsUnread + agentsUnread;
+    const bell = agentsWaiting > 0 ? "🔔 " : "";
+    document.title = n > 0 ? `${bell}(${n}) ${BASE_TITLE}` : `${bell}${BASE_TITLE}`;
+  }, [topicsUnread, chatsUnread, agentsUnread, agentsWaiting]);
+
   // activeTopic -> /topics/<collection>/<…>/<slug>. pushState for a different
   // item (so back/forward walks topics); replaceState when the same item's
   // readable path merely changes — the collection prefix and ancestor chain
@@ -939,20 +820,6 @@ export default function App() {
     const target = liveUrl(active);
     if (window.location.pathname !== target) navigate(target);
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
-
-  // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
-  // canonical URL uses the public UUID; depends on `agents` so the link is
-  // rewritten from a transient integer fallback once the list resolves.
-  useEffect(() => {
-    if (atHome) return;
-    if (sidebarMode !== "agents") return;
-    // Don't clobber a deep-link URL whose agent we haven't resolved yet (the
-    // list may still be loading). Overwriting it with "/agents" here would also
-    // drop the UUID before the agents-load effect can resolve it.
-    if (activeAgentId == null && pendingAgentRef.current) return;
-    const target = agentUrl(activeAgentId, agents);
-    if (window.location.pathname !== target) navigate(target);
-  }, [activeAgentId, sidebarMode, agents, atHome]);
 
   // activeWorkflowId (+ run seg) -> /workflows/<id>[/run/<n|latest>] (or
   // /workflows for the gallery). A workflow id change is a navigation (pushState
@@ -1055,25 +922,6 @@ export default function App() {
     activeSessionId,
   ]);
 
-
-  useEffect(() => {
-    function onOpenAgent(e: Event): void {
-      const detail = (e as CustomEvent<{ id: number | null; topicId?: number }>).detail;
-      const id = detail?.id ?? null;
-      // A null id opens the new-agent form; carry the topic so it's preselected.
-      setAgentDraftTopicId(id == null ? (detail?.topicId ?? null) : null);
-      pendingAgentRef.current = null;
-      setActiveAgentId(id);
-      setAgentComposerOpen(id == null);
-      setAtHome(false);
-      closeMobileNav();
-      setWsRoute({ open: false, slug: null, path: null });
-      setSidebarMode("agents");
-    }
-    window.addEventListener("precursor:open-agent", onOpenAgent);
-    return () => window.removeEventListener("precursor:open-agent", onOpenAgent);
-  }, []);
-
   // While a live session is recording, confirm before any in-app navigation
   // that would unmount the LiveView and stop the capture. Resolves immediately
   // when nothing is recording, so guarded handlers are unchanged off the happy
@@ -1113,9 +961,7 @@ export default function App() {
       setActiveSessionId(null);
       target = "/live";
     } else if (next === "agents") {
-      pendingAgentRef.current = null;
-      setActiveAgentId(null);
-      setAgentComposerOpen(false);
+      agentsCtl.enterOverview();
       target = "/agents";
     } else if (next === "workflows") {
       setActiveWorkflowId(null);
@@ -1133,17 +979,6 @@ export default function App() {
     setSidebarMode(next);
     // These section buttons explicitly select the overview, like a list item.
     if (next === "agents" || next === "workflows") closeMobileNav();
-  }
-
-  async function openAgent(id: number | null): Promise<void> {
-    if (!(await confirmLeaveRecording())) return;
-    pendingAgentRef.current = null;
-    setAtHome(false);
-    setWsRoute({ open: false, slug: null, path: null });
-    setAgentComposerOpen(id == null);
-    setActiveAgentId(id);
-    setSidebarMode("agents");
-    closeMobileNav();
   }
 
   async function openWorkflow(id: number | null): Promise<void> {
@@ -1189,9 +1024,7 @@ export default function App() {
       navigate("/live");
       setSidebarMode("live");
     } else if (mode === "agents") {
-      pendingAgentRef.current = null;
-      setActiveAgentId(null);
-      setAgentComposerOpen(true);
+      agentsCtl.startNew();
       navigate("/agents");
       setSidebarMode("agents");
     } else if (mode === "workflows") {
@@ -1239,14 +1072,6 @@ export default function App() {
     await loadMeetingSessions();
     setActiveSessionId(session.id);
     navigate(liveUrl(session));
-  }
-
-  // The "New agent" card's inline start form calls this once the agent exists.
-  function selectAgentFromHome(id: number | null): void {
-    if (id == null) return;
-    setAtHome(false);
-    setSidebarMode("agents");
-    setActiveAgentId(id);
   }
 
   // Global ⌘K / Ctrl+K toggles the command palette — a width-independent way to
@@ -1348,28 +1173,6 @@ export default function App() {
   // are filtered out inside the bus.
   useEffect(() => {
     eventBus.start();
-    // A running agent emits SDK events at token cadence and each one lands here
-    // as `agent.changed`. Coalesce the roster refresh so a burst costs one
-    // `/api/agents` round-trip per window rather than one per event.
-    const refreshAgents = coalesce(async () => {
-      const list = await loadAgents();
-      // Keep the session the user is actively viewing marked read as it
-      // produces output, so its badge doesn't resurrect when they navigate
-      // away (mirrors how a chat/topic is re-marked read on turn completion).
-      // Gate on a settled status so we mark once per turn, not per streamed
-      // event; markAgentRead doesn't publish, so this can't loop.
-      const activeId = activeAgentIdRef.current;
-      if (activeId == null || !isViewing("agent", activeId) || !windowFocused()) return;
-      const active = list.find((a) => a.id === activeId);
-      if (active && active.unread_count > 0 && AGENT_SETTLED_STATUSES.has(active.status)) {
-        try {
-          await api.agents.markRead(activeId);
-          await loadAgents();
-        } catch {
-          // non-fatal
-        }
-      }
-    });
     const off = eventBus.subscribe((event) => {
       if (event.type === "topic.changed") {
         void refreshTree();
@@ -1471,25 +1274,20 @@ export default function App() {
         // section's unread state so this tab's badge + counter clear in sync.
         // This never re-marks anything, so it can't loop with the active-view
         // read logic.
+        //
+        // The agents controller refreshes its own section on an agent id.
         if (event.chat_id != null) {
           setChatListReloadKey((k) => k + 1);
           void refreshChatsUnread();
-        } else if (event.agent_session_id != null) {
-          refreshAgents();
-        } else {
+        } else if (event.agent_session_id == null) {
           void refreshTree();
         }
-      } else if (event.type === "agent.changed") {
-        // An agent session was created, advanced, or finished (possibly in the
-        // background). Refresh the list so statuses/badges stay current; the
-        // AgentView refreshes its own timeline.
-        refreshAgents();
       } else if (event.type === "workflow.changed") {
         // A workflow was created, advanced a step, or finished (possibly in the
         // background via the coordinator). Bump the reload key so the cockpit
-        // re-fetches; the WorkflowsSection owns its own collection.
+        // re-fetches; the WorkflowsSection owns its own collection. The agents
+        // controller refreshes the roster from the same event.
         setWorkflowReloadKey((k) => k + 1);
-        refreshAgents();
         maybeNotifyWorkflow(
           event.workflow_id ?? null,
           event.workflow_status ?? null,
@@ -1504,7 +1302,6 @@ export default function App() {
     });
     return () => {
       off();
-      refreshAgents.cancel();
     };
   }, []);
 
@@ -1528,7 +1325,7 @@ export default function App() {
             await refreshTree();
           } else {
             await api.agents.markRead(v.id);
-            await loadAgents();
+            await agentsCtl.loadAgents();
           }
         } catch {
           // non-fatal
@@ -1591,56 +1388,6 @@ export default function App() {
     openNotes("chat", chat.id);
   }
 
-  async function handleRenameAgent(id: number, title: string): Promise<void> {
-    await api.agents.rename(id, title);
-    await loadAgents();
-  }
-
-  async function handleArchiveAgents(ids: number[]): Promise<void> {
-    await Promise.all(ids.map((id) => api.agents.archive(id)));
-    if (activeAgentId != null && ids.includes(activeAgentId)) setActiveAgentId(null);
-    await loadAgents();
-  }
-
-  async function handleStopAgent(id: number): Promise<void> {
-    await api.agents.cancel(id);
-    await loadAgents();
-  }
-
-  async function handleRunAgent(agent: AgentSession): Promise<void> {
-    if (!agentsEnabled || !agentsAvailable || !agentCanStart(agent) || startingAgentIds.has(agent.id)) {
-      return;
-    }
-    setStartingAgentIds((ids) => new Set(ids).add(agent.id));
-    setAgentRunError(null);
-    try {
-      await api.agents.start(agent.id);
-      await loadAgents();
-    } catch (e) {
-      setAgentRunError({ agentId: agent.id, message: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setStartingAgentIds((ids) => {
-        const next = new Set(ids);
-        next.delete(agent.id);
-        return next;
-      });
-    }
-  }
-
-  async function handleDeleteAgent(agent: AgentSession): Promise<void> {
-    if (
-      !(await confirmAction({
-        message: `Delete agent “${agent.title}”? Its session state is discarded.`,
-        confirmLabel: "Delete",
-        variant: "danger",
-      }))
-    )
-      return;
-    await api.agents.remove(agent.id);
-    if (activeAgentId === agent.id) setActiveAgentId(null);
-    await loadAgents();
-  }
-
   async function handleSelectChat(chat: Chat): Promise<void> {
     closeMobileNav();
     setActiveChat(chat);
@@ -1674,7 +1421,7 @@ export default function App() {
         await handleSelectChat(await api.chats.get(result.entity_id));
       } else if (result.section === "agents") {
         setSidebarMode("agents");
-        setActiveAgentId(result.entity_id);
+        agentsCtl.setActiveAgentId(result.entity_id);
       } else if (result.section === "live") {
         setSidebarMode("live");
         // Ensure the session list is loaded so the URL-sync effect can resolve
@@ -1784,11 +1531,7 @@ export default function App() {
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
-    else if (sidebarMode === "agents") {
-      pendingAgentRef.current = null;
-      setActiveAgentId(null);
-      setAgentComposerOpen(true);
-    }
+    else if (sidebarMode === "agents") agentsCtl.startNew();
     else if (sidebarMode === "workflows") {
       setActiveWorkflowId(null);
       setActiveWorkflowRunSeg(null);
@@ -1891,9 +1634,9 @@ export default function App() {
       setWorkspaces((prev) =>
         prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
       );
-    } else if (sidebarMode === "agents" && activeAgent) {
-      const updated = await api.agents.update(activeAgent.id, { role_id: roleId });
-      setAgents((prev) =>
+    } else if (sidebarMode === "agents" && agentsCtl.activeAgent) {
+      const updated = await api.agents.update(agentsCtl.activeAgent.id, { role_id: roleId });
+      agentsCtl.setAgents((prev) =>
         prev ? prev.map((a) => (a.id === updated.id ? updated : a)) : prev,
       );
     }
@@ -1992,86 +1735,6 @@ export default function App() {
     await loadMeetingSessions();
   }
 
-  // ---- Agents -----------------------------------------------------------
-  async function loadAgents(): Promise<AgentSession[]> {
-    try {
-      const list = await api.agents.list();
-      // Notify for sessions whose unread grew since the last load — i.e. a
-      // background/scheduled agent produced a new reply — skipping the very
-      // first load and whichever session is currently open. Mirrors how a
-      // finished topic turn notifies (see maybeNotify).
-      const prev = agentUnreadRef.current;
-      if (prev && notificationsEnabledRef.current) {
-        for (const a of list) {
-          const before = prev.get(a.id) ?? 0;
-          if (a.unread_count > before && a.id !== activeAgentIdRef.current) {
-            notifyIfUnfocused({
-              title: a.title,
-              body: "Agent has a new update.",
-              tag: `precursor-agent-${a.id}`,
-            });
-          }
-        }
-      }
-      // Out-of-band waiting signal: fire once when an agent transitions INTO
-      // needs_approval, even if the user is looking at another part of the app,
-      // so a blocked background agent never stalls unnoticed. Clicking jumps
-      // straight to it.
-      const prevStatus = agentStatusRef.current;
-      if (prevStatus && notificationsEnabledRef.current) {
-        for (const a of list) {
-          const was = prevStatus.get(a.id);
-          if (
-            a.status === "needs_approval" &&
-            was != null &&
-            was !== "needs_approval" &&
-            a.id !== activeAgentIdRef.current
-          ) {
-            const detail = a.pending_permission?.title;
-            notifyNow({
-              title: `🔔 ${a.title} needs approval`,
-              body: detail ? `Waiting on: ${detail}` : "An agent is blocked waiting for you.",
-              tag: `precursor-agent-approval-${a.id}`,
-              requireInteraction: true,
-              onClick: () => {
-                setSidebarMode("agents");
-                setActiveAgentId(a.id);
-              },
-            });
-          }
-        }
-      }
-      agentUnreadRef.current = new Map(list.map((a) => [a.id, a.unread_count ?? 0]));
-      agentStatusRef.current = new Map(list.map((a) => [a.id, a.status]));
-      setAgentsError(null);
-      setAgents(list);
-      return list;
-    } catch (err) {
-      setAgentsError(err instanceof Error ? err.message : "Could not load agents.");
-      return agentsRef.current ?? [];
-    }
-  }
-
-  // Mark the active agent read (and refresh badges) whenever it changes to a
-  // real session — covers list clicks, the AgentView, deep links and route
-  // sync in one place. markAgentRead doesn't publish, so this can't loop.
-  useEffect(() => {
-    if (activeAgentId == null) return;
-    void api.agents.markRead(activeAgentId)
-      .then(() => loadAgents())
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAgentId]);
-
-  // Load agent sessions as soon as the feature is known-enabled (independent of
-  // the current mode) so the mode-switcher badge and background completion
-  // notifications work from anywhere, not just inside agents mode.
-  useEffect(() => {
-    if (!agentsEnabled || agents !== null) return;
-    void loadAgents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentsEnabled]);
-
   // Reveal the inline "new topic" form in the main pane (the Topics empty
   // state). Top-level "+ create" passes null; if a topic is selected the new one
   // nests under it. Per-node "+ child" buttons pass their own id explicitly.
@@ -2119,9 +1782,9 @@ export default function App() {
           onNavigate={changeMode}
           onGoHome={goHome}
           onOpenResult={openSearchResult}
-          agents={agents ?? []}
+          agents={agentsCtl.agents ?? []}
           onOpenAgent={(id) => {
-            void openAgent(id);
+            void agentsCtl.openAgent(id);
             setPaletteOpen(false);
           }}
           liveEnabled={liveEnabled}
@@ -2231,18 +1894,9 @@ export default function App() {
           />
         }
         agentSlot={
-          <AgentList
-            agents={agents ?? []}
-            showWorkflowAgents={showWorkflowAgents}
-            onShowWorkflowAgentsChange={setShowWorkflowAgents}
-            activeId={agentComposerOpen ? null : activeAgentId}
-            overviewSelected={activeAgentId == null && !agentComposerOpen}
-            loading={agentsBooting}
-            enabled={agentsEnabled}
-            error={agentsEnabled ? agentsError : null}
-            onRetry={() => void loadAgents()}
+          <AgentsSidebarList
+            controller={agentsCtl}
             onOverview={() => void changeMode("agents")}
-            onSelect={(id) => void openAgent(id)}
           />
         }
         workflowSlot={
@@ -2490,135 +2144,19 @@ export default function App() {
           ) : sidebarMode === "workflows" ? (
             <span className="truncate font-medium min-w-0 flex-1">Workflows</span>
           ) : (
-            <>
-              {activeAgent ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void changeMode("agents")}
-                    className="group inline-flex shrink-0 items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-                    data-tooltip="Back to the agents dashboard"
-                    aria-label="Back to all agents"
-                  >
-                    <ChevronLeft size={14} />
-                    <span>All agents</span>
-                  </button>
-                  <InlineTitle
-                    title={activeAgent.title}
-                    onRename={(t) => handleRenameAgent(activeAgent.id, t)}
-                    className="truncate font-medium min-w-0 flex-1"
-                    inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
-                  />
-                  <AgentStatusBadge status={activeAgent.status} />
-                  {activeAgent.topic_id != null && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const tid = activeAgent.topic_id;
-                        if (tid == null) return;
-                        changeMode("topics");
-                        void handleSelect(tid);
-                      }}
-                      className="group inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-                      data-tooltip="Open the associated topic"
-                    >
-                      <MessagesSquare size={12} />
-                      <span className="max-w-[12rem] truncate">
-                        {findTitle(tree, activeAgent.topic_id) ?? "Topic"}
-                      </span>
-                      <ArrowUpRight
-                        size={12}
-                        className="opacity-60 transition group-hover:opacity-100"
-                      />
-                    </button>
-                  )}
-                  <button
-                    className="p-2 rounded hover:bg-surface shrink-0"
-                    aria-label="Agent settings"
-                    data-tooltip="Agent settings"
-                    onClick={() => setAgentSettingsOpen(true)}
-                  >
-                    <SettingsIcon size={18} />
-                  </button>
-                  <button
-                    type="button"
-                    className="p-2 rounded hover:bg-surface shrink-0 text-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                    aria-label="Run agent"
-                    aria-busy={startingAgentIds.has(activeAgent.id)}
-                    data-tooltip={agentRunDisabledReason ?? "Run the agent's saved task"}
-                    disabled={agentRunDisabledReason !== null}
-                    onClick={() => void handleRunAgent(activeAgent)}
-                  >
-                    {startingAgentIds.has(activeAgent.id)
-                      ? <Loader2 size={18} className="animate-spin" />
-                      : <Play size={18} />}
-                  </button>
-                  {(activeAgent.status === "running" ||
-                    activeAgent.status === "pending" ||
-                    activeAgent.status === "needs_approval") && (
-                    <button
-                      className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
-                      aria-label="Stop agent"
-                      data-tooltip="Stop agent"
-                      onClick={() => void handleStopAgent(activeAgent.id)}
-                    >
-                      <Square size={18} />
-                    </button>
-                  )}
-                  <button
-                    className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-foreground"
-                    aria-label="Archive agent"
-                    data-tooltip="Archive agent"
-                    onClick={() => void handleArchiveAgents([activeAgent.id])}
-                  >
-                    <ArchiveIcon size={18} />
-                  </button>
-                  <button
-                    className="p-2 rounded hover:bg-surface shrink-0 text-muted hover:text-red-500"
-                    aria-label="Delete agent"
-                    data-tooltip="Delete agent"
-                    onClick={() => void handleDeleteAgent(activeAgent)}
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </>
-              ) : agentComposerOpen && (agents?.length ?? 0) > 0 ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setAgentComposerOpen(false)}
-                    className="group inline-flex shrink-0 items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-600 hover:bg-violet-500/20 dark:text-violet-300"
-                    data-tooltip="Back to the agents dashboard"
-                    aria-label="Back to all agents"
-                  >
-                    <ChevronLeft size={14} />
-                    <span>All agents</span>
-                  </button>
-                  <span className="truncate font-medium min-w-0 flex-1">
-                    New agent
-                  </span>
-                </>
-              ) : (
-                <span className="truncate font-medium min-w-0 flex-1">Agents</span>
-              )}
-            </>
+            <AgentsHeader
+              controller={agentsCtl}
+              tree={tree}
+              onOverview={() => void changeMode("agents")}
+              onOpenTopic={(tid) => {
+                changeMode("topics");
+                void handleSelect(tid);
+              }}
+            />
           )}
         </header>
 
-        {!atHome && sidebarMode === "agents" && agentRunError && agentRunError.agentId === activeAgent?.id && (
-          <div role="alert" className="flex items-center gap-2 border-b border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-500">
-            <span className="min-w-0 flex-1">Could not run agent: {agentRunError.message}</span>
-            <button
-              type="button"
-              onClick={() => setAgentRunError(null)}
-              className="shrink-0 rounded p-1 hover:bg-red-500/10"
-              aria-label="Dismiss run error"
-              data-tooltip="Dismiss run error"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
+        {!atHome && sidebarMode === "agents" && <AgentRunErrorBanner controller={agentsCtl} />}
 
         <McpAuthBanner />
 
@@ -2664,18 +2202,7 @@ export default function App() {
                 <LiveStartHero topics={tree} collections={collections} onCreated={createLiveFromHome} />
               }
               agentSurface={
-                <AgentView
-                  agents={agents ?? []}
-                  agentId={null}
-                  enabled={agentsEnabled}
-                  loading={agentsBooting}
-                  available={agentsAvailable}
-                  runtimeStarted={agentsRuntimeStarted}
-                  onReload={() => void loadAgents()}
-                  onSelect={selectAgentFromHome}
-                  onOpenSettings={openAgentSettings}
-                  draftTopicId={null}
-                />
+                <AgentsHomeSurface controller={agentsCtl} onOpenSettings={openAgentSettings} />
               }
             />
           ) : sidebarMode === "topics" ? (
@@ -2821,45 +2348,13 @@ export default function App() {
               onNavigate={(id) => void openWorkflow(id)}
               onRunSegChange={setActiveWorkflowRunSeg}
               onOpenSettings={openAgentSettings}
-              onOpenAgent={(id) => void openAgent(id)}
-            />
-          ) : agentsEnabled && agentsError && agents === null ? (
-            <div role="alert" className="p-6 text-sm">
-              <p>{agentsError}</p>
-              <button type="button" onClick={() => void loadAgents()} className="mt-3 rounded border border-border px-3 py-1.5 hover:bg-surface">
-                Retry
-              </button>
-            </div>
-          ) : agentsEnabled &&
-            agentsAvailable &&
-            agentsRuntimeStarted &&
-            !agentsBooting &&
-            activeAgentId == null &&
-            !agentComposerOpen ? (
-            <AgentDashboard
-              agents={agents ?? []}
-              showWorkflowAgents={showWorkflowAgents}
-              onShowWorkflowAgentsChange={setShowWorkflowAgents}
-              onSelect={(id) => void openAgent(id)}
-              onNew={() => setAgentComposerOpen(true)}
-              onImported={(result) => {
-                void loadAgents();
-                if (result.agent_id != null) void openAgent(result.agent_id);
-              }}
-              onOpenWorkflow={(id) => void openWorkflow(id)}
+              onOpenAgent={(id) => void agentsCtl.openAgent(id)}
             />
           ) : (
-            <AgentView
-              agents={agents ?? []}
-              agentId={activeAgentId}
-              enabled={agentsEnabled}
-              loading={agentsBooting}
-              available={agentsAvailable}
-              runtimeStarted={agentsRuntimeStarted}
-              onReload={() => void loadAgents()}
-              onSelect={(id) => void openAgent(id)}
+            <AgentsMain
+              controller={agentsCtl}
+              onOpenWorkflow={(id) => void openWorkflow(id)}
               onOpenSettings={openAgentSettings}
-              draftTopicId={agentDraftTopicId}
               onSetRole={setRoleForActive}
             />
           )}
@@ -2926,32 +2421,10 @@ export default function App() {
         />
       )}
 
-      {agentSettingsOpen && activeAgent && (
-        <AgentSettingsPanel
-          agent={activeAgent}
-          onClose={() => setAgentSettingsOpen(false)}
-          onSaved={(updated) => {
-            setAgents((prev) =>
-              (prev ?? []).map((a) => (a.id === updated.id ? updated : a)),
-            );
-            setAgentSettingsOpen(false);
-          }}
-          onArchived={() => {
-            setAgentSettingsOpen(false);
-            if (activeAgentId === activeAgent.id) setActiveAgentId(null);
-            void loadAgents();
-          }}
-          onDeleted={() => {
-            setAgentSettingsOpen(false);
-            if (activeAgentId === activeAgent.id) setActiveAgentId(null);
-            void loadAgents();
-          }}
-          onOpenWorkflow={(workflowId) => {
-            setAgentSettingsOpen(false);
-            void openWorkflow(workflowId);
-          }}
-        />
-      )}
+      <AgentSettingsModal
+        controller={agentsCtl}
+        onOpenWorkflow={(workflowId) => void openWorkflow(workflowId)}
+      />
 
       {createWorkspaceOpen && (
         <CreateWorkspaceModal
@@ -2980,10 +2453,10 @@ export default function App() {
             if (activeChat?.id === id) setActiveChat(null);
             setChatListReloadKey((k) => k + 1);
           }}
-          onAgentRestored={() => void loadAgents()}
+          onAgentRestored={() => void agentsCtl.loadAgents()}
           onAgentDeleted={(id) => {
-            if (activeAgentId === id) setActiveAgentId(null);
-            void loadAgents();
+            if (agentsCtl.activeAgentId === id) agentsCtl.setActiveAgentId(null);
+            void agentsCtl.loadAgents();
           }}
           onWorkflowsChanged={() => setWorkflowReloadKey((k) => k + 1)}
           onSessionRestored={() => void loadMeetingSessions()}
