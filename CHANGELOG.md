@@ -461,6 +461,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **A failed MCP connect now names its cause.** When a remote server could not
+  be reached, for example an Agent 365 endpoint timing out, the server card and
+  the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup
+  (1 sub-exception)`. They now show the underlying error, such as
+  `ConnectTimeout`. The WorkIQ keep-alive's renewal trace does the same.
 - **Stopping the workspace assistant no longer throws away its reply.** Topics
   and chats keep whatever streamed before you pressed Stop and mark it
   `_(stopped)_`. The workspace assistant cancelled the request instead, which

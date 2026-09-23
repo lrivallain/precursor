@@ -115,9 +115,13 @@ def _describe_exception(exc: BaseException) -> str:
             for sub in node.exceptions:
                 _walk(sub)
             return
-        text = _leaf_text(node)
-        if text not in leaves:
-            leaves.append(text)
+        # A timeout reaches here as ``ConnectTimeout`` chained onto anyio's
+        # deadline cancellation, whose "Cancelled via cancel scope …" text is the
+        # mechanism, not the cause. Keep walking past it without reporting it.
+        if not isinstance(node, asyncio.CancelledError):
+            text = _leaf_text(node)
+            if text not in leaves:
+                leaves.append(text)
         for chained in (node.__cause__, node.__context__):
             _walk(chained)
 
@@ -950,7 +954,9 @@ class MCPClientManager:
                 self.mark_auth_required(name)
             else:
                 entry.state = "error"
-                entry.error = str(exc)
+                # ``str()`` of the SDK's task-group wrapper is just "unhandled
+                # errors in a TaskGroup" — useless on the card and in the log.
+                entry.error = _describe_exception(exc)
             logger.warning("MCP session for %s failed: %s", name, entry.error)
             raise
         finally:

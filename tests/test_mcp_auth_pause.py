@@ -25,6 +25,7 @@ from precursor.backend.services.mcp.client import (
 )
 from precursor.backend.services.mcp.workiq_preview import (
     WorkIQAuthRequiredError,
+    _short_error,
     _SuppressExpectedAuthError,
 )
 
@@ -103,6 +104,62 @@ def test_describe_exception_handles_cycles() -> None:
     err = RuntimeError("looping")
     err.__context__ = err  # must not loop forever
     assert _describe_exception(err) == "looping"
+
+
+def _connect_timeout_group() -> BaseExceptionGroup:
+    """The shape a stalled streamable-HTTP connect raises on MCP 2.
+
+    ``httpx2.ConnectTimeout`` (empty message) chained onto anyio's deadline
+    cancellation, wrapped in the SDK's task group.
+    """
+    import httpx2
+
+    timeout = httpx2.ConnectTimeout("")
+    timeout.__context__ = asyncio.CancelledError(
+        "Cancelled via cancel scope 10a5d7cf0; reason: deadline exceeded"
+    )
+    return BaseExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [timeout])
+
+
+def test_describe_exception_names_a_timeout_not_its_cancellation() -> None:
+    assert _describe_exception(_connect_timeout_group()) == "ConnectTimeout"
+
+
+def test_short_error_unwraps_task_group() -> None:
+    assert _short_error(_connect_timeout_group()) == "ConnectTimeout"
+    assert _short_error(RuntimeError("boom")) == "RuntimeError: boom"
+    assert _short_error(ValueError()) == "ValueError"
+
+
+async def test_open_transport_failure_records_the_real_cause(monkeypatch) -> None:
+    """A failed connect must not surface anyio's opaque group wrapper.
+
+    The card (and the "MCP session for … failed" log) showed only "unhandled
+    errors in a TaskGroup (1 sub-exception)" for an Agent 365 connect timeout.
+    """
+    from contextlib import asynccontextmanager
+
+    from precursor.backend.services.mcp import client as client_mod
+
+    @asynccontextmanager
+    async def _stalled_session(url: str, **_kwargs: object):
+        raise _connect_timeout_group()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(client_mod, "streamable_http_session", _stalled_session)
+    manager = MCPClientManager()
+    entry = _entry("byo", "disconnected")
+    manager._servers["byo"] = entry
+
+    raised = False
+    try:
+        async with manager._open_transport("byo"):
+            pass
+    except BaseExceptionGroup:
+        raised = True
+    assert raised
+    assert entry.state == "error"
+    assert entry.error == "ConnectTimeout"
 
 
 def _entry(name: str, state: str) -> MCPServerEntry:
