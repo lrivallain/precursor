@@ -111,7 +111,7 @@ export function useLiveSessionsController(
   }
 
   // Live sync across windows: meeting changes arrive over the shared event bus.
-  // `start()` is idempotent, so App starting it too is harmless.
+  // `start()` is idempotent, so every controller starting it is harmless.
   useEffect(() => {
     eventBus.start();
     const off = eventBus.subscribe((event) => {

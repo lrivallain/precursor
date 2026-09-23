@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Menu } from "lucide-react";
-import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
+import {
+  Sidebar,
+  SectionRail,
+  type SectionNavProps,
+  type SidebarMode,
+} from "./components/Sidebar";
 import { resolveSections } from "./lib/plugins";
 import { usePluginDescriptors } from "./lib/pluginStore";
-import type { SectionHost } from "./lib/plugins";
 import { CommandPalette } from "./components/CommandPalette";
 import { McpAuthBanner } from "./components/McpAuthBanner";
-import { SettingsPanel, pluginSettingsTab } from "./components/SettingsPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { HomePage } from "./components/HomePage";
 import { ArchivePanel } from "./components/ArchivePanel";
 import {
@@ -52,12 +56,10 @@ import { PersonaMenu } from "./components/PersonaMenu";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { useConfirm } from "./components/ConfirmDialog";
 import { TooltipProvider } from "./components/Tooltip";
-import { ReminderModal } from "./components/ReminderModal";
+import { SidebarReminderModal } from "./components/RemindersSectionParts";
 import { api } from "./lib/api";
 import { Z_INDEX } from "./lib/constants";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
-import { eventBus } from "./lib/events";
-import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
 import { rolesStore } from "./lib/rolesStore";
 import { useSettings, useSettingsReady } from "./lib/settingsStore";
@@ -71,22 +73,17 @@ import {
   useLiveSessionsController,
   useLiveSessionsLateEffects,
 } from "./lib/useLiveSessionsController";
+import { usePluginSections } from "./lib/usePluginSections";
 import { useReadSync } from "./lib/useReadSync";
+import { useRemindersController } from "./lib/useRemindersController";
 import { useSearchHighlightController } from "./lib/useSearchHighlightController";
 import { useTopicsController } from "./lib/useTopicsController";
 import { useDocumentTitle } from "./lib/useDocumentTitle";
 import { pageTitle } from "./lib/pageTitle";
 import { useWorkflowsController } from "./lib/useWorkflowsController";
 import { useWorkspacesController } from "./lib/useWorkspacesController";
-import type { ReminderItem, SearchResult } from "./lib/types";
-import {
-  isHomePath,
-  isPluginMode,
-  navigate,
-  parseAppRoute,
-  pluginSectionUrl,
-  type PluginRoute,
-} from "./lib/routes";
+import type { SearchResult } from "./lib/types";
+import { isHomePath, isPluginMode, navigate, parseAppRoute } from "./lib/routes";
 
 export default function App() {
   // The active sidebar mode. The URL path owns the mode + selection, so a deep
@@ -100,18 +97,15 @@ export default function App() {
   const [settingsCategory, setSettingsCategory] = useState<string | undefined>(
     undefined,
   );
-  // Agent setup and recovery land on the Agents category rather than making
-  // the user hunt for the relevant toggle or runtime controls.
-  const openAgentSettings = useCallback(() => {
-    setSettingsCategory("agents");
+  // Opens the global settings on a given category.
+  const openSettingsAt = useCallback((category: string) => {
+    setSettingsCategory(category);
     setGlobalSettingsOpen(true);
   }, []);
+  // Agent setup and recovery land on the Agents category rather than making
+  // the user hunt for the relevant toggle or runtime controls.
+  const openAgentSettings = useCallback(() => openSettingsAt("agents"), [openSettingsAt]);
   const [archiveOpen, setArchiveOpen] = useState(false);
-  // Route state owned by the active plugin section (opaque to core).
-  const [pluginRoute, setPluginRoute] = useState<PluginRoute>(() => {
-    const r = parseAppRoute();
-    return { segments: r.pluginSegments, hash: r.pluginHash };
-  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Vertical-nav choice, shared with the sidebar. Drives whether the home
   // launcher also shows the standalone rail ("tabs" has no standalone form).
@@ -130,30 +124,6 @@ export default function App() {
   }, [narrow]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   useGlobalShortcuts({ mobileNavOpen, setMobileNavOpen, setPaletteOpen });
-  // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
-  const [reminders, setReminders] = useState<ReminderItem[]>([]);
-  const [sidebarReminder, setSidebarReminder] = useState<{
-    container: "topic" | "chat";
-    id: number;
-  } | null>(null);
-  // Ids already seen as fired, so we only notify on newly-fired ones.
-  const seenFiredRef = useRef<Set<number>>(new Set());
-  // Conversations with a fired reminder, so their list rows can flag it.
-  const reminderTopicIds = useMemo(
-    () =>
-      new Set(
-        reminders.filter((r) => r.container === "topic" && r.topic_id != null).map((r) => r.topic_id!),
-      ),
-    [reminders],
-  );
-  const reminderChatIds = useMemo(
-    () =>
-      new Set(
-        reminders.filter((r) => r.container === "chat" && r.chat_id != null).map((r) => r.chat_id!),
-      ),
-    [reminders],
-  );
-
   useStreamVersion();
   const streamingTopicIds = streamStore.streamingIds("topic");
   const streamingChatIds = streamStore.streamingIds("chat");
@@ -229,42 +199,15 @@ export default function App() {
     [currentlyViewed],
   );
 
-  // Reload fired reminders and fire a browser notification for any that became
-  // fired since the last load (when enabled + window unfocused).
-  async function loadReminders(): Promise<void> {
-    let items: ReminderItem[];
-    try {
-      items = await api.reminders.list();
-    } catch {
-      return; // transient — keep the previous list
-    }
-    if (notificationsEnabledRef.current) {
-      for (const item of items) {
-        if (!seenFiredRef.current.has(item.id)) {
-          notifyIfUnfocused({
-            title: item.title,
-            body: item.note?.trim() ? `⏰ ${item.note.trim()}` : "⏰ Reminder",
-            tag: `precursor-reminder-${item.id}`,
-          });
-        }
-      }
-    }
-    seenFiredRef.current = new Set(items.map((i) => i.id));
-    setReminders(items);
-  }
-
-  useEffect(() => {
-    void loadReminders();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // The topics loads stay here rather than in the topics controller: this runs
   // before the mount `syncFromUrl`, so the tree and collections requests go out
   // ahead of any topic URL it resolves. That order decides whether a deep link
   // that fails to resolve stays in the address bar, since the controller's
   // "nothing selected" URL effect waits on the collections and on the pending
-  // resolution.
+  // resolution. The reminders load goes first, where App's own mount effect ran
+  // it before; its controller is called far below, after `useReadSync`.
   useEffect(() => {
+    void remindersCtl.loadReminders();
     void topicsCtl.refreshTree();
     void topicsCtl.refreshCollections();
     void chatsCtl.refreshChatsUnread();
@@ -307,7 +250,7 @@ export default function App() {
       // A plugin section owns everything under its root; hand it the fresh
       // segments/hash and let it reconcile (initial load + back/forward).
       if (isPluginMode(r.mode)) {
-        setPluginRoute({ segments: r.pluginSegments, hash: r.pluginHash });
+        pluginsCtl.syncFromRoute(r);
         return;
       }
       if (r.mode === "live") {
@@ -469,7 +412,7 @@ export default function App() {
       target = "/workflows";
     } else if (isPluginMode(next)) {
       // Re-entering a plugin section restores the sub-route it was left at.
-      target = pluginSectionUrl(next, pluginRouteRef.current.segments);
+      target = pluginsCtl.sectionUrl(next);
     } else {
       target = "/ws";
     }
@@ -527,43 +470,35 @@ export default function App() {
   // `?q=` mirror, to keep their original place in the effect order.
   useLiveSessionsLateEffects(liveCtl, { sidebarMode, liveEnabled, setSidebarMode });
 
-  // Same guard for plugin sections: a section whose backend package is gone —
-  // or whose own `isEnabled` turned false (kanban loses its GitHub repo, say) —
-  // can't stay open, and a deep link to it must fall back to Topics. Waits for
-  // the descriptors *and* settings so a valid deep link isn't bounced before
-  // they resolve.
-  useEffect(() => {
-    if (settings == null || pluginDescriptors == null) return;
-    if (!isPluginMode(sidebarMode)) return;
-    if (enabledSections.some((sec) => sec.id === sidebarMode)) return;
-    // Any unrecognised root segment parses as a candidate plugin section, so
-    // this also catches plain typos — all the more reason to replace rather
-    // than push, or Back would bounce off the bad URL forever.
-    navigate("/topics", { replace: true });
-    setSidebarMode("topics");
-  }, [enabledSections, pluginDescriptors, sidebarMode, settings]);
+  // ---- Plugin sections ---------------------------------------------------
+  // The plugin section host. Its bounce for a section that went away runs here,
+  // after the `?q=` mirror, like the live-disabled one above.
+  const pluginsCtl = usePluginSections({
+    sidebarMode,
+    sidebarModeRef,
+    settings,
+    pluginDescriptors,
+    enabledSections,
+    setSidebarMode,
+    openSettings: openSettingsAt,
+    changeMode,
+    handleSelect: topicsCtl.handleSelect,
+  });
+  const { sectionHost } = pluginsCtl;
 
   // The stream-completion owner and the mark-read on refocus.
   useReadSync({ currentlyViewed, topics: topicsCtl, chats: chatsCtl, agents: agentsCtl });
 
-  // Live sync across windows: any mutation in another tab/process pushes an
-  // event over /api/events. Echoes (events tagged with our own client id)
-  // are filtered out inside the bus. The section controllers handle their own
-  // events; App keeps the reminders.
-  useEffect(() => {
-    eventBus.start();
-    const off = eventBus.subscribe((event) => {
-      if (event.type === "reminder.changed") {
-        // A reminder was set, fired, or cleared (possibly by the background
-        // ticker). Reload the sidebar section; loadReminders also notifies for
-        // any newly-fired ones.
-        void loadReminders();
-      }
-    });
-    return () => {
-      off();
-    };
-  }, []);
+  // ---- Reminders ----------------------------------------------------------
+  // Called last so its `reminder.changed` subscription registers where App's
+  // own used to, after every section's. Its mount load runs in the early mount
+  // effect above.
+  const remindersCtl = useRemindersController({
+    notificationsEnabledRef,
+    topics: topicsCtl,
+    chats: chatsCtl,
+    changeMode,
+  });
 
   // Open a content-search hit from the command palette. Mirrors the per-section
   // deep-link resolution: leave home, switch mode, and reveal the entity by its
@@ -592,40 +527,6 @@ export default function App() {
     }
   }
 
-  // Open the conversation behind a fired reminder, switching mode if needed.
-  async function handleReminderSelect(item: ReminderItem): Promise<void> {
-    try {
-      if (item.container === "topic" && item.topic_id != null) {
-        changeMode("topics");
-        await topicsCtl.handleSelect(item.topic_id);
-      } else if (item.container === "chat" && item.chat_id != null) {
-        changeMode("chats");
-        await chatsCtl.selectChatById(item.chat_id);
-      }
-    } catch {
-      // conversation may have been deleted — refresh the list to drop it
-      void loadReminders();
-    }
-  }
-
-  // Acknowledge a fired reminder ("Done"): clear it and refresh the section.
-  async function handleReminderDone(item: ReminderItem): Promise<void> {
-    const id = item.container === "topic" ? item.topic_id : item.chat_id;
-    if (id == null) return;
-    try {
-      await api.reminders.clear(item.container, id);
-    } catch {
-      // already gone — fall through to reload
-    }
-    await loadReminders();
-    // Remount the active panel so its banner clears if it was the one acked.
-    if (item.container === "topic" && topicsCtl.activeTopicRef.current?.id === item.topic_id) {
-      topicsCtl.setChatReloadKey((k) => k + 1);
-    } else if (item.container === "chat" && chatsCtl.activeChatRef.current?.id === item.chat_id) {
-      chatsCtl.setActiveChatReloadKey((k) => k + 1);
-    }
-  }
-
   // The sidebar header's single "New" button adapts to the active mode so the
   // create affordance lives in the same place across Topics / Chats / Files.
   // Chats and agents drop the selection to reveal their "start" landing surface;
@@ -650,87 +551,6 @@ export default function App() {
     } else wsCtl.startNew();
   }
 
-  // ---- Plugin sections ---------------------------------------------------
-
-  // Mirror the section sub-route so changeMode can restore it without
-  // re-subscribing to every route change.
-  const pluginRouteRef = useRef(pluginRoute);
-  useEffect(() => {
-    pluginRouteRef.current = pluginRoute;
-  }, [pluginRoute]);
-
-  // The item a plugin section reports for the tab title, tagged with the
-  // section that reported it so no other section ever inherits it.
-  const [pluginPageTitle, setPluginPageTitle] = useState<{
-    section: string;
-    title: string | null;
-  } | null>(null);
-  // Leaving the section forgets it. This runs after the entered section's own
-  // mount effects, hence the tag check rather than an unconditional reset.
-  useEffect(() => {
-    setPluginPageTitle((prev) => (prev && prev.section !== sidebarMode ? null : prev));
-  }, [sidebarMode]);
-
-  // `changeMode` and `handleSelect` are plain function declarations, so every
-  // render makes new ones closing over that render's state. The host below is
-  // memoised and would pin whichever pair it was built with — and `changeMode`
-  // short-circuits on a stale `sidebarMode`, so a section's "open topic" would
-  // silently do nothing. Read them through refs instead.
-  const changeModeRef = useRef(changeMode);
-  const handleSelectRef = useRef(topicsCtl.handleSelect);
-  useEffect(() => {
-    changeModeRef.current = changeMode;
-    handleSelectRef.current = topicsCtl.handleSelect;
-  });
-
-  // The services a plugin section gets from core. Memoised on the values it
-  // closes over so a section's effects don't re-run on unrelated app renders.
-  const sectionHost = useMemo<SectionHost>(
-    () => ({
-      segments: pluginRoute.segments,
-      hash: pluginRoute.hash,
-      navigate: (segments, hash = "", opts) => {
-        // Idempotent: a section re-asserting the URL it already has must not
-        // spin the render loop that produced it.
-        setPluginRoute((prev) =>
-          prev.hash === hash &&
-          prev.segments.length === segments.length &&
-          prev.segments.every((seg, i) => seg === segments[i])
-            ? prev
-            : { segments, hash },
-        );
-        const path =
-          pluginSectionUrl(sidebarModeRef.current, segments) +
-          window.location.search +
-          (hash ? `#${hash}` : "");
-        if (window.location.pathname + window.location.search + window.location.hash === path) {
-          return;
-        }
-        navigate(path, { replace: !opts?.push });
-      },
-      openTopic: (topicId: number) => {
-        void changeModeRef.current("topics");
-        void handleSelectRef.current(topicId);
-      },
-      openSettings: (pluginPageId?: string) => {
-        setSettingsCategory(pluginPageId ? pluginSettingsTab(pluginPageId) : "plugins");
-        setGlobalSettingsOpen(true);
-      },
-      // Tagged with this render's mode, not `sidebarModeRef`: a section entering
-      // reports from its mount effects, which run before App's ref catches up.
-      setPageTitle: (title) => {
-        const next = title?.trim() || null;
-        setPluginPageTitle((prev) =>
-          prev?.section === sidebarMode && prev.title === next
-            ? prev
-            : { section: sidebarMode, title: next },
-        );
-      },
-      settings,
-    }),
-    [pluginRoute, settings, sidebarMode],
-  );
-
   // After every hook that navigates from an effect (see useDocumentTitle).
   const unreadByMode = useDocumentTitle({
     page: pageTitle({
@@ -742,7 +562,7 @@ export default function App() {
       agents: agentsCtl,
       workflows: workflowsCtl,
       workspaces: wsCtl,
-      pluginItem: pluginPageTitle?.section === sidebarMode ? pluginPageTitle.title : null,
+      pluginItem: pluginsCtl.pageTitle,
     }),
     topicsUnread: topicsCtl.topicsUnread,
     chatsUnread,
@@ -770,6 +590,19 @@ export default function App() {
       );
     }
   }
+
+  // The section navigation the sidebar and the home launcher's rail share.
+  const sectionNav: SectionNavProps = {
+    mode: sidebarMode,
+    atHome,
+    onGoHome: goHome,
+    onOpenPalette: () => setPaletteOpen(true),
+    onModeChange: changeMode,
+    onNew: handleNew,
+    unreadByMode,
+    liveEnabled,
+    pluginSections: enabledSections,
+  };
 
   // A section's sidebar and main pane sit in different subtrees, so its own
   // context provider (when it has one) wraps the whole shell.
@@ -800,15 +633,7 @@ export default function App() {
       )}
       {atHome && navStyle === "rail" && !narrow && (
         <SectionRail
-          mode={sidebarMode}
-          atHome
-          onGoHome={goHome}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onModeChange={changeMode}
-          onNew={handleNew}
-          unreadByMode={unreadByMode}
-          liveEnabled={liveEnabled}
-          pluginSections={enabledSections}
+          {...sectionNav}
           footer={
             <PersonaMenu collapsed onOpenSettings={() => setGlobalSettingsOpen(true)} onOpenArchive={() => setArchiveOpen(true)} />
           }
@@ -843,72 +668,44 @@ export default function App() {
         inert={narrow && !mobileNavOpen}
       >
       <Sidebar
-        tree={topicsCtl.collectionTree}
-        collections={collections}
-        activeCollectionId={activeCollectionId}
-        unreadByCollection={topicsCtl.unreadByCollection}
-        onCollectionChange={topicsCtl.chooseCollection}
-        onCollectionCreate={topicsCtl.createCollection}
-        onManageCollections={() => {
-          setSettingsCategory("collections");
-          setGlobalSettingsOpen(true);
-        }}
-        onMoveToCollection={topicsCtl.moveTopicToCollection}
-        activeId={activeTopic?.id ?? null}
+        nav={sectionNav}
+        topics={topicsCtl}
         streamingTopicIds={streamingTopicIds}
-        narrow={narrow}
-        onClose={closeMobileNav}
+        reminders={remindersCtl}
+        slots={{
+          chats: (
+            <ChatsSidebarList
+              controller={chatsCtl}
+              streamingIds={streamingChatIds}
+              reminderChatIds={remindersCtl.reminderChatIds}
+              onOpenReminder={(chat) =>
+                remindersCtl.setSidebarReminder({ container: "chat", id: chat.id })
+              }
+            />
+          ),
+          workspaces: <WorkspacesSidebarList controller={wsCtl} />,
+          live: <LiveSidebarList controller={liveCtl} />,
+          agents: (
+            <AgentsSidebarList
+              controller={agentsCtl}
+              onOverview={() => void changeMode("agents")}
+            />
+          ),
+          workflows: (
+            <WorkflowsSidebarSlot
+              controller={workflowsCtl}
+              onOverview={() => void changeMode("workflows")}
+            />
+          ),
+          plugin: activeSection ? <activeSection.Sidebar host={sectionHost} /> : null,
+        }}
         collapsed={!narrow && sidebarCollapsed}
-        mode={sidebarMode}
-        onModeChange={changeMode}
-        atHome={atHome}
-        onGoHome={goHome}
-        onOpenPalette={() => setPaletteOpen(true)}
-        chatSlot={
-          <ChatsSidebarList
-            controller={chatsCtl}
-            streamingIds={streamingChatIds}
-            reminderChatIds={reminderChatIds}
-            onOpenReminder={(chat) => setSidebarReminder({ container: "chat", id: chat.id })}
-          />
-        }
-        workspaceSlot={<WorkspacesSidebarList controller={wsCtl} />}
-        liveSlot={<LiveSidebarList controller={liveCtl} />}
-        agentSlot={
-          <AgentsSidebarList
-            controller={agentsCtl}
-            onOverview={() => void changeMode("agents")}
-          />
-        }
-        workflowSlot={
-          <WorkflowsSidebarSlot
-            controller={workflowsCtl}
-            onOverview={() => void changeMode("workflows")}
-          />
-        }
-        pluginSlot={
-          activeSection ? <activeSection.Sidebar host={sectionHost} /> : null
-        }
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-        onSelect={topicsCtl.handleSelect}
-        onNew={handleNew}
-        onCreate={topicsCtl.handleCreate}
-        onRename={topicsCtl.handleRenameTopic}
-        onSetRead={topicsCtl.handleTopicReadState}
-        onTogglePin={topicsCtl.handleTopicPin}
-        onArchive={topicsCtl.handleArchiveTopic}
-        onOpenReminder={(id) => setSidebarReminder({ container: "topic", id })}
-        onOpenNotes={(id) => void topicsCtl.handleOpenTopicNotes(id)}
-        liveEnabled={liveEnabled}
-        reminders={reminders}
-        reminderTopicIds={reminderTopicIds}
-        onReminderSelect={handleReminderSelect}
-        onReminderDone={handleReminderDone}
-        onRefresh={topicsCtl.refreshTree}
         onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
         onOpenArchive={() => setArchiveOpen(true)}
-        unreadByMode={unreadByMode}
-        pluginSections={enabledSections}
+        onManageCollections={() => openSettingsAt("collections")}
+        narrow={narrow}
+        onClose={closeMobileNav}
       />
       </div>
       )}
@@ -999,13 +796,13 @@ export default function App() {
           ) : sidebarMode === "topics" ? (
             <TopicsMain
               controller={topicsCtl}
-              onRemindersChanged={loadReminders}
+              onRemindersChanged={remindersCtl.loadReminders}
               onSetRole={setRoleForActive}
             />
           ) : sidebarMode === "chats" ? (
             <ChatsMain
               controller={chatsCtl}
-              onRemindersChanged={loadReminders}
+              onRemindersChanged={remindersCtl.loadReminders}
               onSetRole={setRoleForActive}
             />
           ) : sidebarMode === "workspaces" ? (
@@ -1042,18 +839,7 @@ export default function App() {
           }}
         />
       )}
-      {sidebarReminder && (
-        <ReminderModal
-          container={sidebarReminder.container}
-          containerId={sidebarReminder.id}
-          existing={null}
-          onClose={() => setSidebarReminder(null)}
-          onSaved={() => {
-            setSidebarReminder(null);
-            void loadReminders();
-          }}
-        />
-      )}
+      <SidebarReminderModal controller={remindersCtl} />
 
       <ChatsSettingsModal
         controller={chatsCtl}

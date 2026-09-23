@@ -96,9 +96,9 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   }, [activeChat, sidebarMode, atHome]);
 
   // Live sync across windows: chat changes arrive over the shared event bus.
-  // `start()` is idempotent, so App starting it too is harmless. The topics
-  // controller's handler keeps the topic branches of the event types both
-  // sections share; a chat id wins over a topic or agent id there.
+  // `start()` is idempotent, so every controller starting it is harmless. The
+  // topics controller's handler keeps the topic branches of the event types
+  // both sections share; a chat id wins over a topic or agent id there.
   useEffect(() => {
     eventBus.start();
     const off = eventBus.subscribe((event) => {
