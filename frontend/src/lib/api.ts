@@ -66,6 +66,7 @@ import type {
   MeetingSession,
   MeetingSessionCreate,
   MeetingSessionUpdate,
+  MeetingTranscriptListResult,
   Message,
   NotesDraft,
   NoteDraftAttachment,
@@ -1187,10 +1188,16 @@ export const api = {
       request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
         method: "POST",
       }),
-    summarizeFromTranscript: (id: number) =>
-      request<{ summary: string; model: string }>(
+    /** The linked Teams meeting's transcription sessions (fail-closed). */
+    listTranscripts: (id: number) =>
+      request<MeetingTranscriptListResult>(`/api/live/${id}/transcripts`),
+    summarizeFromTranscript: (id: number, transcriptIds?: string[]) =>
+      request<{ summary: string; model: string; transcript_ids: string[] }>(
         `/api/live/${id}/summary/from-transcript`,
-        { method: "POST" },
+        {
+          method: "POST",
+          body: JSON.stringify({ transcript_ids: transcriptIds ?? [] }),
+        },
       ),
     postSummary: (id: number, summary: string) =>
       request<{

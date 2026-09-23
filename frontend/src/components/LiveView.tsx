@@ -19,6 +19,7 @@ import type {
   MeetingSegment,
   MeetingSession,
   MeetingSessionUpdate,
+  MeetingTranscriptPart,
   TopicNode,
 } from "../lib/types";
 import { api } from "../lib/api";
@@ -42,6 +43,7 @@ import { LiveChatSection } from "./LiveChatSection";
 import { TranslationSection } from "./TranslationSection";
 import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
+import { TranscriptPartPicker } from "./TranscriptPartPicker";
 import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
 
@@ -215,6 +217,11 @@ export function LiveView({
   summaryRef.current = summaryText;
   // Scraping + summarizing the linked Teams meeting transcript (WorkIQ path).
   const [transcriptScraping, setTranscriptScraping] = useState(false);
+  // Set when the meeting has several Teams transcription sessions: the picker
+  // asks which one(s) to summarise before we scrape anything.
+  const [transcriptParts, setTranscriptParts] = useState<MeetingTranscriptPart[] | null>(
+    null,
+  );
   // Ask the panel to surface a tab (bump the nonce). Used after generating the
   // summary and after starting the assistant.
   const [panelFocus, setPanelFocus] = useState<{ id: string; nonce: number }>({
@@ -640,15 +647,49 @@ export function LiveView({
     }
   }
 
+  async function runTranscriptSummary(transcriptIds: string[]): Promise<void> {
+    if (genRef.current) return;
+    setTranscriptScraping(true);
+    setSummaryError(null);
+    try {
+      const res = await api.meetings.summarizeFromTranscript(session.id, transcriptIds);
+      setSummaryText(res.summary);
+      onUpdated({ ...session, summary: res.summary || null });
+    } catch (e) {
+      setSummaryError(
+        e instanceof Error
+          ? e.message
+          : "Couldn't summarize the Teams transcript — it may not be published yet.",
+      );
+    } finally {
+      // Close the picker either way so the Summary tab's error banner is visible.
+      setTranscriptParts(null);
+      setTranscriptScraping(false);
+    }
+  }
+
   async function generateFromTranscript(): Promise<void> {
     focusTab("summary");
     if (genRef.current || transcriptScraping) return;
     setTranscriptScraping(true);
     setSummaryError(null);
     try {
-      const res = await api.meetings.summarizeFromTranscript(session.id);
-      setSummaryText(res.summary);
-      onUpdated({ ...session, summary: res.summary || null });
+      const listed = await api.meetings.listTranscripts(session.id);
+      if (!listed.available || listed.parts.length === 0) {
+        setSummaryError(
+          listed.detail ??
+            "Couldn't find a Teams transcript for this meeting — it may not be published yet.",
+        );
+        return;
+      }
+      // Teams starts a new transcript each time transcription is stopped and
+      // restarted, so several parts can exist for one meeting. Don't guess —
+      // let the user pick (possibly several, when the meeting got cut).
+      if (listed.parts.length > 1) {
+        setTranscriptParts(listed.parts);
+        return;
+      }
+      await runTranscriptSummary(listed.parts.map((p) => p.id));
     } catch (e) {
       setSummaryError(
         e instanceof Error
@@ -1475,6 +1516,16 @@ export function LiveView({
       />
 
       {helpOpen && <LiveAudioHelp onClose={() => setHelpOpen(false)} />}
+      {transcriptParts && (
+        <TranscriptPartPicker
+          parts={transcriptParts}
+          meetingStart={session.external_meeting?.start ?? null}
+          meetingEnd={session.external_meeting?.end ?? null}
+          busy={transcriptScraping}
+          onCancel={() => setTranscriptParts(null)}
+          onConfirm={(ids) => void runTranscriptSummary(ids)}
+        />
+      )}
     </div>
   );
 }

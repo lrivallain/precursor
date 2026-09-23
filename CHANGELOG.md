@@ -42,6 +42,27 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Pick which Teams transcription session to summarize.** *Generate from Teams
+  transcript* silently used the most recent transcript, which is the wrong one
+  as soon as a meeting has several: Teams starts a **new transcript every time
+  transcription is stopped and restarted**, so a long or interrupted meeting
+  shows up as *Partie 1*, *Partie 2*, … and the newest part could be a two-minute
+  tail of the real discussion.
+
+  Precursor now lists the meeting's transcription sessions first and, when there
+  is more than one, asks which to use — each row showing its **start and end
+  time** and duration so you can tell them apart. The choice is **multiple**,
+  because the usual case is a meeting that got cut in two: the selected sessions
+  are stitched **in chronological order** and summarized as one transcript. The
+  sessions matching the linked meeting's scheduled slot are pre-ticked, which
+  also keeps a **recurring** meeting — whose join link is shared by the whole
+  series — from pulling in another occurrence's transcript. A meeting with a
+  single session is unchanged: nothing is asked.
+
+  New endpoint `GET /api/live/{id}/transcripts`; `POST
+  /api/live/{id}/summary/from-transcript` now accepts an optional
+  `transcript_ids` body and echoes back the sessions that fed the recap.
+
 - **Pick an assistant role while creating a chat or an agent.** A role could
   only be assigned after the fact, so the very first turn — often the one that
   sets the tone — always ran as the default persona.

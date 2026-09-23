@@ -1886,6 +1886,23 @@ export interface AgendaResponse {
   detail: string | null;
 }
 
+/**
+ * One Teams transcription session of a linked meeting. Teams produces one per
+ * start/stop of transcription ("Partie 1", "Partie 2", …), so a meeting that
+ * got cut has several; `ended_at` is absent on older transcripts.
+ */
+export interface MeetingTranscriptPart {
+  id: string;
+  created_at: string | null;
+  ended_at: string | null;
+}
+
+export interface MeetingTranscriptListResult {
+  available: boolean;
+  parts: MeetingTranscriptPart[];
+  detail: string | null;
+}
+
 export interface ExternalMeeting {
   id?: string | null;
   subject: string;
