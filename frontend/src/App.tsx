@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
-  ExternalLink,
   FileText,
   Menu,
-  MessagesSquare,
   Pin,
   PinOff,
   Search,
@@ -16,7 +14,6 @@ import { EmptyHero } from "./components/EmptyHero";
 import { resolveSections } from "./lib/plugins";
 import { usePluginDescriptors } from "./lib/pluginStore";
 import type { SectionHost } from "./lib/plugins";
-import { GithubIcon as Github } from "./components/icons/GithubIcon";
 import { CommandPalette } from "./components/CommandPalette";
 import { ChatPanel } from "./components/ChatPanel";
 import { ChatList } from "./components/ChatList";
@@ -35,9 +32,12 @@ import {
   WorkspaceView,
 } from "./components/WorkspaceView";
 import { WorkspaceList } from "./components/WorkspaceList";
-import { LiveList } from "./components/LiveList";
-import { LiveView } from "./components/LiveView";
-import { LiveStartHero } from "./components/LiveStartHero";
+import {
+  LiveHeader,
+  LiveHomeSurface,
+  LiveMain,
+  LiveSidebarList,
+} from "./components/LiveSectionParts";
 import {
   AgentRunErrorBanner,
   AgentSettingsModal,
@@ -71,6 +71,10 @@ import { useIssueContext } from "./lib/useIssueContext";
 import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { useAgentsController } from "./lib/useAgentsController";
+import {
+  useLiveSessionsController,
+  useLiveSessionsLateEffects,
+} from "./lib/useLiveSessionsController";
 import { useWorkflowsController } from "./lib/useWorkflowsController";
 import { windowFocused } from "./lib/windowFocus";
 import { openNotes } from "./lib/notesOpen";
@@ -78,7 +82,6 @@ import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLin
 import type {
   Chat,
   Collection,
-  MeetingSession,
   ReminderItem,
   SearchResult,
   Topic,
@@ -94,7 +97,6 @@ import {
   chatUrl,
   isHomePath,
   isPluginMode,
-  liveUrl,
   navigate,
   parseAppRoute,
   parseWsRoute,
@@ -106,7 +108,7 @@ import {
   type PluginRoute,
   type WsRoute,
 } from "./lib/routes";
-import { findNode, findTitle, topicAncestors, totalUnread } from "./lib/topicTree";
+import { findTitle, topicAncestors, totalUnread } from "./lib/topicTree";
 
 const BASE_TITLE = "Precursor";
 
@@ -168,9 +170,6 @@ export default function App() {
   // Workspaces are loaded lazily when the user first enters workspaces mode.
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
-  // Live meeting sessions are loaded lazily when the user first enters live mode.
-  const [meetingSessions, setMeetingSessions] = useState<MeetingSession[] | null>(null);
-  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   // Route state owned by the active plugin section (opaque to core).
   const [pluginRoute, setPluginRoute] = useState<PluginRoute>(() => {
     const r = parseAppRoute();
@@ -266,7 +265,6 @@ export default function App() {
   const globalGithubRepo = (settings?.github_repo ?? "").trim();
   const agentsEnabled = settings?.agents_enabled ?? false;
   const liveEnabled = settings?.live_enabled ?? true;
-  const [liveRecordingId, setLiveRecordingId] = useState<number | null>(null);
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsRuntimeStarted = settings?.agents_runtime_started ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
@@ -287,17 +285,6 @@ export default function App() {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
-
-  // Mirror the active meeting session into refs so changeMode / URL sync can
-  // build the /live URL without re-subscribing.
-  const meetingSessionsRef = useRef<MeetingSession[] | null>(meetingSessions);
-  useEffect(() => {
-    meetingSessionsRef.current = meetingSessions;
-  }, [meetingSessions]);
-  const activeSessionIdRef = useRef<number | null>(activeSessionId);
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
 
   // Mirror the current sidebar mode into a ref. The active item refs persist
   // across mode switches (changeMode doesn't clear them), so "the user is
@@ -569,20 +556,7 @@ export default function App() {
         return;
       }
       if (r.mode === "live") {
-        const slug = r.liveSlug;
-        if (!slug) {
-          setActiveSessionId(null);
-          return;
-        }
-        const existing = meetingSessionsRef.current?.find((s) => s.slug === slug);
-        if (existing) {
-          setActiveSessionId(existing.id);
-          return;
-        }
-        void loadMeetingSessions().then((list) => {
-          const found = list.find((s) => s.slug === slug);
-          setActiveSessionId(found ? found.id : null);
-        });
+        liveCtl.syncFromRoute(r);
         return;
       }
       if (r.mode === "workflows") {
@@ -666,6 +640,22 @@ export default function App() {
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
+
+  // ---- Live meeting sessions -------------------------------------------
+  // Called after the mount `syncFromUrl` above, like the controllers below, and
+  // it matters most here: on a cold `/live/<slug>` load its URL effect first
+  // navigates to `/live`, which would lose the slug before the sync read it.
+  // Called ahead of the agents and workflows controllers, which take its
+  // `confirmLeaveRecording`.
+  const liveCtl = useLiveSessionsController({
+    sidebarMode,
+    atHome,
+    setSidebarMode,
+    setAtHome,
+    closeMobileNav,
+    confirmAction,
+  });
+  const { activeSessionId, confirmLeaveRecording } = liveCtl;
 
   // ---- Agents -----------------------------------------------------------
   // Called after the mount `syncFromUrl` above so its `/agents` URL effect still
@@ -769,15 +759,6 @@ export default function App() {
     if (window.location.pathname !== target) navigate(target);
   }, [activeChat, sidebarMode, atHome]);
 
-  // activeSession -> /live/<slug> (or /live when nothing is selected).
-  useEffect(() => {
-    if (atHome) return;
-    if (sidebarMode !== "live") return;
-    const active = meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
-    const target = liveUrl(active);
-    if (window.location.pathname !== target) navigate(target);
-  }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
-
   // Auto-clear the search highlight when the user navigates to a *different*
   // conversation than the one it was opened for. The highlight is tied to a
   // single conversation (`${mode}:${id}`): while a search-open is in flight we
@@ -862,23 +843,6 @@ export default function App() {
     activeSessionId,
   ]);
 
-  // While a live session is recording, confirm before any in-app navigation
-  // that would unmount the LiveView and stop the capture. Resolves immediately
-  // when nothing is recording, so guarded handlers are unchanged off the happy
-  // path. Page-unload (reload/close/quit) is guarded separately in LiveView via
-  // a native beforeunload prompt.
-  async function confirmLeaveRecording(): Promise<boolean> {
-    if (liveRecordingId == null) return true;
-    return confirmAction({
-      title: "Recording in progress",
-      message:
-        "You're recording a live session. Leaving this screen stops the recording. Leave anyway?",
-      confirmLabel: "Leave & stop recording",
-      cancelLabel: "Keep recording",
-      variant: "warning",
-    });
-  }
-
   // Section navigation always opens the Agents/Workflows overview. Item links
   // use their own handlers so this policy never discards a deep-link target.
   async function changeMode(next: SidebarMode): Promise<void> {
@@ -895,10 +859,7 @@ export default function App() {
     } else if (next === "chats") {
       target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
     } else if (next === "live") {
-      // Entering the Live section lands on the create surface (like starting a
-      // fresh topic/agent): drop the selection so the "new session" hero shows.
-      // Existing sessions stay one click away in the list.
-      setActiveSessionId(null);
+      liveCtl.enterOverview();
       target = "/live";
     } else if (next === "agents") {
       agentsCtl.enterOverview();
@@ -945,7 +906,7 @@ export default function App() {
       navigate("/chats");
       setSidebarMode("chats");
     } else if (mode === "live") {
-      setActiveSessionId(null);
+      liveCtl.startNew();
       navigate("/live");
       setSidebarMode("live");
     } else if (mode === "agents") {
@@ -988,15 +949,6 @@ export default function App() {
     await handleStartChat(prompt, roleId);
   }
 
-  // The "New live session" card's inline form: create, then reveal the session.
-  async function createLiveFromHome(session: MeetingSession): Promise<void> {
-    setAtHome(false);
-    setSidebarMode("live");
-    await loadMeetingSessions();
-    setActiveSessionId(session.id);
-    navigate(liveUrl(session));
-  }
-
   // Global ⌘K / Ctrl+K toggles the command palette — a width-independent way to
   // jump to any section regardless of the sidebar's horizontal overflow. A bare
   // "/" opens it too (search-first, like GitHub), but only when the user isn't
@@ -1020,17 +972,9 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // If the Live section gets disabled while it's open (or a deep link lands on
-  // it while disabled), fall back to Topics.
-  useEffect(() => {
-    if (!liveEnabled && sidebarMode === "live") {
-      // replaceState, not push: this bounce must *consume* the unreachable URL.
-      // Pushing would leave it in the history, and going Back would land on it
-      // and bounce again — trapping the user one entry from where they were.
-      navigate("/topics", { replace: true });
-      setSidebarMode("topics");
-    }
-  }, [liveEnabled, sidebarMode]);
+  // The live-disabled bounce and the live lazy load. Called here, after the
+  // `?q=` mirror, to keep their original place in the effect order.
+  useLiveSessionsLateEffects(liveCtl, { sidebarMode, liveEnabled, setSidebarMode });
 
   // Same guard for plugin sections: a section whose backend package is gone —
   // or whose own `isEnabled` turned false (kanban loses its GitHub repo, say) —
@@ -1205,11 +1149,6 @@ export default function App() {
         } else if (event.agent_session_id == null) {
           void refreshTree();
         }
-      } else if (event.type === "meeting.changed") {
-        // A meeting session was created, renamed, ended, or deleted (possibly in
-        // another tab). Refresh the list if we've loaded it so the Live section
-        // stays current.
-        if (meetingSessionsRef.current !== null) void loadMeetingSessions();
       }
     });
     return () => {
@@ -1336,12 +1275,7 @@ export default function App() {
         agentsCtl.setActiveAgentId(result.entity_id);
       } else if (result.section === "live") {
         setSidebarMode("live");
-        // Ensure the session list is loaded so the URL-sync effect can resolve
-        // the slug once we select it.
-        if (!meetingSessionsRef.current?.some((s) => s.id === result.entity_id)) {
-          await loadMeetingSessions();
-        }
-        setActiveSessionId(result.entity_id);
+        await liveCtl.openSearchHit(result.entity_id);
       }
     } catch {
       // Entity may have been deleted since the search — leave the user in the
@@ -1442,7 +1376,7 @@ export default function App() {
     }
     if (sidebarMode === "topics") handleCreate(null);
     else if (sidebarMode === "chats") setActiveChat(null);
-    else if (sidebarMode === "live") setActiveSessionId(null);
+    else if (sidebarMode === "live") liveCtl.startNew();
     else if (sidebarMode === "agents") agentsCtl.startNew();
     else if (sidebarMode === "workflows") workflowsCtl.startNew();
     // Core owns the button; the section owns what it means. A section with no
@@ -1517,10 +1451,6 @@ export default function App() {
   // The route path only applies to the workspace named in the URL.
   const workspaceInitialPath =
     activeWorkspace && activeWorkspace.slug === wsRoute.slug ? wsRoute.path : null;
-
-  // ---- Live meeting sessions -------------------------------------------
-  const activeSession =
-    meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
 
   // ---- Assistant roles --------------------------------------------------
   // Each composer owns its own role pill; this is the shared persistence path
@@ -1598,50 +1528,6 @@ export default function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaces]);
-
-  // ---- Live meeting sessions --------------------------------------------
-  async function loadMeetingSessions(): Promise<MeetingSession[]> {
-    const list = await api.meetings.listSessions();
-    setMeetingSessions(list);
-    return list;
-  }
-
-  // Lazily load sessions the first time the user enters live mode, then pick an
-  // active one (honouring a slug from the URL, else the first).
-  useEffect(() => {
-    if (sidebarMode !== "live" || meetingSessions !== null) return;
-    const { liveSlug } = parseAppRoute();
-    void loadMeetingSessions().then((list) => {
-      if (list.length === 0) return;
-      const fromRoute = liveSlug ? list.find((s) => s.slug === liveSlug) : undefined;
-      // Only auto-select when the URL points at a specific session; otherwise
-      // leave nothing selected so the start hero shows.
-      if (fromRoute) setActiveSessionId((id) => id ?? fromRoute.id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidebarMode]);
-
-  async function handleSelectSession(session: MeetingSession): Promise<void> {
-    // Switching to a different session unmounts the recording LiveView; confirm
-    // first so an accidental click doesn't drop an in-progress capture.
-    if (session.id !== activeSessionId && !(await confirmLeaveRecording())) return;
-    closeMobileNav();
-    setActiveSessionId(session.id);
-    navigate(liveUrl(session));
-  }
-
-  async function handleRenameSession(session: MeetingSession, title: string): Promise<void> {
-    const updated = await api.meetings.updateSession(session.id, { title });
-    setMeetingSessions((prev) =>
-      prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
-    );
-  }
-
-  async function handleArchiveSessions(ids: number[]): Promise<void> {
-    await Promise.all(ids.map((id) => api.meetings.archiveSession(id)));
-    if (activeSessionId != null && ids.includes(activeSessionId)) setActiveSessionId(null);
-    await loadMeetingSessions();
-  }
 
   // Reveal the inline "new topic" form in the main pane (the Topics empty
   // state). Top-level "+ create" passes null; if a topic is selected the new one
@@ -1791,16 +1677,7 @@ export default function App() {
             onSelect={handleSelectWorkspace}
           />
         }
-        liveSlot={
-          <LiveList
-            sessions={meetingSessions}
-            activeId={activeSessionId}
-            recordingId={liveRecordingId}
-            onSelect={handleSelectSession}
-            onRename={handleRenameSession}
-            onArchiveMany={handleArchiveSessions}
-          />
-        }
+        liveSlot={<LiveSidebarList controller={liveCtl} />}
         agentSlot={
           <AgentsSidebarList
             controller={agentsCtl}
@@ -1981,59 +1858,15 @@ export default function App() {
               {activeWorkspace ? activeWorkspace.name : "Workspaces"}
             </span>
           ) : sidebarMode === "live" ? (
-            activeSession ? (
-              (() => {
-                const liveTopic =
-                  activeSession.topic_id != null
-                    ? findNode(tree, activeSession.topic_id)
-                    : null;
-                const liveIssueNumber = liveTopic?.github_issue_number ?? null;
-                const liveIssueRepo =
-                  liveTopic?.github_repo || globalGithubRepo || "";
-                return (
-                  <>
-                    <InlineTitle
-                      title={activeSession.title}
-                      onRename={(t) => handleRenameSession(activeSession, t)}
-                      className="truncate font-medium min-w-0 flex-1"
-                      inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
-                    />
-                    {liveTopic && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          changeMode("topics");
-                          void handleSelect(liveTopic.id);
-                        }}
-                        className="p-2 rounded text-sky-600 hover:bg-surface shrink-0 dark:text-sky-400"
-                        aria-label={`Open topic: ${liveTopic.title}`}
-                        data-tooltip={`Open topic: ${liveTopic.title}`}
-                      >
-                        <MessagesSquare size={18} />
-                      </button>
-                    )}
-                    {liveIssueNumber != null && liveIssueRepo && (
-                      <a
-                        href={`https://github.com/${liveIssueRepo}/issues/${liveIssueNumber}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group inline-flex items-center gap-1 p-2 rounded hover:bg-surface shrink-0"
-                        aria-label={`Open issue #${liveIssueNumber} on GitHub`}
-                        data-tooltip={`Open issue #${liveIssueNumber} on GitHub`}
-                      >
-                        <Github size={18} />
-                        <ExternalLink
-                          size={11}
-                          className="opacity-60 transition group-hover:opacity-100"
-                        />
-                      </a>
-                    )}
-                  </>
-                );
-              })()
-            ) : (
-              <span className="truncate font-medium min-w-0 flex-1">Live</span>
-            )
+            <LiveHeader
+              controller={liveCtl}
+              tree={tree}
+              globalGithubRepo={globalGithubRepo}
+              onOpenTopic={(tid) => {
+                changeMode("topics");
+                void handleSelect(tid);
+              }}
+            />
           ) : activeSection ? (
             <span className="truncate font-medium min-w-0 flex-1">
               {activeSection.Title ? (
@@ -2100,7 +1933,7 @@ export default function App() {
               }
               chatSurface={<ChatStartHero onStart={startChatFromHome} />}
               liveSurface={
-                <LiveStartHero topics={tree} collections={collections} onCreated={createLiveFromHome} />
+                <LiveHomeSurface controller={liveCtl} tree={tree} collections={collections} />
               }
               agentSurface={
                 <AgentsHomeSurface controller={agentsCtl} onOpenSettings={openAgentSettings} />
@@ -2191,41 +2024,7 @@ export default function App() {
               <EmptyHero label="No workspaces yet." />
             )
           ) : sidebarMode === "live" ? (
-            activeSession ? (
-              <LiveView
-                key={activeSession.id}
-                session={activeSession}
-                topics={tree}
-                collections={collections}
-                onUpdated={(updated) =>
-                  setMeetingSessions((prev) =>
-                    prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
-                  )
-                }
-                onDeleted={async () => {
-                  const list = await loadMeetingSessions();
-                  setActiveSessionId(null);
-                  navigate(liveUrl(null));
-                  void list;
-                }}
-                onArchived={async () => {
-                  await loadMeetingSessions();
-                  setActiveSessionId(null);
-                  navigate(liveUrl(null));
-                }}
-                onRecordingChange={setLiveRecordingId}
-              />
-            ) : (
-              <LiveStartHero
-                topics={tree}
-                collections={collections}
-                onCreated={async (session) => {
-                  await loadMeetingSessions();
-                  setActiveSessionId(session.id);
-                  navigate(liveUrl(session));
-                }}
-              />
-            )
+            <LiveMain controller={liveCtl} tree={tree} collections={collections} />
           ) : activeSection ? (
             <activeSection.Main host={sectionHost} />
           ) : sidebarMode === "workflows" ? (
@@ -2343,10 +2142,10 @@ export default function App() {
             void agentsCtl.loadAgents();
           }}
           onWorkflowsChanged={() => workflowsCtl.refreshWorkflows()}
-          onSessionRestored={() => void loadMeetingSessions()}
+          onSessionRestored={() => void liveCtl.loadMeetingSessions()}
           onSessionDeleted={(id) => {
-            if (activeSessionId === id) setActiveSessionId(null);
-            void loadMeetingSessions();
+            if (liveCtl.activeSessionId === id) liveCtl.setActiveSessionId(null);
+            void liveCtl.loadMeetingSessions();
           }}
         />
       )}
