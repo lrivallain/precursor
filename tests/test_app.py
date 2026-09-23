@@ -955,6 +955,35 @@ def test_log_config_unifies_format() -> None:
     assert "\033[" in UTCFormatter(color=True).format(record)
 
 
+def test_log_formatter_clamps_runaway_traceback_lines() -> None:
+    """A single huge exception line must not flush the rotated log history.
+
+    SQLAlchemy errors embed the whole statement; an ``IN (…)`` over tens of
+    thousands of ids produced a 2 MB line on every startup.
+    """
+    import logging
+    import sys
+
+    from precursor.backend.logging_config import UTCFormatter
+
+    statement = "WHERE agent_events.id IN (" + ", ".join("?" * 50_000) + ")"
+    try:
+        raise RuntimeError(f"too many SQL variables\n[SQL: {statement}]")
+    except RuntimeError:
+        exc_info = sys.exc_info()
+    record = logging.LogRecord(
+        "precursor.backend.main", logging.WARNING, __file__, 1, "sweep failed", None, exc_info
+    )
+    out = UTCFormatter(color=False).format(record)
+
+    assert len(out) < 10_000
+    assert "Traceback (most recent call last):" in out
+    assert "too many SQL variables" in out
+    assert "more chars truncated]" in out
+    # Short lines are left untouched.
+    assert "RuntimeError: too many SQL variables" in out.splitlines()
+
+
 def test_auth_trace_logger_level_is_independent_of_the_app_level() -> None:
     """A sign-in lapse can't be reproduced on demand, so its trace stays on.
 
