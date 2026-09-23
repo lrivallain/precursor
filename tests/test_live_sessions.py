@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
+from precursor.backend.services.llm import one_shot
 
 
 def test_meeting_session_crud_lifecycle() -> None:
@@ -229,7 +230,6 @@ def test_parse_insights_tolerates_fences_and_junk() -> None:
 
 
 def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    import precursor.backend.services.meeting_analysis as analysis
     from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
 
     class _FakeProvider:
@@ -248,7 +248,7 @@ def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore
     async def _fake_get_provider(_session, **_kwargs):  # type: ignore[no-untyped-def]
         return _FakeProvider()
 
-    monkeypatch.setattr(analysis, "get_llm_provider", _fake_get_provider)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _fake_get_provider)
 
     app = create_app()
     with TestClient(app) as client:
@@ -274,7 +274,6 @@ def test_meeting_analyze_persists_snapshot(monkeypatch) -> None:  # type: ignore
 
 
 def test_meeting_analyze_replaces_across_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    import precursor.backend.services.meeting_analysis as analysis
     from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
 
     payloads = iter(
@@ -297,7 +296,7 @@ def test_meeting_analyze_replaces_across_runs(monkeypatch) -> None:  # type: ign
     async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
         return _SeqProvider()
 
-    monkeypatch.setattr(analysis, "get_llm_provider", _prov)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _prov)
 
     app = create_app()
     with TestClient(app) as client:
@@ -311,6 +310,52 @@ def test_meeting_analyze_replaces_across_runs(monkeypatch) -> None:  # type: ign
         third = client.post(f"/api/live/{sid}/analyze").json()["insights"]
         # An empty pass keeps the prior snapshot instead of blanking it.
         assert {i["content"] for i in third} == {"Tight deadline"}
+
+
+def test_live_analysis_and_translation_bill_the_attached_topic(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Like the recap, live calls land in the ledger against the session's topic."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import UsageRecord
+    from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+    class _Provider:
+        name = "fake"
+
+        async def stream_chat_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+            yield TextDeltaEvent(content='{"insights": [], "help": false, "suggestion": ""}')
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _Provider()
+
+    monkeypatch.setattr(one_shot, "get_llm_provider", _prov)
+
+    async def _sources(topic_id: int) -> list[str]:
+        async with SessionLocal() as session:
+            rows = await session.scalars(
+                select(UsageRecord.source)
+                .where(UsageRecord.topic_id == topic_id)
+                .order_by(UsageRecord.id)
+            )
+            return list(rows)
+
+    app = create_app()
+    with TestClient(app) as client:
+        tid = client.post("/api/topics", json={"title": "Billed"}).json()["id"]
+        sid = client.post("/api/live", json={"title": "Bill", "topic_id": tid}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "hello"})
+        assert client.post(f"/api/live/{sid}/analyze").status_code == 200
+        assert (
+            client.post(
+                f"/api/live/{sid}/translate", json={"target_lang": "fr", "texts": ["hello"]}
+            ).status_code
+            == 200
+        )
+        assert asyncio.run(_sources(tid)) == ["/live-analysis", "/live-translate"]
 
 
 def test_meeting_ask_streams_answer() -> None:
@@ -818,12 +863,11 @@ class _TextProvider:
 
 
 def test_topic_context_summary(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    import precursor.backend.services.meeting_summary as summary
 
     async def _fake_provider(_session, **_kwargs):  # type: ignore[no-untyped-def]
         return _TextProvider()
 
-    monkeypatch.setattr(summary, "get_llm_provider", _fake_provider)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _fake_provider)
 
     app = create_app()
     with TestClient(app) as client:
@@ -1248,7 +1292,7 @@ def test_translate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     async def _effort(_session):  # type: ignore[no-untyped-def]
         return None
 
-    monkeypatch.setattr(ma, "get_llm_provider", _prov)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _prov)
     monkeypatch.setattr(ma, "resolve_live_fast_model", _model)
     monkeypatch.setattr(ma, "resolve_live_reasoning_effort", _effort)
 

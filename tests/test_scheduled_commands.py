@@ -420,6 +420,28 @@ def test_agent_command_is_dispatched_not_sent_to_llm(monkeypatch: pytest.MonkeyP
         assert any(c.startswith("`/agent` failed:") for c in receipts)
 
 
+def test_a_failed_one_shot_draft_is_surfaced_in_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A provider outage keeps the same receipt the 502 used to carry."""
+    from precursor.backend.services.llm import one_shot
+
+    async def _boom(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("upstream is down")
+
+    monkeypatch.setattr(one_shot, "get_llm_provider", _boom)
+    app = create_app()
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/topics",
+            json={"title": "Linked", "github_repo": "octo/repo", "github_issue_number": 7},
+        )
+        topic_id = created.json()["id"]
+
+        _run_prompt(topic_id, "/gh-update ask for an ETA")
+
+        receipts = [m["content"] for m in _messages(client, topic_id)]
+        assert "`/gh-update` failed: LLM call failed: upstream is down" in receipts
+
+
 def test_split_agent_directive() -> None:
     assert sc._split_agent_directive("/clear poll the inbox") == ("clear", "poll the inbox")
     assert sc._split_agent_directive("  /Clear   ") == ("clear", "")

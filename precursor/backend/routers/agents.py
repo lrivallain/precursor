@@ -72,11 +72,9 @@ from precursor.backend.schemas.agent_state import (
 from precursor.backend.schemas.workflow import WorkflowSummary
 from precursor.backend.services import agent_state as agent_state_service
 from precursor.backend.services.agents import fleet, provision, runtime
-from precursor.backend.services.agents.manager import (
-    get_agent_manager,
-    normalize_mcp_scope,
-    parse_agent_command,
-)
+from precursor.backend.services.agents.directives import parse_agent_command
+from precursor.backend.services.agents.manager import get_agent_manager
+from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler
@@ -338,7 +336,7 @@ def _is_budget_park(agent: AgentSession, spent: int) -> bool:
     A budget park and a raised question both land on ``status="blocked"``; the
     distinguishing signal is that the governor only fires when the accrued spend
     has reached the configured ceiling. ``spent`` is the agent's cumulative spend
-    across every run — the same total :meth:`AgentManager._enforce_budget` gates
+    across every run — the same total :meth:`UsageMeter.enforce_budget` gates
     on, so the badge can't disagree with the governor that raised it.
     """
     return (
@@ -984,7 +982,7 @@ async def update_agent(
         # Gate on cumulative spend across every run, not the agent's mirrored
         # counters (which only carry the current run) — otherwise a raise to
         # just above the latest run's spend un-parks an agent whose lifetime
-        # total is still over the new ceiling, and ``_enforce_budget`` simply
+        # total is still over the new ceiling, and ``UsageMeter.enforce_budget`` simply
         # re-parks it on the next metered round.
         spent = (await _agent_spend(session, [agent.id])).get(agent.id, 0)
         if agent.status == "blocked" and (agent.token_budget is None or spent < agent.token_budget):

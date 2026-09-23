@@ -227,6 +227,28 @@ function messageWindowQuery(opts?: MessageWindow): string {
   return qs ? `?${qs}` : "";
 }
 
+/**
+ * The endpoints topics and flat chats both expose, under different URLs. Shared
+ * conversation code goes through `api.container(kind, id)` instead of branching
+ * on the kind at every call site.
+ */
+export interface ContainerApi {
+  listMessages: (opts?: MessageWindow) => Promise<Message[]>;
+  deleteMessage: (messageId: number) => Promise<void>;
+  /** Persist a partial assistant reply when the user stops generation. */
+  saveStopped: (content: string) => Promise<Message>;
+  uploadAttachment: (file: File) => Promise<Attachment>;
+  notes: {
+    getDraft: () => Promise<NotesDraft>;
+    saveDraft: (text: string) => Promise<NotesDraft>;
+    clearDraft: () => Promise<void>;
+    append: (text: string, attachmentIds: number[]) => Promise<{ message: Message }>;
+    rephrase: (text: string) => Promise<{ text: string }>;
+    uploadAttachment: (file: File) => Promise<NoteDraftAttachment>;
+    deleteAttachment: (attachmentId: number) => Promise<void>;
+  };
+}
+
 export const api = {
   topics: {
     // Topics
@@ -764,6 +786,39 @@ export const api = {
         body: JSON.stringify({ content }),
       }),
   },
+
+  container: (kind: ReminderContainer, id: number): ContainerApi =>
+    kind === "topic"
+      ? {
+          listMessages: (opts) => api.messages.list(id, opts),
+          deleteMessage: (mid) => api.messages.remove(id, mid),
+          saveStopped: (content) => api.messages.saveStopped(id, content),
+          uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
+          notes: {
+            getDraft: () => api.notes.getDraft(id),
+            saveDraft: (text) => api.notes.saveDraft(id, text),
+            clearDraft: () => api.notes.clearDraft(id),
+            append: (text, ids) => api.notes.append(id, text, ids),
+            rephrase: (text) => api.notes.rephrase(id, text),
+            uploadAttachment: (file) => api.notes.uploadAttachment(id, file),
+            deleteAttachment: (attId) => api.notes.deleteAttachment(id, attId),
+          },
+        }
+      : {
+          listMessages: (opts) => api.chats.listMessages(id, opts),
+          deleteMessage: (mid) => api.chats.deleteMessage(id, mid),
+          saveStopped: (content) => api.chats.saveStoppedMessage(id, content),
+          uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
+          notes: {
+            getDraft: () => api.chats.getNotesDraft(id),
+            saveDraft: (text) => api.chats.saveNotesDraft(id, text),
+            clearDraft: () => api.chats.clearNotesDraft(id),
+            append: (text, ids) => api.chats.appendNotes(id, text, ids),
+            rephrase: (text) => api.chats.rephraseNotes(id, text),
+            uploadAttachment: (file) => api.chats.uploadNoteAttachment(id, file),
+            deleteAttachment: (attId) => api.chats.deleteNoteAttachment(id, attId),
+          },
+        },
 
   attachments: {
     // Attachments (images + selected documents)

@@ -460,6 +460,57 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Stopping the workspace assistant no longer throws away its reply.** Topics
+  and chats keep whatever streamed before you pressed Stop and mark it
+  `_(stopped)_`. The workspace assistant cancelled the request instead, which
+  skipped the step that adds the reply to the conversation, so the partial
+  answer vanished as soon as streaming ended. It now stays in the transcript
+  with the same marker and goes into the history of your next question.
+- **Token usage from one-shot features is recorded more reliably.** Several
+  features ask the model once with no tools. Each one used to resolve the model
+  and write its usage row on its own, and the copies had drifted apart:
+  - **Missing attribution.** In a flat chat, `/notes rephrase` and naming
+    (automatic or `/suggest-name`) recorded usage with no chat attached. Live
+    meeting analysis and translation didn't record the session's topic, although
+    the recap did. Their usage is now attributed to the chat or topic.
+  - **Dropped rows.** When a topic-brief refresh failed because the model
+    returned an empty brief, the tokens it spent were never recorded, so the
+    **Stats** totals missed them. Usage is now written in its own session, so it
+    is recorded even when the output is thrown away.
+  - **Held connections.** Most of these features kept a database connection
+    open for the whole model call. They now release it first, so several slow
+    providers at once can no longer use up the connection pool.
+
+  All eleven call sites now share one helper
+  (`services/llm/one_shot.complete_once`), and a provider failure that a
+  feature doesn't handle returns a `502 LLM call failed: …`, as the `/gh-*`
+  drafts and `/notes rephrase` already did.
+
+- **Usage stats now count workspace chat and scheduled turns.** Two turn paths
+  never wrote the usage ledger, so **Settings → Usage stats** undercounted
+  tokens: the workspace assistant (it dropped the provider's usage report on
+  every round), and every unattended topic turn — scheduled prompts and MCP
+  `post_message` calls. Both now record one ledger row per model round, like a
+  topic or chat turn does; workspace rows carry `source="workspace"` because
+  there is no conversation to attribute them to.
+
+- **The workspace assistant now shows an Open chip for files its tools touch.**
+  Its `tool_result` events never carried the `link` the topic and chat streams
+  send, so a file read or written from the workspace assistant had no chip to
+  jump to. It also applies the context budget when no MCP tools are enabled —
+  that path used to send the whole history uncapped.
+
+- **Scheduled and `post_message` answers no longer show a raw `suggest` block.**
+  The unattended turn stored the model's follow-up block verbatim in the
+  transcript instead of lifting it into suggestion chips, and saved no model or
+  duration on the answer. It now stores answers exactly as a streamed turn does.
+
+  Under the hood the topic, chat, scheduled and workspace turns now share one
+  preparation service (`services/conversation_turn.py`) and one set of
+  persistence helpers, so fixes to retries, attachments, prompt overrides or the
+  tool loop land everywhere at once
+  ([#332](https://github.com/lrivallain/precursor/issues/332)).
+
 - **An installed Precursor failed to start on the migration step.** Startup
   runs `alembic upgrade head`, and the config it built pointed at the
   repository's `alembic.ini` — a file that configures the *CLI* (logging,

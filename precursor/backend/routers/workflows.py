@@ -55,7 +55,8 @@ from precursor.backend.schemas.workflow_state import (
 )
 from precursor.backend.services import workflow_state as workflow_state_service
 from precursor.backend.services.agents import workflow as workflow_svc
-from precursor.backend.services.agents.manager import get_agent_manager, normalize_mcp_scope
+from precursor.backend.services.agents.manager import get_agent_manager
+from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import (
     resolve_agents_enabled,
     resolve_workflows_default_capabilities,

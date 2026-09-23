@@ -89,14 +89,15 @@ instance comes up on doesn't depend on the caller's working directory.
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.
-2. The router persists the user `Message`, snapshots history, and builds a system
-   prompt that includes the linked GitHub issue body + most-recent comments +
-   labels, plus any attached skills / memory.
+2. A shared turn service persists the user `Message` (binding its attachments),
+   snapshots history and resolves the turn's model and MCP settings; the router
+   adds a system prompt that includes the linked GitHub issue body + most-recent
+   comments + labels, plus any attached skills / memory.
 3. Enabled [MCP tool servers](/features/mcp) are opened for the turn; their tools
    are advertised to the provider. A server that can't be reached (a lapsed
    credential, say) still contributes its **stored** catalogue, so the turn is
    never held up by it and the model is never quietly left without the tool. The
-   router runs a **tool loop**: stream text, collect tool calls, execute them,
+   turn engine runs a **tool loop**: stream text, collect tool calls, execute them,
    append `tool` results, call again — up to a configured max-rounds — until the
    model stops requesting tools. A call that reaches a server needing an
    interactive sign-in raises the prompt **there** and retries while it waits,
@@ -107,10 +108,17 @@ instance comes up on doesn't depend on the caller's working directory.
 5. Text deltas and tool-call events stream to the browser over SSE.
 6. On stream end (or user "stop"), the assistant turn is persisted using a
    **fresh DB session** (the request-scoped one may be closed by the time the
-   generator finishes), and `message.changed` / `stream.ended` events publish.
+   generator finishes), each metered round is written to the usage ledger, and
+   `message.changed` / `stream.ended` events publish.
 
-Scheduled topics run the *same* turn logic off the request path via
-`services/turn.py`, driven by the scheduler instead of an HTTP request.
+Chats take the same path. Scheduled topics and MCP `post_message` run the *same*
+preparation, tool loop and persistence off the request path via
+`services/turn.py`, driven by the scheduler instead of an HTTP request. The
+[workspace](/features/workspaces) assistant is ephemeral — the client sends its
+history and nothing is stored — but it drives the same tool loop and its usage
+counts too. Tool-less features that ask the model once (`/refine`, summaries,
+auto-naming, …) don't take this path; they use `complete_once()` — see
+**One-shot calls** under [LLM provider abstraction](#llm-provider-abstraction).
 
 ## Request flow: editable topic summary
 
@@ -210,6 +218,16 @@ provider + config from the DB per request and constructs it, falling back to the
 mock when credentials are missing. Shipped providers: **GitHub Copilot**
 (default), **Azure AI Foundry**, **OpenAI-compatible**, and **Mock**. Adding a
 provider is one `ProviderSpec` plus an implementation class.
+
+**One-shot calls.** Features that ask the model once with no tools (the `/gh-*`
+drafts, `/notes rephrase`, `/refine`, auto-naming, the issue and topic
+summaries, the live recap, analysis and translation) go through
+`services/llm/one_shot.complete_once()`. It resolves the provider and model,
+commits the caller's session before the provider call so a slow model doesn't
+hold a pooled connection, and writes the usage row in its own session with the
+topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
+catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
+fallbacks stay with each feature.
 
 **Two endpoints, one provider.** Copilot splits its catalogue across
 `/chat/completions` and the newer Responses API, and a model served by one is

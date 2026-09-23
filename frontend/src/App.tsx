@@ -91,234 +91,26 @@ import {
   readStoredCollectionId,
   writeStoredCollectionId,
 } from "./lib/collections";
-
-interface WsRoute {
-  open: boolean;
-  slug: string | null;
-  path: string | null;
-}
-
-// Parse the current pathname into a workspace route. `/ws` opens the overlay,
-// `/ws/<slug>/<file/path>` deep-links straight to a file.
-function parseWsRoute(): WsRoute {
-  const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/");
-  if (segs[0] !== "ws") return { open: false, slug: null, path: null };
-  const slug = segs[1] ? decodeURIComponent(segs[1]) : null;
-  const path =
-    segs.length > 2 ? segs.slice(2).map(decodeURIComponent).join("/") : null;
-  return { open: true, slug, path };
-}
-
-// Path-based routing for every mode:
-//   /topics/<collection-slug>/<ancestor-slugs…>/<slug>   → topics
-//   /t/<public-id>                                       → topic permalink
-//   /chats/<slug>                                        → chats
-//   /ws/<slug>/<file/path>                               → workspaces
-// Topic slugs are globally unique, so the trailing slug alone identifies the
-// item; the collection slug and the ancestor slugs make the URL readable +
-// bookmarkable. `/t/<uuid>` is the immutable address — it survives renames,
-// re-parenting and collection moves, and the SPA rewrites it to the readable
-// form once resolved.
-interface AppRoute {
-  mode: SidebarMode;
-  // Path segments after `/topics` — `[collection?, …ancestors, slug]`. Legacy
-  // links minted before collections joined the URL simply have no collection
-  // segment; the trailing slug still resolves them.
-  topicPath: string[];
-  // The UUID from a `/t/<public-id>` permalink.
-  topicPublicId: string | null;
-  chatSlug: string | null;
-  liveSlug: string | null;
-  // The raw agent path segment — a public UUID for new links, or a legacy
-  // integer id. Resolved to an internal numeric id once the agent list loads.
-  agentRef: string | null;
-  // The workflow id segment (`/workflows/<id>`); null on the gallery route.
-  workflowRef: number | null;
-  // The run segment (`/workflows/<id>/run/<n|latest>`): a run number as a string
-  // or the literal "latest" to track the live/newest run; null when absent.
-  workflowRunRef: string | null;
-  // For a plugin-contributed section: the path segments after its root, and the
-  // raw hash. Core treats both as opaque and hands them to the section.
-  pluginSegments: string[];
-  pluginHash: string;
-}
-
-function parseAppRoute(): AppRoute {
-  const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-  const base: AppRoute = {
-    mode: "topics",
-    topicPath: [],
-    topicPublicId: null,
-    chatSlug: null,
-    liveSlug: null,
-    agentRef: null,
-    workflowRef: null,
-    workflowRunRef: null,
-    pluginSegments: [],
-    pluginHash: "",
-  };
-  if (segs[0] === "ws") return { ...base, mode: "workspaces" };
-  if (segs[0] === "agents") {
-    return { ...base, mode: "agents", agentRef: segs[1] ? decodeURIComponent(segs[1]) : null };
-  }
-  if (segs[0] === "workflows") {
-    const raw = segs[1] ? Number.parseInt(decodeURIComponent(segs[1]), 10) : NaN;
-    // Optional `/run/<n|latest>` deep link into one run of the workflow.
-    let runRef: string | null = null;
-    if (segs[2] === "run" && segs[3]) {
-      const seg = decodeURIComponent(segs[3]).toLowerCase();
-      if (seg === "latest") runRef = "latest";
-      else if (/^\d+$/.test(seg)) runRef = seg;
-    }
-    return {
-      ...base,
-      mode: "workflows",
-      workflowRef: Number.isSafeInteger(raw) && raw > 0 ? raw : null,
-      workflowRunRef: runRef,
-    };
-  }
-  if (segs[0] === "chats") {
-    return { ...base, mode: "chats", chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
-  }
-  if (segs[0] === "live") {
-    return { ...base, mode: "live", liveSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
-  }
-  if (segs[0] === "t") {
-    return {
-      ...base,
-      mode: "topics",
-      topicPublicId: segs[1] ? decodeURIComponent(segs[1]) : null,
-    };
-  }
-  if (segs[0] === "topics") {
-    return { ...base, mode: "topics", topicPath: segs.slice(1).map(decodeURIComponent) };
-  }
-  // Anything left is a candidate plugin section, which owns its whole subtree:
-  // core keeps the root segment as the mode and passes the rest through
-  // untouched. It deliberately does *not* check the section registry — a
-  // plugin's bundle is fetched asynchronously, so at first parse nothing is
-  // registered yet and a deep link would be thrown away. The gating effect
-  // bounces the mode to Topics once the descriptors say it isn't real.
-  if (segs[0]) {
-    return {
-      ...base,
-      mode: segs[0],
-      pluginSegments: segs.slice(1).map((seg) => decodeURIComponent(seg)),
-      pluginHash: window.location.hash.replace(/^#/, ""),
-    };
-  }
-  return base;
-}
-
-/** Section keys core ships itself; everything else can only be a plugin. */
-const CORE_MODES: ReadonlySet<string> = new Set([
-  "topics",
-  "chats",
-  "live",
-  "workspaces",
-  "agents",
-  "workflows",
-]);
-
-/** Whether `mode` is a plugin section rather than one of core's own. */
-function isPluginMode(mode: SidebarMode): boolean {
-  return !CORE_MODES.has(mode);
-}
-
-/** The home launcher lives at the root path `/` (no path segments). */
-function isHomePath(): boolean {
-  return window.location.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).length === 0;
-}
-
-/** Ancestor → self slug chain for a topic, using the loaded tree. */
-function topicSlugPath(tree: TopicNode[], topicId: number): string[] {
-  const byId = new Map<number, TopicNode>();
-  const walk = (nodes: TopicNode[]): void => {
-    for (const n of nodes) {
-      byId.set(n.id, n);
-      if (n.children?.length) walk(n.children);
-    }
-  };
-  walk(tree);
-  const path: string[] = [];
-  let cur: TopicNode | undefined = byId.get(topicId);
-  while (cur) {
-    path.unshift(cur.slug);
-    cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined;
-  }
-  return path;
-}
-
-function topicUrl(tree: TopicNode[], topic: Topic, collections: Collection[]): string {
-  const segs = topicSlugPath(tree, topic.id);
-  const chain = segs.length ? segs : [topic.slug];
-  const collectionSlug = collections.find((c) => c.id === topic.collection_id)?.slug;
-  const all = collectionSlug ? [collectionSlug, ...chain] : chain;
-  return "/topics/" + all.map(encodeURIComponent).join("/");
-}
-
-/** The Topics mode's own URL when nothing is selected: `/topics/<collection>`. */
-function topicsModeUrl(collections: Collection[], collectionId: number | null): string {
-  const slug = collections.find((c) => c.id === collectionId)?.slug;
-  return slug ? `/topics/${encodeURIComponent(slug)}` : "/topics";
-}
-
-/** Ancestor chain (root → immediate parent, excluding self) for a topic. */
-function topicAncestors(tree: TopicNode[], topicId: number): TopicNode[] {
-  const byId = new Map<number, TopicNode>();
-  const walk = (nodes: TopicNode[]): void => {
-    for (const n of nodes) {
-      byId.set(n.id, n);
-      if (n.children?.length) walk(n.children);
-    }
-  };
-  walk(tree);
-  const chain: TopicNode[] = [];
-  let cur = byId.get(topicId);
-  let parentId = cur?.parent_id ?? null;
-  while (parentId != null) {
-    cur = byId.get(parentId);
-    if (!cur) break;
-    chain.unshift(cur);
-    parentId = cur.parent_id ?? null;
-  }
-  return chain;
-}
-
-function chatUrl(chat: Chat): string {
-  return "/chats/" + encodeURIComponent(chat.slug);
-}
-
-function liveUrl(session: MeetingSession | null): string {
-  if (session == null) return "/live";
-  return "/live/" + encodeURIComponent(session.slug);
-}
-
-// Build the URL for a plugin section from the segments it asked for. A
-// section's registered id *is* its top-level segment (see lib/plugins).
-function pluginSectionUrl(mode: string, segments: string[]): string {
-  const tail = segments.filter(Boolean).map(encodeURIComponent).join("/");
-  return tail ? `/${mode}/${tail}` : `/${mode}`;
-}
-
-// Agents are addressed by their public UUID (public_id) in the URL.
-// Until the agent list has loaded we may not know the UUID yet, so fall back to
-// the internal id; the URL-sync effect rewrites it to the UUID once known.
-function agentUrl(agentId: number | null, agents: AgentSession[] | null): string {
-  if (agentId == null) return "/agents";
-  const a = agents?.find((x) => x.id === agentId);
-  const ref = a?.public_id ?? String(agentId);
-  return `/agents/${encodeURIComponent(ref)}`;
-}
-
-// Resolve a URL agent segment to an internal id. A pure-integer ref is a legacy
-// id; anything else is a public UUID looked up in the loaded session list.
-// Returns null when a UUID can't be matched yet (agents not loaded).
-function resolveAgentRef(ref: string | null, agents: AgentSession[] | null): number | null {
-  if (!ref) return null;
-  if (/^\d+$/.test(ref)) return Number(ref);
-  return agents?.find((a) => a.public_id === ref)?.id ?? null;
-}
+import {
+  agentUrl,
+  chatUrl,
+  isHomePath,
+  isPluginMode,
+  liveUrl,
+  navigate,
+  parseAppRoute,
+  parseWsRoute,
+  pluginSectionUrl,
+  resolveAgentRef,
+  searchTermFromUrl,
+  topicsModeUrl,
+  topicUrl,
+  workflowUrl,
+  workspaceUrl,
+  type PluginRoute,
+  type WsRoute,
+} from "./lib/routes";
+import { findNode, findTitle, topicAncestors, totalUnread } from "./lib/topicTree";
 
 const BASE_TITLE = "Precursor";
 
@@ -371,39 +163,6 @@ function isTypingTarget(e: KeyboardEvent): boolean {
   return false;
 }
 
-/** Sum unread counts across the whole topic tree (recursively). */
-function totalUnread(nodes: TopicNode[]): number {
-  let n = 0;
-  for (const node of nodes) {
-    n += node.unread_count ?? 0;
-    if (node.children?.length) n += totalUnread(node.children);
-  }
-  return n;
-}
-
-/** Find a topic's title anywhere in the tree (for notification text). */
-function findTitle(nodes: TopicNode[], topicId: number): string | null {
-  for (const node of nodes) {
-    if (node.id === topicId) return node.title;
-    if (node.children?.length) {
-      const hit = findTitle(node.children, topicId);
-      if (hit) return hit;
-    }
-  }
-  return null;
-}
-
-function findNode(nodes: TopicNode[], topicId: number): TopicNode | null {
-  for (const node of nodes) {
-    if (node.id === topicId) return node;
-    if (node.children?.length) {
-      const hit = findNode(node.children, topicId);
-      if (hit) return hit;
-    }
-  }
-  return null;
-}
-
 
 export default function App() {
   const [tree, setTree] = useState<TopicNode[]>([]);
@@ -416,9 +175,7 @@ export default function App() {
   // Active "find" term for the open conversation, seeded from the ?q= URL param
   // and set when a content-search hit is opened. Highlights matches in message
   // bodies; empty means no highlighting.
-  const [searchHighlight, setSearchHighlight] = useState<string>(
-    () => new URLSearchParams(window.location.search).get("q") ?? "",
-  );
+  const [searchHighlight, setSearchHighlight] = useState<string>(searchTermFromUrl);
   // The conversation the current highlight belongs to (a `${mode}:${id}` key),
   // so we can auto-clear the highlight when the user navigates to a *different*
   // conversation. `pendingHighlightKeyRef` holds the target of an in-flight
@@ -454,12 +211,10 @@ export default function App() {
   const [meetingSessions, setMeetingSessions] = useState<MeetingSession[] | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   // Route state owned by the active plugin section (opaque to core).
-  const [pluginRoute, setPluginRoute] = useState<{ segments: string[]; hash: string }>(
-    () => {
-      const r = parseAppRoute();
-      return { segments: r.pluginSegments, hash: r.pluginHash };
-    },
-  );
+  const [pluginRoute, setPluginRoute] = useState<PluginRoute>(() => {
+    const r = parseAppRoute();
+    return { segments: r.pluginSegments, hash: r.pluginHash };
+  });
   // Agents are loaded lazily when the user first enters agents mode.
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [showWorkflowAgents, setShowWorkflowAgents] = useState(true);
@@ -968,8 +723,8 @@ export default function App() {
   }
 
   // ---- Path-based routing ----------------------------------------------
-  // The URL path is the single source of truth for mode + selection:
-  //   /topics/<collection>/<ancestor-slugs…>/<slug>   /chats/<slug>   /ws/<slug>/<path>
+  // The URL path is the single source of truth for mode + selection (the full
+  // scheme, parsers and builders live in lib/routes.ts).
   // `syncFromUrl` runs on mount + back/forward; the effects below push the URL
   // when the active item changes. Equality checks break the feedback loop.
 
@@ -995,7 +750,7 @@ export default function App() {
       // Keep the highlight term in step with the URL for reloads / back-forward.
       // Reset the ownership refs so the highlight adopts whichever conversation
       // the URL resolves to (rather than clearing on that first resolution).
-      const urlTerm = new URLSearchParams(window.location.search).get("q") ?? "";
+      const urlTerm = searchTermFromUrl();
       setSearchHighlight(urlTerm);
       if (urlTerm) {
         highlightKeyRef.current = null;
@@ -1148,9 +903,9 @@ export default function App() {
     const lastSeg = decodeURIComponent(curSegs[curSegs.length - 1] ?? "");
     if (lastSeg === activeTopic.slug || permalinkRewriteRef.current) {
       permalinkRewriteRef.current = false;
-      history.replaceState(null, "", target);
+      navigate(target, { replace: true });
     } else {
-      history.pushState(null, "", target);
+      navigate(target);
     }
   }, [activeTopic, sidebarMode, tree, collections, atHome]);
 
@@ -1165,7 +920,7 @@ export default function App() {
     // A deep link still resolving would be overwritten before it lands.
     if (pendingTopicRouteRef.current) return;
     const target = topicsModeUrl(collections, activeCollectionId);
-    if (window.location.pathname !== target) history.replaceState(null, "", target);
+    if (window.location.pathname !== target) navigate(target, { replace: true });
   }, [activeTopic, sidebarMode, collections, activeCollectionId, atHome]);
 
   // activeChat -> /chats/<slug>.
@@ -1173,7 +928,7 @@ export default function App() {
     if (atHome) return;
     if (sidebarMode !== "chats" || !activeChat) return;
     const target = chatUrl(activeChat);
-    if (window.location.pathname !== target) history.pushState(null, "", target);
+    if (window.location.pathname !== target) navigate(target);
   }, [activeChat, sidebarMode, atHome]);
 
   // activeSession -> /live/<slug> (or /live when nothing is selected).
@@ -1182,7 +937,7 @@ export default function App() {
     if (sidebarMode !== "live") return;
     const active = meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
     const target = liveUrl(active);
-    if (window.location.pathname !== target) history.pushState(null, "", target);
+    if (window.location.pathname !== target) navigate(target);
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
 
   // activeAgentId -> /agents/<uuid> (or /agents when nothing is selected). The
@@ -1196,7 +951,7 @@ export default function App() {
     // drop the UUID before the agents-load effect can resolve it.
     if (activeAgentId == null && pendingAgentRef.current) return;
     const target = agentUrl(activeAgentId, agents);
-    if (window.location.pathname !== target) history.pushState(null, "", target);
+    if (window.location.pathname !== target) navigate(target);
   }, [activeAgentId, sidebarMode, agents, atHome]);
 
   // activeWorkflowId (+ run seg) -> /workflows/<id>[/run/<n|latest>] (or
@@ -1208,18 +963,10 @@ export default function App() {
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "workflows") return;
-    let target: string;
-    if (activeWorkflowId == null) {
-      target = "/workflows";
-    } else if (activeWorkflowRunSeg) {
-      target = `/workflows/${activeWorkflowId}/run/${activeWorkflowRunSeg}`;
-    } else {
-      target = `/workflows/${activeWorkflowId}`;
-    }
+    const target = workflowUrl(activeWorkflowId, activeWorkflowRunSeg);
     if (window.location.pathname !== target) {
       const idChanged = prevWorkflowIdRef.current !== activeWorkflowId;
-      if (idChanged) history.pushState(null, "", target);
-      else history.replaceState(null, "", target);
+      navigate(target, { replace: !idChanged });
     }
     prevWorkflowIdRef.current = activeWorkflowId;
   }, [activeWorkflowId, activeWorkflowRunSeg, sidebarMode, atHome]);
@@ -1272,7 +1019,7 @@ export default function App() {
     if (want) params.set("q", want);
     else params.delete("q");
     const qs = params.toString();
-    history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    navigate(window.location.pathname + (qs ? `?${qs}` : ""), { replace: true });
   }, [
     searchHighlight,
     atHome,
@@ -1381,7 +1128,7 @@ export default function App() {
     } else {
       target = "/ws";
     }
-    if (window.location.pathname !== target) history.pushState(null, "", target);
+    if (window.location.pathname !== target) navigate(target);
     setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
     setSidebarMode(next);
     // These section buttons explicitly select the overview, like a list item.
@@ -1408,15 +1155,15 @@ export default function App() {
     setActiveWorkflowRunSeg(null);
     setSidebarMode("workflows");
     closeMobileNav();
-    const target = id == null ? "/workflows" : `/workflows/${id}`;
-    if (window.location.pathname !== target) history.pushState(null, "", target);
+    const target = workflowUrl(id);
+    if (window.location.pathname !== target) navigate(target);
   }
 
   // Navigate to the root home launcher.
   async function goHome(): Promise<void> {
     if (!(await confirmLeaveRecording())) return;
     closeMobileNav();
-    if (window.location.pathname !== "/") history.pushState(null, "", "/");
+    if (window.location.pathname !== "/") navigate("/");
     setWsRoute({ open: false, slug: null, path: null });
     setAtHome(true);
   }
@@ -1431,34 +1178,30 @@ export default function App() {
       setActiveTopic(null);
       setTopicDraftParentId(null);
       setTopicDraftNonce((n) => n + 1);
-      history.pushState(
-        null,
-        "",
-        topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current),
-      );
+      navigate(topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current));
       setSidebarMode("topics");
     } else if (mode === "chats") {
       setActiveChat(null);
-      history.pushState(null, "", "/chats");
+      navigate("/chats");
       setSidebarMode("chats");
     } else if (mode === "live") {
       setActiveSessionId(null);
-      history.pushState(null, "", "/live");
+      navigate("/live");
       setSidebarMode("live");
     } else if (mode === "agents") {
       pendingAgentRef.current = null;
       setActiveAgentId(null);
       setAgentComposerOpen(true);
-      history.pushState(null, "", "/agents");
+      navigate("/agents");
       setSidebarMode("agents");
     } else if (mode === "workflows") {
       setActiveWorkflowId(null);
       setActiveWorkflowRunSeg(null);
       setWorkflowEditor({ id: null });
-      history.pushState(null, "", "/workflows");
+      navigate("/workflows");
       setSidebarMode("workflows");
     } else {
-      history.pushState(null, "", "/ws");
+      navigate("/ws");
       setSidebarMode("workspaces");
       setWsRoute(parseWsRoute());
       setCreateWorkspaceOpen(true);
@@ -1495,7 +1238,7 @@ export default function App() {
     setSidebarMode("live");
     await loadMeetingSessions();
     setActiveSessionId(session.id);
-    history.pushState(null, "", liveUrl(session));
+    navigate(liveUrl(session));
   }
 
   // The "New agent" card's inline start form calls this once the agent exists.
@@ -1536,7 +1279,7 @@ export default function App() {
       // replaceState, not push: this bounce must *consume* the unreachable URL.
       // Pushing would leave it in the history, and going Back would land on it
       // and bounce again — trapping the user one entry from where they were.
-      history.replaceState(null, "", "/topics");
+      navigate("/topics", { replace: true });
       setSidebarMode("topics");
     }
   }, [liveEnabled, sidebarMode]);
@@ -1553,21 +1296,14 @@ export default function App() {
     // Any unrecognised root segment parses as a candidate plugin section, so
     // this also catches plain typos — all the more reason to replace rather
     // than push, or Back would bounce off the bad URL forever.
-    history.replaceState(null, "", "/topics");
+    navigate("/topics", { replace: true });
     setSidebarMode("topics");
   }, [enabledSections, pluginDescriptors, sidebarMode, settings]);
 
   // Reflect the active workspace + open file in the URL so a reload returns to
   // the same place. replaceState keeps it as a single history entry.
   function navigateWorkspace(slug: string | null, filePath: string | null): void {
-    let url = "/ws";
-    if (slug) {
-      url += `/${encodeURIComponent(slug)}`;
-      if (filePath) {
-        url += "/" + filePath.split("/").map(encodeURIComponent).join("/");
-      }
-    }
-    history.replaceState(null, "", url);
+    navigate(workspaceUrl(slug, filePath), { replace: true });
     setWsRoute({ open: true, slug, path: filePath });
   }
 
@@ -2109,8 +1845,7 @@ export default function App() {
         if (window.location.pathname + window.location.search + window.location.hash === path) {
           return;
         }
-        if (opts?.push) history.pushState(null, "", path);
-        else history.replaceState(null, "", path);
+        navigate(path, { replace: !opts?.push });
       },
       openTopic: (topicId: number) => {
         void changeModeRef.current("topics");
@@ -2205,7 +1940,7 @@ export default function App() {
         const target = list.find((w) => w.slug === slug);
         if (!target) return;
         setActiveWorkspaceId(target.id);
-        history.pushState(null, "", url);
+        navigate(url);
         setWsRoute({ open: true, slug, path });
         setSidebarMode("workspaces");
       })();
@@ -2241,7 +1976,7 @@ export default function App() {
     if (session.id !== activeSessionId && !(await confirmLeaveRecording())) return;
     closeMobileNav();
     setActiveSessionId(session.id);
-    history.pushState(null, "", liveUrl(session));
+    navigate(liveUrl(session));
   }
 
   async function handleRenameSession(session: MeetingSession, title: string): Promise<void> {
@@ -2350,7 +2085,7 @@ export default function App() {
     // Push rather than let the "nothing selected" effect replace: Back should
     // return to the topic you were reading, not skip past it.
     const target = topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current);
-    if (window.location.pathname !== target) history.pushState(null, "", target);
+    if (window.location.pathname !== target) navigate(target);
   }
 
   function openTopicSettings(tab: "settings" | "context" = "settings"): void {
@@ -3042,13 +2777,13 @@ export default function App() {
                 onDeleted={async () => {
                   const list = await loadMeetingSessions();
                   setActiveSessionId(null);
-                  history.pushState(null, "", liveUrl(null));
+                  navigate(liveUrl(null));
                   void list;
                 }}
                 onArchived={async () => {
                   await loadMeetingSessions();
                   setActiveSessionId(null);
-                  history.pushState(null, "", liveUrl(null));
+                  navigate(liveUrl(null));
                 }}
                 onRecordingChange={setLiveRecordingId}
               />
@@ -3059,7 +2794,7 @@ export default function App() {
                 onCreated={async (session) => {
                   await loadMeetingSessions();
                   setActiveSessionId(session.id);
-                  history.pushState(null, "", liveUrl(session));
+                  navigate(liveUrl(session));
                 }}
               />
             )

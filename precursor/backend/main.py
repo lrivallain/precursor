@@ -15,10 +15,11 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
+    JSONResponse,
     PlainTextResponse,
     RedirectResponse,
     Response,
@@ -67,6 +68,7 @@ from precursor.backend.routers import (
     workflows,
     workspaces,
 )
+from precursor.backend.services.llm.one_shot import LLMCallFailed
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +343,16 @@ def create_app() -> FastAPI:
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+        )
+
+    @app.exception_handler(LLMCallFailed)
+    async def _llm_call_failed(_request: Request, exc: LLMCallFailed) -> JSONResponse:
+        # One mapping for every one-shot feature that doesn't handle the failure
+        # itself: a provider outage is an upstream error, not a server bug.
+        logger.warning("%s: LLM call failed: %s", exc.source, exc)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"detail": exc.detail},
         )
 
     @app.middleware("http")

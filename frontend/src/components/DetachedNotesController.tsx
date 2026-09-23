@@ -17,28 +17,15 @@ interface Props {
   onDone: () => void;
 }
 
-/** Topic vs chat differ only in which API endpoints back the note actions. */
+/** The popped-out container's notes endpoints, plus the topic-only issue comment. */
 function notesApi(session: DetachedSession) {
   const id = session.containerId;
-  if (session.container === "topic") {
-    return {
-      rephrase: (t: string) => api.notes.rephrase(id, t),
-      append: (t: string, ids: number[]) => api.notes.append(id, t, ids),
-      save: (t: string) => api.notes.saveDraft(id, t),
-      clear: () => api.notes.clearDraft(id),
-      upload: (f: File) => api.notes.uploadAttachment(id, f),
-      remove: (aid: number) => api.notes.deleteAttachment(id, aid),
-      postComment: (t: string, ids: number[]) => api.github.postUpdate(id, t, ids),
-    };
-  }
   return {
-    rephrase: (t: string) => api.chats.rephraseNotes(id, t),
-    append: (t: string, ids: number[]) => api.chats.appendNotes(id, t, ids),
-    save: (t: string) => api.chats.saveNotesDraft(id, t),
-    clear: () => api.chats.clearNotesDraft(id),
-    upload: (f: File) => api.chats.uploadNoteAttachment(id, f),
-    remove: (aid: number) => api.chats.deleteNoteAttachment(id, aid),
-    postComment: undefined as undefined | ((t: string, ids: number[]) => Promise<unknown>),
+    ...api.container(session.container, id).notes,
+    postComment:
+      session.container === "topic"
+        ? (t: string, ids: number[]) => api.github.postUpdate(id, t, ids)
+        : undefined,
   };
 }
 
@@ -97,7 +84,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
     try {
       for (const file of supported) {
         try {
-          const att = await backend.upload(file);
+          const att = await backend.uploadAttachment(file);
           setAttachments((prev) => [...prev, att]);
         } catch (err) {
           setAttachmentsError((err as Error).message || "Upload failed");
@@ -111,7 +98,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
   async function removeAttachment(id: number): Promise<void> {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
     try {
-      await backend.remove(id);
+      await backend.deleteAttachment(id);
     } catch {
       /* ignore stale ids */
     }
@@ -123,7 +110,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
     setSavingDraft(true);
     setError(null);
     try {
-      await backend.save(trimmed);
+      await backend.saveDraft(trimmed);
       announceDraftChanged();
       onDone();
     } catch (err) {
@@ -141,7 +128,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
     try {
       if (action === "append") {
         await backend.append(trimmed, attachmentIds);
-        await backend.clear().catch(() => {});
+        await backend.clearDraft().catch(() => {});
         announceDraftChanged();
         onDone();
       } else if (action === "append-and-ask") {
@@ -150,7 +137,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
         onDone();
       } else if (action === "post-comment" && backend.postComment) {
         await backend.postComment(trimmed, attachmentIds);
-        await backend.clear().catch(() => {});
+        await backend.clearDraft().catch(() => {});
         announceDraftChanged();
         onDone();
       }
@@ -170,7 +157,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
   async function persistAndClose(): Promise<void> {
     const trimmed = latestText.current.trim();
     if (trimmed || attachmentsRef.current.length > 0) {
-      await backend.save(trimmed).catch(() => {});
+      await backend.saveDraft(trimmed).catch(() => {});
       announceDraftChanged();
     }
     onDone();

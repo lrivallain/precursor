@@ -44,8 +44,9 @@ import {
   stripAgentDirectives,
 } from "../lib/directives";
 import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
-import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useDictation } from "../lib/useDictation";
 import { useResizableHeight } from "../lib/useResizableHeight";
+import { navigate } from "../lib/routes";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
@@ -404,7 +405,7 @@ function AgentOrchestrationSection({
     if (target) setViewing(target);
     const url = new URL(window.location.href);
     url.searchParams.delete("artifact");
-    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    navigate(url.pathname + url.search + url.hash, { replace: true });
   }, [artifacts]);
 
   async function addWebhook(): Promise<void> {
@@ -1827,24 +1828,9 @@ export function AgentView({
     min: 40,
     max: 480,
   });
-  const [interimText, setInterimText] = useState("");
-  const appendFinalChunk = (text: string) => {
-    const chunk = text.trim();
-    if (!chunk) return;
-    const append = (d: string) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk);
-    if (selectedRef.current) setFollowUp(append);
-    else setTask(append);
-    setInterimText("");
-  };
-  const speech = useAzureSpeech({
-    onFinalChunk: appendFinalChunk,
-    onInterim: setInterimText,
-    enabled: settings?.stt_azure_ready ?? false,
-    lang: settings?.azure_speech_language || undefined,
-  });
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
+  const { interimText, speech } = useDictation((update) =>
+    selectedRef.current ? setFollowUp(update) : setTask(update),
+  );
 
   // Agents support only the system-handled slash commands (/rename, /clear,
   // /archive); skills and every other builtin are disabled here. They only apply
