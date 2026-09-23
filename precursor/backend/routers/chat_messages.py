@@ -10,16 +10,13 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import get_session
 from precursor.backend.models import (
     Chat,
     Message,
-    MessageRole,
     NoteDraftAttachment,
 )
 from precursor.backend.routers.deps import get_chat_or_404
@@ -40,15 +37,17 @@ from precursor.backend.services import notes as notes_service
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.chat_autoname import schedule_autoname, suggest_chat_name
 from precursor.backend.services.conversation_turn import (
+    clear_container_messages,
+    delete_container_message,
+    list_container_messages,
     persist_user_turn,
     resolve_turn_settings,
+    save_stopped_container_turn,
     snapshot_history,
     stream_turn,
     user_echo,
 )
-from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.llm.one_shot import complete_once
-from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.turn_engine import (
     apply_chat_system_prompt,
     build_chat_system_context,
@@ -73,9 +72,7 @@ async def list_messages(
     ``limit`` rows; ``before_id`` pages further back. Slices come back oldest
     first.
     """
-    return await list_message_window(
-        session, Message.chat_id, chat_id, limit=limit, before_id=before_id
-    )
+    return await list_container_messages(session, "chat", chat_id, limit=limit, before_id=before_id)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_chat_or_404)])
@@ -84,9 +81,7 @@ async def clear_messages(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Wipe the transcript for a chat. The chat row itself is kept."""
-    await session.execute(delete(Message).where(Message.chat_id == chat_id))
-    await session.commit()
-    await publish_message_changed_chat(chat_id)
+    await clear_container_messages(session, "chat", chat_id)
 
 
 @router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -96,12 +91,7 @@ async def delete_message(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Hard-delete a single message."""
-    msg = await session.get(Message, message_id)
-    if msg is None or msg.chat_id != chat_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
-    await session.delete(msg)
-    await session.commit()
-    await publish_message_changed_chat(chat_id)
+    await delete_container_message(session, "chat", chat_id, message_id)
 
 
 @router.post("/stopped", response_model=MessageRead)
@@ -113,18 +103,7 @@ async def save_stopped_turn(
     """Persist the partial assistant reply when the user stops generation."""
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
-    msg = Message(
-        chat_id=chat_id,
-        role=MessageRole.ASSISTANT,
-        content=payload.content,
-    )
-    session.add(msg)
-    await session.commit()
-    await publish_message_changed_chat(chat_id)
-    result = await session.execute(
-        select(Message).where(Message.id == msg.id).options(selectinload(Message.attachments))
-    )
-    return result.scalar_one()
+    return await save_stopped_container_turn(session, "chat", chat_id, payload.content)
 
 
 @router.post("/stream")

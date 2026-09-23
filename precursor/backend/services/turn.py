@@ -18,11 +18,11 @@ import json
 import logging
 
 import anyio
-from sqlalchemy import delete
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
 from precursor.backend.services.conversation_turn import (
+    clear_container_messages,
     persist_user_message,
     resolve_turn_settings,
     snapshot_history,
@@ -90,8 +90,7 @@ async def _run(
 
         # Optionally wipe prior turns so each run is independent of history.
         if clear_context:
-            await session.execute(delete(Message).where(Message.topic_id == topic_id))
-            await session.commit()
+            await clear_container_messages(session, "topic", topic_id)
 
         # Persist the scheduled prompt as the user turn so the transcript and
         # the unread badge behave like a normal conversation.

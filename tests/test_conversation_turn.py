@@ -130,3 +130,41 @@ async def test_resolve_turn_settings_honours_override_and_exclusions(
     assert settings.enabled_servers == ["fetch"]
     assert isinstance(settings.provider, MockProvider)
     assert settings.max_tool_rounds >= 1
+
+
+# -- Transcript endpoints: the same behaviour for both containers -----------
+
+
+@pytest.mark.parametrize("container", ["topics", "chats"])
+def test_transcript_endpoints_share_one_behaviour(container: str) -> None:
+    from fastapi.testclient import TestClient
+
+    from precursor.backend.main import create_app
+
+    with TestClient(create_app()) as client:
+        cid = client.post(f"/api/{container}", json={"title": "Transcript"}).json()["id"]
+        other = client.post(f"/api/{container}", json={"title": "Other"}).json()["id"]
+        base = f"/api/{container}/{cid}/messages"
+
+        stopped = client.post(f"{base}/stopped", json={"content": "partial reply"})
+        assert stopped.status_code == 200
+        saved = stopped.json()
+        assert saved["role"] == "assistant"
+        assert saved["content"] == "partial reply"
+        assert saved["attachments"] == []
+        second = client.post(f"{base}/stopped", json={"content": "another"}).json()
+
+        assert [m["id"] for m in client.get(base).json()] == [saved["id"], second["id"]]
+        assert [m["id"] for m in client.get(base, params={"limit": 1}).json()] == [second["id"]]
+
+        # A message is only deletable through the container that owns it.
+        wrong = client.delete(f"/api/{container}/{other}/messages/{saved['id']}")
+        assert wrong.status_code == 404
+        assert client.delete(f"{base}/{saved['id']}").status_code == 204
+        assert [m["id"] for m in client.get(base).json()] == [second["id"]]
+
+        assert client.delete(base).status_code == 204
+        assert client.get(base).json() == []
+
+        missing = client.post(f"/api/{container}/987654/messages/stopped", json={"content": "x"})
+        assert missing.status_code == 404

@@ -1,4 +1,4 @@
-"""Turn preparation for persisted conversations (topics and chats).
+"""Turn preparation and transcript upkeep for persisted conversations.
 
 Everything a turn needs before the model runs — the user message and its
 attachments, the history snapshot, the resolved LLM settings, the user echo —
@@ -11,6 +11,10 @@ itself.
 Every helper finishes its DB work before returning. The stream endpoints hand
 the result to an SSE generator that outlives the request-scoped session, and the
 generator persists through fresh sessions of its own.
+
+The transcript endpoints both containers expose (list, clear, delete one, save a
+stopped reply) live here too, keyed on :data:`ContainerKind`, so the topic and
+chat routers stay one-liners over the same behaviour.
 """
 
 from __future__ import annotations
@@ -19,7 +23,8 @@ from collections.abc import AsyncIterator, Collection
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select, update
+from fastapi import HTTPException, status
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
@@ -35,6 +40,7 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, LLMProvider
+from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.turn_engine import (
     ContainerKind,
@@ -255,3 +261,66 @@ def stream_turn(
         enabled_servers=settings.enabled_servers,
     )
     return lifecycle_stream(kind, container_id, inner)
+
+
+# -- Transcript upkeep -----------------------------------------------------
+
+
+async def list_container_messages(
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    *,
+    limit: int | None = None,
+    before_id: int | None = None,
+) -> list[Message]:
+    """A container's transcript, optionally as a cursor-paginated window."""
+    return await list_message_window(
+        session, _message_fk(kind), container_id, limit=limit, before_id=before_id
+    )
+
+
+async def clear_container_messages(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> None:
+    """Wipe a container's transcript. The container itself is kept."""
+    await session.execute(delete(Message).where(_message_fk(kind) == container_id))
+    await session.commit()
+    await publish_container_changed(kind, container_id)
+
+
+async def delete_container_message(
+    session: AsyncSession, kind: ContainerKind, container_id: int, message_id: int
+) -> None:
+    """Hard-delete one message. Raises 404 unless it belongs to this container."""
+    msg = await session.get(Message, message_id)
+    owner = None if msg is None else (msg.topic_id if kind == "topic" else msg.chat_id)
+    if msg is None or owner != container_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    await session.delete(msg)
+    await session.commit()
+    await publish_container_changed(kind, container_id)
+
+
+async def save_stopped_container_turn(
+    session: AsyncSession, kind: ContainerKind, container_id: int, content: str
+) -> Message:
+    """Persist the partial reply the client kept when the user stopped a turn.
+
+    The stream only saves its final turn, which never runs once the client
+    disconnects; this keeps the text already received instead of losing it.
+    """
+    msg = Message(
+        role=MessageRole.ASSISTANT,
+        content=content,
+        **container_message_kwargs(kind, container_id),
+    )
+    session.add(msg)
+    await session.commit()
+    await publish_container_changed(kind, container_id)
+    # Re-load with attachments eagerly so MessageRead serialization doesn't
+    # trigger a lazy load outside the async context.
+    result = await session.execute(
+        select(Message).where(Message.id == msg.id).options(selectinload(Message.attachments))
+    )
+    return result.scalar_one()
