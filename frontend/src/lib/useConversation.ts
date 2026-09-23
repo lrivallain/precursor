@@ -7,6 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { useConfirm } from "../components/ConfirmDialog";
 import { api } from "./api";
 import {
   commandsForSurface,
@@ -40,6 +41,19 @@ import { useWindowedMessages } from "./useWindowedMessages";
 import type { ComposerAttachments } from "../components/Composer";
 import type { Message } from "./types";
 
+/**
+ * Erase a conversation's transcript and drop its client-side stream buffer, so a
+ * finished turn still buffered (e.g. after a failed post-stream reload) can't
+ * reappear. A reply still streaming is stopped first; otherwise its tail would
+ * be persisted after the clear, orphaned from its prompt.
+ */
+export async function clearConversation(kind: ConvKind, id: number): Promise<void> {
+  const key = convKey(kind, id);
+  streamStore.stop(key);
+  await api.container(kind, id).clearMessages();
+  streamStore.clear(key);
+}
+
 export interface UseConversationOptions {
   kind: ConvKind;
   id: number;
@@ -47,7 +61,7 @@ export interface UseConversationOptions {
   composer: ComposerInput;
   /**
    * Built-ins only this surface handles. Commands every persisted conversation
-   * shares (notes, reminders, memory, role) are dispatched here first.
+   * shares (notes, reminders, memory, role, clear) are dispatched here first.
    */
   onCommand: (name: string, argument: string) => Promise<void>;
   /** Refresh the sidebar and container after the transcript changes. */
@@ -107,6 +121,7 @@ export function useConversation({
   onSetRole,
   onPostComment,
 }: UseConversationOptions): Conversation {
+  const confirmAction = useConfirm();
   const containerApi = useMemo(() => api.container(kind, id), [kind, id]);
   const handledCommands = useMemo(() => commandsForSurface(kind), [kind]);
   const fetchPage = useCallback(
@@ -341,17 +356,22 @@ export function useConversation({
 
   function stop(): void {
     // Capture whatever the assistant has streamed so far, then cancel the
-    // request. The backend only persists the *final* turn, which never runs
-    // once we disconnect — so we save the partial reply ourselves instead of
-    // letting it vanish. stoppingRef suppresses the streaming→done effect's
-    // reload so this handler owns the post-persist refresh.
+    // request. The backend persists only the *final* turn and each tool result
+    // as it lands, neither of which runs once we disconnect — so we save the
+    // partial reply and settle the tool calls still running as stopped
+    // ourselves, instead of letting them vanish on the reload. stoppingRef
+    // suppresses the streaming→done effect's reload so this handler owns the
+    // post-persist refresh.
     const partial = streamStore.pendingContent(streamKey).trim();
     stoppingRef.current = true;
-    streamStore.stop(streamKey);
+    const stoppedCalls = streamStore.stop(streamKey);
     void (async () => {
       try {
-        if (partial) {
-          await containerApi.saveStopped(`${partial}\n\n_(stopped)_`);
+        if (partial || stoppedCalls.length > 0) {
+          await containerApi.saveStopped({
+            ...(partial ? { content: `${partial}\n\n_(stopped)_` } : {}),
+            ...(stoppedCalls.length > 0 ? { tool_call_ids: stoppedCalls } : {}),
+          });
         }
       } catch {
         // best-effort — keep going to refresh whatever did persist
@@ -390,8 +410,29 @@ export function useConversation({
       case "role":
         await runRole(argument);
         return true;
+      case "clear":
+        await runClear();
+        return true;
       default:
         return false;
+    }
+  }
+
+  async function runClear(): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Erase the entire transcript for this ${kind}?`,
+        confirmLabel: "Erase transcript",
+        variant: "danger",
+      }))
+    )
+      return;
+    try {
+      await clearConversation(kind, id);
+      setPersisted([]);
+      onUpdated();
+    } catch (err) {
+      systemNote(`Clear failed: ${(err as Error).message}`);
     }
   }
 

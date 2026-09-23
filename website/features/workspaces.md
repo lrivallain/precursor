@@ -43,6 +43,16 @@ workspace root.
 Markdown files get a rendered **Preview**, HTML files render in a sandboxed
 frame, and `.drawio` files open in a full diagram editor (below).
 
+## The workspace assistant
+
+The **Assistant** pane beside the editor is a conversation about the workspace,
+focused on the file you have open. It is ephemeral — nothing is saved, and
+**Clear** empties it (stopping a reply that is still streaming first). It uses
+the same tools as a topic or a chat, shown inline, and **Stop** behaves the same
+way: what already streamed is kept, and a tool call still running settles as
+**stopped** rather than spinning. See
+[deleting, clearing and stopping](/features/topics#deleting-clearing-and-stopping).
+
 ## Jumping from a conversation to the file
 
 When the assistant touches a file in a workspace — a diagram via the

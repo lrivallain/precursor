@@ -40,6 +40,8 @@ Chats share the same conversation experience as topics:
 - **Failed turns** surface as a red error notice with a **Retry** button on the
   prompt that failed — see
   [when a turn fails](/features/topics#when-a-turn-fails).
+- **Delete with undo, `/clear` and Stop** work exactly as in topics — see
+  [deleting, clearing and stopping](/features/topics#deleting-clearing-and-stopping).
 
 ## Chats name themselves
 

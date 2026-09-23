@@ -69,16 +69,18 @@ async def delete_message(
     await delete_container_message(session, "topic", topic_id, message_id)
 
 
-@router.post("/stopped", response_model=MessageRead)
+@router.post("/stopped", response_model=list[MessageRead])
 async def save_stopped_turn(
     topic_id: int,
     payload: StoppedTurn,
     session: AsyncSession = Depends(get_session),
-) -> Message:
-    """Persist the partial assistant reply when the user stops generation."""
+) -> list[Message]:
+    """Persist the partial reply and the in-flight tool calls when the user stops."""
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    return await save_stopped_container_turn(session, "topic", topic_id, payload.content)
+    return await save_stopped_container_turn(
+        session, "topic", topic_id, payload.content, payload.tool_call_ids
+    )
 
 
 @router.post("/stream")

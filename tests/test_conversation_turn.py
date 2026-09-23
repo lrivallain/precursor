@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -132,6 +133,58 @@ async def test_resolve_turn_settings_honours_override_and_exclusions(
     assert settings.max_tool_rounds >= 1
 
 
+async def test_save_stopped_turn_settles_only_the_unanswered_calls_of_the_latest_round() -> None:
+    topic_id, _ = await _topic_and_chat()
+    calls = [
+        {"id": cid, "type": "function", "function": {"name": f"srv__{cid}", "arguments": "{}"}}
+        for cid in ("a", "b", "c")
+    ]
+    async with SessionLocal() as session:
+        for msg in [
+            Message(topic_id=topic_id, role=MessageRole.USER, content="go"),
+            Message(
+                topic_id=topic_id,
+                role=MessageRole.ASSISTANT,
+                content="Checking.",
+                tool_calls=json.dumps(calls),
+            ),
+            Message(
+                topic_id=topic_id,
+                role=MessageRole.TOOL,
+                content="a done",
+                tool_calls=json.dumps({"tool_call_id": "a", "name": "srv__a", "is_error": False}),
+            ),
+        ]:
+            session.add(msg)
+            await session.commit()
+
+    async with SessionLocal() as session:
+        # "a" already has its result and "zzz" was never issued by the round.
+        rows = await conversation_turn.save_stopped_container_turn(
+            session, "topic", topic_id, "", ["a", "b", "c", "zzz"]
+        )
+        history = await conversation_turn.snapshot_history(session, "topic", topic_id)
+
+    metas = [json.loads(r.tool_calls or "{}") for r in rows]
+    assert [r.role for r in rows] == [MessageRole.TOOL, MessageRole.TOOL]
+    assert [(m["tool_call_id"], m["name"], m["stopped"]) for m in metas] == [
+        ("b", "srv__b", True),
+        ("c", "srv__c", True),
+    ]
+    assert {r.content for r in rows} == {conversation_turn.STOPPED_TOOL_RESULT}
+    # Every call is answered now, so the next turn replays the round instead of
+    # dropping it as an orphan.
+    assert [m.role for m in history] == ["user", "assistant", "tool", "tool", "tool"]
+    assert [m.tool_call_id for m in history[2:]] == ["a", "b", "c"]
+
+    async with SessionLocal() as session:
+        again = await conversation_turn.save_stopped_container_turn(
+            session, "topic", topic_id, "partial", ["b"]
+        )
+    # A repeated Stop doesn't answer a call twice; the text still lands.
+    assert [(r.role, r.content) for r in again] == [(MessageRole.ASSISTANT, "partial")]
+
+
 # -- Transcript endpoints: the same behaviour for both containers -----------
 
 
@@ -148,11 +201,17 @@ def test_transcript_endpoints_share_one_behaviour(container: str) -> None:
 
         stopped = client.post(f"{base}/stopped", json={"content": "partial reply"})
         assert stopped.status_code == 200
-        saved = stopped.json()
+        [saved] = stopped.json()
         assert saved["role"] == "assistant"
         assert saved["content"] == "partial reply"
         assert saved["attachments"] == []
-        second = client.post(f"{base}/stopped", json={"content": "another"}).json()
+        [second] = client.post(f"{base}/stopped", json={"content": "another"}).json()
+
+        # Nothing to save is a client bug; ids with no tool round save nothing.
+        assert client.post(f"{base}/stopped", json={}).status_code == 422
+        orphan = client.post(f"{base}/stopped", json={"tool_call_ids": ["call_x"]})
+        assert orphan.status_code == 200
+        assert orphan.json() == []
 
         assert [m["id"] for m in client.get(base).json()] == [saved["id"], second["id"]]
         assert [m["id"] for m in client.get(base, params={"limit": 1}).json()] == [second["id"]]

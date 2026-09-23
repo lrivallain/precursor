@@ -3,9 +3,11 @@ import type { Dispatch, SetStateAction } from "react";
 import { TIMING } from "./constants";
 import type { Message } from "./types";
 
-interface PendingDelete {
+export interface PendingDelete {
   message: Message;
   timer: number;
+  /** Epoch ms at which the delete commits, so a countdown tracks the real timer. */
+  expiresAt: number;
 }
 
 export interface UseMessageDeletionOptions {
@@ -66,7 +68,8 @@ export function useMessageDeletion({
   function requestDeleteMessage(message: Message): void {
     if (pendingDeletesRef.current.some((p) => p.message.id === message.id)) return;
     const timer = window.setTimeout(() => commitDelete(message.id), TIMING.UNDO_DELETE_MS);
-    setPendingDeletes((prev) => [...prev, { message, timer }]);
+    const expiresAt = Date.now() + TIMING.UNDO_DELETE_MS;
+    setPendingDeletes((prev) => [...prev, { message, timer, expiresAt }]);
   }
 
   function undoDelete(messageId: number): void {

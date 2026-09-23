@@ -15,6 +15,28 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Topics, chats and the workspace assistant now behave the same when you
+  delete, clear or stop** (#343). The #335 refactor had kept three differences
+  on purpose:
+
+  - **Deleting a message** shows the same undo toast everywhere: *"Your message
+    removed · undo in 5s"*, with a countdown that tracks the real grace timer.
+    Chats used to show a static *"Message deleted"* strip.
+  - **Clearing a transcript always leaves it empty.** A topic's `/clear` now drops
+    the client-side stream buffer too, like a chat's, so a finished turn whose
+    post-stream reload had failed can no longer reappear. Clearing while a reply
+    is streaming — **Settings → Clear chat**, or the workspace assistant's
+    **Clear** — stops the reply first, instead of letting its tool results and
+    answer land afterwards without their prompt. The confirmation reads the same
+    on every surface.
+  - **Stop settles a running tool call as _stopped_.** The workspace assistant's
+    tool bubble no longer spins "running…" forever, and in topics and chats the
+    interrupted call no longer vanishes on the post-stop reload: it is saved as a
+    stopped tool result, so it survives a reload and the next turn's model
+    context sees the call was cut short. `POST …/messages/stopped` accepts
+    `tool_call_ids` next to `content` (either may be omitted, not both) and now
+    returns the list of rows it created.
+
 - **Precursor now runs on MCP 2 (`mcp>=2.2,<3`); MCP 1 is no longer supported.**
   The 2026.9.1 release never shipped: its fresh-install smoke gate resolved
   `mcp 2.2.0`, which dependabot's `<3` bound allowed, and the app died on import
@@ -477,6 +499,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **The workspace assistant no longer drops the text before a tool call.** A
+  reply that said something and then called a tool ("Let me read the file
+  first.") showed only the tool bubble: the text was read after it had already
+  been reset for the next round.
 - **A failed MCP connect now names its cause.** When a remote server could not
   be reached, for example an Agent 365 endpoint timing out, the server card and
   the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup

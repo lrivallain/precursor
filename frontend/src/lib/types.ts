@@ -1020,6 +1020,17 @@ export interface Message {
 }
 
 /**
+ * What a user-stopped turn leaves behind (`POST …/messages/stopped`), mirroring
+ * `schemas/message.py`: the reply text received so far, and the ids of the
+ * latest tool round's calls that never returned (recorded as stopped). At least
+ * one of the two must be present.
+ */
+export interface StoppedTurn {
+  content?: string;
+  tool_call_ids?: string[];
+}
+
+/**
  * The editable status brief shown above a topic's transcript. Mirrors
  * `schemas/topic_summary.py`. A topic has none until one is generated or an
  * item is added to it, so the API resolves to `null` rather than 404.

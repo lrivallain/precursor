@@ -3,7 +3,7 @@ import { ArrowRightCircle } from "lucide-react";
 import { AgentExchangeBadge } from "./MessageBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
-import { TranscriptMessage, TranscriptTail } from "./ConversationTranscript";
+import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
@@ -16,7 +16,6 @@ import { useResizableHeight } from "../lib/useResizableHeight";
 import { useComposerInput } from "../lib/useComposerInput";
 import { useConversation } from "../lib/useConversation";
 import { ResizeHandle } from "./ResizeHandle";
-import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import { useTopicSummary } from "../lib/useTopicSummary";
@@ -27,7 +26,6 @@ import type {
   Message,
   Topic,
 } from "../lib/types";
-import { TIMING } from "../lib/constants";
 import { RoleSelector } from "./RoleSelector";
 
 interface ChatPanelProps {
@@ -108,7 +106,6 @@ function cardConfirmHint(kind: PendingKind): string | undefined {
 }
 
 export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole }: ChatPanelProps) {
-  const confirmAction = useConfirm();
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
 
@@ -183,10 +180,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     if (name === "pin" || name === "unpin") {
       await runSetPinned(name === "pin");
-      return;
-    }
-    if (name === "clear") {
-      await runClear();
       return;
     }
     if (name === "archive") {
@@ -384,24 +377,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       onTopicUpdated();
     } catch (err) {
       systemNote(`${pinned ? "Pin" : "Unpin"} failed: ${(err as Error).message}`);
-    }
-  }
-
-  async function runClear(): Promise<void> {
-    if (
-      !(await confirmAction({
-        message: "Erase the entire chat transcript for this topic?",
-        confirmLabel: "Erase transcript",
-        variant: "danger",
-      }))
-    )
-      return;
-    try {
-      await api.messages.clear(topic.id);
-      setPersisted([]);
-      onTopicUpdated();
-    } catch (err) {
-      systemNote(`Clear failed: ${(err as Error).message}`);
     }
   }
 
@@ -658,17 +633,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
       <div className="border-t border-border p-3 pb-safe">
         <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
-          {conv.deletion.pendingDeletes.length > 0 && (
-            <div className="flex flex-col gap-1">
-              {conv.deletion.pendingDeletes.map((p) => (
-                <UndoDeleteToast
-                  key={p.message.id}
-                  message={p.message}
-                  onUndo={() => conv.deletion.undoDelete(p.message.id)}
-                />
-              ))}
-            </div>
-          )}
+          <UndoDeleteToasts deletion={conv.deletion} />
           <ConversationNotes
             notes={conv.notes}
             container="topic"
@@ -765,43 +730,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         />
       )}
       <NotesConfirmModal notes={conv.notes} />
-    </div>
-  );
-}
-
-const UNDO_DELETE_MS = TIMING.UNDO_DELETE_MS;
-
-function UndoDeleteToast({
-  message,
-  onUndo,
-}: {
-  message: Message;
-  onUndo: () => void;
-}) {
-  const [remaining, setRemaining] = useState<number>(UNDO_DELETE_MS);
-  useEffect(() => {
-    const start = Date.now();
-    const handle = window.setInterval(() => {
-      const left = Math.max(0, UNDO_DELETE_MS - (Date.now() - start));
-      setRemaining(left);
-      if (left <= 0) window.clearInterval(handle);
-    }, 100);
-    return () => window.clearInterval(handle);
-  }, []);
-  const seconds = Math.ceil(remaining / 1000);
-  const label = message.role === "user" ? "Your message" : "Assistant reply";
-  return (
-    <div className="flex items-center justify-between gap-3 px-3 py-1.5 rounded border border-border bg-surface text-xs">
-      <span className="text-muted truncate">
-        {label} removed · undo in {seconds}s
-      </span>
-      <button
-        type="button"
-        onClick={onUndo}
-        className="text-accent hover:underline shrink-0"
-      >
-        Undo
-      </button>
     </div>
   );
 }

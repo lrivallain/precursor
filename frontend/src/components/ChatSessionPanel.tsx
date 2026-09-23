@@ -2,16 +2,14 @@ import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
-import { TranscriptMessage, TranscriptTail } from "./ConversationTranscript";
+import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
 import { ResizeHandle } from "./ResizeHandle";
 import { api } from "../lib/api";
-import { streamStore } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useComposerInput } from "../lib/useComposerInput";
 import { useConversation } from "../lib/useConversation";
-import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type { Chat } from "../lib/types";
@@ -39,7 +37,6 @@ export function ChatSessionPanel({
   onRemindersChanged,
   onSetRole,
 }: ChatSessionPanelProps) {
-  const confirmAction = useConfirm();
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
 
@@ -53,7 +50,7 @@ export function ChatSessionPanel({
     onRemindersChanged,
     onSetRole,
   });
-  const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
+  const { streamKey, systemNote, visibleMessages, streaming, reminders } = conv;
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -103,25 +100,6 @@ export function ChatSessionPanel({
         onChatUpdated();
       } catch (err) {
         systemNote(`${pinned ? "Pin" : "Unpin"} failed: ${(err as Error).message}`);
-      }
-      return;
-    }
-    if (name === "clear") {
-      if (
-        !(await confirmAction({
-          message: "Erase the entire transcript for this chat?",
-          confirmLabel: "Erase transcript",
-          variant: "danger",
-        }))
-      )
-        return;
-      try {
-        await api.chats.clearMessages(chat.id);
-        setPersisted([]);
-        streamStore.clear(streamKey);
-        onChatUpdated();
-      } catch (err) {
-        systemNote(`Clear failed: ${(err as Error).message}`);
       }
       return;
     }
@@ -180,24 +158,7 @@ export function ChatSessionPanel({
 
         <div className="border-t border-border p-3 pb-safe">
           <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
-            {conv.deletion.pendingDeletes.length > 0 && (
-              <div className="flex flex-col gap-1">
-                {conv.deletion.pendingDeletes.map((p) => (
-                  <div
-                    key={p.message.id}
-                    className="flex items-center justify-between gap-2 rounded border border-border bg-surface px-3 py-1.5 text-xs"
-                  >
-                    <span className="truncate text-muted">Message deleted</span>
-                    <button
-                      className="shrink-0 rounded px-2 py-0.5 text-accent hover:bg-border"
-                      onClick={() => conv.deletion.undoDelete(p.message.id)}
-                    >
-                      Undo
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <UndoDeleteToasts deletion={conv.deletion} />
             <ConversationNotes
               notes={conv.notes}
               container="chat"
