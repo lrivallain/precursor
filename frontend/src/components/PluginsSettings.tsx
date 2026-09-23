@@ -41,6 +41,8 @@ export function PluginsSettings() {
   // an install is inert until the process restarts.
   const [restartNeeded, setRestartNeeded] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  /** The nightly the host itself moved to while installing, if it had to. */
+  const [hostUpgrade, setHostUpgrade] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -99,8 +101,9 @@ export function PluginsSettings() {
     setInstalling(target);
     setError(null);
     try {
-      await api.plugins.install(target);
+      const result = await api.plugins.install(target);
       if (clearBox) setPkg("");
+      if (result.host_upgrade) setHostUpgrade(result.host_upgrade);
       setRestartNeeded(true);
       await load();
     } catch (e) {
@@ -122,7 +125,8 @@ export function PluginsSettings() {
     setBusy(plugin.id);
     setError(null);
     try {
-      await api.plugins.uninstall(plugin.id);
+      const result = await api.plugins.uninstall(plugin.id);
+      if (result.host_upgrade) setHostUpgrade(result.host_upgrade);
       setRestartNeeded(true);
       await load();
     } catch (e) {
@@ -218,6 +222,13 @@ export function PluginsSettings() {
           <span className="min-w-0 flex-1 text-xs">
             Precursor must restart to pick this up — plugins are discovered once,
             at startup.
+            {hostUpgrade && (
+              <>
+                {" "}
+                Precursor itself was updated to <code>{hostUpgrade}</code> too: the
+                nightly build it was installed from is no longer published.
+              </>
+            )}
           </span>
           <button
             type="button"

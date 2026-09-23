@@ -477,6 +477,16 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Installing a plugin on a nightly build no longer fails with a 404.** A
+  nightly install pins the exact wheel it came from, and adding or removing a
+  plugin restates that pin so the host isn't downgraded. But the `nightly`
+  release is re-created on every push to main, which deletes the old wheel, so
+  once anything newer shipped every in-app install failed with
+  `Failed to download precursor-ai … 404 Not Found`. A pin to a superseded
+  nightly wheel, including a companion wheel from the same release, now points
+  at the one currently published. The manifest is read fresh before each
+  install, and the Settings panel says when Precursor itself moved to a newer
+  nightly as a result (`host_upgrade` in the install response).
 - **Settings → System no longer says its values come from `.env`.** The panel
   opened with "These values default to the server's environment / .env", but
   every field on it has been database-only since the env twins were removed —

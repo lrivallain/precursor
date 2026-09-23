@@ -500,6 +500,167 @@ def test_the_displayed_command_matches_what_the_server_would_run(
     assert rendered.endswith("--with precursor-notes")
 
 
+# The nightly release is deleted and re-created on every push to main, so a
+# receipt pinned to one of its wheels names a 404 as soon as anything newer
+# ships. Restating that pin failed every plugin install on a nightly host.
+
+
+def _nightly(name: str) -> str:
+    from precursor.backend.config import get_settings
+
+    return f"https://github.com/{get_settings().update_repo}/releases/download/nightly/{name}"
+
+
+_OLD_HOST = _nightly("precursor_ai-2026.9.1.dev75+gd01924e81-py3-none-any.whl")
+_NEW_HOST = _nightly("precursor_ai-2026.9.1.dev77+g347650f90-py3-none-any.whl")
+
+
+def _publish(monkeypatch: pytest.MonkeyPatch, *extra: str) -> list[bool]:
+    """Stand in for the nightly manifest; records each lookup's ``force`` flag."""
+    from precursor.backend.services import updates
+
+    lookups: list[bool] = []
+
+    def _published(*, force: bool = False) -> updates.NightlyBuild:
+        lookups.append(force)
+        return updates.NightlyBuild(
+            version="2026.9.1.dev77+g347650f90", wheel_url=_NEW_HOST, extra_wheel_urls=extra
+        )
+
+    monkeypatch.setattr(updates, "published_nightly", _published)
+    return lookups
+
+
+def test_a_superseded_nightly_host_is_restated_as_the_published_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(f'{{ name = "precursor-ai", extras = ["tray"], url = "{_OLD_HOST}" }}'),
+    )
+    _publish(monkeypatch)
+
+    argv = install_mod.install_command("precursor-kanban")
+    assert f"precursor-ai[tray] @ {_NEW_HOST}" in argv
+    assert not any(_OLD_HOST in a for a in argv)
+    # Still pinned: a bare name would drop to whatever the index serves.
+    assert "precursor-ai[tray]" not in argv
+    # The user is told Precursor itself moves, rather than finding out later.
+    assert install_mod.host_upgrade() == "2026.9.1.dev77+g347650f90"
+    # And the command shown for running by hand is the same, working one.
+    template = install_mod.detect_environment().command_template
+    assert _NEW_HOST in template and _OLD_HOST not in template
+
+
+def test_superseded_nightly_companions_follow_the_release_or_the_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from precursor.backend.plugins import install as install_mod
+
+    new_notes = _nightly("precursor_notes-0.2-py3-none-any.whl")
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(
+            f'{{ name = "precursor-ai", url = "{_OLD_HOST}" }}',
+            f'{{ name = "precursor-notes", url = "{_nightly("precursor_notes-0.1-py3-none-any.whl")}" }}',
+            f'{{ name = "precursor-mail", url = "{_nightly("precursor_mail-0.1-py3-none-any.whl")}" }}',
+            '{ name = "precursor-kanban" }',
+        ),
+    )
+    _publish(monkeypatch, new_notes)
+
+    argv = install_mod.uninstall_command("precursor-kanban")
+    assert argv is not None
+    assert f"precursor-ai @ {_NEW_HOST}" in argv
+    assert f"precursor-notes @ {new_notes}" in argv
+    # No longer on the release at all: resolved from the index, not a 404.
+    assert "precursor-mail" in argv
+    assert "precursor-kanban" not in argv
+
+
+def test_a_current_nightly_pin_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch, tmp_path, _receipt(f'{{ name = "precursor-ai", url = "{_NEW_HOST}" }}')
+    )
+    _publish(monkeypatch)
+
+    assert f"precursor-ai @ {_NEW_HOST}" in install_mod.install_command("precursor-kanban")
+    assert install_mod.host_upgrade() is None
+
+
+def test_an_unreadable_manifest_keeps_the_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from precursor.backend.plugins import install as install_mod
+    from precursor.backend.services import updates
+
+    _uv_tool_env(
+        monkeypatch, tmp_path, _receipt(f'{{ name = "precursor-ai", url = "{_OLD_HOST}" }}')
+    )
+    monkeypatch.setattr(updates, "published_nightly", lambda *, force=False: None)
+
+    assert f"precursor-ai @ {_OLD_HOST}" in install_mod.install_command("precursor-kanban")
+    assert install_mod.host_upgrade() is None
+
+
+def test_only_a_nightly_pin_costs_a_manifest_lookup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stable or index install must not reach out to GitHub to build a command."""
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(
+            f'{{ name = "precursor-ai", extras = ["tray"], url = "{_WHEEL}" }}',
+            '{ name = "precursor-kanban" }',
+        ),
+    )
+    lookups = _publish(monkeypatch)
+
+    install_mod.refresh_nightly()
+    install_mod.install_command("precursor-notes")
+    install_mod.detect_environment()
+    assert install_mod.host_upgrade() is None
+    assert lookups == []
+
+
+def test_the_installer_reads_the_manifest_fresh_and_reports_the_host_move(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _no_real_installer: list[list[str]]
+) -> None:
+    """The display path may use a cached manifest; running a command may not —
+    the release can have been republished since."""
+    from precursor.backend.plugins import install as install_mod
+
+    _uv_tool_env(
+        monkeypatch,
+        tmp_path,
+        _receipt(f'{{ name = "precursor-ai", extras = ["tray"], url = "{_OLD_HOST}" }}'),
+    )
+    monkeypatch.setattr(install_mod, "_uv", lambda: "/usr/bin/uv")
+    lookups = _publish(monkeypatch)
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.put("/api/settings", json={"plugin_install_enabled": True})
+        lookups.clear()
+        r = client.post("/api/plugins/install", json={"package": "precursor-kanban"}, headers=LOCAL)
+        assert r.status_code == 200, r.text
+        assert r.json()["host_upgrade"] == "2026.9.1.dev77+g347650f90"
+
+    assert lookups[0] is True
+    assert f"precursor-ai[tray] @ {_NEW_HOST}" in _no_real_installer[-1]
+
+
 # --- per-plugin settings ----------------------------------------------------
 
 

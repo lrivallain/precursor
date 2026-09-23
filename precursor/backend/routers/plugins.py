@@ -23,7 +23,9 @@ from precursor.backend.plugins.assets import media_type, plugin_entry_url, resol
 from precursor.backend.plugins.catalog import load_catalog, normalize_distribution
 from precursor.backend.plugins.install import (
     detect_environment,
+    host_upgrade,
     install_command,
+    refresh_nightly,
     restart_in_place,
     run_install,
     uninstall_command,
@@ -306,7 +308,9 @@ async def plugin_environment(
     tool has to be reinstalled naming the extra package — so the UI shows the
     command that actually works here rather than a generic one.
     """
-    env = detect_environment()
+    # Off the loop: a nightly install's command is built from the published
+    # manifest, which may need fetching.
+    env = await asyncio.to_thread(detect_environment)
     opted_in = await resolve_plugin_install_enabled(session)
     local = is_loopback_host(get_settings().host) and _host_is_local(request)
     return {
@@ -349,19 +353,26 @@ async def install_plugin(
     caller restarts afterwards.
     """
     await _require_local_admin(request, session)
+    await asyncio.to_thread(refresh_nightly)
     env = detect_environment()
     if not env.can_install:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             env.reason or "This environment can't be modified from inside the app.",
         )
+    upgrade = host_upgrade()
     code, output = await run_install(install_command(payload.package, env))
     if code != 0:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"Install failed:\n{output.strip()[-4000:]}",
         )
-    return {"package": payload.package, "output": output[-4000:], "restart_required": True}
+    return {
+        "package": payload.package,
+        "output": output[-4000:],
+        "restart_required": True,
+        "host_upgrade": upgrade,
+    }
 
 
 @router.delete("/installed/{plugin_id}")
@@ -378,6 +389,7 @@ async def uninstall_plugin(
             status.HTTP_404_NOT_FOUND,
             f"No installed distribution found for plugin '{plugin_id}'",
         )
+    await asyncio.to_thread(refresh_nightly)
     env = detect_environment()
     argv = uninstall_command(plugin.distribution, env)
     if argv is None:
@@ -387,13 +399,19 @@ async def uninstall_plugin(
             "a dependency of Precursor itself or of one of its extras — removing "
             "it would break the install. Disable the plugin instead.",
         )
+    upgrade = host_upgrade()
     code, output = await run_install(argv)
     if code != 0:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"Uninstall failed:\n{output.strip()[-4000:]}",
         )
-    return {"package": plugin.distribution, "output": output[-4000:], "restart_required": True}
+    return {
+        "package": plugin.distribution,
+        "output": output[-4000:],
+        "restart_required": True,
+        "host_upgrade": upgrade,
+    }
 
 
 @router.post("/restart", status_code=status.HTTP_202_ACCEPTED)

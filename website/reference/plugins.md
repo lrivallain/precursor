@@ -402,6 +402,12 @@ Two consequences worth knowing:
 - **A plugin your index can't serve won't strand the host.** The update retries
   without the optional pieces, and the summary names what it gave up rather than
   reporting success.
+- **A nightly host moves to the current nightly.** The `nightly` release is
+  replaced on every push to main, deleting the wheel a nightly install was
+  pinned to, so restating that pin would fail with a 404. Adding or removing a
+  plugin therefore re-points it at the wheel the release publishes now — the
+  only build of that channel still downloadable — and the Settings panel says
+  Precursor itself was updated too.
 
 Adding or removing one plugin never narrows the rest: both commands rebuild the
 environment from the full receipt. Removal is refused only for a distribution

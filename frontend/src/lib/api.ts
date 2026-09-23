@@ -74,6 +74,7 @@ import type {
   CatalogPlugin,
   PluginDescriptor,
   PluginEnvironment,
+  PluginInstallResult,
   IssueDetail,
   Reminder,
   ReminderContainer,
@@ -1055,12 +1056,12 @@ export const api = {
     /** How to install into this instance (and whether the app may do it). */
     environment: () => request<PluginEnvironment>(`/api/plugins/environment`),
     install: (pkg: string) =>
-      request<{ package: string; output: string; restart_required: boolean }>(
+      request<PluginInstallResult>(
         `/api/plugins/install`,
         { method: "POST", body: JSON.stringify({ package: pkg }) },
       ),
     uninstall: (id: string) =>
-      request<{ package: string; output: string; restart_required: boolean }>(
+      request<PluginInstallResult>(
         `/api/plugins/installed/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       ),

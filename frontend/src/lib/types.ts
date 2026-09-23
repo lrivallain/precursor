@@ -1501,6 +1501,18 @@ export interface PluginEnvironment {
   restart_supported: boolean;
 }
 
+/** Result of installing or uninstalling a plugin package. */
+export interface PluginInstallResult {
+  package: string;
+  output: string;
+  restart_required: boolean;
+  /**
+   * The nightly Precursor itself moved to, when the build it was installed
+   * from is no longer published and had to be replaced; `null` otherwise.
+   */
+  host_upgrade: string | null;
+}
+
 /** An installed plugin as reported by `GET /api/plugins/installed`. */
 export interface InstalledPlugin {
   id: string;

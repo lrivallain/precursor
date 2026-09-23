@@ -25,10 +25,11 @@ import shlex
 import shutil
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from precursor.backend import uv_receipt
+from precursor.backend.services import updates
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,42 @@ def _uv() -> str | None:
 PACKAGE_PLACEHOLDER = "{package}"
 
 
-def _host_requirement() -> str:
+def _nightly_build(*, force: bool = False) -> updates.NightlyBuild | None:
+    """The published nightly, looked up only when the receipt pins one of its wheels."""
+    if not any(updates.is_nightly_asset(r.url) for r in uv_receipt.requirements()):
+        return None
+    return updates.published_nightly(force=force)
+
+
+def refresh_nightly() -> None:
+    """Re-read the nightly manifest before running a command built from the receipt.
+
+    The display path is happy with a cached manifest, but the release is
+    republished on every push to main, so one read minutes ago can already name
+    a deleted wheel. Blocking — call it off the event loop.
+    """
+    _nightly_build(force=True)
+
+
+def _repoint(
+    requirement: uv_receipt.Requirement, build: updates.NightlyBuild | None
+) -> uv_receipt.Requirement:
+    """``requirement``, moved off a nightly wheel the release no longer carries.
+
+    Restating a superseded nightly pin fails the whole command with a 404, and
+    that build is gone for good — its replacement is the only one of the
+    channel still downloadable. A companion wheel the release stopped carrying
+    falls back to the index rather than failing.
+    """
+    if build is None or not updates.is_nightly_asset(requirement.url):
+        return requirement
+    published = {
+        uv_receipt.canonical_name(url): url for url in (build.wheel_url, *build.extra_wheel_urls)
+    }
+    return replace(requirement, url=published.get(uv_receipt.canonical_name(requirement.name), ""))
+
+
+def _host_requirement(build: updates.NightlyBuild | None) -> str:
     """The host named exactly as it is installed — extras and wheel URL included.
 
     ``uv tool install`` rewrites the receipt from its own arguments, so naming a
@@ -73,7 +109,23 @@ def _host_requirement() -> str:
     a plugin from being an accidental downgrade.
     """
     installed = uv_receipt.host()
-    return installed.as_argument() if installed else uv_receipt.HOST
+    return _repoint(installed, build).as_argument() if installed else uv_receipt.HOST
+
+
+def host_upgrade() -> str | None:
+    """The nightly the host moves to when a command restates it, if it moves at all.
+
+    Non-``None`` only when the host was installed from a nightly wheel that has
+    since been replaced — adding or removing a plugin then updates Precursor
+    too, which the user should hear about rather than discover.
+    """
+    installed = uv_receipt.host()
+    if installed is None:
+        return None
+    build = _nightly_build()
+    if build is None or _repoint(installed, build).url == installed.url:
+        return None
+    return build.version or build.wheel_url
 
 
 def _uv_tool_argv(package: str) -> list[str]:
@@ -83,11 +135,12 @@ def _uv_tool_argv(package: str) -> list[str]:
     arguments it is given: installing a second plugin with only that plugin
     named would uninstall the first.
     """
-    cmd = ["uv", "tool", "install", "--force", _host_requirement()]
+    build = _nightly_build()
+    cmd = ["uv", "tool", "install", "--force", _host_requirement(build)]
     wanted = uv_receipt.canonical_name(package)
     for sibling in uv_receipt.siblings():
         if uv_receipt.canonical_name(sibling.name) != wanted:
-            cmd += ["--with", sibling.as_argument()]
+            cmd += ["--with", _repoint(sibling, build).as_argument()]
     return [*cmd, "--with", package]
 
 
@@ -182,9 +235,10 @@ def uninstall_command(package: str, env: Environment | None = None) -> list[str]
             # Not installed as a sibling: it is a dependency of the host or of
             # one of its extras, and removing it would break the install.
             return None
-        cmd = ["uv", "tool", "install", "--force", _host_requirement()]
+        build = _nightly_build()
+        cmd = ["uv", "tool", "install", "--force", _host_requirement(build)]
         for sibling in siblings:
-            cmd += ["--with", sibling.as_argument()]
+            cmd += ["--with", _repoint(sibling, build).as_argument()]
         return cmd
     if env.installer == "uv-venv":
         return ["uv", "pip", "uninstall", "--python", sys.executable, package]
