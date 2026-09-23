@@ -390,9 +390,24 @@ Two consequences worth knowing:
 - **A plugin your index can't serve won't strand the host.** The update retries
   without the optional pieces, and the summary names what it gave up rather than
   reporting success.
+- **A nightly host moves to the current nightly.** The `nightly` release is
+  replaced on every push to main, deleting the wheel a nightly install was
+  pinned to, so restating that pin would fail with a 404. Adding or removing a
+  plugin therefore re-points it at the wheel the release publishes now — the
+  only build of that channel still downloadable — and the Settings panel says
+  Precursor itself was updated too.
 
 Adding or removing one plugin never narrows the rest: both commands rebuild the
-environment from the full receipt. Removal is refused only for a distribution
+environment from the full receipt. Upgrading one moves **only that plugin** —
+the command adds `--upgrade-package <plugin>` and restates everything else as it
+is — so a plugin's cadence is its own, never tied to a core release.
+
+Outside `uv tool`, the installer (`uv pip` or `pip`) resolves only what it is
+asked for and will move anything else to make it fit. So Precursor passes its own
+requirements as a **constraints file**: a plugin release built for an older MCP
+SDK fails to resolve instead of downgrading core's `mcp`. Core's extras are left
+out of it on purpose — an extra that names a plugin must not decide which release
+of it you may pick. Removal is refused only for a distribution
 that was *not* installed alongside the tool, since that one arrived as a
 dependency of Precursor or of an extra, and dropping it would break the install
 — disable the plugin instead.

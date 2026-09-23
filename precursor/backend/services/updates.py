@@ -197,6 +197,56 @@ def _check_stable(
     return tag, None, wheel_url, ()
 
 
+@dataclass(frozen=True)
+class NightlyBuild:
+    """What the rolling nightly release carries right now."""
+
+    version: str | None
+    wheel_url: str
+    extra_wheel_urls: tuple[str, ...] = ()
+
+
+_nightly_cache: tuple[float, NightlyBuild | None] | None = None
+
+
+def is_nightly_asset(url: str) -> bool:
+    """Whether ``url`` is a file on the rolling nightly release.
+
+    Such a URL only lives until the next push to main: the workflow deletes the
+    release and re-creates it with the new build's files, so a uv receipt
+    pinned to one ends up naming a 404.
+    """
+    prefix = f"https://github.com/{get_settings().update_repo}/releases/download/{NIGHTLY_TAG}/"
+    return bool(url) and url.startswith(prefix)
+
+
+def published_nightly(*, force: bool = False) -> NightlyBuild | None:
+    """The build the nightly release carries now; ``None`` when it can't be read.
+
+    Cached like :func:`check`, failures included, so an offline instance pays
+    for the lookup once per TTL rather than on every call.
+    """
+    global _nightly_cache
+    cfg = get_settings()
+    ttl = float(cfg.update_check_ttl_seconds)
+    with _cache_lock:
+        cached = _nightly_cache
+        if not force and cached is not None and (time.monotonic() - cached[0]) < ttl:
+            return cached[1]
+
+    build: NightlyBuild | None = None
+    try:
+        with httpx.Client(follow_redirects=True, headers=_headers(authenticated=False)) as client:
+            version, _commit, wheel_url, extras = _check_nightly(client, cfg.update_repo)
+        if wheel_url:
+            build = NightlyBuild(version=version, wheel_url=wheel_url, extra_wheel_urls=extras)
+    except Exception as exc:  # network, malformed payload
+        logger.debug("Nightly manifest lookup failed: %s", exc)
+    with _cache_lock:
+        _nightly_cache = (time.monotonic(), build)
+    return build
+
+
 def check(*, force: bool = False) -> UpdateInfo:
     """Look up the newest build on the active channel (cached)."""
     global _cache
@@ -272,9 +322,10 @@ def check(*, force: bool = False) -> UpdateInfo:
 
 def invalidate() -> None:
     """Drop the cached result (called right after applying an update)."""
-    global _cache
+    global _cache, _nightly_cache
     with _cache_lock:
         _cache = None
+        _nightly_cache = None
 
 
 class UpdateError(RuntimeError):

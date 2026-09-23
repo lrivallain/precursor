@@ -1509,7 +1509,23 @@ export interface PluginEnvironment {
   /** Whether it *could*, if the user opted in — drives the opt-in checkbox. */
   installable_here: boolean;
   reason: string | null;
+  /** False where the process can't restart itself; the UI asks for a manual restart. */
   restart_supported: boolean;
+}
+
+/** Result of installing or uninstalling a plugin package. */
+export interface PluginInstallResult {
+  /** The requirement that was installed, e.g. `precursor-kanban==2026.9.1`. */
+  package: string;
+  /** The concrete version it resolves to, when known up front. */
+  version: string | null;
+  output: string;
+  restart_required: boolean;
+  /**
+   * The nightly Precursor itself moved to, when the build it was installed
+   * from is no longer published and had to be replaced; `null` otherwise.
+   */
+  host_upgrade: string | null;
 }
 
 /** An installed plugin as reported by `GET /api/plugins/installed`. */
@@ -1528,6 +1544,56 @@ export interface InstalledPlugin {
   /** Route prefixes the plugin mounted, e.g. `/api/github/projects`. */
   routes: string[];
   mcp_servers: Array<{ name: string; title: string }>;
+  /** Where upgrades come from; `null` when the distribution is unknown. */
+  source: PluginSource | null;
+}
+
+/**
+ * How a plugin is (or would be) installed. `direct` is a path or an arbitrary
+ * URL, which has no list of releases to upgrade from.
+ */
+export interface PluginSource {
+  kind: "pypi" | "github" | "direct";
+  distribution: string | null;
+  /** `owner/repo` for a GitHub source. */
+  repository: string | null;
+  /** The constraint the install asked for, e.g. `==1.2` or `>=1.2`. */
+  specifier: string;
+  /** True when that constraint is an exact `==` pin. */
+  pinned: boolean;
+}
+
+/** One installable release, with the requirement that would install it. */
+export interface PluginRelease {
+  version: string;
+  prerelease: boolean;
+  published_at: string | null;
+  tag: string | null;
+  requirement: string;
+}
+
+/** `GET /api/plugins/versions` — every release of a name or GitHub repository. */
+export interface PluginVersions {
+  source: PluginSource;
+  latest: string | null;
+  /** What "Latest" installs: unpinned from PyPI, the newest wheel from GitHub. */
+  latest_requirement: string;
+  /** Newest first. */
+  versions: PluginRelease[];
+}
+
+/** `GET /api/plugins/updates` — one row per installed plugin. */
+export interface PluginUpdate {
+  id: string;
+  distribution: string | null;
+  installed_version: string | null;
+  source: PluginSource;
+  latest: string | null;
+  update_available: boolean;
+  /** What an upgrade to `latest` installs, for running it by hand. */
+  upgrade_requirement: string | null;
+  /** Why the newest release couldn't be looked up, if it couldn't. */
+  error: string | null;
 }
 
 /**
@@ -1545,6 +1611,8 @@ export interface CatalogPlugin {
   title: string;
   summary: string;
   homepage: string | null;
+  /** GitHub repository whose releases are an alternative install source. */
+  repository: string | null;
   author: string | null;
   license: string | null;
   tags: string[];

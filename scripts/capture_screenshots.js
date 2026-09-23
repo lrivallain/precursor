@@ -108,6 +108,96 @@ async function openSettings(page, tab) {
   await sleep(800);
 }
 
+// Fixed release data for the Plugins shots: the panel asks PyPI and GitHub for
+// the newest releases, and a screenshot must not depend on either answering —
+// or on what has shipped since it was taken.
+const KANBAN_RELEASES = ["2026.9.2", "2026.9.1", "2026.9.0"];
+const KANBAN_WHEEL = (v) =>
+  `https://github.com/lrivallain/precursor-kanban/releases/download/v${v}/precursor_kanban-${v}-py3-none-any.whl`;
+
+// The installed plugin the "plugins" shot shows — a fixture, so neither shot
+// depends on what happens to be installed in the environment serving the demo.
+const KANBAN_INSTALLED = {
+  id: "kanban",
+  distribution: "precursor-kanban",
+  version: "2026.9.1",
+  summary: "GitHub Projects v2 kanban board for Precursor.",
+  homepage: "https://github.com/lrivallain/precursor-kanban",
+  enabled: true,
+  error: null,
+  entry: "/api/plugins/kanban/assets/index.js",
+  sections: [{ id: "kanban", title: "Kanban" }],
+  extensions: [{ id: "kanban", kind: "section", slot: "app.section", title: "Kanban" }],
+  settings_pages: [],
+  routes: ["/api/github/projects"],
+  mcp_servers: [{ name: "kanban.board", title: "Kanban board" }],
+  source: {
+    kind: "github",
+    distribution: "precursor-kanban",
+    repository: "lrivallain/precursor-kanban",
+    specifier: "",
+    pinned: false,
+  },
+};
+
+async function stubPluginReleases(page, { installed }) {
+  const plugins = installed ? [KANBAN_INSTALLED] : [];
+  await page.route("**/api/plugins/installed", (route) => route.fulfill({ json: plugins }));
+  await page.route("**/api/plugins/catalog", async (route) => {
+    const entries = await (await route.fetch()).json();
+    await route.fulfill({
+      json: entries.map((e) => ({
+        ...e,
+        installed: installed && e.id === "kanban",
+        enabled: installed && e.id === "kanban",
+        installed_version: installed && e.id === "kanban" ? KANBAN_INSTALLED.version : null,
+      })),
+    });
+  });
+  await page.route("**/api/plugins/versions?*", async (route) => {
+    const spec = new URL(route.request().url()).searchParams.get("package") || "";
+    const github = spec.includes("github.com");
+    const requirement = (v) =>
+      github ? `precursor-kanban @ ${KANBAN_WHEEL(v)}` : `precursor-kanban==${v}`;
+    await route.fulfill({
+      json: {
+        source: {
+          kind: github ? "github" : "pypi",
+          distribution: "precursor-kanban",
+          repository: github ? "lrivallain/precursor-kanban" : null,
+          specifier: "",
+          pinned: false,
+        },
+        latest: KANBAN_RELEASES[0],
+        latest_requirement: github
+          ? requirement(KANBAN_RELEASES[0])
+          : `precursor-kanban>=${KANBAN_RELEASES[0]}`,
+        versions: KANBAN_RELEASES.map((v) => ({
+          version: v,
+          prerelease: false,
+          published_at: null,
+          tag: `v${v}`,
+          requirement: requirement(v),
+        })),
+      },
+    });
+  });
+  await page.route("**/api/plugins/updates*", async (route) => {
+    await route.fulfill({
+      json: plugins.map((p) => ({
+          id: p.id,
+          distribution: p.distribution,
+          installed_version: p.version,
+          source: p.source,
+          latest: KANBAN_RELEASES[0],
+          update_available: p.version !== KANBAN_RELEASES[0],
+        upgrade_requirement: `precursor-kanban @ ${KANBAN_WHEEL(KANBAN_RELEASES[0])}`,
+        error: null,
+      })),
+    });
+  });
+}
+
 // --------------------------------------------------------------------------
 // Scenes. `viewport` is per scene because these surfaces have very different
 // natural heights; the clip trims whatever is left over.
@@ -296,28 +386,41 @@ const scenes = {
     },
   },
 
-  // Settings → Plugins: the installed packages and what each contributes.
+  // Settings → Plugins: the installed packages, what each contributes, and
+  // where each upgrades from. The installed plugin and its release lookups are
+  // fixtures, so the shot depends neither on the environment nor the network.
   plugins: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
+      await stubPluginReleases(page, { installed: true });
       await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
       await openSettings(page, "Plugins");
+      await page.locator("text=2026.9.2 available").first().waitFor({ timeout: 10000 }).catch(() => {});
+      await sleep(400);
       return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
     },
   },
 
   // The same panel, framed on the bundled catalogue — the "Available" list you
-  // install from. Its content depends on what the demo environment already has:
-  // an entry disappears from Available once its package is installed, so run
-  // this one against an instance *without* the catalogued plugins. The shot
-  // reveals one entry's install command, since that is the state a reader
-  // without the in-app installer enabled will actually meet.
+  // install from. Nothing counts as installed here, whatever the environment
+  // has, so the catalogued entry stays in Available. The shot opens the source
+  // and version picker on GitHub and reveals the resulting install command,
+  // since that is the state a reader without the in-app installer enabled will
+  // actually meet.
   "plugins-catalog": {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
+      await stubPluginReleases(page, { installed: false });
       await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
       await openSettings(page, "Plugins");
-      const command = page.getByRole("button", { name: "Install command" }).first();
+      const card = page.locator("li", { hasText: "Kanban board" }).first();
+      const options = card.getByRole("button", { name: /Choose source and version/ });
+      if (await options.count()) {
+        await options.click();
+        await card.getByRole("button", { name: "GitHub", exact: true }).click();
+        await page.locator("text=on GitHub").first().waitFor({ timeout: 10000 }).catch(() => {});
+      }
+      const command = card.getByRole("button", { name: "Install command" });
       if (await command.count()) {
         await command.click();
         await sleep(600);

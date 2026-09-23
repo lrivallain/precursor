@@ -75,6 +75,9 @@ import type {
   CatalogPlugin,
   PluginDescriptor,
   PluginEnvironment,
+  PluginInstallResult,
+  PluginUpdate,
+  PluginVersions,
   IssueDetail,
   Reminder,
   ReminderContainer,
@@ -1062,13 +1065,38 @@ export const api = {
       ),
     /** How to install into this instance (and whether the app may do it). */
     environment: () => request<PluginEnvironment>(`/api/plugins/environment`),
-    install: (pkg: string) =>
-      request<{ package: string; output: string; restart_required: boolean }>(
+    /**
+     * Install a package name, a GitHub repository link or any requirement.
+     * `version` picks a release for the first two; omitted, a name installs
+     * unpinned and a repository installs its newest release.
+     */
+    install: (pkg: string, version?: string | null) =>
+      request<PluginInstallResult>(
         `/api/plugins/install`,
-        { method: "POST", body: JSON.stringify({ package: pkg }) },
+        {
+          method: "POST",
+          body: JSON.stringify(version ? { package: pkg, version } : { package: pkg }),
+        },
       ),
+    /** Move an installed plugin to `version`, or to its newest release. */
+    upgrade: (id: string, version?: string | null) =>
+      request<PluginInstallResult>(
+        `/api/plugins/installed/${encodeURIComponent(id)}/upgrade`,
+        { method: "POST", body: JSON.stringify(version ? { version } : {}) },
+      ),
+    /** Every release of a package name or GitHub repository link. */
+    versions: (pkg: string, refresh = false) =>
+      request<PluginVersions>(
+        `/api/plugins/versions?${new URLSearchParams({
+          package: pkg,
+          ...(refresh ? { refresh: "true" } : {}),
+        })}`,
+      ),
+    /** The newest release of each installed plugin, from where it came from. */
+    updates: (refresh = false) =>
+      request<PluginUpdate[]>(`/api/plugins/updates${refresh ? "?refresh=true" : ""}`),
     uninstall: (id: string) =>
-      request<{ package: string; output: string; restart_required: boolean }>(
+      request<PluginInstallResult>(
         `/api/plugins/installed/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       ),

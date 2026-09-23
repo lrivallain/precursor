@@ -159,6 +159,49 @@ def test_source_checkout_is_the_install_mode_here() -> None:
     assert updates.install_mode() == "source"
 
 
+def test_only_the_rolling_nightly_release_is_a_nightly_asset() -> None:
+    repo = config.get_settings().update_repo
+    assert updates.is_nightly_asset(
+        f"https://github.com/{repo}/releases/download/nightly/precursor_ai-1-py3-none-any.whl"
+    )
+    # A tagged release's files are immutable; so is anything off GitHub.
+    assert not updates.is_nightly_asset(
+        f"https://github.com/{repo}/releases/download/v2026.9.0/precursor_ai-1-py3-none-any.whl"
+    )
+    assert not updates.is_nightly_asset("https://example.invalid/nightly/x.whl")
+    assert not updates.is_nightly_asset("")
+
+
+def test_the_published_nightly_is_cached_unless_forced(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        assert "releases/download/nightly/version.json" in str(request.url)
+        # Never credentials: the manifest is a public asset on another origin.
+        assert "authorization" not in request.headers
+        return httpx.Response(
+            200,
+            json={"version": "2026.9.1.dev77", "wheel_url": "w", "extra_wheel_urls": ["k"]},
+        )
+
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    build = updates.published_nightly()
+    assert build == updates.NightlyBuild("2026.9.1.dev77", "w", ("k",))
+    updates.published_nightly()
+    assert calls["n"] == 1
+    updates.published_nightly(force=True)
+    assert calls["n"] == 2
+
+
+def test_an_unreadable_nightly_manifest_is_unknown_not_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_client(monkeypatch, httpx.MockTransport(lambda _r: httpx.Response(404)))
+    assert updates.published_nightly(force=True) is None
+
+
 def _write_receipt(
     tmp_path: Path,
     extras: list[str],

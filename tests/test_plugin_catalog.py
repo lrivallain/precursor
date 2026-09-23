@@ -139,6 +139,29 @@ def test_parse_entry_rejects_a_non_https_homepage() -> None:
         parse_entry("my-plugin", _entry(homepage="http://example.invalid"))
 
 
+def test_parse_entry_accepts_a_github_repository() -> None:
+    entry = parse_entry("my-plugin", _entry(repository="https://github.com/you/precursor-my"))
+    assert entry.repository == "https://github.com/you/precursor-my"
+    assert parse_entry("my-plugin", _entry()).repository is None
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "http://github.com/you/precursor-my",
+        "https://gitlab.com/you/precursor-my",
+        "https://github.com/you/precursor-my/releases",
+        "https://github.com/you/precursor-my.git?x=1",
+        "https://github.com/you",
+        "https://github.com/you/precursor-my/",
+    ],
+)
+def test_parse_entry_rejects_anything_but_one_github_repository(repository: str) -> None:
+    """It picks where release wheels are installed from — one exact spelling."""
+    with pytest.raises(CatalogError, match="repository"):
+        parse_entry("my-plugin", _entry(repository=repository))
+
+
 def test_parse_entry_rejects_unknown_contributions() -> None:
     with pytest.raises(CatalogError, match="unknown 'contributes'"):
         parse_entry("my-plugin", _entry(contributes=["section", "telepathy"]))
