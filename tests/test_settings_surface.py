@@ -15,8 +15,13 @@ short, justified allow-list.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from precursor.backend.config import Settings
 from precursor.backend.schemas.settings import SettingsPayload
+
+_SETTINGS_PANEL = Path(__file__).resolve().parents[1] / "frontend/src/components/SettingsPanel.tsx"
 
 # The two deliberate exceptions. Both describe *the machine or tenant the app runs
 # in* rather than a preference, both are documented (reference/configuration.md,
@@ -47,3 +52,27 @@ def test_the_deliberate_exceptions_still_exist() -> None:
     """
     stale = sorted(_DELIBERATE_ENV_TWINS - set(Settings.model_fields))
     assert not stale, f"allow-list entries no longer on config.Settings: {stale}"
+
+
+def test_system_panel_copy_does_not_point_at_the_environment() -> None:
+    """The panel's own blurb must describe the split the tests above enforce.
+
+    It outlived the split once (#252), telling readers these values "default to
+    the server's environment / .env" — including the ``PRECURSOR_CMD_RUNNER_*``
+    twins that were removed precisely because they could switch the sandbox off.
+    """
+    source = _SETTINGS_PANEL.read_text(encoding="utf-8")
+    start = source.index("function SystemTab(")
+    end = source.index("\nfunction ", start + 1)
+    system_tab = re.sub(r"\s+", " ", source[start:end])
+
+    env_claim = re.compile(
+        r"\b(defaults?|falls? back|comes?)\s+(to|from)\s+(the\s+)?(server'?s\s+)?"
+        r"(environment|\.env)\b|overridden here|PRECURSOR_",
+        re.IGNORECASE,
+    )
+    found = env_claim.search(system_tab)
+    assert found is None, (
+        f"Settings → System copy implies an env fallback ({found.group(0)!r}), but "
+        "every field on that panel is DB-only."
+    )
