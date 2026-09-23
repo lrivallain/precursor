@@ -166,6 +166,13 @@ error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
 The same object is stored on the tool message's `tool_calls` metadata, so the
 chip survives a reload without re-reading the result body.
 
+`POST /api/workspaces/{id}/chat/stream` — the [workspace](/features/workspaces)
+assistant — streams the same `delta`, `tool_calls`, `tool_result` (with `link`),
+`mcp_auth_required`, `system`, `error`, `done` and `suggestions` events. It is
+ephemeral: the client sends the prior turns as `history`, nothing is persisted,
+so its events carry no message ids and it sends no `user_message` or `usage`
+event. Its token usage is still written to the usage ledger.
+
 `POST .../messages/stream` accepts `retry_message_id` to **replay** such a turn:
 instead of persisting a new user message it reuses that one — attachments and
 all — and deletes every message recorded after it. The id must name a user turn

@@ -41,6 +41,7 @@ from precursor.backend.services.events import (
     publish_topic_changed,
 )
 from precursor.backend.services.github_auth import resolve_github_token
+from precursor.backend.services.llm.one_shot import LLMCallFailed
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.mcp.oauth_registry import server_label as _server_label
 from precursor.backend.services.turn import run_topic_turn
@@ -490,9 +491,10 @@ async def _dispatch_builtin(topic_id: int, name: str, argument: str, *, literal:
         return
     try:
         await handler(topic_id, argument)
-    except HTTPException as exc:
+    except (HTTPException, LLMCallFailed) as exc:
         # The reused router functions raise HTTPException for user-facing
-        # failures (no token, feature disabled, …). Surface the detail in-chat
+        # failures (no token, feature disabled, …), and the one-shot drafts let
+        # LLMCallFailed reach the app's 502 mapping. Surface the detail in-chat
         # rather than failing the whole schedule.
         await _record(topic_id, f"`/{name}` failed: {exc.detail}")
     except Exception as exc:  # record and keep the schedule healthy

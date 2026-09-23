@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,17 +15,13 @@ from precursor.backend.models import IssueContextCache, Topic
 from precursor.backend.services.app_settings import (
     resolve_issue_associations_enabled,
     resolve_issue_context_ttl_minutes,
-    resolve_llm_model,
 )
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
-from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.llm.one_shot import complete_once
 
 router = APIRouter(prefix="/api/topics/{topic_id}/summary", tags=["chat"])
-logger = logging.getLogger(__name__)
 
 
 class IssueLabel(BaseModel):
@@ -176,20 +171,10 @@ async def refresh_issue_context(
     )
     user = "\n\n".join(prompt_parts)
 
-    provider = await get_llm_provider(session)
-    model = await resolve_llm_model(session)
-    try:
-        summary_text, usage = await complete_text_with_usage(
-            provider,
-            model=model,
-            messages=[
-                ChatMessage(role="system", content=system),
-                ChatMessage(role="user", content=user),
-            ],
-        )
-    except Exception as exc:
-        logger.warning("Summary generation failed: %s", exc)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"LLM call failed: {exc}") from exc
+    result = await complete_once(
+        session, system=system, user=user, usage_source="/summary", topic_id=topic_id
+    )
+    summary_text, model = result.text, result.model
 
     now = datetime.now(UTC)
     labels_json = json.dumps(issue.get("labels", []))
@@ -210,16 +195,6 @@ async def refresh_issue_context(
         row.summary = summary_text
         row.model = model
         row.fetched_at = now
-        if usage is not None:
-            await record_usage(
-                write_session,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                total_tokens=usage.total_tokens,
-                source="/summary",
-                model=model,
-                topic_id=topic_id,
-            )
         await write_session.commit()
 
     return IssueSummary(

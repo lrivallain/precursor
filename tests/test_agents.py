@@ -254,7 +254,7 @@ def test_parse_mcp_scope_distinguishes_absent_from_empty() -> None:
     Null is "no scope, attach everything enabled"; an empty string is the
     deliberate "attach nothing" a step uses to shed tool schemas entirely.
     """
-    from precursor.backend.services.agents.manager import parse_mcp_scope
+    from precursor.backend.services.agents.mcp_scope import parse_mcp_scope
 
     assert parse_mcp_scope(None) is None
     assert parse_mcp_scope("") == frozenset()
@@ -320,7 +320,7 @@ def test_scope_includes_precursor_is_the_single_rule() -> None:
     Both ask this one question. If they ever answered it differently, a step
     that re-pointed *only* ``precursor`` would keep the previous catalogue.
     """
-    from precursor.backend.services.agents.manager import (
+    from precursor.backend.services.agents.mcp_scope import (
         parse_mcp_scope,
         scope_includes_precursor,
     )
@@ -347,10 +347,8 @@ async def test_expected_mcp_fingerprint_tracks_scope_and_steadies_tools_off() ->
     session that was already correct.
     """
     from precursor.backend.models import AgentSession
-    from precursor.backend.services.agents.manager import (
-        _MCP_OFF_FINGERPRINT,
-        AgentManager,
-    )
+    from precursor.backend.services.agents.manager import AgentManager
+    from precursor.backend.services.agents.mcp_scope import _MCP_OFF_FINGERPRINT
     from precursor.backend.services.mcp.client import get_mcp_client_manager
 
     await _ensure_schema()
@@ -631,7 +629,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
 
 
 def test_parse_agent_command() -> None:
-    from precursor.backend.services.agents.manager import parse_agent_command
+    from precursor.backend.services.agents.directives import parse_agent_command
 
     assert parse_agent_command("hello there") is None
     assert parse_agent_command("  not a / command") is None
@@ -1282,7 +1280,7 @@ async def test_create_agent_accepts_an_mcp_scope(monkeypatch) -> None:
 def test_normalize_mcp_scope_pairs_with_parse() -> None:
     """Everything written goes through normalize, everything read through parse,
     so the stored and effective forms can't drift."""
-    from precursor.backend.services.agents.manager import normalize_mcp_scope, parse_mcp_scope
+    from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope, parse_mcp_scope
 
     # Null and empty stay distinct through the write half, matching parse.
     assert normalize_mcp_scope(None) is None
@@ -2154,7 +2152,7 @@ def test_parse_directives_normalizes_artifact_markdown() -> None:
     literal ``\\n`` and breaks a packed sequential numbered list onto separate
     lines — while leaving incidental "2." tokens (versions, prices) untouched.
     """
-    from precursor.backend.services.agents.manager import parse_agent_directives
+    from precursor.backend.services.agents.directives import parse_agent_directives
 
     escaped = parse_agent_directives("ARTIFACT: Next steps | Do these:\\n\\n1. First\\n2. Second")[
         "artifacts"
@@ -2181,7 +2179,7 @@ def test_parse_directives_captures_block_artifact() -> None:
     with no pipe, body lines, then ``END_ARTIFACT``) preserves the full body so
     a research inventory / draft / review lands intact for downstream agents.
     """
-    from precursor.backend.services.agents.manager import parse_agent_directives
+    from precursor.backend.services.agents.directives import parse_agent_directives
 
     text = (
         "Here is the result.\n"
@@ -2203,7 +2201,7 @@ def test_parse_directives_captures_block_artifact() -> None:
 
 def test_parse_directives_block_ends_at_next_directive() -> None:
     """A block with no explicit END_ARTIFACT terminates at the next directive."""
-    from precursor.backend.services.agents.manager import parse_agent_directives
+    from precursor.backend.services.agents.directives import parse_agent_directives
 
     text = (
         "ARTIFACT: Inventory\n1. First\n2. Second\nOBJECTIVE_COMPLETE: done gathering the inventory"
@@ -2215,7 +2213,7 @@ def test_parse_directives_block_ends_at_next_directive() -> None:
 
 def test_parse_directives_strips_trailing_control_line_from_inline() -> None:
     """A control line glued onto inline artifact content is peeled off the tail."""
-    from precursor.backend.services.agents.manager import parse_agent_directives
+    from precursor.backend.services.agents.directives import parse_agent_directives
 
     content = parse_agent_directives(
         "ARTIFACT: Inventory | 1. First\\n2. Second\\nOBJECTIVE_COMPLETE: all done"
@@ -2232,7 +2230,7 @@ def test_parse_directives_ignores_marker_quoted_in_prose() -> None:
     garbled phantom question that halted the workflow. Directives are now only
     recognised at the start of a line.
     """
-    from precursor.backend.services.agents.manager import parse_agent_directives
+    from precursor.backend.services.agents.directives import parse_agent_directives
 
     text = (
         "My draft is complete and ready for the downstream REVIEW agent.\n"
@@ -2247,7 +2245,7 @@ def test_parse_directives_bolded_label_does_not_leak_emphasis() -> None:
     The closing ``**`` of the bolded label must be eaten so it never leaks into
     the captured value and unbalances the Markdown the callout renders.
     """
-    from precursor.backend.services.agents.manager import parse_agent_directives
+    from precursor.backend.services.agents.directives import parse_agent_directives
 
     parsed = parse_agent_directives("**NEED_INPUT:** Should I deploy to prod or staging?")
     assert parsed["blocked"] == "Should I deploy to prod or staging?"
@@ -2628,7 +2626,7 @@ async def test_gate_result_is_cleaned_of_directive_tokens() -> None:
 
 
 def test_strip_control_directives_scrubs_tokens_keeps_prose() -> None:
-    from precursor.backend.services.agents.manager import strip_control_directives
+    from precursor.backend.services.agents.directives import strip_control_directives
 
     raw = (
         "Here is the finished draft.\n"
@@ -3984,7 +3982,7 @@ async def test_step_output_placeholder_carries_payload_past_the_summary_cap() ->
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentEventRecord, AgentRun, AgentSession
     from precursor.backend.services.agents import workflow as wf_mod
-    from precursor.backend.services.agents.manager import RESULT_SUMMARY_CAP
+    from precursor.backend.services.agents.directives import RESULT_SUMMARY_CAP
 
     await _ensure_schema()
     wf_id, agents = await _seed_linear_workflow(

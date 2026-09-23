@@ -12,10 +12,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.services.app_settings import resolve_llm_model
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
-from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.llm.one_shot import complete_once
 
 logger = logging.getLogger(__name__)
 
@@ -91,25 +88,11 @@ async def refine_text(
     if not source:
         return "", ""
 
-    provider = await get_llm_provider(session)
-    model = await resolve_llm_model(session)
-    refined, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=_build_system(kind, instruction)),
-            ChatMessage(role="user", content=source),
-        ],
+    result = await complete_once(
+        session,
+        system=_build_system(kind, instruction),
+        user=source,
+        usage_source="/refine",
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/refine",
-            model=model,
-        )
-        await session.commit()
     # Fall back to the original text if the model returned nothing usable.
-    return (refined or source), model
+    return (result.text or source), result.model

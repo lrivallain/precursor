@@ -20,16 +20,13 @@ from precursor.backend.models import (
     MeetingSession,
     Topic,
 )
-from precursor.backend.services.app_settings import resolve_llm_model
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.meeting_analysis import (
     context_notes_text,
     display_label,
     language_name,
     meeting_context_text,
 )
-from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -169,28 +166,15 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    provider = await get_llm_provider(session)
-    # Use the default chat model for a higher-quality recap (not the fast model).
-    model = await resolve_llm_model(session)
-    text, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content="\n".join(user_parts)),
-        ],
+    # No ``model=``: the recap uses the default chat model, not the fast one.
+    result = await complete_once(
+        session,
+        system=system,
+        user="\n".join(user_parts),
+        usage_source="/live-summary",
+        topic_id=ms.topic_id,
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-summary",
-            model=model,
-            topic_id=ms.topic_id,
-        )
-        await session.commit()
+    text, model = result.text, result.model
     # Keep note attachments in the recap even if the model dropped them.
     attach_md = await _attachments_markdown(session, session_id, text)
     if attach_md:
@@ -237,27 +221,14 @@ async def generate_summary_from_transcript(
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    provider = await get_llm_provider(session)
-    model = await resolve_llm_model(session)
-    text, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content="\n".join(user_parts)),
-        ],
+    result = await complete_once(
+        session,
+        system=system,
+        user="\n".join(user_parts),
+        usage_source="/live-summary-transcript",
+        topic_id=ms.topic_id,
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-summary-transcript",
-            model=model,
-            topic_id=ms.topic_id,
-        )
-        await session.commit()
+    text, model = result.text, result.model
     attach_md = await _attachments_markdown(session, session_id, text)
     if attach_md:
         text = text.rstrip() + "\n\n" + attach_md
@@ -313,25 +284,12 @@ async def summarize_topic_conversation(
     if lang:
         system += f"\n\nWrite the brief in {lang}."
 
-    provider = await get_llm_provider(session)
-    model = await resolve_llm_model(session)
-    text, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content="\n\n".join(parts)[-16000:]),
-        ],
+    result = await complete_once(
+        session,
+        system=system,
+        user="\n\n".join(parts)[-16000:],
+        usage_source="/live-topic-context",
+        topic_id=topic_id,
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-topic-context",
-            model=model,
-            topic_id=topic_id,
-        )
-        await session.commit()
+    text, model = result.text, result.model
     return text, model

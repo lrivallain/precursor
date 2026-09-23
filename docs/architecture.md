@@ -102,22 +102,31 @@ detached background process, so Precursor can run without a terminal:
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.
-2. The router persists the user `Message`, snapshots history, and builds a
-   system prompt that includes the linked GitHub issue body + most-recent
-   comments + labels, plus any attached skills/memory.
+2. `services/conversation_turn.py` persists the user `Message` (binding its
+   attachments), snapshots history and resolves the turn's LLM/MCP settings; the
+   router adds a system prompt that includes the linked GitHub issue body +
+   most-recent comments + labels, plus any attached skills/memory.
 3. Enabled MCP tool servers are opened for the turn; their tools are advertised
-   to the provider. The router runs a **tool loop**: stream text, collect tool
-   calls, execute them, append `tool` results, call again — up to a configured
-   max-rounds — until the model stops requesting tools.
+   to the provider. `services/turn_engine.run_tool_loop` runs a **tool loop**:
+   stream text, collect tool calls, execute them, append `tool` results, call
+   again — up to a configured max-rounds — until the model stops requesting
+   tools.
 4. Each round is trimmed to a token budget (`services/context_budget.py`) so a
    few large tool results can't overflow the context window.
 5. Text deltas and tool-call events stream to the browser over SSE.
 6. On stream end (or user "stop"), the assistant turn is persisted using a
    **fresh DB session** (the request-scoped one may be closed by the time the
-   generator finishes), and `message.changed` / `stream.ended` events publish.
+   generator finishes), each metered round is written to the usage ledger, and
+   `message.changed` / `stream.ended` events publish.
 
-Scheduled topics run the *same* turn logic off the request path via
-`services/turn.py`, driven by the scheduler instead of an HTTP request.
+Chats (`/api/chats/{id}/messages/stream`) take the same path. Scheduled topics
+and MCP `post_message` run the *same* preparation, tool loop and persistence off
+the request path via `services/turn.py`. The workspace assistant
+(`services/workspace_chat.py`) is ephemeral — the client sends its history and
+nothing is stored — but it drives the same tool loop and meters its rounds too.
+Tool-less features that ask the model once (`/refine`, summaries, auto-naming,
+…) don't take this path; they use `complete_once()` — see *One-shot calls*
+under [LLM provider abstraction](#llm-provider-abstraction).
 
 ## Request flow: editable topic summary
 
@@ -237,6 +246,16 @@ translation — input items, flat tool schemas, and the event stream mapped back
 onto the same four provider events — lives in `services/llm/_responses_compat.py`.
 Adding a provider is one `ProviderSpec` in the registry plus an implementation
 class.
+
+**One-shot calls.** Features that ask the model once with no tools (the `/gh-*`
+drafts, `/notes rephrase`, `/refine`, auto-naming, the issue and topic
+summaries, the live recap, analysis and translation) go through
+`services/llm/one_shot.complete_once()`. It resolves the provider and model,
+commits the caller's session before the provider call so a slow model doesn't
+hold a pooled connection, and writes the usage row in its own session with the
+topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
+catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
+fallbacks stay with each feature.
 
 ## MCP
 
