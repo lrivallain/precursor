@@ -52,6 +52,11 @@ from precursor.backend.models.workflow import (
     WorkflowRunStep,
     WorkflowStep,
 )
+from precursor.backend.services.agents.directives import (
+    RESULT_SUMMARY_CAP,
+    strip_control_directives,
+)
+from precursor.backend.services.agents.mcp_scope import parse_mcp_scope, scope_includes_precursor
 from precursor.backend.services.events import publish_workflow_changed
 from precursor.backend.services.workflow_state import (
     build_state_index_prompt,
@@ -625,10 +630,6 @@ def _has_precursor_tools(step: WorkflowStep) -> bool:
     """
     if step.use_mcp is False:
         return False
-    # Imported here rather than at module scope: ``manager`` reaches back into
-    # this module, so a top-level import would close the cycle.
-    from precursor.backend.services.agents.manager import parse_mcp_scope, scope_includes_precursor
-
     return scope_includes_precursor(parse_mcp_scope(step.mcp_servers))
 
 
@@ -836,11 +837,6 @@ async def _step_output(
     archive, scrubbed exactly the way the manager scrubbed the summary, and keep
     whichever is longer.
     """
-    from precursor.backend.services.agents.manager import (
-        RESULT_SUMMARY_CAP,
-        strip_control_directives,
-    )
-
     summary: str | None = None
     if agent_run is not None and agent_run.result_summary:
         summary = agent_run.result_summary

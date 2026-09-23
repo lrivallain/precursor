@@ -72,11 +72,9 @@ from precursor.backend.schemas.agent_state import (
 from precursor.backend.schemas.workflow import WorkflowSummary
 from precursor.backend.services import agent_state as agent_state_service
 from precursor.backend.services.agents import fleet, provision, runtime
-from precursor.backend.services.agents.manager import (
-    get_agent_manager,
-    normalize_mcp_scope,
-    parse_agent_command,
-)
+from precursor.backend.services.agents.directives import parse_agent_command
+from precursor.backend.services.agents.manager import get_agent_manager
+from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler

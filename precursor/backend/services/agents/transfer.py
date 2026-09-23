@@ -55,6 +55,7 @@ from precursor.backend.schemas.transfer import (
     TransferWarning,
     TransferWorkflow,
 )
+from precursor.backend.services.agents.mcp_scope import _PRECURSOR_SERVER, parse_mcp_scope
 from precursor.backend.services.schedule_timing import normalize_rules, rules_to_json
 
 logger = logging.getLogger(__name__)
@@ -431,13 +432,6 @@ async def _mcp_scope_warnings(
     """
     if doc.workflow is None:
         return []
-    # Imported inside the function: manager imports transfer-adjacent models, so
-    # a module-level import would close a cycle.
-    from precursor.backend.services.agents.manager import (
-        _PRECURSOR_SERVER,
-        parse_mcp_scope,
-    )
-
     scoped: set[str] = set()
     for step in doc.workflow.steps:
         # An explicitly tools-off step never attaches anything, so its scope is
