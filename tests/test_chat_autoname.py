@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
 from precursor.backend.routers import chat_messages
-from precursor.backend.services import chat_autoname
+from precursor.backend.services import chat_autoname, conversation_turn
 from precursor.backend.services.chat_autoname import MAX_TITLE_CHARS, sanitize_title
 from precursor.backend.services.llm import one_shot
 from precursor.backend.services.llm.base import TextDeltaEvent, TurnDoneEvent, UsageEvent
@@ -400,7 +400,7 @@ def test_streaming_the_first_turn_renames_the_chat(monkeypatch: pytest.MonkeyPat
     _stub_provider(monkeypatch, "Fixing the login redirect")
     # Stub the turn's own provider too, so the test never reaches a real API.
     # Naming resolves its provider independently; only the title is under test.
-    monkeypatch.setattr(chat_messages, "get_llm_provider", _stub_provider_factory("ok"))
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", _stub_provider_factory("ok"))
 
     app = create_app()
     with TestClient(app) as client:
@@ -439,7 +439,7 @@ def test_shutdown_cancels_detached_autoname_tasks(monkeypatch: pytest.MonkeyPatc
             cancelled.set()
 
     monkeypatch.setattr(chat_autoname, "_autoname_chat", _parked_autoname)
-    monkeypatch.setattr(chat_messages, "get_llm_provider", _stub_provider_factory("ok"))
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", _stub_provider_factory("ok"))
 
     app = create_app()
     with TestClient(app) as client:

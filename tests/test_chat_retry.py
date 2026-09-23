@@ -11,8 +11,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
-from precursor.backend.routers import chat as chat_router
-from precursor.backend.routers import chat_messages as chat_messages_router
+from precursor.backend.services import conversation_turn as conversation_turn_mod
 from precursor.backend.services import turn_engine as turn_engine_mod
 from precursor.backend.services.llm.base import (
     LLMError,
@@ -54,7 +53,7 @@ class _EchoProvider:
         return []
 
 
-def _patch_provider(monkeypatch, router, provider) -> None:
+def _patch_provider(monkeypatch, provider) -> None:
     async def _get(_session):
         return provider
 
@@ -62,7 +61,7 @@ def _patch_provider(monkeypatch, router, provider) -> None:
         _ = args, kwargs
         return None
 
-    monkeypatch.setattr(router, "get_llm_provider", _get)
+    monkeypatch.setattr(conversation_turn_mod, "get_llm_provider", _get)
     monkeypatch.setattr(turn_engine_mod, "record_usage", _record_usage)
 
 
@@ -71,7 +70,7 @@ def test_topic_retry_replaces_failed_turn(monkeypatch) -> None:
     with TestClient(app) as client:
         tid = client.post("/api/topics", json={"title": "Retry"}).json()["id"]
 
-        _patch_provider(monkeypatch, chat_router, _RejectingProvider())
+        _patch_provider(monkeypatch, _RejectingProvider())
         failed = client.post(
             f"/api/topics/{tid}/messages/stream",
             json={"content": "draw a diagram"},
@@ -84,7 +83,7 @@ def test_topic_retry_replaces_failed_turn(monkeypatch) -> None:
         assert msgs[1]["content"].startswith("Error: ")
         user_id = msgs[0]["id"]
 
-        _patch_provider(monkeypatch, chat_router, _EchoProvider())
+        _patch_provider(monkeypatch, _EchoProvider())
         retried = client.post(
             f"/api/topics/{tid}/messages/stream",
             json={"content": "draw a diagram", "retry_message_id": user_id},
@@ -109,7 +108,7 @@ def test_topic_retry_keeps_bound_attachments(monkeypatch) -> None:
             files={"file": ("notes.txt", b"context from the attachment", "text/plain")},
         ).json()["id"]
 
-        _patch_provider(monkeypatch, chat_router, _RejectingProvider())
+        _patch_provider(monkeypatch, _RejectingProvider())
         client.post(
             f"/api/topics/{tid}/messages/stream",
             json={"content": "summarize", "attachment_ids": [aid]},
@@ -117,7 +116,7 @@ def test_topic_retry_keeps_bound_attachments(monkeypatch) -> None:
         )
         user_id = client.get(f"/api/topics/{tid}/messages").json()[0]["id"]
 
-        _patch_provider(monkeypatch, chat_router, _EchoProvider())
+        _patch_provider(monkeypatch, _EchoProvider())
         client.post(
             f"/api/topics/{tid}/messages/stream",
             json={"content": "summarize", "retry_message_id": user_id},
@@ -135,7 +134,7 @@ def test_retry_rejects_non_user_message(monkeypatch) -> None:
     with TestClient(app) as client:
         tid = client.post("/api/topics", json={"title": "Bad retry"}).json()["id"]
 
-        _patch_provider(monkeypatch, chat_router, _EchoProvider())
+        _patch_provider(monkeypatch, _EchoProvider())
         client.post(
             f"/api/topics/{tid}/messages/stream",
             json={"content": "hello"},
@@ -164,7 +163,7 @@ def test_chat_retry_replaces_failed_turn(monkeypatch) -> None:
     with TestClient(app) as client:
         cid = client.post("/api/chats", json={"title": "Retry chat"}).json()["id"]
 
-        _patch_provider(monkeypatch, chat_messages_router, _RejectingProvider())
+        _patch_provider(monkeypatch, _RejectingProvider())
         client.post(
             f"/api/chats/{cid}/messages/stream",
             json={"content": "ping"},
@@ -174,7 +173,7 @@ def test_chat_retry_replaces_failed_turn(monkeypatch) -> None:
         assert [m["role"] for m in msgs] == ["user", "system"]
         user_id = msgs[0]["id"]
 
-        _patch_provider(monkeypatch, chat_messages_router, _EchoProvider())
+        _patch_provider(monkeypatch, _EchoProvider())
         client.post(
             f"/api/chats/{cid}/messages/stream",
             json={"content": "ping", "retry_message_id": user_id},
