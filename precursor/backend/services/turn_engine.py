@@ -712,6 +712,159 @@ async def run_tool_loop(
     yield RoundCapReached(max_tool_rounds)
 
 
+# -- Turn persistence ------------------------------------------------------
+#
+# Shared by the SSE consumer below and the unattended topic turn
+# (``services/turn.py``), so a streamed and a scheduled answer are stored the
+# same way. Each write uses a fresh session: the request-scoped one may be closed
+# by the time a streaming generator gets here.
+
+
+async def record_round_usage(
+    usage: UsageEvent | None,
+    *,
+    model: str,
+    source: str = "chat",
+    kind: ContainerKind | None = None,
+    container_id: int | None = None,
+) -> None:
+    """Append one metered model round to the usage ledger (no-op without usage).
+
+    ``kind``/``container_id`` attribute it to a conversation; leave them unset
+    for a surface that has none, such as workspace chat.
+    """
+    if usage is None:
+        return
+    owner = (
+        container_message_kwargs(kind, container_id)
+        if kind is not None and container_id is not None
+        else {}
+    )
+    async with SessionLocal() as us:
+        await record_usage(
+            us,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            source=source,
+            model=model,
+            **owner,
+        )
+        await us.commit()
+
+
+@dataclass(slots=True)
+class PersistedAnswer:
+    """The stored final answer: its id, clean text and follow-up chips."""
+
+    message_id: int
+    text: str
+    suggestions: list[str]
+
+
+async def persist_final_turn(
+    kind: ContainerKind,
+    container_id: int,
+    ev: AssistantFinalTurn,
+    *,
+    model: str,
+    elapsed_ms: int,
+) -> PersistedAnswer:
+    """Store the final answer, minus its ``suggest`` block, and meter the round."""
+    text, suggestions = split_suggestions(ev.text)
+    usage = ev.usage
+    async with SessionLocal() as ws:
+        assistant = Message(
+            role=MessageRole.ASSISTANT,
+            content=text,
+            suggestions=json.dumps(suggestions) if suggestions else None,
+            prompt_tokens=usage.prompt_tokens if usage else None,
+            completion_tokens=usage.completion_tokens if usage else None,
+            model=model,
+            elapsed_ms=elapsed_ms,
+            **container_message_kwargs(kind, container_id),
+        )
+        ws.add(assistant)
+        await ws.commit()
+        await ws.refresh(assistant)
+        message_id = assistant.id
+    await publish_container_changed(kind, container_id)
+    await record_round_usage(usage, model=model, kind=kind, container_id=container_id)
+    return PersistedAnswer(message_id=message_id, text=text, suggestions=suggestions)
+
+
+async def persist_tool_calls_turn(
+    kind: ContainerKind,
+    container_id: int,
+    ev: AssistantToolCallsTurn,
+    *,
+    model: str,
+) -> int:
+    """Store an assistant-with-tool-calls round and meter it; return its id."""
+    usage = ev.usage
+    async with SessionLocal() as ws:
+        assistant = Message(
+            role=MessageRole.ASSISTANT,
+            content=ev.text,
+            tool_calls=json.dumps(ev.openai_tool_calls),
+            prompt_tokens=usage.prompt_tokens if usage else None,
+            completion_tokens=usage.completion_tokens if usage else None,
+            **container_message_kwargs(kind, container_id),
+        )
+        ws.add(assistant)
+        await ws.commit()
+        await ws.refresh(assistant)
+        assistant_id = assistant.id
+    await publish_container_changed(kind, container_id)
+    await record_round_usage(usage, model=model, kind=kind, container_id=container_id)
+    return assistant_id
+
+
+async def persist_tool_result(kind: ContainerKind, container_id: int, ev: ToolResultTurn) -> int:
+    """Store one tool result; return its id.
+
+    The workspace ``link`` rides in the row's ``tool_calls`` metadata so the
+    transcript's Open chip survives a reload without re-reading the result body.
+    """
+    call = ev.call
+    tool_meta: dict[str, Any] = {
+        "tool_call_id": call.id,
+        "name": call.name,
+        "arguments": call.arguments,
+        "is_error": ev.is_error,
+    }
+    if ev.link:
+        tool_meta["link"] = ev.link
+    async with SessionLocal() as ws:
+        tool_msg = Message(
+            role=MessageRole.TOOL,
+            content=ev.result_text,
+            tool_calls=json.dumps(tool_meta),
+            **container_message_kwargs(kind, container_id),
+        )
+        ws.add(tool_msg)
+        await ws.commit()
+        await ws.refresh(tool_msg)
+        tool_msg_id = tool_msg.id
+    await publish_container_changed(kind, container_id)
+    return tool_msg_id
+
+
+def usage_event(message_id: int, usage: UsageEvent) -> dict[str, str]:
+    """The ``usage`` SSE event for a metered round."""
+    return {
+        "event": "usage",
+        "data": json.dumps(
+            {
+                "message_id": message_id,
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            }
+        ),
+    }
+
+
 # -- SSE consumer ----------------------------------------------------------
 
 
@@ -795,112 +948,38 @@ async def run_message_stream(
                 elif isinstance(ev, AssistantFinalTurn):
                     # Final assistant turn — split off any suggested follow-ups,
                     # persist the clean text, and surface the chips separately.
-                    round_usage = ev.usage
-                    assistant_text, suggestions = split_suggestions(ev.text)
                     elapsed_ms = int((time.monotonic() - turn_started) * 1000)
-                    async with SessionLocal() as ws:
-                        assistant = Message(
-                            role=MessageRole.ASSISTANT,
-                            content=assistant_text,
-                            suggestions=json.dumps(suggestions) if suggestions else None,
-                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens
-                            if round_usage
-                            else None,
-                            model=model,
-                            elapsed_ms=elapsed_ms,
-                            **container_message_kwargs(kind, container_id),
-                        )
-                        ws.add(assistant)
-                        await ws.commit()
-                        await ws.refresh(assistant)
-                        assistant_id = assistant.id
-                        await publish_container_changed(kind, container_id)
-                        if round_usage is not None:
-                            async with SessionLocal() as us:
-                                await record_usage(
-                                    us,
-                                    prompt_tokens=round_usage.prompt_tokens,
-                                    completion_tokens=round_usage.completion_tokens,
-                                    total_tokens=round_usage.total_tokens,
-                                    source="chat",
-                                    model=model,
-                                    **container_message_kwargs(kind, container_id),
-                                )
-                                await us.commit()
-                            yield {
-                                "event": "usage",
-                                "data": json.dumps(
-                                    {
-                                        "message_id": assistant.id,
-                                        "prompt_tokens": round_usage.prompt_tokens,
-                                        "completion_tokens": round_usage.completion_tokens,
-                                        "total_tokens": round_usage.total_tokens,
-                                    }
-                                ),
+                    answer = await persist_final_turn(
+                        kind, container_id, ev, model=model, elapsed_ms=elapsed_ms
+                    )
+                    if ev.usage is not None:
+                        yield usage_event(answer.message_id, ev.usage)
+                    yield {
+                        "event": "done",
+                        "data": json.dumps(
+                            {
+                                "id": answer.message_id,
+                                "content": answer.text,
+                                "model": model,
+                                "elapsed_ms": elapsed_ms,
                             }
-                        yield {
-                            "event": "done",
-                            "data": json.dumps(
-                                {
-                                    "id": assistant.id,
-                                    "content": assistant_text,
-                                    "model": model,
-                                    "elapsed_ms": elapsed_ms,
-                                }
-                            ),
-                        }
-                    if suggestions:
+                        ),
+                    }
+                    if answer.suggestions:
                         yield {
                             "event": "suggestions",
-                            "data": json.dumps({"message_id": assistant_id, "items": suggestions}),
+                            "data": json.dumps(
+                                {"message_id": answer.message_id, "items": answer.suggestions}
+                            ),
                         }
                     return
 
                 elif isinstance(ev, AssistantToolCallsTurn):
-                    # Persist assistant-with-tool-calls turn.
-                    round_usage = ev.usage
-                    async with SessionLocal() as ws:
-                        assistant = Message(
-                            role=MessageRole.ASSISTANT,
-                            content=ev.text,
-                            tool_calls=json.dumps(ev.openai_tool_calls),
-                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens
-                            if round_usage
-                            else None,
-                            **container_message_kwargs(kind, container_id),
-                        )
-                        ws.add(assistant)
-                        await ws.commit()
-                        await ws.refresh(assistant)
-                        assistant_id = assistant.id
-                    await publish_container_changed(kind, container_id)
-
-                    if round_usage is not None:
-                        async with SessionLocal() as us:
-                            await record_usage(
-                                us,
-                                prompt_tokens=round_usage.prompt_tokens,
-                                completion_tokens=round_usage.completion_tokens,
-                                total_tokens=round_usage.total_tokens,
-                                source="chat",
-                                model=model,
-                                **container_message_kwargs(kind, container_id),
-                            )
-                            await us.commit()
-                        yield {
-                            "event": "usage",
-                            "data": json.dumps(
-                                {
-                                    "message_id": assistant_id,
-                                    "prompt_tokens": round_usage.prompt_tokens,
-                                    "completion_tokens": round_usage.completion_tokens,
-                                    "total_tokens": round_usage.total_tokens,
-                                }
-                            ),
-                        }
-
+                    assistant_id = await persist_tool_calls_turn(
+                        kind, container_id, ev, model=model
+                    )
+                    if ev.usage is not None:
+                        yield usage_event(assistant_id, ev.usage)
                     yield {
                         "event": "tool_calls",
                         "data": json.dumps(
@@ -919,36 +998,15 @@ async def run_message_stream(
                     }
 
                 elif isinstance(ev, ToolResultTurn):
-                    call = ev.call
-                    tool_meta: dict[str, Any] = {
-                        "tool_call_id": call.id,
-                        "name": call.name,
-                        "arguments": call.arguments,
-                        "is_error": ev.is_error,
-                    }
-                    if ev.link:
-                        tool_meta["link"] = ev.link
-                    async with SessionLocal() as ws:
-                        tool_msg = Message(
-                            role=MessageRole.TOOL,
-                            content=ev.result_text,
-                            tool_calls=json.dumps(tool_meta),
-                            **container_message_kwargs(kind, container_id),
-                        )
-                        ws.add(tool_msg)
-                        await ws.commit()
-                        await ws.refresh(tool_msg)
-                        tool_msg_id = tool_msg.id
-                    await publish_container_changed(kind, container_id)
-
+                    tool_msg_id = await persist_tool_result(kind, container_id, ev)
                     yield {
                         "event": "tool_result",
                         "data": json.dumps(
                             {
                                 "message_id": tool_msg_id,
-                                "tool_call_id": call.id,
-                                "name": call.name,
-                                "arguments": call.arguments,
+                                "tool_call_id": ev.call.id,
+                                "name": ev.call.name,
+                                "arguments": ev.call.arguments,
                                 "content": ev.result_text,
                                 "is_error": ev.is_error,
                                 "link": ev.link,

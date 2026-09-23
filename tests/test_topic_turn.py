@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import select
 
 from precursor.backend.db import SessionLocal, init_db
-from precursor.backend.models import AppSetting, Message, MessageRole, Topic
+from precursor.backend.models import AppSetting, Message, MessageRole, Topic, UsageRecord
 from precursor.backend.services import app_settings
 from precursor.backend.services.llm.base import (
     ChatMessage,
@@ -68,6 +68,10 @@ class _ScriptedProvider:
         self.calls.append(list(messages))
         for event in self.rounds[min(len(self.calls), len(self.rounds)) - 1]:
             yield event
+
+    async def list_models(self) -> list[SimpleNamespace]:
+        # A one-model catalogue, so the turn resolves a known model id.
+        return [SimpleNamespace(id="fake-model")]
 
 
 class _Bundle(ActiveTools):
@@ -297,3 +301,69 @@ async def test_missing_topic_is_a_no_op(monkeypatch) -> None:
 
     assert provider.calls == []
     assert await _messages(987_654) == []
+
+
+# -- Stored like a streamed turn (#332) --------------------------------------
+
+
+async def _usage(topic_id: int) -> list[UsageRecord]:
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(UsageRecord).where(UsageRecord.topic_id == topic_id).order_by(UsageRecord.id)
+        )
+        return list(result.scalars().all())
+
+
+async def test_answer_is_stored_like_a_streamed_one(monkeypatch, enabled_servers) -> None:
+    reply = "Done.\n\n```suggest\n- Run it again\n- Show the log\n```"
+    _install_provider(monkeypatch, _ScriptedProvider(_answer(reply)))
+    _install_mcp(monkeypatch)
+    topic_id = await _topic()
+
+    await run_topic_turn(topic_id, "go")
+
+    answer = (await _messages(topic_id))[-1]
+    # The follow-up block becomes chips instead of leaking into the transcript.
+    assert answer.content == "Done."
+    assert json.loads(answer.suggestions or "[]") == ["Run it again", "Show the log"]
+    assert answer.model == "fake-model"
+    assert answer.elapsed_ms is not None and answer.elapsed_ms >= 0
+
+
+async def test_every_metered_round_reaches_the_usage_ledger(monkeypatch, enabled_servers) -> None:
+    provider = _ScriptedProvider(
+        [
+            ToolCallsEvent(calls=[_Call("call-1", "fetch__get")]),
+            UsageEvent(prompt_tokens=5, completion_tokens=2, total_tokens=7),
+            TurnDoneEvent(finish_reason="tool_calls"),
+        ],
+        _answer("Fetched."),
+    )
+    _install_provider(monkeypatch, provider)
+
+    async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
+        _ = server, raw_name, args
+        return SimpleNamespace(content=[SimpleNamespace(text="ok")], isError=False)
+
+    _install_mcp(
+        monkeypatch,
+        tools=[
+            MCPToolDef(
+                server="fetch",
+                name="get",
+                description="GET a URL",
+                input_schema={"type": "object", "properties": {}},
+            )
+        ],
+        handler=handler,
+    )
+    topic_id = await _topic()
+
+    await run_topic_turn(topic_id, "fetch it")
+
+    usage = await _usage(topic_id)
+    assert [(u.prompt_tokens, u.completion_tokens, u.total_tokens) for u in usage] == [
+        (5, 2, 7),
+        (13, 4, 17),
+    ]
+    assert {(u.source, u.model) for u in usage} == {("chat", "fake-model")}

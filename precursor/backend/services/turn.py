@@ -4,18 +4,19 @@ The chat router streams turns to the browser over SSE. Scheduled topics need
 the *same* generation logic (system context, history hydration, MCP tool loop,
 message persistence) but driven by the background scheduler instead of a request.
 
-Rather than duplicate that logic, this reuses the shared engine in
-:mod:`precursor.backend.services.turn_engine`: :func:`run_tool_loop` drives the
-provider + MCP tool loop and yields semantic events, and this module applies the
-scheduler's own (plain, non-streaming) persistence policy on top, emitting the
-same ``stream.started`` / ``stream.ended`` / ``message.changed`` events so the UI
+Rather than duplicate that logic, this reuses the shared pieces: the turn is
+prepared by :mod:`precursor.backend.services.conversation_turn`, and
+:func:`~precursor.backend.services.turn_engine.run_tool_loop` drives the provider
++ MCP tool loop. This module only skips the streaming: it stores each round with
+the same persistence helpers the SSE consumer uses and emits the same
+``stream.started`` / ``stream.ended`` / ``message.changed`` events, so the UI
 lights up exactly as it does for a manual chat.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import time
 
 import anyio
 
@@ -41,6 +42,9 @@ from precursor.backend.services.turn_engine import (
     ToolAuthRequired,
     ToolResultTurn,
     build_system_context,
+    persist_final_turn,
+    persist_tool_calls_turn,
+    persist_tool_result,
     run_tool_loop,
 )
 
@@ -109,6 +113,7 @@ async def _run(
         for server_name, err in active.unavailable:
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
+        turn_started = time.monotonic()
         async for ev in run_tool_loop(
             active=active,
             provider=settings.provider,
@@ -135,66 +140,25 @@ async def _run(
                 await publish_mcp_auth_required(ev.server, ev.message, topic_id=topic_id)
                 continue
 
+            # Stored exactly as a streamed turn stores them (clean text + chips,
+            # model, elapsed time, and a usage-ledger row per metered round).
             if isinstance(ev, AssistantFinalTurn):
-                round_usage = ev.usage
-                async with SessionLocal() as ws:
-                    ws.add(
-                        Message(
-                            topic_id=topic_id,
-                            role=MessageRole.ASSISTANT,
-                            content=ev.text,
-                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens
-                            if round_usage
-                            else None,
-                        )
-                    )
-                    await ws.commit()
-                await publish_message_changed(topic_id)
+                elapsed_ms = int((time.monotonic() - turn_started) * 1000)
+                await persist_final_turn(
+                    "topic", topic_id, ev, model=settings.model, elapsed_ms=elapsed_ms
+                )
                 return
 
             if isinstance(ev, AssistantToolCallsTurn):
-                round_usage = ev.usage
-                async with SessionLocal() as ws:
-                    ws.add(
-                        Message(
-                            topic_id=topic_id,
-                            role=MessageRole.ASSISTANT,
-                            content=ev.text,
-                            tool_calls=json.dumps(ev.openai_tool_calls),
-                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens
-                            if round_usage
-                            else None,
-                        )
-                    )
-                    await ws.commit()
-                await publish_message_changed(topic_id)
+                await persist_tool_calls_turn("topic", topic_id, ev, model=settings.model)
 
             elif isinstance(ev, ToolResultTurn):
-                call = ev.call
-                tool_meta: dict[str, object] = {
-                    "tool_call_id": call.id,
-                    "name": call.name,
-                    "arguments": call.arguments,
-                    "is_error": ev.is_error,
-                }
-                if ev.link:
-                    tool_meta["link"] = ev.link
-                async with SessionLocal() as ws:
-                    ws.add(
-                        Message(
-                            topic_id=topic_id,
-                            role=MessageRole.TOOL,
-                            content=ev.result_text,
-                            tool_calls=json.dumps(tool_meta),
-                        )
-                    )
-                    await ws.commit()
-                await publish_message_changed(topic_id)
+                await persist_tool_result("topic", topic_id, ev)
 
             elif isinstance(ev, RoundCapReached):
-                # Exhausted the tool-round budget without a final answer.
+                # Exhausted the tool-round budget without a final answer. This
+                # stays the unattended turn's own assistant note; the stream
+                # records an "Error: …" system row instead.
                 async with SessionLocal() as ws:
                     ws.add(
                         Message(
