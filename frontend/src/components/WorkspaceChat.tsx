@@ -13,6 +13,7 @@ import { skillsStore } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamWorkspaceChat } from "../lib/sse";
 import { stripSuggestionBlock } from "../lib/suggestions";
+import { STOPPED_TOOL_RESULT } from "../lib/toolMeta";
 import { useComposerInput } from "../lib/useComposerInput";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import type { WorkspaceFileRef } from "../lib/workspaceLink";
@@ -33,11 +34,14 @@ type WorkspaceChatItem =
   | { kind: "assistant"; content: string; suggestions?: string[] }
   | {
       kind: "tool";
+      /** The model's tool_call_id, which `tool_result` answers. */
+      callId: string;
       name: string;
       arguments: string;
       content: string | null;
       isError: boolean;
       pending: boolean;
+      stopped?: boolean;
       link?: WorkspaceFileRef | null;
     };
 
@@ -87,6 +91,9 @@ export function WorkspaceChat({
   }, [collapsed, narrow]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Bumped by Clear so a stream it cut short can't write into the new, empty
+  // transcript (its abort path would otherwise append the stopped reply).
+  const turnRef = useRef(0);
 
   // Resizable assistant panel (right) + message composer (bottom).
   const { width: panelWidth, onMouseDown: onPanelResize } = useResizableWidth({
@@ -166,11 +173,12 @@ export function WorkspaceChat({
     setPending("");
     const controller = new AbortController();
     abortRef.current = controller;
+    const turn = ++turnRef.current;
+    const current = () => turnRef.current === turn;
     let acc = "";
     let turnSuggestions: string[] = [];
-    // Tool items emitted during this turn, keyed by tool_call_id so results can
-    // be matched back to the call that produced them.
-    const toolItems = new Map<string, WorkspaceChatItem & { kind: "tool" }>();
+    // Calls of this turn still waiting on their `tool_result`.
+    const openCalls = new Set<string>();
     try {
       await streamWorkspaceChat(
         area.id,
@@ -183,6 +191,7 @@ export function WorkspaceChat({
         {
           signal: controller.signal,
           onEvent: (e) => {
+            if (!current()) return;
             if (e.event === "delta") {
               const { content: c } = JSON.parse(e.data) as { content: string };
               acc += c;
@@ -193,24 +202,23 @@ export function WorkspaceChat({
               const { calls } = JSON.parse(e.data) as {
                 calls: { id: string; name: string; arguments: string }[];
               };
-              setMessages((prev) => {
-                const next = [...prev];
-                if (acc.trim())
-                  next.push({ kind: "assistant", content: stripSuggestionBlock(acc) });
-                for (const call of calls) {
-                  const item: WorkspaceChatItem & { kind: "tool" } = {
-                    kind: "tool",
-                    name: call.name,
-                    arguments: call.arguments,
-                    content: null,
-                    isError: false,
-                    pending: true,
-                  };
-                  toolItems.set(call.id, item);
-                  next.push(item);
-                }
-                return next;
-              });
+              // Build the items now: React runs the updater later, after `acc`
+              // has been reset below, so reading it in there loses the text.
+              const added: WorkspaceChatItem[] = [];
+              if (acc.trim()) added.push({ kind: "assistant", content: stripSuggestionBlock(acc) });
+              for (const call of calls) {
+                openCalls.add(call.id);
+                added.push({
+                  kind: "tool",
+                  callId: call.id,
+                  name: call.name,
+                  arguments: call.arguments,
+                  content: null,
+                  isError: false,
+                  pending: true,
+                });
+              }
+              setMessages((prev) => [...prev, ...added]);
               acc = "";
               setPending("");
             } else if (e.event === "tool_result") {
@@ -220,9 +228,10 @@ export function WorkspaceChat({
                 is_error: boolean;
                 link?: WorkspaceFileRef | null;
               };
+              openCalls.delete(r.tool_call_id);
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.kind === "tool" && m === toolItems.get(r.tool_call_id)
+                  m.kind === "tool" && m.pending && m.callId === r.tool_call_id
                     ? {
                         ...m,
                         content: r.content,
@@ -252,7 +261,7 @@ export function WorkspaceChat({
           },
         },
       );
-      if (acc.trim()) {
+      if (acc.trim() && current()) {
         setMessages((m) => [
           ...m,
           {
@@ -263,7 +272,8 @@ export function WorkspaceChat({
         ]);
       }
     } catch (e) {
-      if (controller.signal.aborted) {
+      // A Clear mid-stream wants nothing of this turn in the transcript.
+      if (current() && controller.signal.aborted) {
         // Stop rejects the stream before the append above runs. Keep what
         // already streamed, marked the way topics and chats save it.
         const partial = stripSuggestionBlock(acc).trim();
@@ -273,14 +283,42 @@ export function WorkspaceChat({
             { kind: "assistant", content: `${partial}\n\n_(stopped)_` },
           ]);
         }
-      } else {
+      } else if (current()) {
         setError(e instanceof Error ? e.message : String(e));
       }
     } finally {
+      // Never leave a call spinning: one Stop cut short is settled as stopped,
+      // like topics and chats; one the stream simply never answered, as failed.
+      if (openCalls.size > 0 && current()) {
+        const stopped = controller.signal.aborted;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.kind === "tool" && m.pending && openCalls.has(m.callId)
+              ? stopped
+                ? { ...m, pending: false, stopped: true, content: STOPPED_TOOL_RESULT }
+                : {
+                    ...m,
+                    pending: false,
+                    isError: true,
+                    content: "The reply ended before the tool returned a result.",
+                  }
+              : m,
+          ),
+        );
+      }
       setStreaming(false);
       setPending("");
       abortRef.current = null;
     }
+  }
+
+  function clearChat(): void {
+    // Stop first, so the reply doesn't land in the emptied transcript.
+    turnRef.current += 1;
+    abortRef.current?.abort();
+    setMessages([]);
+    setPending("");
+    setError(null);
   }
 
   if (collapsed) {
@@ -321,7 +359,7 @@ export function WorkspaceChat({
           {messages.length > 0 && (
             <button
               className="text-xs text-muted hover:text-text"
-              onClick={() => setMessages([])}
+              onClick={clearChat}
             >
               Clear
             </button>
@@ -360,6 +398,7 @@ export function WorkspaceChat({
               content={m.content}
               isError={m.isError}
               pending={m.pending}
+              stopped={m.stopped}
               link={m.link}
             />
           ) : (

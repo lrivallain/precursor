@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Archive, ArrowUpRight, Eraser, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
+import { clearConversation } from "../lib/useConversation";
 import type { Chat, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
@@ -99,7 +100,7 @@ export function ChatSettingsPanel({
     setClearing(true);
     setError(null);
     try {
-      await api.chats.clearMessages(chat.id);
+      await clearConversation("chat", chat.id);
       onCleared();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -68,6 +68,7 @@ import type {
   MeetingSessionUpdate,
   MeetingTranscriptListResult,
   Message,
+  StoppedTurn,
   NotesDraft,
   NoteDraftAttachment,
   InstalledPlugin,
@@ -238,8 +239,13 @@ function messageWindowQuery(opts?: MessageWindow): string {
 export interface ContainerApi {
   listMessages: (opts?: MessageWindow) => Promise<Message[]>;
   deleteMessage: (messageId: number) => Promise<void>;
-  /** Persist a partial assistant reply when the user stops generation. */
-  saveStopped: (content: string) => Promise<Message>;
+  /** Erase the whole transcript server-side. */
+  clearMessages: () => Promise<void>;
+  /**
+   * Persist what a user-stopped turn leaves behind: the partial reply and the
+   * tool calls still running. Returns the rows created, oldest first.
+   */
+  saveStopped: (turn: StoppedTurn) => Promise<Message[]>;
   uploadAttachment: (file: File) => Promise<Attachment>;
   notes: {
     getDraft: () => Promise<NotesDraft>;
@@ -357,10 +363,10 @@ export const api = {
       request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
     deleteMessage: (chatId: number, messageId: number) =>
       request<void>(`/api/chats/${chatId}/messages/${messageId}`, { method: "DELETE" }),
-    saveStoppedMessage: (chatId: number, content: string) =>
-      request<Message>(`/api/chats/${chatId}/messages/stopped`, {
+    saveStoppedMessage: (chatId: number, turn: StoppedTurn) =>
+      request<Message[]>(`/api/chats/${chatId}/messages/stopped`, {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(turn),
       }),
     // /suggest-name — re-derive the chat's title from its transcript.
     suggestName: (chatId: number) =>
@@ -783,10 +789,10 @@ export const api = {
         method: "DELETE",
       }),
     // Persist a partial assistant reply when the user stops generation.
-    saveStopped: (topicId: number, content: string) =>
-      request<Message>(`/api/topics/${topicId}/messages/stopped`, {
+    saveStopped: (topicId: number, turn: StoppedTurn) =>
+      request<Message[]>(`/api/topics/${topicId}/messages/stopped`, {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(turn),
       }),
   },
 
@@ -795,7 +801,8 @@ export const api = {
       ? {
           listMessages: (opts) => api.messages.list(id, opts),
           deleteMessage: (mid) => api.messages.remove(id, mid),
-          saveStopped: (content) => api.messages.saveStopped(id, content),
+          clearMessages: () => api.messages.clear(id),
+          saveStopped: (turn) => api.messages.saveStopped(id, turn),
           uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
           notes: {
             getDraft: () => api.notes.getDraft(id),
@@ -810,7 +817,8 @@ export const api = {
       : {
           listMessages: (opts) => api.chats.listMessages(id, opts),
           deleteMessage: (mid) => api.chats.deleteMessage(id, mid),
-          saveStopped: (content) => api.chats.saveStoppedMessage(id, content),
+          clearMessages: () => api.chats.clearMessages(id),
+          saveStopped: (turn) => api.chats.saveStoppedMessage(id, turn),
           uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
           notes: {
             getDraft: () => api.chats.getNotesDraft(id),

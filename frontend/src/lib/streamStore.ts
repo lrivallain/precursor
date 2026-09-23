@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { mcpAuthStore } from "./mcpAuth";
 import { streamChat, streamChatSession, type ChatStreamBody } from "./sse";
+import { parseToolMeta, STOPPED_TOOL_RESULT } from "./toolMeta";
 import type { Attachment, Message } from "./types";
 
 export interface UsageReport {
@@ -128,8 +129,29 @@ class StreamStore {
     if (this.sessions.delete(key)) this.notify();
   }
 
-  stop(key: string): void {
-    this.sessions.get(key)?.abort.abort();
+  /**
+   * Abort a stream. Tool calls still running settle as stopped right away
+   * instead of spinning until a reload replaces the buffer; their ids are
+   * returned so the caller can record them server-side.
+   */
+  stop(key: string): string[] {
+    const session = this.sessions.get(key);
+    if (!session) return [];
+    const stopped: string[] = [];
+    session.messages = session.messages.map((m) => {
+      if (m.role !== "tool") return m;
+      const meta = parseToolMeta(m.tool_calls);
+      if (!meta?.pending) return m;
+      if (meta.tool_call_id) stopped.push(meta.tool_call_id);
+      return {
+        ...m,
+        content: STOPPED_TOOL_RESULT,
+        tool_calls: JSON.stringify({ ...meta, pending: false, stopped: true }),
+      };
+    });
+    session.abort.abort();
+    if (stopped.length) this.notify();
+    return stopped;
   }
 
   async start(

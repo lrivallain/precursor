@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { parseToolMeta } from "../lib/toolMeta";
+import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import type { Message } from "../lib/types";
 
 interface TranscriptMessageProps {
@@ -36,6 +38,7 @@ export function TranscriptMessage({
         content={meta?.pending ? null : m.content}
         isError={Boolean(meta?.is_error)}
         pending={Boolean(meta?.pending)}
+        stopped={Boolean(meta?.stopped)}
         link={meta?.link}
       />
     );
@@ -95,4 +98,63 @@ export function TranscriptTail({
     return <SuggestedReplies items={last.suggestions} onPick={onPickSuggestion} />;
   }
   return null;
+}
+
+function removedLabel(message: Message): string {
+  if (message.role === "user") return "Your message";
+  return message.role === "assistant" ? "Assistant reply" : "Message";
+}
+
+/** One undo row per message awaiting its delete-grace timeout. */
+export function UndoDeleteToasts({
+  deletion,
+}: {
+  deletion: Pick<MessageDeletion, "pendingDeletes" | "undoDelete">;
+}) {
+  const latest = deletion.pendingDeletes[deletion.pendingDeletes.length - 1];
+  return (
+    <>
+      {/* Always mounted: screen readers skip a live region inserted along with
+          its text. Out of flow, so it adds no gap to the composer stack. */}
+      <span className="sr-only" role="status">
+        {latest ? `${removedLabel(latest.message)} removed. Undo is available for a few seconds.` : ""}
+      </span>
+      {deletion.pendingDeletes.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {deletion.pendingDeletes.map((p) => (
+            <UndoDeleteToast
+              key={p.message.id}
+              pending={p}
+              onUndo={() => deletion.undoDelete(p.message.id)}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function UndoDeleteToast({ pending, onUndo }: { pending: PendingDelete; onUndo: () => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const handle = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(handle);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((pending.expiresAt - now) / 1000));
+  const label = removedLabel(pending.message);
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-1.5 rounded border border-border bg-surface text-xs">
+      <span className="text-muted truncate">
+        {label} removed · undo in {seconds}s
+      </span>
+      <button
+        type="button"
+        onClick={onUndo}
+        className="text-accent hover:underline shrink-0"
+        aria-label={`Undo: restore ${label.toLowerCase()}`}
+      >
+        Undo
+      </button>
+    </div>
+  );
 }

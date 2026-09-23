@@ -19,6 +19,7 @@ chat routers stay one-liners over the same behaviour.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Collection
 from dataclasses import dataclass
 from typing import Any
@@ -302,25 +303,119 @@ async def delete_container_message(
     await publish_container_changed(kind, container_id)
 
 
-async def save_stopped_container_turn(
-    session: AsyncSession, kind: ContainerKind, container_id: int, content: str
-) -> Message:
-    """Persist the partial reply the client kept when the user stopped a turn.
+STOPPED_TOOL_RESULT = "Stopped by the user before the tool returned a result."
 
-    The stream only saves its final turn, which never runs once the client
-    disconnects; this keeps the text already received instead of losing it.
+
+async def _stopped_tool_rows(
+    session: AsyncSession, kind: ContainerKind, container_id: int, call_ids: list[str]
+) -> list[Message]:
+    """Tool rows settling the requested calls of the latest tool round as stopped.
+
+    Only calls the container's most recent assistant tool round actually issued
+    are recorded, and never one that already has a result (Stop racing a tool
+    that just finished), so the round stays one answer per call — which is what
+    lets ``hydrate_history`` replay it on the next turn instead of dropping it.
     """
-    msg = Message(
-        role=MessageRole.ASSISTANT,
-        content=content,
-        **container_message_kwargs(kind, container_id),
-    )
-    session.add(msg)
+    fk = _message_fk(kind)
+    issuer = (
+        await session.execute(
+            select(Message)
+            .where(
+                fk == container_id,
+                Message.role == MessageRole.ASSISTANT,
+                Message.tool_calls.is_not(None),
+            )
+            .order_by(Message.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if issuer is None or not issuer.tool_calls:
+        return []
+    try:
+        calls = json.loads(issuer.tool_calls)
+    except ValueError:
+        return []
+    answered: set[str] = set()
+    for raw in (
+        await session.execute(
+            select(Message.tool_calls).where(
+                fk == container_id, Message.role == MessageRole.TOOL, Message.id > issuer.id
+            )
+        )
+    ).scalars():
+        try:
+            meta = json.loads(raw) if raw else {}
+        except ValueError:
+            continue
+        if isinstance(meta, dict) and meta.get("tool_call_id"):
+            answered.add(meta["tool_call_id"])
+    wanted = set(call_ids)
+    rows: list[Message] = []
+    for call in calls if isinstance(calls, list) else []:
+        if not isinstance(call, dict):
+            continue
+        call_id = call.get("id")
+        if call_id not in wanted or call_id in answered:
+            continue
+        fn = call.get("function")
+        if not isinstance(fn, dict):
+            fn = {}
+        rows.append(
+            Message(
+                role=MessageRole.TOOL,
+                content=STOPPED_TOOL_RESULT,
+                tool_calls=json.dumps(
+                    {
+                        "tool_call_id": call_id,
+                        "name": fn.get("name"),
+                        "arguments": fn.get("arguments"),
+                        "is_error": False,
+                        "stopped": True,
+                    }
+                ),
+                **container_message_kwargs(kind, container_id),
+            )
+        )
+    return rows
+
+
+async def save_stopped_container_turn(
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    content: str,
+    tool_call_ids: list[str] | None = None,
+) -> list[Message]:
+    """Persist what the client kept when the user stopped a turn; return the rows.
+
+    The stream only saves its final turn and each tool result as it arrives,
+    neither of which runs once the client disconnects. This records the tool
+    calls still in flight as stopped, then the text already received, so the
+    turn reads as cut short instead of losing its tail.
+    """
+    rows = await _stopped_tool_rows(session, kind, container_id, tool_call_ids or [])
+    if content:
+        rows.append(
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=content,
+                **container_message_kwargs(kind, container_id),
+            )
+        )
+    if not rows:
+        return []
+    for row in rows:
+        # Flush one at a time so ids follow transcript order.
+        session.add(row)
+        await session.flush()
     await session.commit()
     await publish_container_changed(kind, container_id)
     # Re-load with attachments eagerly so MessageRead serialization doesn't
     # trigger a lazy load outside the async context.
     result = await session.execute(
-        select(Message).where(Message.id == msg.id).options(selectinload(Message.attachments))
+        select(Message)
+        .where(Message.id.in_([row.id for row in rows]))
+        .order_by(Message.id)
+        .options(selectinload(Message.attachments))
     )
-    return result.scalar_one()
+    return list(result.scalars())

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from precursor.backend.models.message import MessageRole
 
@@ -52,9 +52,20 @@ class MessageCreate(BaseModel):
 
 
 class StoppedTurn(BaseModel):
-    """Partial assistant reply the user interrupted, to persist as-is."""
+    """What a user-stopped turn leaves behind, to persist as-is.
 
-    content: str = Field(min_length=1)
+    ``content`` is the partial reply received so far; ``tool_call_ids`` name the
+    calls of the latest tool round that never returned, recorded as stopped.
+    """
+
+    content: str = ""
+    tool_call_ids: list[str] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="after")
+    def _something_to_save(self) -> StoppedTurn:
+        if not self.content and not self.tool_call_ids:
+            raise ValueError("content or tool_call_ids is required")
+        return self
 
 
 class MessageRead(BaseModel):

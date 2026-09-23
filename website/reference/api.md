@@ -178,6 +178,15 @@ instead of persisting a new user message it reuses that one — attachments and
 all — and deletes every message recorded after it. The id must name a user turn
 of the same container (`400` otherwise, `404` when unknown).
 
+Stopping a turn disconnects the stream, so the backend never persists its final
+answer or the results of tools still running. The client records them with
+`POST .../messages/stopped`: `content` is the text received so far and
+`tool_call_ids` names the calls of the latest tool round that never returned —
+either may be omitted, not both (`422`). Each such call gets a tool row whose
+metadata carries `"stopped": true`, skipping ids the round didn't issue or that
+already have a result, so the round still replays on the next turn. The response
+is the list of rows created, oldest first.
+
 ::: tip Contributions welcome
 Want to help build the generated reference? See the
 [contribution guide](/contributing/).

@@ -15,6 +15,28 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Topics, chats and the workspace assistant now behave the same when you
+  delete, clear or stop** (#343). The #335 refactor had kept three differences
+  on purpose:
+
+  - **Deleting a message** shows the same undo toast everywhere: *"Your message
+    removed · undo in 5s"*, with a countdown that tracks the real grace timer.
+    Chats used to show a static *"Message deleted"* strip.
+  - **Clearing a transcript always leaves it empty.** A topic's `/clear` now drops
+    the client-side stream buffer too, like a chat's, so a finished turn whose
+    post-stream reload had failed can no longer reappear. Clearing while a reply
+    is streaming — **Settings → Clear chat**, or the workspace assistant's
+    **Clear** — stops the reply first, instead of letting its tool results and
+    answer land afterwards without their prompt. The confirmation reads the same
+    on every surface.
+  - **Stop settles a running tool call as _stopped_.** The workspace assistant's
+    tool bubble no longer spins "running…" forever, and in topics and chats the
+    interrupted call no longer vanishes on the post-stop reload: it is saved as a
+    stopped tool result, so it survives a reload and the next turn's model
+    context sees the call was cut short. `POST …/messages/stopped` accepts
+    `tool_call_ids` next to `content` (either may be omitted, not both) and now
+    returns the list of rows it created.
+
 - **Precursor now runs on MCP 2 (`mcp>=2.2,<3`); MCP 1 is no longer supported.**
   The 2026.9.1 release never shipped: its fresh-install smoke gate resolved
   `mcp 2.2.0`, which dependabot's `<3` bound allowed, and the app died on import
@@ -519,6 +541,10 @@ are the per-version history; releasing does not rewrite this file.
   at the one currently published. The manifest is read fresh before each
   install, and the Settings panel says when Precursor itself moved to a newer
   nightly as a result (`host_upgrade` in the install response).
+- **The workspace assistant no longer drops the text before a tool call.** A
+  reply that said something and then called a tool ("Let me read the file
+  first.") showed only the tool bubble: the text was read after it had already
+  been reset for the next round.
 - **Settings → System no longer says its values come from `.env`.** The panel
   opened with "These values default to the server's environment / .env", but
   every field on it has been database-only since the env twins were removed —
@@ -530,6 +556,32 @@ are the per-version history; releasing does not rewrite this file.
   database" description is gone from the architecture and stack docs, the
   command-runner screenshot is retaken, and a test now fails if the panel's copy
   points back at the environment (#252).
+- **Back, Forward and reload no longer rewrite browser history.** Three
+  routing bugs in the web app:
+  - **Deep links and reloads added history entries.** Opening or reloading a
+    `/live/<session>` or `/agents/<id>` link added two entries (`/live`, then
+    the session) on every load, so Back returned to the section's start page
+    first. After one reload on an agent, Back bounced between `/agents` and
+    the agent and never got further. The old numeric `/agents/<n>` form added
+    one entry, and a link to a live session that doesn't exist added `/live`.
+    None of these add anything now. Opening a live session from **⌘K** before
+    the Live list had loaded also stops adding an extra entry. Going Back onto
+    a live session that was archived or deleted meanwhile shows the Live start
+    page once and lets you keep going back. Before, it wiped your forward
+    history and kept you on `/live` however often you pressed Back.
+  - **Back to `/chats` kept the chat on screen.** It now shows the chats start
+    page, like `/live` and `/agents`. The stale chat used to cause a worse
+    problem: going Forward onto `/chats` from another section jumped back into
+    that chat and threw away every later history entry.
+  - **The search highlight leaked onto other pages.** Opening a **⌘K** search
+    hit wrote `?q=` onto the page you were leaving, so Back later returned to
+    it with a query it never had. Switching to Workflows, Files or a section's
+    start page kept the "Highlighting …" banner and carried `?q=` along. Now
+    each history entry keeps the query it was created with, and leaving the
+    highlighted conversation clears both the banner and `?q=`. Going Back or
+    Forward onto a highlighted topic or chat, from another one, shows the
+    highlight again. It used to strip the entry's `?q=` and lose it for good.
+
 - **A failed MCP connect now names its cause.** When a remote server could not
   be reached, for example an Agent 365 endpoint timing out, the server card and
   the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup

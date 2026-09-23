@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
+import { clearConversation } from "../lib/useConversation";
 import { useSettings } from "../lib/settingsStore";
 import type { Collection, Schedule, Topic, TopicNode } from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
@@ -223,7 +224,7 @@ export function TopicSettingsPanel({
   async function clearChat(): Promise<void> {
     if (
       !(await confirmAction({
-        message: "Erase the entire chat transcript for this topic?",
+        message: "Erase the entire transcript for this topic?",
         confirmLabel: "Erase transcript",
         variant: "danger",
       }))
@@ -232,7 +233,7 @@ export function TopicSettingsPanel({
     setClearing(true);
     setError(null);
     try {
-      await api.messages.clear(topic.id);
+      await clearConversation("topic", topic.id);
       onCleared?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
