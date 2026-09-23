@@ -86,6 +86,14 @@ export interface SectionHost {
    * argument it opens the Plugins list.
    */
   openSettings: (pluginPageId?: string) => void;
+  /**
+   * Name the item the section has open, for the browser tab title
+   * (`<title> · <section label> · Precursor`). Pass `null` to fall back to the
+   * section label; core forgets it when the user leaves the section. Added
+   * without an API bump, so call it as `host.setPageTitle?.(…)` to keep
+   * working on older hosts.
+   */
+  setPageTitle: (title: string | null) => void;
   /** App settings, or `null` while they load. */
   settings: Settings | null;
 }
