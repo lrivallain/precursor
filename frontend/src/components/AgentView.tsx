@@ -46,6 +46,7 @@ import {
 import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
 import { useDictation } from "../lib/useDictation";
 import { useResizableHeight } from "../lib/useResizableHeight";
+import { navigate } from "../lib/routes";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
@@ -404,7 +405,7 @@ function AgentOrchestrationSection({
     if (target) setViewing(target);
     const url = new URL(window.location.href);
     url.searchParams.delete("artifact");
-    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    navigate(url.pathname + url.search + url.hash, { replace: true });
   }, [artifacts]);
 
   async function addWebhook(): Promise<void> {
