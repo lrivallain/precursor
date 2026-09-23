@@ -540,6 +540,15 @@ are the per-version history; releasing does not rewrite this file.
     Forward onto a highlighted topic or chat, from another one, shows the
     highlight again. It used to strip the entry's `?q=` and lose it for good.
 
+- **Opening a ⌘K search hit adds exactly one history entry.** Opening a chat
+  hit from another section, while a different chat was still open in Chats,
+  first added an entry for that old chat, so Back showed it instead of the page
+  you searched from. Topic hits did the same with the previously open topic.
+  With no topic open yet, or from Home, a topic hit overwrote the page you were
+  leaving with the collection's start page. A hit now adds a single entry for
+  its target, and Back returns to where you opened the palette. A hit whose
+  item was deleted since the search now leaves you where you were.
+
 - **A failed MCP connect now names its cause.** When a remote server could not
   be reached, for example an Agent 365 endpoint timing out, the server card and
   the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup
