@@ -46,8 +46,11 @@ import {
   AgentsMain,
   AgentsSidebarList,
 } from "./components/AgentsSection";
-import { WorkflowsSection } from "./components/WorkflowsSection";
-import { WorkflowSidebarList } from "./components/WorkflowSidebarList";
+import {
+  WorkflowsHeader,
+  WorkflowsMain,
+  WorkflowsSidebarSlot,
+} from "./components/WorkflowsSectionParts";
 import { PersonaMenu } from "./components/PersonaMenu";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
@@ -59,7 +62,7 @@ import { api } from "./lib/api";
 import { Z_INDEX } from "./lib/constants";
 import { SearchHighlightProvider } from "./lib/searchHighlight";
 import { eventBus } from "./lib/events";
-import { notifyIfUnfocused, notifyNow } from "./lib/notifications";
+import { notifyIfUnfocused } from "./lib/notifications";
 import { skillsStore } from "./lib/skillsStore";
 import { rolesStore } from "./lib/rolesStore";
 import { useSettings, useSettingsReady } from "./lib/settingsStore";
@@ -67,8 +70,8 @@ import { streamStore, useStreamVersion, convKey } from "./lib/streamStore";
 import { useIssueContext } from "./lib/useIssueContext";
 import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
-import { useWorkflowCollection } from "./lib/useWorkflowCollection";
 import { useAgentsController } from "./lib/useAgentsController";
+import { useWorkflowsController } from "./lib/useWorkflowsController";
 import { windowFocused } from "./lib/windowFocus";
 import { openNotes } from "./lib/notesOpen";
 import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLink";
@@ -99,7 +102,6 @@ import {
   searchTermFromUrl,
   topicsModeUrl,
   topicUrl,
-  workflowUrl,
   workspaceUrl,
   type PluginRoute,
   type WsRoute,
@@ -107,16 +109,6 @@ import {
 import { findNode, findTitle, topicAncestors, totalUnread } from "./lib/topicTree";
 
 const BASE_TITLE = "Precursor";
-
-// Workflow run states worth interrupting the user for, and what to say. Only
-// terminal-ish transitions notify: a run advancing between steps is noise.
-// `awaiting_approval` is the important one — the run is *blocked* on a human,
-// so without a notification a background pipeline can wait indefinitely.
-const WORKFLOW_NOTICES: Record<string, string> = {
-  awaiting_approval: "⏸ Waiting for your approval to continue.",
-  completed: "✅ Workflow finished.",
-  failed: "⚠️ Workflow failed.",
-};
 
 // Bare-key shortcuts (like "/") must never steal a keystroke the user meant to
 // type, so they're ignored while focus sits in any editable control — including
@@ -184,18 +176,6 @@ export default function App() {
     const r = parseAppRoute();
     return { segments: r.pluginSegments, hash: r.pluginHash };
   });
-  // Selection and editor state are shared by the workflow sidebar and main pane.
-  const [activeWorkflowId, setActiveWorkflowId] = useState<number | null>(
-    () => parseAppRoute().workflowRef,
-  );
-  // The run segment shown in the URL (`/run/<n|latest>`). Owned here so the
-  // workflow URL effect can write it; kept in sync with the detail view's
-  // selected run via onRunChange below.
-  const [activeWorkflowRunSeg, setActiveWorkflowRunSeg] = useState<string | null>(
-    () => parseAppRoute().workflowRunRef,
-  );
-  const [workflowReloadKey, setWorkflowReloadKey] = useState(0);
-  const [workflowEditor, setWorkflowEditor] = useState<{ id: number | null } | null>(null);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
@@ -290,10 +270,6 @@ export default function App() {
   const agentsAvailable = settings?.agents_available ?? false;
   const agentsRuntimeStarted = settings?.agents_runtime_started ?? false;
   const agentsUnavailableReason = settings?.agents_unavailable_reason ?? null;
-  const workflowCollection = useWorkflowCollection(
-    agentsEnabled && sidebarMode === "workflows" && !atHome,
-    workflowReloadKey,
-  );
 
   const issueContext = useIssueContext(activeTopic, setActiveTopic);
 
@@ -311,11 +287,6 @@ export default function App() {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
-
-  // Editors are transient; returning to a section never revives an old draft.
-  useEffect(() => {
-    if (sidebarMode !== "workflows") setWorkflowEditor(null);
-  }, [sidebarMode]);
 
   // Mirror the active meeting session into refs so changeMode / URL sync can
   // build the /live URL without re-subscribing.
@@ -543,36 +514,6 @@ export default function App() {
     });
   }
 
-  // Fire a notification when a workflow reaches a state worth interrupting for.
-  // A background pipeline is invisible otherwise — and an approval checkpoint
-  // *blocks* until someone answers, so parking on one is the single most
-  // important thing to surface. Deduped per (workflow, state) so the repeated
-  // `workflow.changed` events a run emits don't notify twice for the same
-  // transition.
-  const workflowNoticeRef = useRef<Map<number, string>>(new Map());
-  function maybeNotifyWorkflow(
-    workflowId: number | null,
-    status: string | null,
-    name: string | null,
-  ): void {
-    if (workflowId == null || !status) return;
-    const notice = WORKFLOW_NOTICES[status];
-    if (!notice) {
-      // Any other state (running, paused…) clears the marker so the *next*
-      // completion of this workflow notifies again.
-      workflowNoticeRef.current.delete(workflowId);
-      return;
-    }
-    if (workflowNoticeRef.current.get(workflowId) === status) return;
-    workflowNoticeRef.current.set(workflowId, status);
-    if (!notificationsEnabledRef.current) return;
-    const title = name?.trim() || "Workflow";
-    // An approval blocks the run, so it's worth showing even when the app is
-    // focused — the other outcomes only interrupt an unfocused window.
-    const notify = status === "awaiting_approval" ? notifyNow : notifyIfUnfocused;
-    notify({ title, body: notice, tag: `precursor-workflow-${workflowId}` });
-  }
-
   // ---- Path-based routing ----------------------------------------------
   // The URL path is the single source of truth for mode + selection (the full
   // scheme, parsers and builders live in lib/routes.ts).
@@ -596,7 +537,7 @@ export default function App() {
   useEffect(() => {
     const syncFromUrl = (): void => {
       agentsCtl.setAgentComposerOpen(false);
-      setWorkflowEditor(null);
+      workflowsCtl.setWorkflowEditor(null);
       closeMobileNav();
       // Keep the highlight term in step with the URL for reloads / back-forward.
       // Reset the ownership refs so the highlight adopts whichever conversation
@@ -645,8 +586,7 @@ export default function App() {
         return;
       }
       if (r.mode === "workflows") {
-        setActiveWorkflowId(r.workflowRef);
-        setActiveWorkflowRunSeg(r.workflowRunRef);
+        workflowsCtl.syncFromRoute(r);
         return;
       }
       if (r.mode === "agents") {
@@ -751,6 +691,23 @@ export default function App() {
   });
   const { activeAgentId, agentsUnread, agentsWaiting } = agentsCtl;
 
+  // ---- Workflows --------------------------------------------------------
+  // Called after the mount `syncFromUrl` for the same reason as the agents
+  // controller: its `/workflows` URL effect must not navigate before the sync
+  // has read the entry URL.
+  const workflowsCtl = useWorkflowsController({
+    sidebarMode,
+    atHome,
+    settingsReady,
+    agentsEnabled,
+    notificationsEnabledRef,
+    setSidebarMode,
+    setAtHome,
+    setWsRoute,
+    closeMobileNav,
+    confirmLeaveRecording,
+  });
+
   // Reflect the total unread count in the tab title (always, independent of the
   // notification permission/setting). Cleared title falls back to the base.
   const topicsUnread = useMemo(() => totalUnread(tree), [tree]);
@@ -820,23 +777,6 @@ export default function App() {
     const target = liveUrl(active);
     if (window.location.pathname !== target) navigate(target);
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
-
-  // activeWorkflowId (+ run seg) -> /workflows/<id>[/run/<n|latest>] (or
-  // /workflows for the gallery). A workflow id change is a navigation (pushState
-  // so Back returns to the gallery / previous workflow); a run-seg-only change
-  // is a refinement of the same view (replaceState so auto-advancing runs don't
-  // spam history).
-  const prevWorkflowIdRef = useRef<number | null>(activeWorkflowId);
-  useEffect(() => {
-    if (atHome) return;
-    if (sidebarMode !== "workflows") return;
-    const target = workflowUrl(activeWorkflowId, activeWorkflowRunSeg);
-    if (window.location.pathname !== target) {
-      const idChanged = prevWorkflowIdRef.current !== activeWorkflowId;
-      navigate(target, { replace: !idChanged });
-    }
-    prevWorkflowIdRef.current = activeWorkflowId;
-  }, [activeWorkflowId, activeWorkflowRunSeg, sidebarMode, atHome]);
 
   // Auto-clear the search highlight when the user navigates to a *different*
   // conversation than the one it was opened for. The highlight is tied to a
@@ -964,9 +904,7 @@ export default function App() {
       agentsCtl.enterOverview();
       target = "/agents";
     } else if (next === "workflows") {
-      setActiveWorkflowId(null);
-      setActiveWorkflowRunSeg(null);
-      setWorkflowEditor(null);
+      workflowsCtl.enterOverview();
       target = "/workflows";
     } else if (isPluginMode(next)) {
       // Re-entering a plugin section restores the sub-route it was left at.
@@ -979,19 +917,6 @@ export default function App() {
     setSidebarMode(next);
     // These section buttons explicitly select the overview, like a list item.
     if (next === "agents" || next === "workflows") closeMobileNav();
-  }
-
-  async function openWorkflow(id: number | null): Promise<void> {
-    if (!(await confirmLeaveRecording())) return;
-    setAtHome(false);
-    setWsRoute({ open: false, slug: null, path: null });
-    setWorkflowEditor(null);
-    setActiveWorkflowId(id);
-    setActiveWorkflowRunSeg(null);
-    setSidebarMode("workflows");
-    closeMobileNav();
-    const target = workflowUrl(id);
-    if (window.location.pathname !== target) navigate(target);
   }
 
   // Navigate to the root home launcher.
@@ -1028,9 +953,7 @@ export default function App() {
       navigate("/agents");
       setSidebarMode("agents");
     } else if (mode === "workflows") {
-      setActiveWorkflowId(null);
-      setActiveWorkflowRunSeg(null);
-      setWorkflowEditor({ id: null });
+      workflowsCtl.startNew();
       navigate("/workflows");
       setSidebarMode("workflows");
     } else {
@@ -1282,17 +1205,6 @@ export default function App() {
         } else if (event.agent_session_id == null) {
           void refreshTree();
         }
-      } else if (event.type === "workflow.changed") {
-        // A workflow was created, advanced a step, or finished (possibly in the
-        // background via the coordinator). Bump the reload key so the cockpit
-        // re-fetches; the WorkflowsSection owns its own collection. The agents
-        // controller refreshes the roster from the same event.
-        setWorkflowReloadKey((k) => k + 1);
-        maybeNotifyWorkflow(
-          event.workflow_id ?? null,
-          event.workflow_status ?? null,
-          event.workflow_name ?? null,
-        );
       } else if (event.type === "meeting.changed") {
         // A meeting session was created, renamed, ended, or deleted (possibly in
         // another tab). Refresh the list if we've loaded it so the Live section
@@ -1532,11 +1444,7 @@ export default function App() {
     else if (sidebarMode === "chats") setActiveChat(null);
     else if (sidebarMode === "live") setActiveSessionId(null);
     else if (sidebarMode === "agents") agentsCtl.startNew();
-    else if (sidebarMode === "workflows") {
-      setActiveWorkflowId(null);
-      setActiveWorkflowRunSeg(null);
-      setWorkflowEditor({ id: null });
-    }
+    else if (sidebarMode === "workflows") workflowsCtl.startNew();
     // Core owns the button; the section owns what it means. A section with no
     // `onNew` has no "+" either (see `supportsNew` in Sidebar).
     else if (isPluginMode(sidebarMode)) {
@@ -1900,16 +1808,9 @@ export default function App() {
           />
         }
         workflowSlot={
-          <WorkflowSidebarList
-            workflows={workflowCollection.workflows}
-            activeId={activeWorkflowId}
-            overviewSelected={activeWorkflowId == null && workflowEditor == null}
-            loading={!settingsReady || (agentsEnabled && workflowCollection.loading)}
-            enabled={agentsEnabled}
-            error={agentsEnabled ? workflowCollection.error : null}
-            onRetry={() => void workflowCollection.reload()}
+          <WorkflowsSidebarSlot
+            controller={workflowsCtl}
             onOverview={() => void changeMode("workflows")}
-            onSelect={(id) => void openWorkflow(id)}
           />
         }
         pluginSlot={
@@ -2142,7 +2043,7 @@ export default function App() {
               )}
             </span>
           ) : sidebarMode === "workflows" ? (
-            <span className="truncate font-medium min-w-0 flex-1">Workflows</span>
+            <WorkflowsHeader />
           ) : (
             <AgentsHeader
               controller={agentsCtl}
@@ -2328,32 +2229,15 @@ export default function App() {
           ) : activeSection ? (
             <activeSection.Main host={sectionHost} />
           ) : sidebarMode === "workflows" ? (
-            <WorkflowsSection
-              enabled={agentsEnabled}
-              ready={settingsReady}
-              workflows={workflowCollection.workflows}
-              loading={workflowCollection.loading}
-              error={workflowCollection.error}
-              onReload={() => void workflowCollection.reload()}
-              onChanged={workflowCollection.upsert}
-              onDeleted={workflowCollection.remove}
-              activeId={activeWorkflowId}
-              editor={workflowEditor}
-              onEdit={(id) => {
-                setWorkflowEditor({ id });
-                closeMobileNav();
-              }}
-              onCloseEditor={() => setWorkflowEditor(null)}
-              runSeg={activeWorkflowRunSeg}
-              onNavigate={(id) => void openWorkflow(id)}
-              onRunSegChange={setActiveWorkflowRunSeg}
+            <WorkflowsMain
+              controller={workflowsCtl}
               onOpenSettings={openAgentSettings}
               onOpenAgent={(id) => void agentsCtl.openAgent(id)}
             />
           ) : (
             <AgentsMain
               controller={agentsCtl}
-              onOpenWorkflow={(id) => void openWorkflow(id)}
+              onOpenWorkflow={(id) => void workflowsCtl.openWorkflow(id)}
               onOpenSettings={openAgentSettings}
               onSetRole={setRoleForActive}
             />
@@ -2423,7 +2307,7 @@ export default function App() {
 
       <AgentSettingsModal
         controller={agentsCtl}
-        onOpenWorkflow={(workflowId) => void openWorkflow(workflowId)}
+        onOpenWorkflow={(workflowId) => void workflowsCtl.openWorkflow(workflowId)}
       />
 
       {createWorkspaceOpen && (
@@ -2458,7 +2342,7 @@ export default function App() {
             if (agentsCtl.activeAgentId === id) agentsCtl.setActiveAgentId(null);
             void agentsCtl.loadAgents();
           }}
-          onWorkflowsChanged={() => setWorkflowReloadKey((k) => k + 1)}
+          onWorkflowsChanged={() => workflowsCtl.refreshWorkflows()}
           onSessionRestored={() => void loadMeetingSessions()}
           onSessionDeleted={(id) => {
             if (activeSessionId === id) setActiveSessionId(null);
