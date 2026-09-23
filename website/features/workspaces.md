@@ -45,10 +45,11 @@ frame, and `.drawio` files open in a full diagram editor (below).
 
 ## Jumping from a conversation to the file
 
-When the assistant touches a file in a workspace during a chat or topic — a
-diagram via the [`drawio` MCP server](/features/mcp), or any file via
-`workspace-fs` — the tool call in the transcript carries an **Open** chip naming
-it. One click switches to the Files section with that file already open, so a
+When the assistant touches a file in a workspace — a diagram via the
+[`drawio` MCP server](/features/mcp), or any file via `workspace-fs` — the tool
+call in the transcript carries an **Open** chip naming it. That holds in a chat,
+a topic, and the workspace's own assistant alike. One click switches to the
+Files section with that file already open, so a
 diagram produced (or merely inspected) mid-conversation doesn't have to be
 hunted down in the tree. Browser **Back** returns to the discussion.
 

@@ -4,40 +4,35 @@ The chat router streams turns to the browser over SSE. Scheduled topics need
 the *same* generation logic (system context, history hydration, MCP tool loop,
 message persistence) but driven by the background scheduler instead of a request.
 
-Rather than duplicate that logic, this reuses the shared engine in
-:mod:`precursor.backend.services.turn_engine`: :func:`run_tool_loop` drives the
-provider + MCP tool loop and yields semantic events, and this module applies the
-scheduler's own (plain, non-streaming) persistence policy on top, emitting the
-same ``stream.started`` / ``stream.ended`` / ``message.changed`` events so the UI
+Rather than duplicate that logic, this reuses the shared pieces: the turn is
+prepared by :mod:`precursor.backend.services.conversation_turn`, and
+:func:`~precursor.backend.services.turn_engine.run_tool_loop` drives the provider
++ MCP tool loop. This module only skips the streaming: it stores each round with
+the same persistence helpers the SSE consumer uses and emits the same
+``stream.started`` / ``stream.ended`` / ``message.changed`` events, so the UI
 lights up exactly as it does for a manual chat.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import time
 
 import anyio
-from sqlalchemy import delete, select
-from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
-from precursor.backend.services.app_settings import (
-    resolve_llm_max_input_tokens,
-    resolve_llm_max_tool_result_tokens,
-    resolve_llm_model,
-    resolve_llm_reasoning_effort,
-    resolve_max_tool_rounds,
+from precursor.backend.services.conversation_turn import (
+    clear_container_messages,
+    persist_user_message,
+    resolve_turn_settings,
+    snapshot_history,
 )
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_stream_ended,
     publish_stream_started,
 )
-from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.turn_engine import (
     AssistantFinalTurn,
@@ -47,8 +42,9 @@ from precursor.backend.services.turn_engine import (
     ToolAuthRequired,
     ToolResultTurn,
     build_system_context,
-    hydrate_history,
-    load_enabled_mcp_servers,
+    persist_final_turn,
+    persist_tool_calls_turn,
+    persist_tool_result,
     run_tool_loop,
 )
 
@@ -71,7 +67,8 @@ async def run_topic_turn(
 
     ``llm_prompt`` lets a skill invocation persist the literal slash command as
     the user turn while sending the expanded instructions to the LLM for this
-    turn only (mirrors the ``prompt_override`` path in ``routers/chat.py``).
+    turn only (the same ``prompt_override`` patch the stream routers apply, via
+    :func:`~precursor.backend.services.conversation_turn.snapshot_history`).
     """
     await publish_stream_started(topic_id)
     try:
@@ -97,64 +94,36 @@ async def _run(
 
         # Optionally wipe prior turns so each run is independent of history.
         if clear_context:
-            await session.execute(delete(Message).where(Message.topic_id == topic_id))
-            await session.commit()
+            await clear_container_messages(session, "topic", topic_id)
 
         # Persist the scheduled prompt as the user turn so the transcript and
         # the unread badge behave like a normal conversation.
-        user_msg = Message(topic_id=topic_id, role=MessageRole.USER, content=prompt)
-        session.add(user_msg)
-        await session.commit()
-        await publish_message_changed(topic_id)
+        await persist_user_message(session, "topic", topic_id, prompt)
 
         system_prompt = await build_system_context(session, topic)
-        history_result = await session.execute(
-            select(Message)
-            .where(Message.topic_id == topic_id)
-            .options(selectinload(Message.attachments))
-            .order_by(Message.created_at)
-        )
-        history = hydrate_history(list(history_result.scalars().all()))
-        # For skill invocations the persisted user turn stays the literal slash
-        # command, but the LLM should see the expanded prompt for this turn only.
-        if llm_prompt is not None:
-            for idx in range(len(history) - 1, -1, -1):
-                if history[idx].role == "user":
-                    history[idx] = ChatMessage(
-                        role="user",
-                        content=llm_prompt,
-                        image_urls=history[idx].image_urls,
-                    )
-                    break
-        enabled_servers = await load_enabled_mcp_servers(session)
+        history = await snapshot_history(session, "topic", topic_id, prompt_override=llm_prompt)
         # Never let a programmatically-driven turn (scheduler / MCP post_message)
         # re-expose Precursor's own MCP server to itself — that would let a
         # post_message-triggered turn recursively call post_message.
-        enabled_servers = [s for s in enabled_servers if s != "precursor"]
-        model = await resolve_llm_model(session)
-        reasoning_effort = await resolve_llm_reasoning_effort(session)
-        max_tool_rounds = await resolve_max_tool_rounds(session)
-        max_input_tokens = await resolve_llm_max_input_tokens(session)
-        max_tool_result_tokens = await resolve_llm_max_tool_result_tokens(session)
-        provider = await get_llm_provider(session)
-        github_token = await resolve_github_token(session)
+        settings = await resolve_turn_settings(session, exclude_servers={"precursor"})
 
     async with manager.acquired(
-        enabled_servers, github_token=github_token, advertise_cached=True
+        settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
     ) as active:
         for server_name, err in active.unavailable:
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
+        turn_started = time.monotonic()
         async for ev in run_tool_loop(
             active=active,
-            provider=provider,
-            model=model,
-            reasoning_effort=reasoning_effort,
+            provider=settings.provider,
+            model=settings.model,
+            reasoning_effort=settings.reasoning_effort,
             system_prompt=system_prompt,
             history=history,
-            max_tool_rounds=max_tool_rounds,
-            max_input_tokens=max_input_tokens,
-            max_tool_result_tokens=max_tool_result_tokens,
+            max_tool_rounds=settings.max_tool_rounds,
+            max_input_tokens=settings.max_input_tokens,
+            max_tool_result_tokens=settings.max_tool_result_tokens,
             # Unattended: nobody is watching to complete a browser sign-in, so a
             # tool that needs one raises the app-global banner and fails fast
             # rather than parking the run for the full interactive window.
@@ -171,66 +140,25 @@ async def _run(
                 await publish_mcp_auth_required(ev.server, ev.message, topic_id=topic_id)
                 continue
 
+            # Stored exactly as a streamed turn stores them (clean text + chips,
+            # model, elapsed time, and a usage-ledger row per metered round).
             if isinstance(ev, AssistantFinalTurn):
-                round_usage = ev.usage
-                async with SessionLocal() as ws:
-                    ws.add(
-                        Message(
-                            topic_id=topic_id,
-                            role=MessageRole.ASSISTANT,
-                            content=ev.text,
-                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens
-                            if round_usage
-                            else None,
-                        )
-                    )
-                    await ws.commit()
-                await publish_message_changed(topic_id)
+                elapsed_ms = int((time.monotonic() - turn_started) * 1000)
+                await persist_final_turn(
+                    "topic", topic_id, ev, model=settings.model, elapsed_ms=elapsed_ms
+                )
                 return
 
             if isinstance(ev, AssistantToolCallsTurn):
-                round_usage = ev.usage
-                async with SessionLocal() as ws:
-                    ws.add(
-                        Message(
-                            topic_id=topic_id,
-                            role=MessageRole.ASSISTANT,
-                            content=ev.text,
-                            tool_calls=json.dumps(ev.openai_tool_calls),
-                            prompt_tokens=round_usage.prompt_tokens if round_usage else None,
-                            completion_tokens=round_usage.completion_tokens
-                            if round_usage
-                            else None,
-                        )
-                    )
-                    await ws.commit()
-                await publish_message_changed(topic_id)
+                await persist_tool_calls_turn("topic", topic_id, ev, model=settings.model)
 
             elif isinstance(ev, ToolResultTurn):
-                call = ev.call
-                tool_meta: dict[str, object] = {
-                    "tool_call_id": call.id,
-                    "name": call.name,
-                    "arguments": call.arguments,
-                    "is_error": ev.is_error,
-                }
-                if ev.link:
-                    tool_meta["link"] = ev.link
-                async with SessionLocal() as ws:
-                    ws.add(
-                        Message(
-                            topic_id=topic_id,
-                            role=MessageRole.TOOL,
-                            content=ev.result_text,
-                            tool_calls=json.dumps(tool_meta),
-                        )
-                    )
-                    await ws.commit()
-                await publish_message_changed(topic_id)
+                await persist_tool_result("topic", topic_id, ev)
 
             elif isinstance(ev, RoundCapReached):
-                # Exhausted the tool-round budget without a final answer.
+                # Exhausted the tool-round budget without a final answer. This
+                # stays the unattended turn's own assistant note; the stream
+                # records an "Error: …" system row instead.
                 async with SessionLocal() as ws:
                     ws.add(
                         Message(
