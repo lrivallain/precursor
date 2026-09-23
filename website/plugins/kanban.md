@@ -4,6 +4,7 @@ description: GitHub Projects v2 boards, rendered as a full section inside Precur
 plugin: kanban
 distribution: precursor-kanban
 homepage: https://github.com/lrivallain/precursor-kanban
+repository: https://github.com/lrivallain/precursor-kanban
 author: lrivallain
 license: MIT
 tags: [github, planning]
@@ -40,6 +41,11 @@ account's boards".
 | **API routes** | `/api/github/projects` |
 
 ## Install
+
+Install it from **Settings → Plugins**: from PyPI, or from the wheels attached
+to its [GitHub releases](https://github.com/lrivallain/precursor-kanban/releases)
+when your package index hasn't caught up — at the newest release, or any older
+one.
 
 It also rides along with the `kanban` extra, which the recommended install
 already includes:

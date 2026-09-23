@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   BookOpen,
   Check,
+  ChevronDown,
+  CircleArrowUp,
   Copy,
   Download,
   ExternalLink,
@@ -17,8 +19,24 @@ import {
 import { api, apiErrorMessage } from "../lib/api";
 import { getSection, getSettingsPage } from "../lib/plugins";
 import { pluginStore } from "../lib/pluginStore";
-import type { CatalogPlugin, InstalledPlugin, PluginEnvironment } from "../lib/types";
+import type {
+  CatalogPlugin,
+  InstalledPlugin,
+  PluginEnvironment,
+  PluginInstallResult,
+  PluginUpdate,
+} from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import {
+  LatestRelease,
+  SourceBadge,
+  installCommand,
+  VersionSelect,
+  isLookupSpec,
+  requirementFor,
+  sourceSpec,
+  usePluginVersions,
+} from "./PluginVersions";
 
 /**
  * Settings → Plugins: what's installed, what each one brings, and a switch.
@@ -41,6 +59,17 @@ export function PluginsSettings() {
   // an install is inert until the process restarts.
   const [restartNeeded, setRestartNeeded] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  /** The nightly the host itself moved to while installing, if it had to. */
+  const [hostUpgrade, setHostUpgrade] = useState<string | null>(null);
+  /** Newest release per installed plugin, keyed by plugin id. Loaded lazily. */
+  const [updates, setUpdates] = useState<Map<string, PluginUpdate>>(new Map());
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  /**
+   * Plugins moved to another release this session, keyed by id. They keep
+   * running the old code until the restart, so the card says so instead of
+   * offering the same upgrade again.
+   */
+  const [upgraded, setUpgraded] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -60,13 +89,33 @@ export function PluginsSettings() {
     }
   }, []);
 
+  /**
+   * Ask each installed plugin's source for its newest release.
+   *
+   * Separate from `load` and never awaited by it: it goes out to PyPI or
+   * GitHub, and the panel must not wait on the network to list what is
+   * installed. A failure here only means no "update available" hints.
+   */
+  const loadUpdates = useCallback(async (refresh = false) => {
+    setCheckingUpdates(true);
+    try {
+      const rows = await api.plugins.updates(refresh);
+      setUpdates(new Map(rows.map((row) => [row.id, row])));
+    } catch {
+      /* offline or rate limited — the list stays usable without hints */
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
+    void loadUpdates();
     void api.plugins
       .environment()
       .then(setEnv)
       .catch(() => setEnv(null));
-  }, [load]);
+  }, [load, loadUpdates]);
 
   /**
    * Turn the in-app installer on or off.
@@ -87,26 +136,55 @@ export function PluginsSettings() {
     }
   }
 
+  /** Bookkeeping shared by every action that changes what is on disk. */
+  function changedOnDisk(result: PluginInstallResult) {
+    if (result.host_upgrade) setHostUpgrade(result.host_upgrade);
+    setRestartNeeded(true);
+  }
+
   /**
    * Install one package and mark the instance as needing a restart.
    *
    * Shared by the free-form box and the catalogue, so both go through exactly
    * the same gated endpoint — the catalogue is a shortcut to a package name,
-   * never a second, laxer way in.
+   * never a second, laxer way in. `spec` is a package name, a GitHub link or a
+   * requirement; `key` identifies the button that shows the spinner.
    */
-  async function installPackage(target: string, clearBox: boolean) {
-    if (!target) return;
-    setInstalling(target);
+  async function installPackage(
+    spec: string,
+    version: string | null,
+    key: string,
+    clearBox: boolean,
+  ) {
+    if (!spec) return;
+    setInstalling(key);
     setError(null);
     try {
-      await api.plugins.install(target);
+      changedOnDisk(await api.plugins.install(spec, version));
       if (clearBox) setPkg("");
-      setRestartNeeded(true);
       await load();
     } catch (e) {
       setError(apiErrorMessage(e, "Install failed"));
     } finally {
       setInstalling(null);
+    }
+  }
+
+  /** Move one plugin to `version`, or to its newest release. */
+  async function upgradePlugin(plugin: InstalledPlugin, version: string | null) {
+    setBusy(plugin.id);
+    setError(null);
+    try {
+      const result = await api.plugins.upgrade(plugin.id, version);
+      changedOnDisk(result);
+      setUpgraded((prev) => ({
+        ...prev,
+        [plugin.id]: result.version ?? version ?? "the newest release",
+      }));
+    } catch (e) {
+      setError(apiErrorMessage(e, "Upgrade failed"));
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -122,8 +200,8 @@ export function PluginsSettings() {
     setBusy(plugin.id);
     setError(null);
     try {
-      await api.plugins.uninstall(plugin.id);
-      setRestartNeeded(true);
+      const result = await api.plugins.uninstall(plugin.id);
+      changedOnDisk(result);
       await load();
     } catch (e) {
       setError(apiErrorMessage(e, "Uninstall failed"));
@@ -216,17 +294,27 @@ export function PluginsSettings() {
             className={`shrink-0 text-amber-600 dark:text-amber-400 ${restarting ? "animate-spin" : ""}`}
           />
           <span className="min-w-0 flex-1 text-xs">
-            Precursor must restart to pick this up — plugins are discovered once,
-            at startup.
+            {env?.restart_supported === false
+              ? "Restart Precursor the way you started it to pick this up — plugins are discovered once, at startup."
+              : "Precursor must restart to pick this up — plugins are discovered once, at startup."}
+            {hostUpgrade && (
+              <>
+                {" "}
+                Precursor itself was updated to <code>{hostUpgrade}</code> too: the
+                nightly build it was installed from is no longer published.
+              </>
+            )}
           </span>
-          <button
-            type="button"
-            disabled={restarting}
-            onClick={() => void restart()}
-            className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/25 disabled:opacity-60 dark:text-amber-300"
-          >
-            {restarting ? "Restarting…" : "Restart now"}
-          </button>
+          {env?.restart_supported !== false && (
+            <button
+              type="button"
+              disabled={restarting}
+              onClick={() => void restart()}
+              className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/25 disabled:opacity-60 dark:text-amber-300"
+            >
+              {restarting ? "Restarting…" : "Restart now"}
+            </button>
+          )}
         </div>
       )}
 
@@ -242,7 +330,9 @@ export function PluginsSettings() {
           canInstall={env?.can_install === true}
           commandTemplate={env?.command_template ?? null}
           installing={installing}
-          onInstall={(distribution) => void installPackage(distribution, false)}
+          onInstall={(entry, spec, version) =>
+            void installPackage(spec, version, entry.distribution, false)
+          }
         />
       )}
 
@@ -253,7 +343,7 @@ export function PluginsSettings() {
         pkg={pkg}
         onPkgChange={setPkg}
         installing={installing !== null}
-        onInstall={() => void installPackage(pkg.trim(), true)}
+        onInstall={(version) => void installPackage(pkg.trim(), version, pkg.trim(), true)}
       />
 
       {plugins.length === 0 ? (
@@ -262,9 +352,21 @@ export function PluginsSettings() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Installed
-          </h4>
+          <div className="flex items-center gap-2">
+            <h4 className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted">
+              Installed
+            </h4>
+            <button
+              type="button"
+              disabled={checkingUpdates}
+              onClick={() => void loadUpdates(true)}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface hover:text-accent disabled:opacity-60"
+              data-tooltip="Ask each plugin's source — PyPI or GitHub — for its newest release"
+            >
+              <RefreshCw size={11} className={checkingUpdates ? "animate-spin" : ""} />
+              {checkingUpdates ? "Checking…" : "Check for updates"}
+            </button>
+          </div>
           <ul className="flex flex-col gap-3">
           {plugins.map((plugin) => (
             <li
@@ -339,6 +441,16 @@ export function PluginsSettings() {
                 </label>
               </div>
 
+              <PluginVersionRow
+                plugin={plugin}
+                update={updates.get(plugin.id) ?? null}
+                canInstall={env?.can_install === true}
+                commandTemplate={env?.command_template ?? null}
+                busy={busy === plugin.id}
+                upgradedTo={upgraded[plugin.id] ?? null}
+                onUpgrade={(version) => void upgradePlugin(plugin, version)}
+              />
+
               {plugin.error ? (
                 <div className="flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-2.5 py-2 text-xs text-red-500">
                   <AlertTriangle size={13} className="mt-0.5 shrink-0" />
@@ -390,7 +502,7 @@ function Catalog({
   /** Environment-specific install command, with a `<package>` placeholder. */
   commandTemplate: string | null;
   installing: string | null;
-  onInstall: (distribution: string) => void;
+  onInstall: (entry: CatalogPlugin, spec: string, version: string | null) => void;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -421,9 +533,9 @@ function Catalog({
 /**
  * One catalogue entry.
  *
- * Its own component because each card owns a little state — whether its install
- * command is revealed, and whether it was just copied — which shouldn't be
- * hoisted into a map keyed by plugin id.
+ * Its own component because each card owns a little state — which source and
+ * release to install, whether its install command is revealed, and whether it
+ * was just copied — which shouldn't be hoisted into a map keyed by plugin id.
  */
 function CatalogCard({
   entry,
@@ -436,15 +548,31 @@ function CatalogCard({
   canInstall: boolean;
   commandTemplate: string | null;
   installing: string | null;
-  onInstall: (distribution: string) => void;
+  onInstall: (entry: CatalogPlugin, spec: string, version: string | null) => void;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [source, setSource] = useState<"pypi" | "github">("pypi");
+  const [version, setVersion] = useState("");
 
-  const command = (commandTemplate ?? "uv pip install <package>").replace(
-    "<package>",
-    entry.distribution,
-  );
+  const spec = source === "github" && entry.repository ? entry.repository : entry.distribution;
+  // Looked up for the card itself, not just the picker: the newest release is
+  // worth showing before anyone asks, and it is cached server-side.
+  const versions = usePluginVersions(spec);
+  // A GitHub release is only installable by its wheel URL, so until the list
+  // arrives there is no honest command to show for it.
+  const requirement =
+    requirementFor(versions.data, version) ?? (source === "pypi" ? entry.distribution : null);
+  const command =
+    requirement === null
+      ? null
+      : installCommand(commandTemplate ?? "uv pip install <package>", requirement);
+
+  function pickSource(next: "pypi" | "github") {
+    setSource(next);
+    setVersion("");
+  }
 
   /**
    * Reveal the command *and* put it on the clipboard in one go.
@@ -456,6 +584,7 @@ function CatalogCard({
    */
   async function showCommand() {
     setRevealed(true);
+    if (command === null) return;
     try {
       await navigator.clipboard.writeText(command);
       setCopied(true);
@@ -513,28 +642,88 @@ function CatalogCard({
               <span className="font-sans"> · {entry.tags.join(" · ")}</span>
             )}
           </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+            <LatestRelease versions={versions} />
+            <button
+              type="button"
+              onClick={() => setOptionsOpen((open) => !open)}
+              aria-expanded={optionsOpen}
+              className="inline-flex items-center gap-0.5 hover:text-accent"
+            >
+              {entry.repository ? "Choose source and version" : "Choose version"}
+              <ChevronDown
+                size={11}
+                className={`transition-transform ${optionsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+          </div>
         </div>
         <button
           type="button"
-          disabled={installing !== null}
+          disabled={installing !== null || (source === "github" && versions.data === null)}
           onClick={() =>
-            canInstall ? onInstall(entry.distribution) : void showCommand()
+            canInstall ? onInstall(entry, spec, version || null) : void showCommand()
           }
           className="shrink-0 rounded border border-accent/30 bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
         >
           {installing === entry.distribution
             ? "Installing…"
             : canInstall
-              ? "Install"
+              ? version
+                ? `Install ${version}`
+                : "Install"
               : "Install command"}
         </button>
       </div>
+
+      {optionsOpen && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded border border-border bg-bg px-2.5 py-2 text-xs">
+          {entry.repository && (
+            <div className="flex items-center gap-2">
+              <span className="text-muted">Source</span>
+              <div className="flex overflow-hidden rounded border border-border" role="group">
+                {(["pypi", "github"] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => pickSource(kind)}
+                    aria-pressed={source === kind}
+                    className={`px-2 py-1 text-[11px] ${
+                      source === kind
+                        ? "bg-accent/15 font-medium text-accent"
+                        : "text-muted hover:bg-surface"
+                    }`}
+                    data-tooltip={
+                      kind === "pypi"
+                        ? "By name, from your package index"
+                        : "The wheel attached to a GitHub release — for when your index hasn't caught up"
+                    }
+                  >
+                    {kind === "pypi" ? "PyPI" : "GitHub"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="text-muted">Version</span>
+            <VersionSelect versions={versions.data} value={version} onChange={setVersion} />
+          </div>
+          <span className="basis-full text-[11px] text-muted">
+            {version
+              ? "Pinned to this release: upgrades and Precursor updates keep it until you choose another."
+              : source === "pypi"
+                ? `Latest asks for at least ${versions.data?.latest ?? "the newest release"}. If your index doesn't carry it yet, the install fails instead of settling for an older one — pick GitHub or another version then.`
+                : "Installs the newest release's wheel; upgrade from the Installed list later."}
+          </span>
+        </div>
+      )}
 
       {/* The command itself, in place. It was previously loaded into the
           free-form box further down the panel, which read as the button having
           done nothing: the label promised a command and the eye had to hunt
           for it. */}
-      {!canInstall && revealed && (
+      {!canInstall && revealed && command !== null && (
         <div className="flex items-center gap-2 rounded border border-border bg-bg px-2.5 py-2">
           <code className="min-w-0 flex-1 select-all break-all font-mono text-[11px]">
             {command}
@@ -551,6 +740,139 @@ function CatalogCard({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * Where an installed plugin comes from, whether a newer release exists there,
+ * and a way to move to it — or to any other release.
+ *
+ * The newest release is looked up against the plugin's own source (PyPI or its
+ * GitHub repository), never against a version core pins, so a plugin can move
+ * on its own cadence. Picking an older release is the way around one that
+ * doesn't fit this Precursor.
+ */
+function PluginVersionRow({
+  plugin,
+  update,
+  canInstall,
+  commandTemplate,
+  busy,
+  upgradedTo,
+  onUpgrade,
+}: {
+  plugin: InstalledPlugin;
+  update: PluginUpdate | null;
+  canInstall: boolean;
+  commandTemplate: string | null;
+  busy: boolean;
+  /** Set once this plugin was moved to another release this session. */
+  upgradedTo: string | null;
+  onUpgrade: (version: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [version, setVersion] = useState("");
+  const source = plugin.source;
+  const movable = source !== null && source.kind !== "direct" && canInstall && !upgradedTo;
+  // Only fetched once the picker opens: the update row above already knows
+  // the newest release, and most people never want another one.
+  const versions = usePluginVersions(open ? sourceSpec(source) : null);
+
+  let status: ReactNode = null;
+  if (upgradedTo) {
+    status = <span className="text-muted">Moved to {upgradedTo} — restart to load it.</span>;
+  } else if (update?.update_available && update.latest) {
+    status = (
+      <span className="inline-flex items-center gap-1 font-medium text-accent">
+        <CircleArrowUp size={12} />
+        {update.latest} available
+      </span>
+    );
+  } else if (update?.latest) {
+    status = (
+      <span className="inline-flex items-center gap-1 text-muted">
+        <Check size={12} className="text-emerald-500" />
+        Up to date
+      </span>
+    );
+  } else if (update?.error) {
+    status = (
+      <span className="text-muted" data-tooltip={update.error}>
+        Couldn't check for updates
+      </span>
+    );
+  }
+
+  if (source === null && status === null) return null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <SourceBadge source={source} />
+        {status}
+        <span className="flex-1" />
+        {movable && update?.update_available && update.latest && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onUpgrade(null)}
+            className="shrink-0 rounded border border-accent/30 bg-accent/15 px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+          >
+            {busy ? "Upgrading…" : `Upgrade to ${update.latest}`}
+          </button>
+        )}
+        {movable && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-muted hover:text-accent"
+          >
+            Other version
+            <ChevronDown size={11} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {open && movable && (
+        <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-bg px-2.5 py-2 text-xs">
+          <VersionSelect
+            versions={versions.data}
+            value={version}
+            onChange={setVersion}
+            installed={plugin.version}
+            disabled={busy}
+          />
+          <button
+            type="button"
+            disabled={
+              busy || versions.data === null || (version !== "" && version === plugin.version)
+            }
+            onClick={() => onUpgrade(version || null)}
+            className="shrink-0 rounded border border-accent/30 bg-accent/15 px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
+          >
+            {busy ? "Installing…" : "Install this version"}
+          </button>
+          {versions.loading && <span className="text-[11px] text-muted">Looking up releases…</span>}
+          {versions.error && <span className="text-[11px] text-red-500">{versions.error}</span>}
+          {version && source?.kind === "pypi" && (
+            <span className="basis-full text-[11px] text-muted">
+              Choosing a release pins it; “Latest” later lifts the pin.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* With the in-app installer off, the upgrade is still one paste away. */}
+      {!canInstall && update?.update_available && update.upgrade_requirement && commandTemplate && (
+        <p className="text-[11px] text-muted">
+          Upgrade it yourself:{" "}
+          <code className="break-all rounded bg-surface px-1 py-0.5">
+            {installCommand(commandTemplate, update.upgrade_requirement)}
+          </code>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -593,6 +915,10 @@ function Contributions({ plugin }: { plugin: InstalledPlugin }) {
  * Install a plugin — by running it here when that's safe, or by showing the
  * exact command otherwise.
  *
+ * Takes a package name, a GitHub repository link or any requirement. For the
+ * first two it looks the releases up as you type, so the newest version is on
+ * screen before you commit and an older one is a pick away.
+ *
  * The command is environment-specific: a `uv tool install` of Precursor lives in
  * an isolated environment that `pip install` silently fails to extend, so the
  * backend reports which installer actually owns this instance.
@@ -608,11 +934,27 @@ function InstallBox({
   pkg: string;
   onPkgChange: (v: string) => void;
   installing: boolean;
-  onInstall: () => void;
+  onInstall: (version: string | null) => void;
 }) {
+  const [version, setVersion] = useState("");
+  const typed = pkg.trim();
+  const spec = isLookupSpec(typed) ? typed : null;
+  const versions = usePluginVersions(spec, { debounceMs: 400 });
+
+  // A release picked for one package means nothing for the next.
+  useEffect(() => setVersion(""), [spec]);
+
   if (env === null) return null;
 
-  const command = env.command_template.replace("<package>", pkg.trim() || "<package>");
+  const isGithub = /github\.com\//i.test(typed);
+  // A repository link isn't itself installable — only the wheel it resolves to
+  // is — so the command waits for the lookup rather than showing a broken one.
+  const requirement =
+    requirementFor(versions.data, version) ?? (isGithub ? null : typed || "<package>");
+  const command = installCommand(env.command_template, requirement ?? "<package>");
+  const submit = () => {
+    if (env.can_install && typed) onInstall(version || null);
+  };
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface/60 p-3">
@@ -626,29 +968,38 @@ function InstallBox({
           value={pkg}
           onChange={(e) => onPkgChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && env.can_install) onInstall();
+            if (e.key === "Enter") submit();
           }}
-          placeholder="package name, e.g. precursor-kanban"
+          placeholder="package name or GitHub link, e.g. precursor-kanban"
+          aria-label="Package name or GitHub repository link"
           className="min-w-0 flex-1 rounded border border-border bg-bg px-2 py-1.5 text-sm outline-none focus:border-accent"
         />
+        {spec !== null && versions.data !== null && (
+          <VersionSelect versions={versions.data} value={version} onChange={setVersion} />
+        )}
         {env.can_install && (
           <button
             type="button"
-            disabled={installing || pkg.trim().length === 0}
-            onClick={onInstall}
+            disabled={installing || typed.length === 0 || (isGithub && versions.data === null)}
+            onClick={submit}
             className="shrink-0 rounded border border-accent/30 bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
           >
             {installing ? "Installing…" : "Install"}
           </button>
         )}
       </div>
+      {spec !== null && (
+        <p className="text-[11px] text-muted">
+          <LatestRelease versions={versions} />
+        </p>
+      )}
       <p className="text-[11px] text-muted">
         {env.can_install
           ? "Or run it yourself, in Precursor's own environment:"
           : env.reason
             ? `${env.reason} Run it yourself, in Precursor's own environment:`
             : "Run it yourself, in Precursor's own environment:"}{" "}
-        <code className="rounded bg-surface px-1 py-0.5">{command}</code>
+        <code className="break-all rounded bg-surface px-1 py-0.5">{command}</code>
       </p>
     </div>
   );

@@ -18,6 +18,11 @@ one yet, start with the [plugin contract](/features/plugins) and
 [`precursor-kanban`](https://github.com/lrivallain/precursor-kanban) as the
 worked example.
 
+Attach the built wheel to each GitHub release too, and declare `repository`
+below: users whose package index lags PyPI can then install and upgrade from
+your releases instead, and every user can pick an older release when the newest
+doesn't fit their Precursor yet.
+
 ## 2. Add `website/plugins/<your-plugin-id>.md`
 
 The file name **must** be your plugin id — the entry-point name — because it is
@@ -30,6 +35,7 @@ description: One sentence, shown on the card in the app and on the site.
 plugin: my-plugin
 distribution: precursor-my-plugin
 homepage: https://github.com/you/precursor-my-plugin
+repository: https://github.com/you/precursor-my-plugin
 author: you
 license: MIT
 tags: [github, notes]
@@ -51,6 +57,7 @@ What it does, what it needs to work, and how to install it.
 | `plugin` | ✅ | Entry-point name. Lowercase, alphanumeric and dashes, **equal to the file name**. |
 | `distribution` | ✅ | PyPI project name. A **bare name** — see below. |
 | `homepage` | — | `https://` URL of the source repository. |
+| `repository` | — | `https://github.com/<owner>/<repo>`, exactly. Lets the app install from the wheels attached to your GitHub releases — the way around a package index that hasn't caught up. Only useful if your releases carry a built wheel. |
 | `author` | — | Who maintains it. |
 | `license` | — | SPDX identifier, e.g. `MIT`. |
 | `tags` | — | Free-form keywords for scanning the list. |
