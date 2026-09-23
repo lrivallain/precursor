@@ -91,18 +91,6 @@ export function streamChatSession(
   return postSSE(`/api/chats/${chatId}/messages/stream`, body, opts);
 }
 
-/**
- * POST a question to a live meeting session and stream the answer.
- * The exchange is not persisted server-side; the caller renders it live.
- */
-export function streamMeetingAsk(
-  sessionId: number,
-  question: string,
-  opts: StreamChatOptions,
-): Promise<void> {
-  return postSSE(`/api/live/${sessionId}/ask`, { question }, opts);
-}
-
 async function consumeStream(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: SSEEvent) => void,
