@@ -98,7 +98,8 @@ export function ChatsHomeSurface({ controller }: { controller: ChatsController }
 }
 
 // The chat settings drawer, opened from the header or a chat's list row.
-// Promoting the chat to a topic hands off to App, which owns the topics state.
+// Promoting the chat to a topic hands off to App, which switches to Topics and
+// has the topics controller reveal it.
 export function ChatsSettingsModal({
   controller,
   collectionId,
