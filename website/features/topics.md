@@ -98,6 +98,23 @@ Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
 - **[Attachments](/features/attachments)** — images (vision) and documents.
 - **[MCP tools](/features/mcp)** — shown inline as they are called.
 
+## Deleting, clearing and stopping
+
+- **Delete** a message from its hover toolbar. It disappears at once, and an
+  undo toast above the composer counts down — *"Your message removed · undo in
+  5s"* — before the delete is committed. Switching away commits it straight away.
+- **`/clear`** (or **Topic settings → Clear chat**) erases the whole transcript
+  after a confirmation. It always leaves it empty: a reply still streaming is
+  stopped first, so its answer can't land afterwards without its prompt.
+- **Stop** keeps what already streamed, marked _(stopped)_. A
+  [tool call](/features/mcp) still running settles as **stopped** instead of
+  spinning, and stays in the transcript after a reload — so the next turn knows
+  the call was cut short.
+
+Chats behave the same way, and so does the
+[workspace assistant](/features/workspaces#the-workspace-assistant) (which has no
+per-message delete, since nothing there is saved).
+
 ## When a turn fails
 
 A failed turn — a rejected model, bad credentials, a tool loop that hits its cap

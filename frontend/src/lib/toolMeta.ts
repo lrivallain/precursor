@@ -7,6 +7,8 @@ export interface ParsedToolMeta {
   arguments?: string;
   is_error?: boolean;
   pending?: boolean;
+  /** The user pressed Stop before this call returned (see `STOPPED_TOOL_RESULT`). */
+  stopped?: boolean;
   /**
    * Set when the tool read or wrote a workspace file. Lifted here by the
    * backend so the UI can offer an "Open" chip without parsing the result body
@@ -14,6 +16,9 @@ export interface ParsedToolMeta {
    */
   link?: WorkspaceFileRef | null;
 }
+
+/** What a stopped call reports as its result; mirrors `services/conversation_turn.py`. */
+export const STOPPED_TOOL_RESULT = "Stopped by the user before the tool returned a result.";
 
 /** Safely parse a message's `tool_calls` JSON blob, returning null on garbage. */
 export function parseToolMeta(raw: string | null): ParsedToolMeta | null {

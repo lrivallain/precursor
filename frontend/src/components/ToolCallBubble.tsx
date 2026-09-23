@@ -5,9 +5,11 @@ import {
   AlertCircle,
   ArrowUpRight,
   FileText,
+  StopCircle,
   Workflow,
   Wrench,
 } from "lucide-react";
+import { STOPPED_TOOL_RESULT } from "../lib/toolMeta";
 import { openWorkspaceFile, toWorkspaceFileLink } from "../lib/workspaceLink";
 import type { WorkspaceFileRef } from "../lib/workspaceLink";
 
@@ -17,6 +19,8 @@ interface Props {
   content: string | null;
   isError?: boolean;
   pending?: boolean;
+  /** The user pressed Stop before this call returned: settled, no result. */
+  stopped?: boolean;
   /** Workspace file this call touched, from the tool call's metadata. */
   link?: WorkspaceFileRef | null;
 }
@@ -40,15 +44,17 @@ export function ToolCallBubble({
   arguments: args,
   content,
   isError,
-  pending,
+  pending: pendingProp,
+  stopped,
   link: linkRef,
 }: Props) {
   const [open, setOpen] = useState(false);
   const { server, tool } = splitName(name);
+  const pending = pendingProp && !stopped;
   // A successful workspace read/write links straight to the file it touched.
   const link = useMemo(
-    () => (pending || isError ? null : toWorkspaceFileLink(linkRef)),
-    [linkRef, pending, isError],
+    () => (pending || isError || stopped ? null : toWorkspaceFileLink(linkRef)),
+    [linkRef, pending, isError, stopped],
   );
 
   return (
@@ -57,7 +63,9 @@ export function ToolCallBubble({
         className={`border rounded-lg text-sm ${
           isError
             ? "border-red-500/40 bg-red-500/5"
-            : "border-blue-500/40 bg-blue-500/5"
+            : stopped
+              ? "border-amber-500/40 bg-amber-500/5"
+              : "border-blue-500/40 bg-blue-500/5"
         }`}
       >
         <div className="flex items-center rounded-lg hover:bg-blue-500/10">
@@ -69,6 +77,8 @@ export function ToolCallBubble({
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             {isError ? (
               <AlertCircle size={14} className="text-red-500" />
+            ) : stopped ? (
+              <StopCircle size={14} className="text-amber-600 dark:text-amber-400" />
             ) : (
               <Wrench size={14} className="text-blue-500" />
             )}
@@ -81,6 +91,11 @@ export function ToolCallBubble({
             )}
             {!pending && isError && (
               <span className="ml-auto text-[11px] text-red-500">error</span>
+            )}
+            {stopped && !isError && (
+              <span className="ml-auto text-[11px] text-amber-600 dark:text-amber-400">
+                stopped
+              </span>
             )}
           </button>
           {link && (
@@ -115,6 +130,8 @@ export function ToolCallBubble({
               </div>
               {pending ? (
                 <div className="text-xs text-muted italic">Waiting for result…</div>
+              ) : stopped ? (
+                <div className="text-xs text-muted italic">{content || STOPPED_TOOL_RESULT}</div>
               ) : (
                 <pre className="text-xs bg-bg/60 border border-blue-500/20 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-72">
                   {content ?? "(no content)"}
