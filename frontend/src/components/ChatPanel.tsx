@@ -13,14 +13,11 @@ import {
   commandsForSurface,
   GITHUB_SLASH_COMMANDS,
   formatMemoryList,
-  matchSlashCommands,
   nextSyntheticMessageId,
   parseMemoryStoreArg,
   parseMemoryUpdateArg,
-  parseSlashCommand,
-  type SlashCommand,
 } from "../lib/commands";
-import { skillsStore, useSkills } from "../lib/skillsStore";
+import { skillsStore } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey, mergeConversation } from "../lib/streamStore";
 import { failedTurnUserMessageId } from "../lib/systemNotice";
@@ -31,7 +28,7 @@ import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useChatScroll } from "../lib/useChatScroll";
 import { useWindowedMessages } from "../lib/useWindowedMessages";
-import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useComposerInput } from "../lib/useComposerInput";
 import { ResizeHandle } from "./ResizeHandle";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
@@ -158,7 +155,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     deleteMessage: (mid) => api.messages.remove(topic.id, mid),
     setPersisted,
   });
-  const [draft, setDraft] = useState("");
   const [roleOpen, setRoleOpen] = useState(false);
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
@@ -178,6 +174,8 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     if (!agentsEnabled) set.add("agent");
     return set;
   }, [issueAssociationsEnabled, agentsEnabled]);
+  const { draft, setDraft, interimText, speech, suggestions, parseCommand } =
+    useComposerInput({ surface: "topic", exclude: excludedCommands });
   const streamKey = convKey("topic", topic.id);
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
@@ -295,62 +293,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       max: 480,
     });
 
-  // History recall (Up/Down to cycle through previous user messages).
-  const historyIndexRef = useRef<number | null>(null);
-  const originalDraftRef = useRef<string>("");
   const userHistory = useMemo(
     () => persisted.filter((m) => m.role === "user").map((m) => m.content),
     [persisted],
   );
-
-  // Live speech-to-text via Azure (when configured server-side). Final chunks
-  // are appended to the draft as the user speaks; the interim transcript is
-  // shown transiently. The mic is hidden entirely when Azure isn't configured.
-  const [interimText, setInterimText] = useState("");
-  const appendFinalChunk = (text: string) => {
-    const chunk = text.trim();
-    if (!chunk) return;
-    historyIndexRef.current = null;
-    setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-    setInterimText("");
-  };
-  const azureReady = settings?.stt_azure_ready ?? false;
-  const sttLanguage = settings?.azure_speech_language || undefined;
-  const speech = useAzureSpeech({
-    onFinalChunk: appendFinalChunk,
-    onInterim: setInterimText,
-    enabled: azureReady,
-    lang: sttLanguage,
-  });
-  // Drop any lingering interim text once dictation stops.
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
-
-  const skills = useSkills();
-  const skillCommands = useMemo<SlashCommand[]>(
-    () =>
-      skills
-        .filter((s) => s.active)
-        .map((s) => ({
-          name: s.name,
-          label: `/${s.name}`,
-          description: s.description ?? "",
-          kind: "skill",
-          argumentHint: "input",
-        })),
-    [skills],
-  );
-
-  const suggestions = useMemo<SlashCommand[]>(
-    () => matchSlashCommands(draft, skillCommands, excludedCommands) ?? [],
-    [draft, skillCommands, excludedCommands],
-  );
-
-  useEffect(() => {
-    historyIndexRef.current = null;
-    originalDraftRef.current = "";
-  }, [topic.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -404,12 +350,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     const hasAttachments = pendingAttachments.length > 0;
     if ((!content && !hasAttachments) || streaming) return;
     pinToBottom();
-    historyIndexRef.current = null;
     if (speech.listening) speech.stop();
 
-    const cmd = content
-      ? parseSlashCommand(content, skillCommands, excludedCommands)
-      : null;
+    const cmd = content ? parseCommand(content) : null;
     if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
       setDraft("");
       echoCommand(content);
@@ -447,7 +390,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   function sendSuggestion(text: string): void {
     if (streaming || !text.trim()) return;
     pinToBottom();
-    historyIndexRef.current = null;
     void streamStore.start(streamKey, text.trim());
   }
 

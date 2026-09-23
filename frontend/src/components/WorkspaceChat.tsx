@@ -8,15 +8,12 @@ import {
   Loader2,
   MessageSquare,
 } from "lucide-react";
-import { commandsForSurface, parseSlashCommand, SLASH_COMMANDS } from "../lib/commands";
-import type { SlashCommand } from "../lib/commands";
 import { mcpAuthStore } from "../lib/mcpAuth";
-import { skillsStore, useSkills } from "../lib/skillsStore";
+import { skillsStore } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
-import { useSettings } from "../lib/settingsStore";
 import { streamWorkspaceChat } from "../lib/sse";
 import { stripSuggestionBlock } from "../lib/suggestions";
-import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useComposerInput } from "../lib/useComposerInput";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import type { WorkspaceFileRef } from "../lib/workspaceLink";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -56,7 +53,17 @@ export function WorkspaceChat({
   onSetRole?: (roleId: number | null) => Promise<void>;
 }) {
   const [messages, setMessages] = useState<WorkspaceChatItem[]>([]);
-  const [input, setInput] = useState("");
+  // Autocomplete offers only the commands this surface handles in `send`
+  // (skills + whatever the catalog tags `workspace`), so the picker never
+  // offers commands the backend rejects.
+  const {
+    draft: input,
+    setDraft: setInput,
+    interimText,
+    speech,
+    suggestions,
+    parseCommand,
+  } = useComposerInput({ surface: "workspace" });
   const [roleOpen, setRoleOpen] = useState(false);
   const [pending, setPending] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -97,48 +104,6 @@ export function WorkspaceChat({
       max: 320,
     });
 
-  const settings = useSettings();
-
-  // Live speech-to-text (when Azure is configured server-side).
-  const [interimText, setInterimText] = useState("");
-  const speech = useAzureSpeech({
-    onFinalChunk: (text) => {
-      const chunk = text.trim();
-      if (!chunk) return;
-      setInput((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-      setInterimText("");
-    },
-    onInterim: setInterimText,
-    enabled: settings?.stt_azure_ready ?? false,
-    lang: settings?.azure_speech_language || undefined,
-  });
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
-
-  // Autocomplete: only the commands this surface actually handles in `send`
-  // (skills + whatever the catalog tags `workspace`), so the picker never
-  // offers commands the backend rejects.
-  const skills = useSkills();
-  const wsCommands = useMemo<SlashCommand[]>(() => {
-    const builtins = commandsForSurface("workspace");
-    const builtinCommands = SLASH_COMMANDS.filter((c) => builtins.has(c.name));
-    const skillCommands: SlashCommand[] = skills
-      .filter((s) => s.active)
-      .map((s) => ({
-        name: s.name,
-        label: `/${s.name}`,
-        description: s.description ?? "",
-        kind: "skill" as const,
-        argumentHint: "input",
-      }));
-    return [...builtinCommands, ...skillCommands];
-  }, [skills]);
-  const suggestions = useMemo<SlashCommand[]>(() => {
-    if (!input.startsWith("/") || /\s/.test(input)) return [];
-    const q = input.slice(1).toLowerCase();
-    return wsCommands.filter((c) => c.name.startsWith(q));
-  }, [input, wsCommands]);
   const userHistory = useMemo(
     () => messages.filter((m) => m.kind === "user").map((m) => m.content),
     [messages],
@@ -157,18 +122,7 @@ export function WorkspaceChat({
     // Skills: a `/skill-name argument` invocation is expanded into the prompt
     // the model receives, while the UI keeps showing the literal command.
     let promptOverride: string | undefined;
-    const cmd = parseSlashCommand(
-      content,
-      skillsStore
-        .all()
-        .filter((s) => s.active)
-        .map((s) => ({
-          name: s.name,
-          label: `/${s.name}`,
-          description: s.description ?? "",
-          kind: "skill" as const,
-        })),
-    );
+    const cmd = parseCommand(content);
     if (cmd && cmd.name === "role") {
       const arg = cmd.argument.trim();
       if (!arg) {

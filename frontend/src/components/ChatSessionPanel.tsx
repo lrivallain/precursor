@@ -11,15 +11,11 @@ import { api } from "../lib/api";
 import {
   commandsForSurface,
   formatMemoryList,
-  matchSlashCommands,
   nextSyntheticMessageId,
   parseMemoryStoreArg,
   parseMemoryUpdateArg,
-  parseSlashCommand,
-  surfaceExcludes,
-  type SlashCommand,
 } from "../lib/commands";
-import { skillsStore, useSkills } from "../lib/skillsStore";
+import { skillsStore } from "../lib/skillsStore";
 import { rolesStore } from "../lib/rolesStore";
 import { streamStore, useStreamVersion, convKey, mergeConversation } from "../lib/streamStore";
 import { failedTurnUserMessageId } from "../lib/systemNotice";
@@ -35,7 +31,7 @@ import { useNotesDraft } from "../lib/useNotesDraft";
 import { usePendingAttachments } from "../lib/usePendingAttachments";
 import { useMessageDeletion } from "../lib/useMessageDeletion";
 import { parseToolMeta } from "../lib/toolMeta";
-import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useComposerInput } from "../lib/useComposerInput";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
@@ -60,10 +56,9 @@ interface ChatSessionPanelProps {
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands, the
-// tree-only /new and the topic-only /agent don't apply. The handled and
-// excluded sets are derived from the catalog (see lib/commands.ts) so they
-// can't drift from SLASH_COMMANDS.
-const CHAT_EXCLUDED_COMMANDS: ReadonlySet<string> = surfaceExcludes("chat");
+// tree-only /new and the topic-only /agent don't apply. The handled set is
+// derived from the catalog (see lib/commands.ts) so it can't drift from
+// SLASH_COMMANDS; useComposerInput excludes the rest.
 const HANDLED_COMMANDS = commandsForSurface("chat");
 
 export function ChatSessionPanel({
@@ -96,7 +91,8 @@ export function ChatSessionPanel({
     deleteMessage: (mid) => api.chats.deleteMessage(chat.id, mid),
     setPersisted,
   });
-  const [draft, setDraft] = useState("");
+  const { draft, setDraft, interimText, speech, suggestions, parseCommand } =
+    useComposerInput({ surface: "chat" });
   const [roleOpen, setRoleOpen] = useState(false);
   const stoppingRef = useRef(false);
 
@@ -203,45 +199,6 @@ export function ChatSessionPanel({
       min: 40,
       max: 480,
     });
-
-  // Live speech-to-text (when Azure is configured server-side).
-  const [interimText, setInterimText] = useState("");
-  const appendFinalChunk = (text: string): void => {
-    const chunk = text.trim();
-    if (!chunk) return;
-    setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-    setInterimText("");
-  };
-  const azureReady = settings?.stt_azure_ready ?? false;
-  const sttLanguage = settings?.azure_speech_language || undefined;
-  const speech = useAzureSpeech({
-    onFinalChunk: appendFinalChunk,
-    onInterim: setInterimText,
-    enabled: azureReady,
-    lang: sttLanguage,
-  });
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
-
-  const skills = useSkills();
-  const skillCommands = useMemo<SlashCommand[]>(
-    () =>
-      skills
-        .filter((s) => s.active)
-        .map((s) => ({
-          name: s.name,
-          label: `/${s.name}`,
-          description: s.description ?? "",
-          kind: "skill" as const,
-          argumentHint: "input",
-        })),
-    [skills],
-  );
-  const suggestions = useMemo<SlashCommand[]>(
-    () => matchSlashCommands(draft, skillCommands, CHAT_EXCLUDED_COMMANDS) ?? [],
-    [draft, skillCommands],
-  );
 
   const userHistory = useMemo(
     () => persisted.filter((m) => m.role === "user").map((m) => m.content),
@@ -480,9 +437,7 @@ export function ChatSessionPanel({
     pinToBottom();
     if (speech.listening) speech.stop();
 
-    const cmd = content
-      ? parseSlashCommand(content, skillCommands, CHAT_EXCLUDED_COMMANDS)
-      : null;
+    const cmd = content ? parseCommand(content) : null;
     if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
       setDraft("");
       echoCommand(content);
