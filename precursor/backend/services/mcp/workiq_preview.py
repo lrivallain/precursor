@@ -1845,7 +1845,7 @@ async def resolve_workiq_bearer_token(
         # tokens are dead, so return None (skip attaching WorkIQ) rather than
         # logging a misleading transport failure and handing the agent an expired
         # bearer that would just 401 and re-trigger the sign-in prompt.
-        from precursor.backend.services.mcp.client import _find_in_exception
+        from precursor.backend.services.mcp.client import _describe_exception, _find_in_exception
 
         if _find_in_exception(exc, WorkIQAuthRequiredError) is not None:
             auth_trace.record(
@@ -1856,7 +1856,7 @@ async def resolve_workiq_bearer_token(
             return None
         # A transient connect failure shouldn't strand the agent: fall back to
         # whatever token we already have stored.
-        logger.warning("WorkIQ token refresh for agent attach failed: %s", exc)
+        logger.warning("WorkIQ token refresh for agent attach failed: %s", _describe_exception(exc))
         auth_trace.record(
             profile.server,
             "silent renewal hit a transport error — keeping the stored token",
@@ -1887,7 +1887,12 @@ async def resolve_workiq_bearer_token(
 
 def _short_error(exc: BaseException) -> str:
     """One-line ``Type: message`` rendering for the trace, capped in length."""
-    message = str(exc).replace("\n", " ").strip()
+    from precursor.backend.services.mcp.client import _describe_exception
+
+    message = _describe_exception(exc).replace("\n", " ").strip()
+    if isinstance(exc, BaseExceptionGroup) or message == type(exc).__name__:
+        # The group's own type says nothing; the unwrapped leaves already do.
+        return message[:300]
     return f"{type(exc).__name__}: {message}"[:300]
 
 
