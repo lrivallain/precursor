@@ -10,7 +10,7 @@ tokens and escalates to a browser sign-in. These pin the seam that prevents it.
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthMetadata, OAuthToken
 
@@ -156,7 +156,7 @@ async def test_discovery_is_resolved_once_per_endpoint(monkeypatch) -> None:
     async def _asm(response):
         return True, _entra_metadata()
 
-    monkeypatch.setattr(wp.httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr(wp.httpx2.AsyncClient, "send", _fake_send)
     monkeypatch.setattr(wp, "handle_protected_resource_response", _prm)
     monkeypatch.setattr(wp, "handle_auth_metadata_response", _asm)
 
@@ -176,9 +176,9 @@ async def test_unreachable_endpoint_is_not_retried_every_tick(monkeypatch) -> No
 
     async def _fake_send(self, request):
         attempts.append(str(request.url))
-        raise httpx.ConnectError("network down")
+        raise httpx2.ConnectError("network down")
 
-    monkeypatch.setattr(wp.httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr(wp.httpx2.AsyncClient, "send", _fake_send)
 
     assert await wp._discover_authorization_server(wp.PREVIEW_PROFILE.url) is None
     after_first = len(attempts)

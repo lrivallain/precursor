@@ -26,7 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from precursor.backend.config import get_settings
@@ -35,7 +35,7 @@ from precursor.backend.models import Workspace
 from precursor.backend.services import cmd_runner
 from precursor.backend.services.app_settings import resolve_cmd_runner_config
 
-mcp = FastMCP("cmd-runner")
+mcp = MCPServer("cmd-runner")
 
 # Interpreter argv per language. Programs are fed on stdin (``-``/``-s``/piped)
 # so we never write a script file into the working tree.

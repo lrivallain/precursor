@@ -19,13 +19,13 @@ import json
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_BYTES = 200_000
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
-mcp = FastMCP("fetch")
+mcp = MCPServer("fetch")
 
 
 def _encode_body(body: Any) -> tuple[bytes | None, bool]:

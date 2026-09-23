@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-import httpx
+import httpx2
+from mcp import MCPError
+from mcp.types import INTERNAL_ERROR, INVALID_REQUEST
 
 from precursor.backend.services.mcp.client import (
     MCPClientManager,
@@ -28,16 +30,28 @@ from precursor.backend.services.mcp.client import (
     describe_transport_failure,
     is_transport_failure,
 )
+from precursor.backend.services.mcp.transport import MCPHTTPStatusError
 from precursor.backend.services.turn_engine import (
     ToolCallOutcome,
     call_tool_with_auth_retry,
 )
 
 
-def _http_error(status: int) -> httpx.HTTPStatusError:
-    request = httpx.Request("POST", "https://example.test/mcp")
-    response = httpx.Response(status, request=request)
-    return httpx.HTTPStatusError(f"error {status}", request=request, response=response)
+def _http_error(status: int) -> MCPHTTPStatusError:
+    """A failed POST as MCP 2 reports it, re-tagged with its status by our transport."""
+    stand_in = (
+        MCPError(INVALID_REQUEST, "Session terminated")
+        if status == 404
+        else MCPError(INTERNAL_ERROR, "Server returned an error response")
+    )
+    return MCPHTTPStatusError(status, stand_in)
+
+
+def _stream_error(status: int) -> httpx2.HTTPStatusError:
+    """A failed GET stream, the one path on which MCP 2 still raises for a status."""
+    request = httpx2.Request("GET", "https://example.test/mcp")
+    response = httpx2.Response(status, request=request)
+    return httpx2.HTTPStatusError(f"error {status}", request=request, response=response)
 
 
 # --------------------------------------------------------------------------
@@ -48,12 +62,14 @@ def _http_error(status: int) -> httpx.HTTPStatusError:
 def test_session_terminated_is_a_transport_failure() -> None:
     # What the SDK synthesises when the endpoint 404s our Mcp-Session-Id.
     assert is_transport_failure(RuntimeError("Session terminated"))
+    assert is_transport_failure(MCPError(INVALID_REQUEST, "Session terminated"))
 
 
 def test_remote_404_and_5xx_are_transport_failures() -> None:
     assert is_transport_failure(_http_error(404))
     assert is_transport_failure(_http_error(502))
     assert is_transport_failure(_http_error(503))
+    assert is_transport_failure(_stream_error(502))
 
 
 def test_transport_failure_unwraps_task_group() -> None:
@@ -71,6 +87,7 @@ def test_dead_worker_is_a_transport_failure() -> None:
 def test_genuine_tool_errors_are_not_transport_failures() -> None:
     # A 4xx that isn't 404 is the server rejecting *this call*, not the session.
     assert not is_transport_failure(_http_error(400))
+    assert not is_transport_failure(_stream_error(400))
     assert not is_transport_failure(RuntimeError("chatId is required"))
     assert not is_transport_failure(RuntimeError("Unknown tool: ListChats"))
 

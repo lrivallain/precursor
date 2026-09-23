@@ -427,7 +427,7 @@ def test_http_transport_rejects_foreign_host() -> None:
             "Host": "evil.example.com",
         }
         r = client.post("/mcp", json=_INIT, headers=headers)
-        # FastMCP's Host allowlist rejects non-localhost Host headers.
+        # The MCP SDK's Host allowlist rejects non-localhost Host headers.
         assert r.status_code == 421
 
 

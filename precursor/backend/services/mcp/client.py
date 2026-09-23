@@ -29,12 +29,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
 
 from precursor.backend.config import get_settings
+from precursor.backend.services.mcp.transport import streamable_http_session
 
 if TYPE_CHECKING:
-    import httpx
+    import httpx2
 
 logger = logging.getLogger(__name__)
 
@@ -187,10 +187,10 @@ class MCPServerEntry:
     # default env. Built-ins that need the app's DB/config forward os.environ.
     env: dict[str, str] | None = None
     headers_provider: HeadersProvider | None = None
-    # Optional httpx auth driver for streamable_http transports (e.g. the
+    # Optional httpx2 auth driver for streamable_http transports (e.g. the
     # WorkIQ preview OAuth provider). When set, the transport authenticates via
     # this instead of (or in addition to) ``headers_provider``.
-    auth_provider: httpx.Auth | None = None
+    auth_provider: httpx2.Auth | None = None
     # False only for user-defined (DB-backed, editable) entries. A plugin's
     # servers are ``True`` — the user can enable/disable them but not edit them.
     builtin: bool = True
@@ -725,7 +725,7 @@ class MCPClientManager:
     def workiq_preview(self) -> bool:
         return self._workiq_preview
 
-    def configure_workiq_preview(self, enabled: bool, *, auth_provider: httpx.Auth | None) -> None:
+    def configure_workiq_preview(self, enabled: bool, *, auth_provider: httpx2.Auth | None) -> None:
         """Switch the built-in ``workiq`` entry between stdio and hosted HTTP.
 
         Preview mode points WorkIQ at the OAuth-protected hosted endpoint (full
@@ -760,7 +760,7 @@ class MCPClientManager:
         self.clear_auth_required("workiq")
 
     def configure_agent365(
-        self, name: str, *, url: str | None, auth_provider: httpx.Auth | None
+        self, name: str, *, url: str | None, auth_provider: httpx2.Auth | None
     ) -> None:
         """Point a built-in Agent 365 entry at the resolved per-tenant endpoint.
 
@@ -902,14 +902,9 @@ class MCPClientManager:
                     raise RuntimeError(
                         f"MCP server '{name}' has no credentials; configure them in Settings"
                     )
-                async with (
-                    streamablehttp_client(entry.url, headers=headers, auth=entry.auth_provider) as (
-                        read,
-                        write,
-                        _get_session_id,
-                    ),
-                    ClientSession(read, write) as session,
-                ):
+                async with streamable_http_session(
+                    entry.url, headers=headers, auth=entry.auth_provider
+                ) as session:
                     await session.initialize()
                     tools = await self._fetch_tools(name, session)
                     await self._adopt_tools(entry, tools)
@@ -1079,7 +1074,7 @@ class MCPClientManager:
                 server=server_name,
                 name=t.name,
                 description=(t.description or "").strip(),
-                input_schema=t.inputSchema or {"type": "object", "properties": {}},
+                input_schema=t.input_schema or {"type": "object", "properties": {}},
             )
             for t in result.tools
         ]
@@ -1321,7 +1316,7 @@ def _looks_like_unknown_tool(exc: BaseException) -> bool:
     """Whether ``exc`` reads as "that tool does not exist on this server".
 
     MCP servers report a missing tool inconsistently (a JSON-RPC "Method not
-    found", a plain ``ValueError``, an SDK ``McpError``), and none of it is
+    found", a plain ``ValueError``, an SDK ``MCPError``), and none of it is
     typed, so match on the message. A false positive only costs one extra
     ``list_tools`` plus a retry that fails the same way.
     """
@@ -1338,7 +1333,7 @@ _DEAD_SESSION_MARKERS = (
     # Our own ``_ServerWorker`` reporting that its session task has gone.
     "session is not running",
     "session closed",
-    # httpx/anyio transport teardown against a flapping endpoint.
+    # httpx2/anyio transport teardown against a flapping endpoint.
     "server disconnected",
     "peer closed connection",
     "connection reset",
@@ -1348,11 +1343,21 @@ _DEAD_SESSION_MARKERS = (
 
 
 def _http_status_in(exc: BaseException) -> int | None:
-    """The HTTP status behind ``exc``, when it wraps an httpx response error."""
-    import httpx
+    """The HTTP status behind ``exc``, when an HTTP error response caused it.
 
-    hit = _find_in_exception(exc, httpx.HTTPStatusError)
-    return hit.response.status_code if isinstance(hit, httpx.HTTPStatusError) else None
+    MCP 2 reports a failed POST as an ``MCPError`` stand-in, which
+    :mod:`~precursor.backend.services.mcp.transport` re-tags with the status;
+    only the GET stream still raises ``httpx2.HTTPStatusError``.
+    """
+    import httpx2
+
+    from precursor.backend.services.mcp.transport import MCPHTTPStatusError
+
+    tagged = _find_in_exception(exc, MCPHTTPStatusError)
+    if isinstance(tagged, MCPHTTPStatusError):
+        return tagged.status
+    hit = _find_in_exception(exc, httpx2.HTTPStatusError)
+    return hit.response.status_code if isinstance(hit, httpx2.HTTPStatusError) else None
 
 
 def is_transport_failure(exc: BaseException) -> bool:

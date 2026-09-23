@@ -13,6 +13,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
+from mcp.types import ListToolsResult, Tool
+
 from precursor.backend.db import init_db
 from precursor.backend.services.mcp import tool_cache
 from precursor.backend.services.mcp.client import (
@@ -31,18 +33,14 @@ def _tool(server: str, name: str, description: str = "") -> MCPToolDef:
     )
 
 
-class _SdkTool:
-    """Shape of the SDK's ``list_tools()`` entries."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-        self.description = f"{name} tool"
-        self.inputSchema = {"type": "object", "properties": {}}  # SDK spelling
-
-
-class _SdkToolList:
-    def __init__(self, names: list[str]) -> None:
-        self.tools = [_SdkTool(n) for n in names]
+def _sdk_tool_list(names: list[str]) -> ListToolsResult:
+    """A real SDK ``list_tools()`` result, so a field rename can't hide behind a double."""
+    return ListToolsResult(
+        tools=[
+            Tool(name=n, description=f"{n} tool", input_schema={"type": "object", "properties": {}})
+            for n in names
+        ]
+    )
 
 
 class _FakeSession:
@@ -52,8 +50,8 @@ class _FakeSession:
         self.names = names
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def list_tools(self) -> _SdkToolList:
-        return _SdkToolList(self.names)
+    async def list_tools(self) -> ListToolsResult:
+        return _sdk_tool_list(self.names)
 
     async def call_tool(self, name: str, args: dict[str, Any]) -> Any:
         self.calls.append((name, args))

@@ -14,6 +14,7 @@ import socket
 
 import pytest
 from fastapi.testclient import TestClient
+from mcp.client.auth import AuthorizationCodeResult
 
 from precursor.backend.main import create_app
 from precursor.backend.services.mcp.workiq_preview import WORKIQ_PREVIEW_URL
@@ -115,12 +116,12 @@ async def test_interactive_handler_skips_browser_when_popup_drives(monkeypatch) 
 
 
 async def test_callback_handler_returns_code_and_state() -> None:
-    """The loopback callback must resolve ``(code, state)`` — not ``None``.
+    """The loopback callback must resolve the authorization response — not ``None``.
 
     Regression: the ``asyncio.start_server`` block was mis-indented inside the
     per-connection handler, so ``_callback_handler`` fell off the end and
-    returned ``None``, breaking the SDK's ``auth_code, state = await
-    callback_handler()`` unpack with a ``TypeError``.
+    returned ``None``, breaking the SDK's read of the callback result. MCP 2
+    expects an ``AuthorizationCodeResult`` carrying the RFC 9207 ``iss`` too.
     """
     import asyncio
 
@@ -132,18 +133,23 @@ async def test_callback_handler_returns_code_and_state() -> None:
 
     try:
         reader, writer = await asyncio.open_connection("127.0.0.1", wp.WORKIQ_OAUTH_REDIRECT_PORT)
-        writer.write(b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        writer.write(
+            b"GET /callback?code=abc123&state=xyz&iss=https%3A%2F%2Fissuer.example "
+            b"HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        )
         await writer.drain()
         await reader.read()  # drain the success page so the server closes cleanly
         writer.close()
 
-        code, state = await asyncio.wait_for(waiter, timeout=5.0)
+        result = await asyncio.wait_for(waiter, timeout=5.0)
     finally:
         if not waiter.done():
             waiter.cancel()
 
-    assert code == "abc123"
-    assert state == "xyz"
+    assert isinstance(result, AuthorizationCodeResult)
+    assert result.code == "abc123"
+    assert result.state == "xyz"
+    assert result.iss == "https://issuer.example"
 
 
 async def test_callback_handler_ignores_stray_probe_then_resolves() -> None:
@@ -181,13 +187,14 @@ async def test_callback_handler_ignores_stray_probe_then_resolves() -> None:
         await r2.read()
         w2.close()
 
-        code, state = await asyncio.wait_for(waiter, timeout=5.0)
+        result = await asyncio.wait_for(waiter, timeout=5.0)
     finally:
         if not waiter.done():
             waiter.cancel()
 
-    assert code == "abc123"
-    assert state == "xyz"
+    assert result.code == "abc123"
+    assert result.state == "xyz"
+    assert result.iss is None
 
 
 async def test_callback_handler_silent_timeout_raises_interaction_required() -> None:
@@ -580,7 +587,7 @@ async def test_resolve_bearer_returns_none_on_group_wrapped_auth_required(monkey
         yield  # pragma: no cover - never reached
 
     warnings: list[str] = []
-    monkeypatch.setattr(wp, "streamablehttp_client", _raising_client)
+    monkeypatch.setattr(wp, "streamable_http_session", _raising_client)
     monkeypatch.setattr(wp.logger, "warning", lambda *a, **k: warnings.append(a[0]))
 
     # Auth-required → None (don't hand the agent the dead token) and no scary warning.
@@ -610,7 +617,7 @@ async def test_resolve_bearer_falls_back_on_transient_error(monkeypatch) -> None
         yield  # pragma: no cover - never reached
 
     warnings: list[str] = []
-    monkeypatch.setattr(wp, "streamablehttp_client", _raising_client)
+    monkeypatch.setattr(wp, "streamable_http_session", _raising_client)
     monkeypatch.setattr(wp.logger, "warning", lambda *a, **k: warnings.append(a[0]))
 
     resolved = await wp.resolve_workiq_bearer_token()

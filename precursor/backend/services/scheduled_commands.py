@@ -210,7 +210,7 @@ def _parse_guard(body: str) -> _GuardSpec | None:
 
 def _coerce_result_value(result: Any) -> Any:
     """Reduce an MCP ``CallToolResult`` to a Python value for emptiness checks."""
-    structured = getattr(result, "structuredContent", None)
+    structured = getattr(result, "structured_content", None)
     if structured is not None:
         return structured
     texts: list[str] = []
@@ -296,7 +296,7 @@ async def _probe_guard(spec: _GuardSpec) -> _ProbeResult:
     except Exception as exc:
         logger.warning("Guard probe %s/%s failed (%s); running anyway", spec.server, spec.tool, exc)
         return _ProbeResult(empty=None)
-    if getattr(result, "isError", False):
+    if getattr(result, "is_error", False):
         logger.warning(
             "Guard probe %s/%s returned an error result; running anyway", spec.server, spec.tool
         )

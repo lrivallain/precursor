@@ -41,6 +41,11 @@ Every PR runs `.github/workflows/ci.yml`:
   hash (see [Lockfiles](#lockfiles) below).
 - **Backend** — `uv sync --locked`, then ruff check, ruff format check, mypy
   (strict), and pytest.
+- **Fresh wheel install** — builds the wheel, installs it into an empty
+  environment *without* the lockfile (the way an end user's `uvx precursor-ai`
+  resolves), then runs the release smoke gate and `scripts/smoke_mcp.py`. The
+  locked backend job can't see a new dependency major that the published wheel
+  would pick up; this one can.
 - **Frontend** — `npm ci`, then typecheck and build.
 - **Docs site** — `npm ci` and `npm run docs:build` for `website/`, so a broken
   docs build fails the PR instead of the deploy.

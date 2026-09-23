@@ -58,6 +58,61 @@ jobs:
       - name: Pytest
         run: uv run pytest -q
 
+  # Deliberately *not* the lockfile. End users install the published wheel and
+  # resolve every dependency fresh, which is how 2026.9.1 met an MCP major the
+  # locked suite had never seen. This builds the wheel the release would ship,
+  # installs it into an empty environment outside the checkout, and runs the
+  # unchanged release smoke gate plus the MCP surfaces the app never imports.
+  wheel:
+    name: Fresh wheel install (resolved, not locked)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history + tags so hatch-vcs can resolve the CalVer version.
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            website/package-lock.json
+
+      # The smoke gate requires the bundled SPA and docs, as in release.yml.
+      - name: Build frontend and bundled documentation
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+          npm --prefix website ci
+          DOCS_BASE=/docs/ npm --prefix website run docs:build
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Build the wheel
+        run: uv build --no-create-gitignore
+
+      - name: Install it into a fresh environment
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12 "$RUNNER_TEMP/wheel-venv"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" dist/*.whl
+          uv pip check --python "$RUNNER_TEMP/wheel-venv/bin/python"
+          uv pip list --python "$RUNNER_TEMP/wheel-venv/bin/python" | grep -E '^(mcp|httpx2) '
+
+      - name: Release smoke gate
+        run: |
+          set -euo pipefail
+          python="$RUNNER_TEMP/wheel-venv/bin/python"
+          version="$("$python" -I -c 'import importlib.metadata as m; print(m.version("precursor-ai"))')"
+          "$python" -I scripts/smoke_release.py "$version"
+
+      - name: MCP smoke (stdio servers + streamable HTTP)
+        run: '"$RUNNER_TEMP/wheel-venv/bin/python" -I scripts/smoke_mcp.py'
+
   frontend:
     name: Frontend (typecheck · build)
     runs-on: ubuntu-latest

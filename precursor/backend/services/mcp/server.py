@@ -1,7 +1,7 @@
 """Outbound MCP — Precursor as an MCP server exposing its own capabilities.
 
 The working implementation lives in
-:mod:`precursor.backend.services.mcp.precursor_server` (a FastMCP stdio server
+:mod:`precursor.backend.services.mcp.precursor_server` (an MCPServer stdio server
 registered as the built-in ``precursor`` entry, see ``mcp/client.py``). External
 hosts connect by launching::
 

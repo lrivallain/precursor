@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from mcp.types import CallToolResult
 
 from precursor.backend.services.mcp import workspace_links as links
 
@@ -55,17 +56,15 @@ def test_with_open_link_omits_an_unsafe_link_but_keeps_the_result() -> None:
     assert out == {"path": "../x", "written": True}
 
 
-class _Result:
-    """Stand-in for an MCP ``CallToolResult``."""
-
-    def __init__(self, structured: object) -> None:
-        self.structuredContent = structured
+def _result(structured: object) -> CallToolResult:
+    """A real SDK ``CallToolResult``, so a field rename can't hide behind a double."""
+    return CallToolResult(content=[], structured_content=structured)
 
 
 def test_link_from_result_reads_the_structured_payload() -> None:
     # The file body is deliberately large: the point of reading structured
     # content is that it is never parsed out of the serialised result text.
-    result = _Result(
+    result = _result(
         {
             "path": "docs/a.drawio",
             "workspace_slug": "ws",
@@ -78,13 +77,13 @@ def test_link_from_result_reads_the_structured_payload() -> None:
 
 
 def test_link_from_result_ignores_unrelated_or_failed_results() -> None:
-    assert links.link_from_result(_Result(None)) is None
-    assert links.link_from_result(_Result({"answer": 42})) is None
-    assert links.link_from_result(_Result("not a dict")) is None
+    assert links.link_from_result(_result(None)) is None
+    assert links.link_from_result(_result({"answer": 42})) is None
+    assert links.link_from_result(_result("not a dict")) is None
     assert links.link_from_result(object()) is None
     assert (
         links.link_from_result(
-            _Result({"error": "File not found", "path": "a.md", "workspace_slug": "ws"})
+            _result({"error": "File not found", "path": "a.md", "workspace_slug": "ws"})
         )
         is None
     )
@@ -93,7 +92,7 @@ def test_link_from_result_ignores_unrelated_or_failed_results() -> None:
 def test_link_from_result_rejects_a_hostile_server_payload() -> None:
     # Only slug + path are taken; a `url` the server made up is never trusted,
     # and a traversal path is refused outright.
-    hostile = _Result(
+    hostile = _result(
         {
             "path": "../../etc/passwd",
             "workspace_slug": "ws",
@@ -103,7 +102,7 @@ def test_link_from_result_rejects_a_hostile_server_payload() -> None:
 
     assert links.link_from_result(hostile) is None
 
-    spoofed_url = _Result({"path": "a.md", "workspace_slug": "ws", "url": "javascript:alert(1)"})
+    spoofed_url = _result({"path": "a.md", "workspace_slug": "ws", "url": "javascript:alert(1)"})
 
     # The url is dropped; the caller rebuilds it from slug + path.
     assert links.link_from_result(spoofed_url) == {"slug": "ws", "path": "a.md"}
@@ -243,11 +242,14 @@ async def test_link_survives_a_real_mcp_round_trip(
 ) -> None:
     """The link must come back through the actual MCP protocol, not just in-process.
 
-    ``link_from_result`` reads ``structuredContent``, which FastMCP only
+    ``link_from_result`` reads ``structured_content``, which ``MCPServer`` only
     populates for tools annotated to return a dict. Calling the real tool over a
     real client session is what proves the field is actually on the wire.
+    ``mode="legacy"`` keeps the in-memory JSON-RPC framing (and the initialize
+    handshake Precursor's own client performs) instead of MCP 2's direct
+    in-process dispatch, which would skip serialisation entirely.
     """
-    from mcp.shared.memory import create_connected_server_and_client_session as connect
+    from mcp import Client
 
     from precursor.backend.services.mcp import drawio_server as srv
 
@@ -260,7 +262,7 @@ async def test_link_survives_a_real_mcp_round_trip(
     monkeypatch.setattr(srv, "_load_workspace", _stub_workspace(_WS()))
     monkeypatch.setattr(srv, "_browse_root", lambda ws: root)
 
-    async with connect(srv.mcp._mcp_server) as client:
+    async with Client(srv.mcp, mode="legacy") as client:
         written = await client.call_tool(
             "create_diagram",
             {

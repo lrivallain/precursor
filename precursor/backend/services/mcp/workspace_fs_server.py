@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from precursor.backend.config import get_settings
@@ -37,7 +37,7 @@ _DEFAULT_MAX_BYTES = 100_000
 # Cap how many entries list_files returns so a huge repo can't blow the context.
 _MAX_LIST_ENTRIES = 2000
 
-mcp = FastMCP("workspace-fs")
+mcp = MCPServer("workspace-fs")
 
 
 def _browse_root(ws: Workspace) -> Path:

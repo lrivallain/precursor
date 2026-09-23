@@ -40,12 +40,19 @@ dependencies = [
     "sse-starlette>=3.4",
     "httpx>=0.28",
     "openai>=2.43",
-    # Capped below 2.0: that release renamed the client entry points we import
-    # (``streamablehttp_client`` → ``streamable_http_client``) and dropped the
-    # old names, so an uncapped floor resolves a wheel the app cannot import.
-    # uv.lock protects dev and CI, but *end users of the published wheel*
-    # resolve fresh — so an API-breaking major needs a real cap here.
-    "mcp>=1.28,<3",
+    # MCP 2 only. The 2.x SDK is a different API (``FastMCP`` → ``MCPServer``,
+    # ``streamablehttp_client`` → ``streamable_http_client`` over an ``httpx2``
+    # client, snake_case result fields, stricter OAuth issuer checks), and MCP 1
+    # is not supported — ``services/mcp/transport.py`` and the WorkIQ OAuth
+    # provider are written against 2.x. The floor is the release the migration
+    # was verified on; the cap stays because the next major will break the same
+    # surfaces again, and end users of the published wheel resolve fresh (uv.lock
+    # only protects dev and CI).
+    "mcp>=2.2,<3",
+    # Imported directly: MCP 2's transports and OAuth providers take httpx2
+    # clients and ``httpx2.Auth``, not httpx ones. Precursor's own HTTP calls
+    # still use ``httpx`` above; the two packages install side by side.
+    "httpx2>=2.5",
     # Agents mode. The floor is *not* the usual "minimum API we rely on": 1.0.4
     # is where the SDK stopped shipping six platform-specific wheels that each
     # bundled the native Copilot CLI (~95 MB, ~145 MB unpacked) and became a

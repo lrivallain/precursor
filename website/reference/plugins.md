@@ -95,12 +95,12 @@ registry.add_mcp_server(name="board", title="Kanban boards", module="my_pkg.mcp_
 The server is launched as `<running interpreter> -m my_pkg.mcp_server` with the
 app's environment forwarded, so it reaches the same database, settings and
 credentials as the UI — exactly how core's own in-tree servers work. Write it
-with `FastMCP` and expose `main()`:
+with the MCP SDK's `MCPServer` and expose `main()`:
 
 ```python
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP("my-plugin")
+mcp = MCPServer("my-plugin")
 
 
 @mcp.tool()
@@ -112,6 +112,16 @@ async def list_things() -> list[dict]:
 def main() -> None:
     mcp.run()
 ```
+
+::: warning Target MCP 2
+The server runs in Precursor's own environment, so it gets whichever MCP SDK
+Precursor requires: **`mcp>=2.2,<3`**. MCP 2 renamed `FastMCP` to `MCPServer`
+(`mcp.server.fastmcp` no longer imports), so a plugin written for MCP 1 fails at
+startup. Declare `mcp>=2.2,<3` yourself so the resolver can't pair your plugin
+with an SDK it wasn't written for. The
+[MCP v2 migration guide](https://py.sdk.modelcontextprotocol.io/v2/migration/)
+covers everything else that changed.
+:::
 
 It is registered as `<plugin_id>.<name>`, appears in **Settings → MCP servers**
 attributed to the plugin, and inherits the per-surface enable toggles. Use

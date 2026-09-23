@@ -29,6 +29,7 @@ import json
 import logging
 import socket
 import time
+import uuid
 import webbrowser
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -36,9 +37,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Final, cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
-import httpx
-from mcp import ClientSession
-from mcp.client.auth import OAuthClientProvider, TokenStorage
+import httpx2
+from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, TokenStorage
 from mcp.client.auth.utils import (
     build_oauth_authorization_server_metadata_discovery_urls,
     build_protected_resource_metadata_discovery_urls,
@@ -46,19 +46,20 @@ from mcp.client.auth.utils import (
     handle_auth_metadata_response,
     handle_protected_resource_response,
 )
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthClientMetadata,
     OAuthMetadata,
     OAuthToken,
 )
+from pydantic import AnyHttpUrl, TypeAdapter
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AppSetting
 from precursor.backend.services.events import publish_mcp_auth_url
 from precursor.backend.services.mcp import auth_trace
+from precursor.backend.services.mcp.transport import streamable_http_session
 
 logger = logging.getLogger(__name__)
 
@@ -732,7 +733,8 @@ def _augment_authorization_url(url: str, *, login_hint: str | None, prompt: str 
     The MCP SDK constructs the authorization URL itself and doesn't expose these
     OAuth parameters, so we add them to the finished URL before it's opened.
     Existing query params are never clobbered — if the SDK ever sets one, it
-    wins — and empty values are skipped. ``login_hint`` pre-selects the account;
+    wins, bar the ``prompt=consent`` MCP 2 adds on its own (see below) — and
+    empty values are skipped. ``login_hint`` pre-selects the account;
     ``prompt=none`` requests a silent (no-UI) authorization.
 
     ``scope`` is the exception to the never-clobber rule: it is *merged* rather
@@ -752,6 +754,13 @@ def _augment_authorization_url(url: str, *, login_hint: str | None, prompt: str 
     split = urlsplit(url)
     params = dict(parse_qsl(split.query, keep_blank_values=True))
     original = dict(params)
+    # MCP 2 adds ``prompt=consent`` whenever ``offline_access`` is in scope
+    # (SEP-2207, following OIDC). Entra issues the refresh token without it, and
+    # forcing the consent screen interrupts every sign-in, defeats the silent
+    # ``prompt=none`` pass, and blocks users whose tenant reserves consent for
+    # admins. Precursor never asks for it, so it counts as unset.
+    if params.get("prompt") == "consent":
+        del params["prompt"]
     if login_hint and "login_hint" not in params:
         params["login_hint"] = login_hint
     if prompt and "prompt" not in params:
@@ -1042,7 +1051,7 @@ def _make_callback_handler(
     silent: bool = False,
     profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
     autoclose_seconds: int = _CALLBACK_AUTOCLOSE_SECONDS,
-) -> Callable[[], Awaitable[tuple[str, str | None]]]:
+) -> Callable[[], Awaitable[AuthorizationCodeResult]]:
     """Build the SDK ``callback_handler`` bound to a specific wait ``timeout``.
 
     The silent auto re-auth uses a much shorter timeout than the interactive
@@ -1064,15 +1073,16 @@ def _make_callback_handler(
     itself — ``0`` for hands-free sign-ins, which nobody is watching.
     """
 
-    async def _callback_handler() -> tuple[str, str | None]:
-        """Run a one-shot loopback server and return ``(auth_code, state)``.
+    async def _callback_handler() -> AuthorizationCodeResult:
+        """Run a one-shot loopback server and return the authorization response.
 
         Listens on ``127.0.0.1:<profile.redirect_port>`` for the single OAuth
-        redirect, parses ``code``/``state`` off the query string, replies with a
-        styled success page that auto-closes the tab, and resolves.
+        redirect, parses ``code``/``state``/``iss`` off the query string, replies
+        with a styled success page that auto-closes the tab, and resolves.
+        ``iss`` is forwarded so the SDK can run its RFC 9207 mix-up check.
         """
         loop = asyncio.get_running_loop()
-        result: asyncio.Future[tuple[str, str | None]] = loop.create_future()
+        result: asyncio.Future[AuthorizationCodeResult] = loop.create_future()
 
         async def _on_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             try:
@@ -1084,6 +1094,7 @@ def _make_callback_handler(
                 query = parse_qs(urlsplit(target).query)
                 code = query.get("code", [""])[0]
                 state = query.get("state", [None])[0]
+                iss = query.get("iss", [None])[0]
                 error = query.get("error", [None])[0]
 
                 # Ignore stray connections that aren't the OAuth redirect —
@@ -1159,7 +1170,7 @@ def _make_callback_handler(
 
                 if not result.done():
                     if code:
-                        result.set_result((code, state))
+                        result.set_result(AuthorizationCodeResult(code=code, state=state, iss=iss))
                     elif interaction_required:
                         result.set_exception(WorkIQInteractionRequiredError(error))
                     else:
@@ -1391,7 +1402,7 @@ async def _discover_authorization_server(server_url: str) -> OAuthMetadata | Non
         try:
             async with (
                 asyncio.timeout(_DISCOVERY_TIMEOUT_SECONDS),
-                httpx.AsyncClient(timeout=_DISCOVERY_TIMEOUT_SECONDS) as client,
+                httpx2.AsyncClient(timeout=_DISCOVERY_TIMEOUT_SECONDS) as client,
             ):
                 auth_server_url: str | None = None
                 for url in build_protected_resource_metadata_discovery_urls(None, server_url):
@@ -1415,6 +1426,73 @@ async def _discover_authorization_server(server_url: str) -> OAuthMetadata | Non
             logger.debug("OAuth metadata discovery failed for %s", server_url, exc_info=True)
         _ASM_FAILED_UNTIL[server_url] = loop.time() + _DISCOVERY_RETRY_AFTER_SECONDS
         return None
+
+
+# Entra's multi-tenant authorities publish their metadata under a *templated*
+# issuer, ``https://login.microsoftonline.com/{tenantid}/v2.0``: the real issuer
+# depends on which tenant the user signs in to. MCP 2 checks the metadata
+# ``issuer`` against the authority the resource advertised with a plain string
+# comparison (RFC 8414 §3.3, SEP-2468). WorkIQ and Agent 365 both advertise
+# ``…/organizations/v2.0``, so an unmodified provider aborts every sign-in with
+# "issuer mismatch", and the SDK offers no client-side switch.
+_ENTRA_AUTHORITY_HOST: Final = "login.microsoftonline.com"
+_ENTRA_MULTI_TENANT_ALIASES: Final = frozenset({"common", "organizations", "consumers"})
+# Rendered the way the SDK's metadata model renders it (braces percent-encoded),
+# because that rendering is what the comparison sees.
+_ENTRA_TEMPLATED_ISSUER: Final = str(
+    TypeAdapter(AnyHttpUrl).validate_python(f"https://{_ENTRA_AUTHORITY_HOST}/{{tenantid}}/v2.0")
+)
+
+
+def _entra_v2_tenant_segment(url: str) -> str | None:
+    """The tenant segment of an ``https://login.microsoftonline.com/<t>/v2.0`` URL."""
+    try:
+        split = urlsplit(url)
+    except ValueError:
+        return None
+    segments = split.path.strip("/").split("/")
+    if (
+        split.scheme != "https"
+        or split.netloc.lower() != _ENTRA_AUTHORITY_HOST
+        or len(segments) != 2
+        or segments[1] != "v2.0"
+    ):
+        return None
+    return segments[0]
+
+
+def _entra_expected_issuer(authority: str) -> str:
+    """The issuer to require of ``authority``'s metadata.
+
+    Entra's multi-tenant aliases map to the templated issuer they really publish;
+    anything else — a tenant-specific authority included — is returned as-is, so
+    the SDK's strict comparison still applies.
+    """
+    tenant = _entra_v2_tenant_segment(authority)
+    if tenant is not None and tenant.lower() in _ENTRA_MULTI_TENANT_ALIASES:
+        return _ENTRA_TEMPLATED_ISSUER
+    return authority
+
+
+def _entra_response_iss(iss: str | None, metadata: OAuthMetadata | None) -> str | None:
+    """Reconcile an authorization-response ``iss`` with a templated metadata issuer.
+
+    Under a multi-tenant authority Entra can only name the concrete tenant the
+    user signed in to, which never string-matches the ``{tenantid}`` template the
+    SDK's RFC 9207 check compares it with. A concrete Entra v2 tenant issuer is
+    the template instantiated, so it is mapped onto it; anything else is left for
+    the SDK to reject.
+    """
+    if iss is None or metadata is None or str(metadata.issuer) != _ENTRA_TEMPLATED_ISSUER:
+        return iss
+    tenant = _entra_v2_tenant_segment(iss)
+    if tenant is None:
+        return iss
+    try:
+        uuid.UUID(tenant)
+    except ValueError:
+        return iss
+    return _ENTRA_TEMPLATED_ISSUER
 
 
 class _WorkIQOAuthClientProvider(OAuthClientProvider):
@@ -1460,6 +1538,10 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
 
     ``renew_now`` marks a provider built *because* a renewal was already judged
     due — see :meth:`_initialize` for why that needs saying out loud.
+
+    **The issuer.** :meth:`_expected_issuer` and the wrapped callback handler
+    let MCP 2's issuer checks accept Entra's templated multi-tenant issuer; see
+    :func:`_entra_expected_issuer` and :func:`_entra_response_iss`.
     """
 
     def __init__(
@@ -1474,6 +1556,18 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
         self._profile = profile
         self._purpose = purpose
         self._renew_now = renew_now
+        inner = self.context.callback_handler
+        if inner is not None:
+
+            async def _callback() -> AuthorizationCodeResult:
+                result = await inner()
+                iss = _entra_response_iss(result.iss, self.context.oauth_metadata)
+                return result if iss == result.iss else result.model_copy(update={"iss": iss})
+
+            self.context.callback_handler = _callback
+
+    def _expected_issuer(self) -> str:
+        return _entra_expected_issuer(super()._expected_issuer())
 
     def _trace(self, phase: str, *, level: int = logging.INFO, **detail: Any) -> None:
         auth_trace.record(self._profile.server, phase, level=level, purpose=self._purpose, **detail)
@@ -1616,6 +1710,13 @@ if _missing_hooks:  # pragma: no cover - only trips on an SDK upgrade
         "MCP OAuth SDK no longer exposes %s; WorkIQ auth tracing is partially blind.",
         ", ".join(_missing_hooks),
     )
+# Unlike the traced hooks, losing this one is not cosmetic: without the override
+# every Entra multi-tenant sign-in fails MCP 2's issuer check.
+if not hasattr(OAuthClientProvider, "_expected_issuer"):  # pragma: no cover - SDK upgrade
+    logger.error(
+        "MCP OAuth SDK no longer exposes _expected_issuer; WorkIQ and Agent 365 sign-ins "
+        "will fail the authorization-server issuer check."
+    )
 
 
 def build_oauth_provider(
@@ -1630,7 +1731,7 @@ def build_oauth_provider(
     hands_free: bool = False,
     renew_now: bool = False,
 ) -> OAuthClientProvider:
-    """Build the OAuth provider used as the ``httpx.Auth`` for the HTTP transport.
+    """Build the OAuth provider used as the ``httpx2.Auth`` for the HTTP transport.
 
     ``interactive=False`` (the default, used for the warm pool / catalog probes /
     chat turns) silently refreshes tokens when possible but refuses to launch a
@@ -1704,7 +1805,7 @@ async def resolve_workiq_bearer_token(
     """Resolve a current WorkIQ access token plus its expiry, or ``None``.
 
     The Copilot SDK's HTTP MCP config only accepts *static* headers — it can't
-    drive an OAuth ``httpx.Auth`` the way the in-app client does. To let an agent
+    drive an OAuth ``httpx2.Auth`` the way the in-app client does. To let an agent
     reach hosted WorkIQ we therefore have to hand it a concrete bearer token.
 
     We open a one-shot, non-interactive session first: that lets the OAuth
@@ -1734,10 +1835,7 @@ async def resolve_workiq_bearer_token(
         return None
     try:
         provider = build_oauth_provider(profile=profile, interactive=False, renew_now=True)
-        async with (
-            streamablehttp_client(profile.url, auth=provider) as (read, write, _),
-            ClientSession(read, write) as session,
-        ):
+        async with streamable_http_session(profile.url, auth=provider) as session:
             await session.initialize()
     except Exception as exc:  # pragma: no cover - network/transport dependent
         # The SDK's streamable-http transport runs inside an anyio task group, so
@@ -1795,10 +1893,7 @@ def _short_error(exc: BaseException) -> str:
 
 async def _run_signin(provider: OAuthClientProvider, profile: WorkIQOAuthProfile) -> None:
     """Open a throwaway hosted WorkIQ session purely to drive the OAuth grant."""
-    async with (
-        streamablehttp_client(profile.url, auth=provider) as (read, write, _),
-        ClientSession(read, write) as session,
-    ):
+    async with streamable_http_session(profile.url, auth=provider) as session:
         await session.initialize()
 
 

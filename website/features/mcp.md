@@ -82,9 +82,13 @@ Both are tunable — see `PRECURSOR_MCP_WARMUP_*` in the
 
 A hosted endpoint can go away underneath a live session — a rolling deploy, a
 gateway blip, or the server simply forgetting the session id it issued. The MCP
-SDK reports all of that as the single phrase **`Session terminated`**, which
-reads like a local problem and is anything but: it is emitted only when the
-remote answers with **HTTP 404**.
+SDK reports a forgotten session as the single phrase **`Session terminated`**,
+which reads like a local problem and is anything but: it is emitted only when the
+remote answers with **HTTP 404**. Other servers say `Session not found`, and any
+other HTTP error comes back as the server's own message or an equally vague
+`Server returned an error response`, always with the status dropped. Precursor
+re-attaches it (`… (HTTP 502)`), because a 404 or 5xx and a 4xx call for
+different handling.
 
 Left alone that wording is actively harmful. A warm session is reused across
 turns, so a dropped one stays poisoned and *every* later call fails the same
@@ -223,6 +227,16 @@ tokens are refreshed silently before they expire, a lapsed credential is renewed
 hands-free where the browser still holds a live session, and when several servers
 go stale at once you get **one prompt, not one per credential**. The banner is
 the last resort, not the first move.
+
+**Entra's sign-in is taken as Entra serves it.** Both endpoints point at Entra's
+multi-tenant `organizations` authority, which publishes a *templated* issuer
+(`…/{tenantid}/v2.0`) because the real one depends on whose account signs in.
+The MCP SDK's strict issuer check would reject that outright, so Precursor
+accepts exactly that template for exactly those authorities, and a concrete
+tenant issuer on the redirect in its place. It also drops the `prompt=consent`
+the SDK adds whenever it asks for a refresh token: Entra issues one without it,
+and forcing it would put a consent screen in front of every sign-in, defeat the
+silent pass, and stop users whose tenant reserves consent for admins.
 
 **A sign-in counts for every server on that credential.** Several built-ins share
 one Entra token — the five Agent 365 endpoints are a single sign-in between them
@@ -391,7 +405,7 @@ tenant is known the entries stay unconfigured and say so.
 
 ## As a server — exposing your conversations
 
-Precursor runs a `FastMCP` server named **`precursor`** that exposes its own data
+Precursor runs an MCP server (the SDK's `MCPServer`) named **`precursor`** that exposes its own data
 to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 (meeting) sessions, cross-entity search, skills, memory,
 [agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),

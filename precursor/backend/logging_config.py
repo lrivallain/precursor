@@ -50,6 +50,10 @@ _THIRD_PARTY_LEVELS: dict[str, str] = {
     "mcp.client": "WARNING",
     "httpx": "WARNING",
     "httpcore": "WARNING",
+    # MCP 2's transports and OAuth provider speak httpx2, which logs under its
+    # own names; the two ``httpx`` entries above only cover Precursor's calls.
+    "httpx2": "WARNING",
+    "httpcore2": "WARNING",
     "watchfiles": "WARNING",
     "watchfiles.main": "WARNING",
     "aiosqlite": "WARNING",
@@ -300,7 +304,7 @@ def configure_subprocess_logging() -> None:
     """Apply the shared config in a stdio MCP subprocess.
 
     The in-tree MCP servers (fetch / workspace-fs / cmd-runner / precursor) run
-    as ``python -m …`` subprocesses; importing FastMCP installs a plain root
+    as ``python -m …`` subprocesses; building an MCPServer installs a plain root
     StreamHandler, so without this their ``mcp.server`` logs print in a
     different, timestamp-less format. Calling this in each ``main()`` replaces
     that handler with the unified formatter and honours ``PRECURSOR_LOG_LEVEL``

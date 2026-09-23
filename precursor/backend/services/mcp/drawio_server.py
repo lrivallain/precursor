@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from precursor.backend.config import get_settings
@@ -54,7 +54,7 @@ from precursor.backend.models import Workspace
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services.mcp.workspace_links import with_open_link
 
-mcp = FastMCP("drawio")
+mcp = MCPServer("drawio")
 
 # Suffixes we accept as "already a diagram file"; anything else gets `.drawio`
 # appended so the file opens in draw.io / the VS Code extension by double-click.

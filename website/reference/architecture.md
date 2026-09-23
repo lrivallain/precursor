@@ -242,7 +242,7 @@ Precursor is both an MCP client and an MCP server.
   across turns. `services/mcp/warmup.py` connects the enabled ones sequentially
   in the background after startup, and `services/mcp/tool_cache.py` persists each
   catalogue so it survives a restart.
-- **As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server exposing
+- **As server** (`services/mcp/precursor_server.py`) — an `MCPServer` exposing
   Precursor's own data, gated per-section by `mcp_expose` (off by default), over
   **stdio** and an in-process **HTTP** transport at `/mcp` (off by default,
   loopback-only, Host-header allowlisted).
