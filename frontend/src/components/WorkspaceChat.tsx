@@ -263,7 +263,17 @@ export function WorkspaceChat({
         ]);
       }
     } catch (e) {
-      if (!controller.signal.aborted) {
+      if (controller.signal.aborted) {
+        // Stop rejects the stream before the append above runs. Keep what
+        // already streamed, marked the way topics and chats save it.
+        const partial = stripSuggestionBlock(acc).trim();
+        if (partial) {
+          setMessages((m) => [
+            ...m,
+            { kind: "assistant", content: `${partial}\n\n_(stopped)_` },
+          ]);
+        }
+      } else {
         setError(e instanceof Error ? e.message : String(e));
       }
     } finally {
