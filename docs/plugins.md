@@ -233,6 +233,7 @@ Every section component receives a `host` — the only thing core promises it:
 | `navigate(segments, hash?, { push })` | Rewrite the section-relative URL (idempotent). |
 | `openTopic(id)` | Leave the section and open a topic. |
 | `openSettings(pageId?)` | Open the Settings modal, on a plugin's own page when named. |
+| `setPageTitle(title)` | Name the open item in the browser tab (`<title> · <label> · Precursor`); `null` falls back to the label. Newer than `HOST_API_VERSION` 2, so call it as `host.setPageTitle?.(…)`. |
 | `settings` | App settings, or `null` while they load. |
 
 ### `@precursor/host`

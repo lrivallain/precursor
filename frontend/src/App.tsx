@@ -74,7 +74,8 @@ import {
 import { useReadSync } from "./lib/useReadSync";
 import { useSearchHighlightController } from "./lib/useSearchHighlightController";
 import { useTopicsController } from "./lib/useTopicsController";
-import { useUnreadTitle } from "./lib/useUnreadTitle";
+import { useDocumentTitle } from "./lib/useDocumentTitle";
+import { pageTitle } from "./lib/pageTitle";
 import { useWorkflowsController } from "./lib/useWorkflowsController";
 import { useWorkspacesController } from "./lib/useWorkspacesController";
 import type { ReminderItem, SearchResult } from "./lib/types";
@@ -432,13 +433,6 @@ export default function App() {
   });
   const { tree, collections, activeTopic, activeCollectionId } = topicsCtl;
 
-  const unreadByMode = useUnreadTitle({
-    topicsUnread: topicsCtl.topicsUnread,
-    chatsUnread,
-    agentsUnread,
-    agentsWaiting,
-  });
-
   // ---- Search highlight ---------------------------------------------------
   // Called after every section controller: its `?q=` mirror must run after
   // their pathname URL effects in the same commit, or a navigation drops `q`.
@@ -508,7 +502,6 @@ export default function App() {
       setSidebarMode("topics");
     } else if (mode === "chats") {
       chatsCtl.startNew();
-      navigate("/chats");
       setSidebarMode("chats");
     } else if (mode === "live") {
       liveCtl.startNew();
@@ -666,6 +659,18 @@ export default function App() {
     pluginRouteRef.current = pluginRoute;
   }, [pluginRoute]);
 
+  // The item a plugin section reports for the tab title, tagged with the
+  // section that reported it so no other section ever inherits it.
+  const [pluginPageTitle, setPluginPageTitle] = useState<{
+    section: string;
+    title: string | null;
+  } | null>(null);
+  // Leaving the section forgets it. This runs after the entered section's own
+  // mount effects, hence the tag check rather than an unconditional reset.
+  useEffect(() => {
+    setPluginPageTitle((prev) => (prev && prev.section !== sidebarMode ? null : prev));
+  }, [sidebarMode]);
+
   // `changeMode` and `handleSelect` are plain function declarations, so every
   // render makes new ones closing over that render's state. The host below is
   // memoised and would pin whichever pair it was built with — and `changeMode`
@@ -711,10 +716,39 @@ export default function App() {
         setSettingsCategory(pluginPageId ? pluginSettingsTab(pluginPageId) : "plugins");
         setGlobalSettingsOpen(true);
       },
+      // Tagged with this render's mode, not `sidebarModeRef`: a section entering
+      // reports from its mount effects, which run before App's ref catches up.
+      setPageTitle: (title) => {
+        const next = title?.trim() || null;
+        setPluginPageTitle((prev) =>
+          prev?.section === sidebarMode && prev.title === next
+            ? prev
+            : { section: sidebarMode, title: next },
+        );
+      },
       settings,
     }),
-    [pluginRoute, settings],
+    [pluginRoute, settings, sidebarMode],
   );
+
+  // After every hook that navigates from an effect (see useDocumentTitle).
+  const unreadByMode = useDocumentTitle({
+    page: pageTitle({
+      atHome,
+      mode: sidebarMode,
+      topics: topicsCtl,
+      chats: chatsCtl,
+      live: liveCtl,
+      agents: agentsCtl,
+      workflows: workflowsCtl,
+      workspaces: wsCtl,
+      pluginItem: pluginPageTitle?.section === sidebarMode ? pluginPageTitle.title : null,
+    }),
+    topicsUnread: topicsCtl.topicsUnread,
+    chatsUnread,
+    agentsUnread,
+    agentsWaiting,
+  });
 
   // ---- Assistant roles --------------------------------------------------
   // Each composer owns its own role pill; this is the shared persistence path

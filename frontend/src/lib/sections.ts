@@ -1,6 +1,24 @@
 import type { CoreSidebarMode, SidebarMode } from "../components/Sidebar";
 import { getSection } from "./plugins";
 
+/** Core sections' display names: the sidebar switchers and the tab title. */
+export const SECTION_LABELS: Record<CoreSidebarMode, string> = {
+  topics: "Topics",
+  chats: "Chats",
+  live: "Live",
+  workspaces: "Files",
+  agents: "Agents",
+  workflows: "Workflows",
+};
+
+/** Display name for any section — core or plugin-contributed. */
+export function sectionLabel(mode: SidebarMode): string {
+  // Own keys only: the mode comes straight from the URL, and `/constructor`
+  // would otherwise resolve to an inherited Object member.
+  if (Object.hasOwn(SECTION_LABELS, mode)) return SECTION_LABELS[mode as CoreSidebarMode];
+  return getSection(mode)?.label ?? mode;
+}
+
 /**
  * Per-section color scheme, shared across the app so a section reads the same
  * everywhere (home cards, sidebar tabs, …). Values are full Tailwind class

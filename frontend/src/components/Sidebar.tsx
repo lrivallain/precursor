@@ -31,7 +31,7 @@ import {
   X,
 } from "lucide-react";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
-import { sectionColor } from "../lib/sections";
+import { SECTION_LABELS, sectionColor } from "../lib/sections";
 import type { SectionPlugin } from "../lib/plugins";
 import { Z_INDEX } from "../lib/constants";
 import { CollectionSwitcher } from "./CollectionSwitcher";
@@ -886,12 +886,12 @@ type ModeDef = {
 // sections are appended in backend `order`, then the whole list is reordered by
 // the user's persisted arrangement.
 const CORE_MODES: ModeDef[] = [
-  { mode: "topics", label: "Topics", Icon: MessagesSquare },
-  { mode: "chats", label: "Chats", Icon: MessageSquare },
-  { mode: "live", label: "Live", Icon: Radio },
-  { mode: "workspaces", label: "Files", Icon: FolderGit2 },
-  { mode: "agents", label: "Agents", Icon: Bot },
-  { mode: "workflows", label: "Workflows", Icon: WorkflowIcon },
+  { mode: "topics", label: SECTION_LABELS.topics, Icon: MessagesSquare },
+  { mode: "chats", label: SECTION_LABELS.chats, Icon: MessageSquare },
+  { mode: "live", label: SECTION_LABELS.live, Icon: Radio },
+  { mode: "workspaces", label: SECTION_LABELS.workspaces, Icon: FolderGit2 },
+  { mode: "agents", label: SECTION_LABELS.agents, Icon: Bot },
+  { mode: "workflows", label: SECTION_LABELS.workflows, Icon: WorkflowIcon },
 ];
 
 // Stable empty default so a caller that passes no plugin sections doesn't
