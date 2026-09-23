@@ -204,8 +204,10 @@ default to the rolling channel; tagged installations normally follow stable.
 - **Dependency floors vs. the published wheel.** `uv.lock` pins exact versions
   for dev and CI, but **end users of the wheel resolve fresh** and never see the
   lockfile. Coarse `>=major.minor` floors are right for compatible releases; an
-  API-breaking major needs a real cap in `pyproject.toml` (see the `mcp<2` pin).
-  A green CI run does *not* prove a fresh `uvx precursor-ai` works.
+  API-breaking major needs a real cap in `pyproject.toml` (see the `mcp<3` pin,
+  and the 2026.9.1 candidate a too-wide `mcp` bound stopped at the smoke gate).
+  The backend CI job alone does *not* prove a fresh `uvx precursor-ai` works;
+  the **Fresh wheel install** CI job is the one that resolves like a user does.
 - **Commit messages** follow Conventional Commits (see `CONTRIBUTING.md`); the
   GitHub Release notes are generated from them.
 - **PyPI**: each tagged release publishes the wheel + sdist to PyPI via Trusted

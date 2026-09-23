@@ -15,6 +15,45 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Precursor now runs on MCP 2 (`mcp>=2.2,<3`); MCP 1 is no longer supported.**
+  The 2026.9.1 release never shipped: its fresh-install smoke gate resolved
+  `mcp 2.2.0`, which dependabot's `<3` bound allowed, and the app died on import
+  (`cannot import name 'streamablehttp_client'`). The lockfile had kept every
+  other check on MCP 1, so nothing else noticed. This is the whole migration,
+  not just the import rename:
+
+  - The client opens streamable-HTTP sessions through `streamable_http_client`
+    over an `httpx2` client, with MCP 1's 30 s / 300 s timeouts kept. `httpx2`
+    is now a direct dependency because MCP 2's transports and OAuth providers
+    take it instead of `httpx`.
+  - The built-in servers (`precursor`, `fetch`, `workspace-fs`, `drawio`,
+    `cmd-runner`) are `MCPServer`s, and the in-app `/mcp` endpoint takes its
+    path and Host allowlist on `streamable_http_app()`.
+  - Tool results are read by MCP 2's snake_case field names. Under MCP 2 the
+    old `isError` / `structuredContent` spellings read as missing *without an
+    error*. That would have made failed tool calls look successful, hosted
+    WorkIQ reads look empty, and workspace file links disappear.
+  - MCP 2 no longer raises on an HTTP error. It fails the call with the server's
+    JSON-RPC error, or a generic message when there is none, and drops the
+    status. Precursor re-attaches the status, so a 404 (a remote that forgot the
+    session, such as MCP 2's own `Session not found`) or a 5xx still recycles the
+    session and retries once, and a 4xx still doesn't.
+  - **WorkIQ and Agent 365 sign-in.** MCP 2's OAuth client rejected Entra's
+    multi-tenant metadata ("issuer mismatch"), which would have blocked every
+    sign-in, and it forced `prompt=consent` onto each one. Precursor now accepts
+    Entra's templated issuer for its multi-tenant authorities only, and drops
+    the forced consent.
+  - **Plugins** that ship an MCP server run in Precursor's environment, so they
+    must use MCP 2's `MCPServer` too. See the plugin reference. The `kanban`
+    extra now requires `precursor-kanban>=2026.9.1`, its first MCP 2 release
+    (lrivallain/precursor-kanban#8).
+  - CI gains a **fresh wheel install** job. It builds the wheel and installs it
+    with the `kanban` extra, unlocked, outside the checkout. It then runs the
+    release smoke gate plus a new `scripts/smoke_mcp.py`, which drives the stdio
+    servers, the HTTP endpoint and every installed plugin's MCP server through
+    Precursor's own client. This is the coverage the lockfile alone could never
+    give.
+
 - **The assistant-role picker now lives in every composer toolbar, not in the
   app header.** The header selector was an odd one out: a bordered pill floating
   far from the text you were writing, duplicating a control that already existed

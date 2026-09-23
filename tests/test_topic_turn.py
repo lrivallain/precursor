@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 from sqlalchemy import select
 
 from precursor.backend.db import SessionLocal, init_db
@@ -246,10 +247,9 @@ async def test_tool_round_persists_the_call_and_its_result(monkeypatch, enabled_
 
     async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
         assert (server, raw_name, args) == ("fetch", "get", {"url": "https://x"})
-        return SimpleNamespace(
-            content=[SimpleNamespace(text="page body")],
-            structuredContent={"workspace_slug": "docs", "path": "a.md"},
-            isError=False,
+        return CallToolResult(
+            content=[TextContent(type="text", text="page body")],
+            structured_content={"workspace_slug": "docs", "path": "a.md"},
         )
 
     _install_mcp(
@@ -343,7 +343,7 @@ async def test_every_metered_round_reaches_the_usage_ledger(monkeypatch, enabled
 
     async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
         _ = server, raw_name, args
-        return SimpleNamespace(content=[SimpleNamespace(text="ok")], isError=False)
+        return CallToolResult(content=[TextContent(type="text", text="ok")])
 
     _install_mcp(
         monkeypatch,

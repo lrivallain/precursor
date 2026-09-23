@@ -574,7 +574,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
     """WorkIQ preview is attached with a bearer header, or skipped when signed out."""
     from datetime import UTC, datetime, timedelta
 
-    import httpx
+    import httpx2
     import pytest
 
     from precursor.backend.services.agents import runtime
@@ -588,7 +588,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
     await _ensure_schema()
 
     manager = get_mcp_client_manager()
-    manager.configure_workiq_preview(True, auth_provider=httpx.Auth())
+    manager.configure_workiq_preview(True, auth_provider=httpx2.Auth())
     try:
         await _set_mcp_enabled({"workiq": True})
 

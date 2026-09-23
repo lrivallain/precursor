@@ -217,7 +217,7 @@ class _McpHttpGate:
 
     Also enforces a loopback-bind guard: an unauthenticated endpoint must never
     answer when the app is bound to a non-loopback host (e.g. 0.0.0.0). When
-    closed it returns 404 so the endpoint simply appears absent. FastMCP's own
+    closed it returns 404 so the endpoint simply appears absent. The MCP SDK's own
     Host-header allowlist (set in ``precursor_server``) is the second layer.
     """
 
@@ -435,10 +435,10 @@ def create_app() -> FastAPI:
     # SPA catch-all (GET-only) and 405. The exact Route matches /mcp for all
     # methods, with no trailing-slash redirect. It is appended before the SPA
     # fallback below.
-    from precursor.backend.services.mcp.precursor_server import build_mcp
+    from precursor.backend.services.mcp.precursor_server import build_http_app, build_mcp
 
     precursor_mcp = build_mcp()
-    _mcp_http_app = precursor_mcp.streamable_http_app()  # builds Route + manager
+    _mcp_http_app = build_http_app(precursor_mcp)  # builds Route + manager
     app.state.precursor_http_mcp = precursor_mcp
     mcp_route = cast("Route", _mcp_http_app.routes[0])
     if getattr(mcp_route, "path", None) != "/mcp":  # defensive: SDK shape changed

@@ -298,7 +298,7 @@ rebuilds with the fresh token. On success it broadcasts a single
 ever saw the `needs_auth` notice and never drove this sign-in — clears its stale
 `McpAuthBanner` (and any "Signing in…" state) without a reload.
 
-**As server** (`services/mcp/precursor_server.py`) — a `FastMCP` server named
+**As server** (`services/mcp/precursor_server.py`) — an `MCPServer` named
 `precursor` exposing Precursor's own data: topics, messages, chats, agents, live
 (meeting) sessions, cross-entity search, skills, memory (read + `memory_write` to
 store/edit entries), `post_message` (runs a full turn), schedules, and reminders
@@ -472,7 +472,8 @@ the server preflights Docker availability against the effective jail setting.
   wheel only for real (non-editable) builds, so `uv sync` / dev / CI never need
   a frontend build.
 - CI (`.github/workflows/ci.yml`) runs ruff, mypy (strict), pytest, and the
-  frontend typecheck+build on every PR. A tag push (`v*`) triggers
+  frontend typecheck+build on every PR, plus a fresh (unlocked) wheel install
+  that runs the release smoke gate and `scripts/smoke_mcp.py`. A tag push (`v*`) triggers
   `release.yml`, which builds the wheel and publishes a GitHub Release. See
   [../RELEASING.md](../RELEASING.md).
 - `nightly.yml` publishes a **rolling prerelease** of `main` on every push:

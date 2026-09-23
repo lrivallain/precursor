@@ -16,11 +16,11 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from mcp.types import CallToolResult, TextContent
 
 from precursor.backend.main import create_app
 from precursor.backend.services import app_settings
@@ -125,11 +125,10 @@ def _tool_round(*calls: _Call, text: str = "") -> list[ProviderEvent]:
     ]
 
 
-def _file_result(slug: str, path: str, text: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        content=[SimpleNamespace(text=text)],
-        structuredContent={"workspace_slug": slug, "path": path, "content": text},
-        isError=False,
+def _file_result(slug: str, path: str, text: str) -> CallToolResult:
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structured_content={"workspace_slug": slug, "path": path, "content": text},
     )
 
 
@@ -348,7 +347,7 @@ def test_auth_required_tool_prompts_then_retries_after_sign_in(monkeypatch) -> N
         attempts.append(1)
         if len(attempts) == 1:
             raise MCPToolAuthRequired(server, "Sign-in expired.")
-        return SimpleNamespace(content=[SimpleNamespace(text="body")], isError=False)
+        return CallToolResult(content=[TextContent(type="text", text="body")])
 
     _install_mcp(monkeypatch, tools=[_READ], handler=handler)
 
@@ -404,7 +403,7 @@ def test_tool_round_cap_ends_with_an_error_event(monkeypatch) -> None:
 
     async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
         _ = server, raw_name, args
-        return SimpleNamespace(content=[SimpleNamespace(text="again")], isError=False)
+        return CallToolResult(content=[TextContent(type="text", text="again")])
 
     _install_mcp(monkeypatch, tools=[_READ], handler=handler)
 
@@ -430,7 +429,7 @@ def test_every_metered_round_is_counted_in_usage_stats(monkeypatch) -> None:
 
     async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
         _ = server, raw_name, args
-        return SimpleNamespace(content=[SimpleNamespace(text="body")], isError=False)
+        return CallToolResult(content=[TextContent(type="text", text="body")])
 
     _install_mcp(monkeypatch, tools=[_READ], handler=handler)
 

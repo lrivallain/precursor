@@ -36,7 +36,8 @@ release.
 
 Key dependencies (floors, from `pyproject.toml`): `fastapi`, `uvicorn[standard]`,
 `sqlalchemy[asyncio]`, `aiosqlite`, `alembic`, `pydantic`, `pydantic-settings`,
-`sse-starlette`, `httpx`, `openai`, `mcp`, `python-multipart`, `pypdf`, `pyyaml`.
+`sse-starlette`, `httpx`, `openai`, `mcp` (MCP 2: `>=2.2,<3`), `httpx2` (the HTTP
+client MCP 2's transports and OAuth take), `python-multipart`, `pypdf`, `pyyaml`.
 
 ## Frontend
 

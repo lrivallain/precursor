@@ -328,13 +328,16 @@ def format_tool_result(payload: Any) -> str:
         if text is not None:
             blocks.append(text)
         else:
-            blocks.append(json.dumps(getattr(block, "model_dump", lambda: {})(), default=str))
+            # ``by_alias`` keeps the MCP wire spelling (``mimeType``): MCP 2
+            # models dump snake_case field names by default.
+            dump = getattr(block, "model_dump", None)
+            blocks.append(json.dumps(dump(by_alias=True) if dump else {}, default=str))
     if blocks:
         return "\n\n".join(blocks)
     # Some MCP servers (e.g. the hosted WorkIQ endpoint) return no text content
-    # blocks and put the payload in ``structuredContent`` instead. Falling back
+    # blocks and put the payload in ``structured_content`` instead. Falling back
     # to it keeps reads from looking empty to the model.
-    structured = getattr(payload, "structuredContent", None)
+    structured = getattr(payload, "structured_content", None)
     if structured is not None:
         return json.dumps(structured, default=str)
     return "(empty result)"
@@ -558,7 +561,7 @@ async def call_tool_with_auth_retry(
             logger.warning("MCP call %s(%s) failed: %s", tool_name, args, exc)
             yield ToolCallOutcome(result_text=f"Tool call failed: {exc}", is_error=True)
             return
-        is_error = bool(getattr(result, "isError", False))
+        is_error = bool(getattr(result, "is_error", False))
         yield ToolCallOutcome(
             result_text=format_tool_result(result),
             is_error=is_error,

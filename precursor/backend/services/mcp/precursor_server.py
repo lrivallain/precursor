@@ -41,10 +41,10 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import quote
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
@@ -80,6 +80,9 @@ from precursor.backend.services.collections import (
 )
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
+if TYPE_CHECKING:
+    from starlette.applications import Starlette
+
 # Decorated tool functions are returned unchanged, so the registrar's decorator
 # is identity-typed (preserves each tool's signature for callers/mypy).
 F = TypeVar("F", bound=Callable[..., Any])
@@ -114,7 +117,7 @@ class _ToolRegistrar:
     """Collects ``@mcp.tool()``-decorated functions at import time.
 
     The module decorates tools against this registrar; :func:`build_mcp` then
-    stamps them onto a *fresh* ``FastMCP`` instance. A fresh instance per app is
+    stamps them onto a *fresh* ``MCPServer`` instance. A fresh instance per app is
     required because a ``StreamableHTTPSessionManager`` can only be ``run()`` once
     — sharing one instance across app instances (e.g. across tests) would fail.
     """
@@ -131,24 +134,30 @@ class _ToolRegistrar:
 
 
 _registrar = _ToolRegistrar()
-# Tools below decorate against the registrar; the stdio FastMCP instance is
+# Tools below decorate against the registrar; the stdio MCPServer instance is
 # built at the end of the module (``_stdio_mcp``).
 mcp = _registrar
 
 
-def build_mcp() -> FastMCP:
-    """Build a fresh FastMCP 'precursor' server with all tools registered."""
-    server = FastMCP(
-        "precursor",
-        # Route path for the streamable-HTTP app. The FastAPI app reuses this
-        # route directly (exact ``/mcp``) so the bare URL works without a
-        # trailing-slash redirect; see main.create_app.
-        streamable_http_path="/mcp",
-        transport_security=_transport_security(),
-    )
+def build_mcp() -> MCPServer:
+    """Build a fresh MCPServer 'precursor' server with all tools registered."""
+    server = MCPServer("precursor")
     for fn in _registrar.tools:
         server.tool()(fn)
     return server
+
+
+def build_http_app(server: MCPServer) -> Starlette:
+    """Build ``server``'s streamable-HTTP app (and its session manager).
+
+    MCP 2 takes transport settings here rather than on the constructor. The
+    FastAPI app reuses the exact ``/mcp`` route so the bare URL works without a
+    trailing-slash redirect; see ``main.create_app``.
+    """
+    return server.streamable_http_app(
+        streamable_http_path="/mcp",
+        transport_security=_transport_security(),
+    )
 
 
 # Cap list/search results so a huge instance can't blow the caller's context.
@@ -1550,7 +1559,7 @@ def app_base_url() -> str:
     return f"http://{authority}"
 
 
-# Concrete FastMCP instance for the stdio entrypoint. The HTTP transport builds
+# Concrete MCPServer instance for the stdio entrypoint. The HTTP transport builds
 # its own per-app instance via build_mcp() (session-manager run-once constraint).
 _stdio_mcp = build_mcp()
 

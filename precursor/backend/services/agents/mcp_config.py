@@ -200,7 +200,7 @@ class MCPConfigBuilder:
                 logger.warning("Skipping MCP server '%s': %s", entry.name, exc)
                 continue
             # OAuth-protected catalog servers (the hosted WorkIQ preview and the
-            # Agent 365 pair) authenticate via an httpx.Auth provider that the
+            # Agent 365 pair) authenticate via an httpx2.Auth provider that the
             # SDK's static-header HTTP config can't carry. Mint a concrete bearer
             # token and inject it, or skip the server entirely when sign-in is
             # required — attaching it without credentials would just surface 401s

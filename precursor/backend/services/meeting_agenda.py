@@ -43,8 +43,8 @@ def _sanitize_iso(value: str | None) -> str | None:
 
 
 def _result_to_json(payload: Any) -> Any:
-    """Coerce an MCP tool result (text blocks or structuredContent) to JSON."""
-    structured = getattr(payload, "structuredContent", None)
+    """Coerce an MCP tool result (text blocks or structured_content) to JSON."""
+    structured = getattr(payload, "structured_content", None)
     if isinstance(structured, (dict, list)):
         return structured
     content = getattr(payload, "content", None)

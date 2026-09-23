@@ -504,12 +504,12 @@ def _install_fake_workiq(monkeypatch, transcripts, contents):  # type: ignore[no
     ``contents`` maps a transcript id to the words its VTT carries. Returns the
     bundle so a test can assert on the request paths it saw.
     """
+    from mcp.types import CallToolResult
+
     import precursor.backend.services.mcp.client as mcp_client
 
-    class _Result:
-        def __init__(self, data: object) -> None:
-            self.structuredContent = data
-            self.content = None
+    def _result(data: object) -> CallToolResult:
+        return CallToolResult(content=[], structured_content=data)
 
     class _Tool:
         def __init__(self, name: str) -> None:
@@ -529,21 +529,21 @@ def _install_fake_workiq(monkeypatch, transcripts, contents):  # type: ignore[no
             self.paths.append(path)
             # Simulate Graph rejecting $orderby on the transcripts collection.
             if "$orderby" in path:
-                return _Result({"results": [{"data": None, "statusCode": 400}]})
+                return _result({"results": [{"data": None, "statusCode": 400}]})
             if "/transcripts/" in path and "/content" in path:
                 tid = path.split("/transcripts/")[1].split("/")[0]
                 spoken = contents.get(tid, tid)
                 vtt = f"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Alex>{spoken}</v>"
-                return _Result({"results": [{"data": vtt, "statusCode": 200}]})
+                return _result({"results": [{"data": vtt, "statusCode": 200}]})
             if path.endswith("/transcripts"):
-                return _Result(
+                return _result(
                     {"results": [{"data": {"value": list(transcripts)}, "statusCode": 200}]}
                 )
             if "onlineMeetings?$filter" in path:
-                return _Result(
+                return _result(
                     {"results": [{"data": {"value": [{"id": "MID"}]}, "statusCode": 200}]}
                 )
-            return _Result({"results": [{"data": None, "statusCode": 404}]})
+            return _result({"results": [{"data": None, "statusCode": 404}]})
 
         async def aclose(self) -> None:
             return None
