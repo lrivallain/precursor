@@ -79,9 +79,19 @@ export function useLiveSessionsController(
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "live") return;
-    const active = meetingSessions?.find((s) => s.id === activeSessionId) ?? null;
+    // Until the list loads, a deep-linked slug can't be resolved and looks like
+    // "nothing selected". Writing `/live` now would push a transient entry that
+    // the resolved slug then pushes over. Every surface that enters Live before
+    // the list has loaded writes its own URL.
+    if (meetingSessions === null) return;
+    const active = meetingSessions.find((s) => s.id === activeSessionId) ?? null;
     const target = liveUrl(active);
-    if (window.location.pathname !== target) navigate(target);
+    if (window.location.pathname === target) return;
+    // A slug naming no session (archived, deleted or mistyped) is a dead entry:
+    // normalise it in place. Pushing would add an entry on a cold load, and on
+    // Back it would wipe the forward history every time, trapping the user.
+    const slug = parseAppRoute().liveSlug;
+    navigate(target, { replace: slug != null && !meetingSessions.some((s) => s.slug === slug) });
   }, [activeSessionId, meetingSessions, sidebarMode, atHome]);
 
   // While a live session is recording, confirm before any in-app navigation

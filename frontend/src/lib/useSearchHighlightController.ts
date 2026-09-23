@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { SidebarMode } from "../components/Sidebar";
-import { navigate, searchTermFromUrl } from "./routes";
+import { navigate, parseAppRoute, searchTermFromUrl } from "./routes";
 import type { Chat, Topic } from "./types";
 
 // The selection state every section controller owns. The effects below re-fire
@@ -44,6 +44,9 @@ export function useSearchHighlightController(
   // search-open so the transition to it isn't mistaken for a navigation-away.
   const highlightKeyRef = useRef<string | null>(null);
   const pendingHighlightKeyRef = useRef<string | null>(null);
+  // Set when the auto-clear drops the term, so the `?q=` mirror running in the
+  // same commit (which still sees the old term) drops the query too.
+  const justClearedRef = useRef(false);
 
   // App's mount + back/forward URL sync.
   function syncFromUrl(): void {
@@ -69,12 +72,26 @@ export function useSearchHighlightController(
     setSearchHighlight(term);
   }
 
-  // Auto-clear the search highlight when the user navigates to a *different*
-  // conversation than the one it was opened for. The highlight is tied to a
-  // single conversation (`${mode}:${id}`): while a search-open is in flight we
-  // wait until the selection lands on its target; a URL-loaded term adopts the
-  // first conversation it resolves to; any later switch to a different one
-  // clears it. Transitional states with no complete selection are ignored.
+  // Whether the address bar names the selected topic or chat. The other
+  // sections resolve their URL selection synchronously once their list loads.
+  function urlNamesSelection(): boolean {
+    const r = parseAppRoute();
+    if (sidebarMode === "chats") return activeChat?.slug === r.chatSlug;
+    if (sidebarMode === "topics") {
+      if (r.topicPublicId) return activeTopic?.public_id === r.topicPublicId;
+      return activeTopic?.slug === r.topicPath[r.topicPath.length - 1];
+    }
+    return true;
+  }
+
+  // Auto-clear the search highlight when the user navigates away from the
+  // conversation it was opened for. The highlight is tied to a single
+  // conversation (`${mode}:${id}`): while a search-open is in flight we wait
+  // until the selection lands on its target, and a URL-loaded term adopts the
+  // conversation its entry names once that has resolved. Until then, states
+  // with no complete selection are transitional and ignored. Once it has
+  // landed, any change of selection clears it, including to a surface with
+  // none (a start hero, the Workflows or Files section).
   useEffect(() => {
     if (!searchHighlight.trim()) return;
     let key: string | null = null;
@@ -84,7 +101,6 @@ export function useSearchHighlightController(
       key = activeAgentId != null ? `agents:${activeAgentId}` : null;
     else if (sidebarMode === "live")
       key = activeSessionId != null ? `live:${activeSessionId}` : null;
-    if (key == null) return; // mid-transition — wait for a complete selection
     const pending = pendingHighlightKeyRef.current;
     if (pending != null) {
       // Still travelling to the just-opened search target; adopt once we arrive.
@@ -95,12 +111,18 @@ export function useSearchHighlightController(
       return;
     }
     if (highlightKeyRef.current == null) {
-      highlightKeyRef.current = key; // first resolved conversation owns the term
+      if (key == null) return; // mid-transition — wait for a complete selection
+      // On Back/Forward a topic or chat is looked up by slug asynchronously, so
+      // the one still on screen may not be the entry's: adopting it would clear
+      // the term (and its `?q=`) as soon as the right one arrives.
+      if (!urlNamesSelection()) return;
+      highlightKeyRef.current = key; // the entry's conversation owns the term
       return;
     }
     if (key !== highlightKeyRef.current) {
       setSearchHighlight("");
       highlightKeyRef.current = null;
+      justClearedRef.current = true;
     }
   }, [searchHighlight, sidebarMode, activeTopic, activeChat, activeAgentId, activeSessionId]);
 
@@ -112,7 +134,14 @@ export function useSearchHighlightController(
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cur = params.get("q") ?? "";
-    const want = atHome ? "" : searchHighlight.trim();
+    // Whenever the auto-clear above runs, this runs right after it in the same
+    // commit, so the flag only ever covers the commit that cleared.
+    const cleared = justClearedRef.current;
+    justClearedRef.current = false;
+    const want = atHome || cleared ? "" : searchHighlight.trim();
+    // A term still travelling to a search hit would graft `?q=` onto whichever
+    // entry is current: the one being left, or a transient one on the way.
+    if (want && pendingHighlightKeyRef.current != null) return;
     if (cur === want) return;
     if (want) params.set("q", want);
     else params.delete("q");

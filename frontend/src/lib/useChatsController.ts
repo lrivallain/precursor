@@ -266,10 +266,14 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   }
 
   // The chats branch of App's mount + back/forward URL sync. A bare `/chats`
-  // leaves the open chat on screen: a known quirk (#344), kept as is.
+  // drops the selection so the start hero shows, as `/live` and `/agents` do.
   function syncFromRoute(r: AppRoute): void {
     const slug = r.chatSlug;
-    if (!slug || activeChatRef.current?.slug === slug) return;
+    if (!slug) {
+      setActiveChat(null);
+      return;
+    }
+    if (activeChatRef.current?.slug === slug) return;
     void (async () => {
       try {
         const c = await api.chats.getBySlug(slug);
