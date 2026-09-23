@@ -65,7 +65,7 @@ def normalize_mcp_scope(raw: str | None) -> str | None:
     return ",".join(seen)[:MCP_SCOPE_MAX_LEN]
 
 
-#: The built-in server, attached from :meth:`AgentManager._precursor_mcp_config`
+#: The built-in server, attached from :meth:`MCPConfigBuilder.precursor_mcp_config`
 #: rather than from the enabled catalogue.
 _PRECURSOR_SERVER = "precursor"
 
