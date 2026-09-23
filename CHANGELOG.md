@@ -44,14 +44,15 @@ are the per-version history; releasing does not rewrite this file.
     Entra's templated issuer for its multi-tenant authorities only, and drops
     the forced consent.
   - **Plugins** that ship an MCP server run in Precursor's environment, so they
-    must use MCP 2's `MCPServer` too. See the plugin reference. `precursor-ai[kanban]`
-    resolves once `precursor-kanban` publishes an MCP 2 release
+    must use MCP 2's `MCPServer` too. See the plugin reference. The `kanban`
+    extra now requires `precursor-kanban>=2026.9.1`, its first MCP 2 release
     (lrivallain/precursor-kanban#8).
-  - CI gains a **fresh wheel install** job. It builds the wheel, installs it
-    unlocked outside the checkout, and runs the release smoke gate plus a new
-    `scripts/smoke_mcp.py`, which exercises the stdio servers and the HTTP
-    endpoint through Precursor's own client. This is the coverage the lockfile
-    alone could never give.
+  - CI gains a **fresh wheel install** job. It builds the wheel and installs it
+    with the `kanban` extra, unlocked, outside the checkout. It then runs the
+    release smoke gate plus a new `scripts/smoke_mcp.py`, which drives the stdio
+    servers, the HTTP endpoint and every installed plugin's MCP server through
+    Precursor's own client. This is the coverage the lockfile alone could never
+    give.
 
 - **The assistant-role picker now lives in every composer toolbar, not in the
   app header.** The header selector was an odd one out: a bordered pill floating

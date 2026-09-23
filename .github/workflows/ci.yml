@@ -95,13 +95,17 @@ jobs:
       - name: Build the wheel
         run: uv build --no-create-gitignore
 
+      # With the kanban extra: the plugin's MCP server runs in this same
+      # environment, so a plugin on another SDK major is exactly the failure a
+      # fresh install has to catch.
       - name: Install it into a fresh environment
         run: |
           set -euo pipefail
+          wheel="$(ls dist/*.whl)"
           uv venv --python 3.12 "$RUNNER_TEMP/wheel-venv"
-          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" dist/*.whl
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" "precursor-ai[kanban] @ ./$wheel"
           uv pip check --python "$RUNNER_TEMP/wheel-venv/bin/python"
-          uv pip list --python "$RUNNER_TEMP/wheel-venv/bin/python" | grep -E '^(mcp|httpx2) '
+          uv pip list --python "$RUNNER_TEMP/wheel-venv/bin/python" | grep -E '^(mcp|httpx2|precursor-kanban) '
 
       - name: Release smoke gate
         run: |
@@ -110,8 +114,8 @@ jobs:
           version="$("$python" -I -c 'import importlib.metadata as m; print(m.version("precursor-ai"))')"
           "$python" -I scripts/smoke_release.py "$version"
 
-      - name: MCP smoke (stdio servers + streamable HTTP)
-        run: '"$RUNNER_TEMP/wheel-venv/bin/python" -I scripts/smoke_mcp.py'
+      - name: MCP smoke (stdio servers, streamable HTTP, plugin servers)
+        run: '"$RUNNER_TEMP/wheel-venv/bin/python" -I scripts/smoke_mcp.py kanban'
 
   frontend:
     name: Frontend (typecheck · build)

@@ -89,11 +89,12 @@ agents = []
 # `pip install precursor-ai[kanban]` keeps the section, while
 # `pip install precursor-ai` gets a core with no GitHub Projects surface.
 #
-# The floor is the first release made from the plugin's own repository, which is
-# also the first one built against `precursor.plugin_api`. Cadences are now
-# independent, so this is a real floor rather than a formality: raise it only
-# when core starts relying on something newer.
-kanban = ["precursor-kanban>=2026.9"]
+# The floor is the first release on MCP 2 (`MCPServer`, `mcp>=2.2,<3`): the
+# plugin's MCP server runs in this environment, so it must agree with core on the
+# SDK major, and 2026.9.0 pins `mcp<2`. Cadences are independent, so this is a
+# real floor rather than a formality: raise it only when core starts relying on
+# something newer.
+kanban = ["precursor-kanban>=2026.9.1"]
 # Menu-bar / system-tray control for a background instance (`precursor tray`).
 # An extra because pystray + Pillow pull GUI bindings that a headless or
 # server-side install has no use for; the `precursor service …` commands cover

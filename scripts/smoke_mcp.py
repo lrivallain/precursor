@@ -6,6 +6,11 @@ its own: the in-tree stdio servers only load inside their subprocess, and the
 streamable-HTTP client only runs when a server is reached. Both are driven here
 through Precursor's own client, from outside the source checkout, with no access
 to the developer's data.
+
+Installed plugins' MCP servers run in the same environment and so must agree on
+the SDK major; each one is started and listed too. Pass plugin ids as arguments
+(``smoke_mcp.py kanban``) to fail when one of them contributes no MCP server —
+otherwise a plugin that silently failed to load would pass vacuously.
 """
 
 from __future__ import annotations
@@ -71,7 +76,7 @@ async def _exercise(manager: Any, name: str, expected_version: str) -> int:
     return len(tools)
 
 
-async def _main() -> None:
+async def _main(expected_plugins: set[str]) -> None:
     import httpx
     import uvicorn
 
@@ -79,7 +84,11 @@ async def _main() -> None:
     from precursor.backend.config import get_settings
     from precursor.backend.db import init_db
     from precursor.backend.main import create_app
-    from precursor.backend.services.mcp.client import BUILTIN_CATALOG, MCPClientManager
+    from precursor.backend.services.mcp.client import (
+        BUILTIN_CATALOG,
+        MCPClientManager,
+        get_mcp_client_manager,
+    )
 
     modules = [
         spec.args[1]
@@ -108,6 +117,20 @@ async def _main() -> None:
         manager = MCPClientManager()
         manager.register_user_entry(name="self", transport="streamable_http", url=f"{origin}/mcp")
         http_tools = await _exercise(manager, "self", precursor.__version__)
+
+        # The lifespan hydrated the plugins' servers into the shared manager.
+        shared = get_mcp_client_manager()
+        plugin_entries = [e for e in shared.list_entries() if e.plugin_id is not None]
+        missing = expected_plugins - {e.plugin_id for e in plugin_entries}
+        if missing:
+            raise RuntimeError(f"expected plugins contributed no MCP server: {sorted(missing)}")
+        plugin_tools: dict[str, int] = {}
+        for entry in plugin_entries:
+            async with shared.open_session(entry.name) as (_session, tools):
+                if not tools:
+                    raise RuntimeError(f"plugin MCP server {entry.name} exposes no tools")
+                plugin_tools[entry.name] = len(tools)
+        await shared.aclose()
     finally:
         server.should_exit = True
         await serving
@@ -115,7 +138,7 @@ async def _main() -> None:
     print(
         f"MCP {version('mcp')}: {len(modules)} stdio servers import; the built-in stdio server "
         f"({stdio_tools} tools) and the streamable-HTTP endpoint ({http_tools} tools) list, "
-        "call and reconnect."
+        f"call and reconnect; plugin MCP servers start and list: {plugin_tools or 'none'}."
     )
 
 
@@ -125,7 +148,7 @@ def main() -> None:
         from precursor.backend.logging_config import configure_logging
 
         configure_logging("warning")
-        asyncio.run(_main())
+        asyncio.run(_main(set(sys.argv[1:])))
 
 
 if __name__ == "__main__":
