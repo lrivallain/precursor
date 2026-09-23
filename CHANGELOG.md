@@ -81,6 +81,20 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Plugins install from GitHub, show their newest release, and upgrade on
+  their own.** Settings → Plugins now takes a GitHub repository link as well as
+  a package name, and installs the wheel attached to one of its releases. For a
+  name or a repository it lists every release, and a version picker installs
+  any of them — the way around a newest release that doesn't fit this Precursor
+  yet. The Installed list checks each plugin against where it came from (PyPI or
+  its GitHub repository, never a version core requires), says when a newer
+  release exists, and offers **Upgrade** and **Other version**. An upgrade moves
+  that plugin only. Catalogue entries can declare a `repository`, and the Kanban
+  board does, so it can install from GitHub when a package index lags PyPI.
+  New endpoints: `GET /api/plugins/versions`, `GET /api/plugins/updates` and
+  `POST /api/plugins/installed/{id}/upgrade`; `POST /api/plugins/install`
+  accepts a `version`.
+
 - **The browser tab names what's open.** The tab title was always just
   `Precursor`, so a row of Precursor tabs — or the long-press list behind the
   Back and Forward buttons — gave no clue which page was which. It now reads
@@ -477,6 +491,24 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **"Restart now" works under `precursor --dev`.** After a plugin install, the
+  in-app restart re-exec'd the process with its original arguments — but under
+  `--dev` that process is uvicorn's reload worker, a multiprocessing child, and
+  re-running its spawn handshake crashed with `OSError: [Errno 9] Bad file
+  descriptor`. The dev server now hands the worker a watched file, and a restart
+  rewrites it (same bytes) so the reloader starts a fresh worker. Where a
+  process can't restart itself at all, the panel says so and asks for a manual
+  restart instead of offering a button that fails.
+- **Installing a plugin can no longer break Precursor.** Outside a `uv tool`
+  install, the in-app installer ran a bare `uv pip install <plugin>`, which
+  resolves only the plugin and moves anything else to fit. From an index that
+  lagged PyPI, "installing the Kanban board" picked its oldest release, built for
+  MCP 1, and downgraded core's `mcp` — the app then failed on import. Precursor's
+  own requirements now go in as constraints, so a release that doesn't fit fails
+  to install instead. "Latest" also installs as a floor at the newest release
+  (`>=2026.9.2`) rather than a bare name, so a lagging index fails loudly instead
+  of quietly delivering an older release than the one shown. Commands shown for
+  running by hand are now shell-quoted — `pkg>=1.2` pasted bare is a redirect.
 - **Installing a plugin on a nightly build no longer fails with a 404.** A
   nightly install pins the exact wheel it came from, and adding or removing a
   plugin restates that pin so the host isn't downgraded. But the `nightly`

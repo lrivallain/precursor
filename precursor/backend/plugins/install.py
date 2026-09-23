@@ -21,11 +21,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import shutil
 import sys
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from importlib import metadata
 from pathlib import Path
 
 from precursor.backend import uv_receipt
@@ -128,7 +132,7 @@ def host_upgrade() -> str | None:
     return build.version or build.wheel_url
 
 
-def _uv_tool_argv(package: str) -> list[str]:
+def _uv_tool_argv(package: str, *, upgrade: bool = False) -> list[str]:
     """Argv adding ``package`` to this tool environment without narrowing it.
 
     Every sibling is restated, because uv rebuilds the environment from the
@@ -138,6 +142,8 @@ def _uv_tool_argv(package: str) -> list[str]:
     build = _nightly_build()
     cmd = ["uv", "tool", "install", "--force", _host_requirement(build)]
     wanted = uv_receipt.canonical_name(package)
+    if upgrade:
+        cmd += ["--upgrade-package", wanted]
     for sibling in uv_receipt.siblings():
         if uv_receipt.canonical_name(sibling.name) != wanted:
             cmd += ["--with", _repoint(sibling, build).as_argument()]
@@ -210,14 +216,68 @@ def detect_environment() -> Environment:
     )
 
 
-def install_command(package: str, env: Environment | None = None) -> list[str]:
-    """Argv for installing ``package``. Never shelled out through a shell."""
+def install_command(
+    package: str,
+    env: Environment | None = None,
+    *,
+    upgrade: bool = False,
+    constraints: Path | None = None,
+) -> list[str]:
+    """Argv for installing ``package``. Never shelled out through a shell.
+
+    ``upgrade`` lets the resolver move ``package`` past the version already
+    installed — and only that one, so upgrading a plugin never drags Precursor
+    or its other plugins along. ``constraints`` is a file from
+    :func:`host_constraints`, for the installers that need one.
+    """
     env = env or detect_environment()
     if env.installer == "uv-tool":
-        return _uv_tool_argv(package)
+        return _uv_tool_argv(package, upgrade=upgrade)
+    held = ["--constraint", str(constraints)] if constraints else []
     if env.installer == "uv-venv":
-        return ["uv", "pip", "install", "--python", sys.executable, package]
-    return [sys.executable, "-m", "pip", "install", package]
+        flag = ["--upgrade-package", uv_receipt.canonical_name(package)] if upgrade else []
+        return ["uv", "pip", "install", "--python", sys.executable, *flag, *held, package]
+    flag = ["--upgrade"] if upgrade else []
+    return [sys.executable, "-m", "pip", "install", *flag, *held, package]
+
+
+_EXTRA_MARKER = re.compile(r"\bextra\s*==")
+
+
+def host_requirements() -> list[str]:
+    """What Precursor itself needs to run: its version and its non-extra requirements."""
+    try:
+        dist = metadata.distribution(uv_receipt.HOST)
+    except metadata.PackageNotFoundError:
+        return []
+    requires = [
+        str(line)
+        for line in dist.metadata.get_all("Requires-Dist") or []
+        if not _EXTRA_MARKER.search(str(line).partition(";")[2])
+    ]
+    return [f"{uv_receipt.HOST}=={dist.version}", *requires]
+
+
+@contextmanager
+def host_constraints(env: Environment) -> Iterator[Path | None]:
+    """A constraints file holding Precursor in place while a plugin installs.
+
+    ``uv tool install`` restates the host, so its resolver already honours
+    Precursor's requirements. ``uv pip install`` and ``pip install`` resolve only
+    what they are asked for, and move anything else to make it fit: a plugin
+    release built for MCP 1 once downgraded core's ``mcp`` and broke the app. As
+    constraints, Precursor's requirements make that release fail to resolve
+    instead. Extras are left out on purpose — a core extra naming a plugin must
+    not decide which release of it the user may pick.
+    """
+    lines = host_requirements() if env.installer != "uv-tool" else []
+    if not lines:
+        yield None
+        return
+    with tempfile.TemporaryDirectory(prefix="precursor-install-") as tmp:
+        path = Path(tmp) / "host-constraints.txt"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        yield path
 
 
 def uninstall_command(package: str, env: Environment | None = None) -> list[str] | None:
@@ -267,13 +327,51 @@ def restart_command() -> list[str]:
     return [sys.executable, *sys.orig_argv[1:]] if sys.orig_argv else [sys.executable, *sys.argv]
 
 
+#: Set by ``precursor --dev`` to a source file its reloader watches (see
+#: ``__main__._run_dev``), which is how the dev server gets restarted.
+RELOAD_TRIGGER_ENV = "PRECURSOR_RELOAD_TRIGGER"
+
+
+def _reload_trigger() -> Path | None:
+    raw = os.environ.get(RELOAD_TRIGGER_ENV, "").strip()
+    return Path(raw) if raw else None
+
+
+def restart_supported() -> bool:
+    """Whether :func:`restart_in_place` can bring this process back on its own.
+
+    A ``multiprocessing`` child can't: re-running its argv replays the spawn
+    handshake (``spawn_main(tracker_fd=…, pipe_handle=…)``) with descriptors
+    that died with the old process. The one such child Precursor knows how to
+    restart is ``--dev``'s reload worker, via its trigger file.
+    """
+    if _reload_trigger() is not None:
+        return True
+    import multiprocessing
+
+    return multiprocessing.parent_process() is None
+
+
 def restart_in_place() -> None:
     """Replace this process with a fresh one, so discovery re-runs.
 
     ``execv`` rather than spawn-and-exit: the new process inherits the same pid,
     terminal and listening socket ownership, so a supervisor (or the user's
     shell) sees one continuous service rather than an exit it might not restart.
+
+    Under ``precursor --dev`` this process is instead uvicorn's reload worker,
+    which the reloader replaces whenever a watched file changes — so the restart
+    is to change one. Its own bytes are written back: content untouched, but
+    every file watcher sees a modification, where a bare ``touch`` is reported
+    inconsistently across platforms.
     """
+    trigger = _reload_trigger()
+    if trigger is not None:
+        logger.info("Restarting the dev server's worker via %s", trigger)
+        trigger.write_bytes(trigger.read_bytes())
+        return
+    if not restart_supported():
+        raise RuntimeError("This process can't restart itself; restart Precursor by hand.")
     argv = restart_command()
     logger.info("Restarting Precursor: %s", " ".join(argv))
     sys.stdout.flush()

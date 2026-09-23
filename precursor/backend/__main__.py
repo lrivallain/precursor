@@ -420,6 +420,24 @@ def _inject_dev_cors(frontend_port: int) -> None:
     os.environ["PRECURSOR_CORS_ORIGINS"] = ",".join(merged)
 
 
+def _inject_reload_trigger() -> None:
+    """Tell the --reload worker which file restarts it.
+
+    The in-app "Restart now" can't re-exec a reload worker — it is a
+    multiprocessing child — so it rewrites a watched file and lets uvicorn's
+    reloader start a fresh one (see ``plugins.install.restart_in_place``).
+    uvicorn watches the working directory, so the trigger has to live under it;
+    started from anywhere else, the restart is reported as unsupported instead.
+    """
+    from precursor.backend.plugins.install import RELOAD_TRIGGER_ENV
+
+    trigger = Path(__file__).resolve().parent / "__init__.py"
+    if trigger.is_relative_to(Path.cwd().resolve()):
+        os.environ[RELOAD_TRIGGER_ENV] = str(trigger)
+    else:
+        os.environ.pop(RELOAD_TRIGGER_ENV, None)
+
+
 def _new_process_group_kwargs() -> _PopenProcessGroupKwargs:
     """``Popen`` kwargs that isolate a child in its own process group/session.
 
@@ -645,6 +663,7 @@ def _run_dev(
                 _terminate_process_tree(docs_proc)
 
     try:
+        _inject_reload_trigger()
         uvicorn.run(
             "precursor.backend.main:app",
             host=host,

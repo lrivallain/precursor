@@ -11,7 +11,7 @@ import asyncio
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,17 +22,33 @@ from precursor.backend.plugins import get_registry
 from precursor.backend.plugins.assets import media_type, plugin_entry_url, resolve_asset
 from precursor.backend.plugins.catalog import load_catalog, normalize_distribution
 from precursor.backend.plugins.install import (
+    Environment,
     detect_environment,
+    host_constraints,
     host_upgrade,
     install_command,
     refresh_nightly,
     restart_in_place,
+    restart_supported,
     run_install,
     uninstall_command,
 )
 from precursor.backend.plugins.settings import read_settings, write_settings
+from precursor.backend.plugins.sources import (
+    Releases,
+    Resolution,
+    Source,
+    SourceError,
+    classify,
+    installed_source,
+    is_newer,
+    list_releases,
+    requirement_for,
+    resolve,
+)
 from precursor.backend.plugins.state import disabled_ids, is_enabled, set_enabled
 from precursor.backend.services.app_settings import resolve_plugin_install_enabled
+from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.mcp.precursor_server import LOOPBACK_HOSTS, is_loopback_host
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
@@ -43,9 +59,22 @@ class PluginToggle(BaseModel):
 
 
 class PluginInstall(BaseModel):
-    """A package to install. Any PEP 508 requirement the installer accepts."""
+    """What to install.
 
-    package: str = Field(min_length=1, max_length=200)
+    ``package`` is a package name, a GitHub repository link, or any PEP 508
+    requirement the installer accepts. ``version`` picks a release for the
+    first two; left out, a name installs unpinned and a repository installs its
+    newest release.
+    """
+
+    package: str = Field(min_length=1, max_length=300)
+    version: str | None = Field(default=None, max_length=64)
+
+
+class PluginUpgrade(BaseModel):
+    """Move an installed plugin to ``version``, or to its newest release."""
+
+    version: str | None = Field(default=None, max_length=64)
 
 
 def _require_known_plugin(plugin_id: str) -> None:
@@ -127,6 +156,46 @@ async def _require_local_admin(request: Request, session: AsyncSession) -> None:
         )
 
 
+async def _github_token(
+    request: Request, session: AsyncSession, *sources: Source | None
+) -> str | None:
+    """The user's GitHub token for a release lookup — only for a local caller.
+
+    Anonymous lookups work for public repositories but share a small rate limit,
+    so the token is worth sending. It is also what can see a *private*
+    repository's releases, though, and these lookups are readable: a page that
+    DNS-rebinds to this instance must not get them answered with the user's
+    credentials. So the same Host/Origin check as the installer decides.
+    """
+    if not any(s is not None and s.kind == "github" for s in sources):
+        return None
+    if not (_host_is_local(request) and _origin_is_local(request)):
+        return None
+    return await resolve_github_token(session) or None
+
+
+def _releases_payload(releases: Releases) -> dict[str, Any]:
+    """A source's releases, each with the requirement that would install it."""
+    latest = releases.latest
+    return {
+        "source": releases.source.as_dict(),
+        "latest": latest.version if latest else None,
+        # What "Latest" installs: a floor at the newest PyPI release, or the
+        # newest release's wheel from GitHub.
+        "latest_requirement": requirement_for(releases, None),
+        "versions": [
+            {
+                "version": r.version,
+                "prerelease": r.prerelease,
+                "published_at": r.published_at,
+                "tag": r.tag,
+                "requirement": requirement_for(releases, r),
+            }
+            for r in releases.releases
+        ],
+    }
+
+
 @router.get("")
 async def list_extensions() -> list[dict[str, Any]]:
     """Frontend extension descriptors from every *enabled* plugin.
@@ -189,6 +258,10 @@ async def list_installed() -> list[dict[str, Any]]:
             ],
             "routes": plugin.route_prefixes,
             "mcp_servers": [{"name": s.name, "title": s.title} for s in plugin.mcp_servers],
+            # Where upgrades come from — read from local metadata, no network.
+            "source": installed_source(plugin.distribution).as_dict()
+            if plugin.distribution
+            else None,
         }
         for plugin in registry.plugins.values()
     ]
@@ -225,6 +298,77 @@ async def list_catalog() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+@router.get("/versions")
+async def plugin_versions(
+    request: Request,
+    package: str = Query(min_length=1, max_length=300),
+    refresh: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Every installable release of a package name or GitHub repository.
+
+    Read-only — nothing is installed — and cached per source, so opening the
+    panel doesn't re-ask PyPI or GitHub each time. ``refresh`` skips the cache.
+    """
+    source = classify(package)
+    if source is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Versions can be listed for a package name or a GitHub repository link.",
+        )
+    token = await _github_token(request, session, source)
+    try:
+        releases = await list_releases(source, token=token, refresh=refresh)
+    except SourceError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    return _releases_payload(releases)
+
+
+@router.get("/updates")
+async def plugin_updates(
+    request: Request,
+    refresh: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    """The newest release of every installed plugin, from where it was installed.
+
+    A plugin from PyPI is compared against PyPI, one from a GitHub repository
+    against that repository's releases — the version core happens to pin, if
+    any, has no say. Lookups run concurrently, and one failing is reported on
+    its own row rather than failing the rest.
+    """
+    plugins = [p for p in get_registry().plugins.values() if p.distribution]
+    sources = {p.id: installed_source(p.distribution or "") for p in plugins}
+    token = await _github_token(request, session, *sources.values())
+
+    async def check(plugin: Any) -> dict[str, Any]:
+        source = sources[plugin.id]
+        row: dict[str, Any] = {
+            "id": plugin.id,
+            "distribution": plugin.distribution,
+            "installed_version": plugin.version,
+            "source": source.as_dict(),
+            "latest": None,
+            "update_available": False,
+            "upgrade_requirement": None,
+            "error": None,
+        }
+        if source.kind == "direct":
+            return row
+        try:
+            releases = await list_releases(source, token=token, refresh=refresh)
+        except SourceError as exc:
+            row["error"] = str(exc)
+            return row
+        row["latest"] = releases.latest.version if releases.latest else None
+        if is_newer(releases, plugin.version):
+            row["update_available"] = True
+            row["upgrade_requirement"] = requirement_for(releases, None)
+        return row
+
+    return list(await asyncio.gather(*(check(p) for p in plugins)))
 
 
 @router.put("/installed/{plugin_id}")
@@ -335,7 +479,52 @@ async def plugin_environment(
             if local
             else "Only available from Precursor's own localhost address."
         ),
-        "restart_supported": True,
+        # False only where the process can't bring itself back (e.g. a reload
+        # worker started outside the checkout); the UI then asks for a manual one.
+        "restart_supported": restart_supported(),
+    }
+
+
+async def _installable_environment() -> Environment:
+    """This instance's installer, once it is known to be usable from here."""
+    # Fresh, not the display cache: the command about to run is built from it.
+    await asyncio.to_thread(refresh_nightly)
+    env = detect_environment()
+    if not env.can_install:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            env.reason or "This environment can't be modified from inside the app.",
+        )
+    return env
+
+
+async def _install(
+    resolution: Resolution, env: Environment, *, upgrade: bool = False
+) -> dict[str, Any]:
+    host = host_upgrade()
+    with host_constraints(env) as constraints:
+        code, output = await run_install(
+            install_command(resolution.requirement, env, upgrade=upgrade, constraints=constraints)
+        )
+    if code != 0:
+        hint = ""
+        if resolution.kind == "pypi" and "No solution found" in output:
+            # By far the likeliest causes, and both have a way out in the UI.
+            hint = (
+                "\n\nYour package index may not carry this release yet, or it doesn't "
+                "fit this Precursor. Choose another version, or install from the "
+                "plugin's GitHub repository."
+            )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Install failed:\n{output.strip()[-4000:]}{hint}",
+        )
+    return {
+        "package": resolution.requirement,
+        "version": resolution.version,
+        "output": output[-4000:],
+        "restart_required": True,
+        "host_upgrade": host,
     }
 
 
@@ -353,26 +542,56 @@ async def install_plugin(
     caller restarts afterwards.
     """
     await _require_local_admin(request, session)
-    await asyncio.to_thread(refresh_nightly)
-    env = detect_environment()
-    if not env.can_install:
+    env = await _installable_environment()
+    try:
+        resolution = await resolve(
+            payload.package,
+            payload.version,
+            token=await _github_token(request, session, classify(payload.package)),
+        )
+    except SourceError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    return await _install(resolution, env)
+
+
+@router.post("/installed/{plugin_id}/upgrade")
+async def upgrade_plugin(
+    plugin_id: str,
+    payload: PluginUpgrade,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Move an installed plugin to another release, from where it came from.
+
+    Only that plugin is allowed to move: Precursor and every other plugin are
+    restated as they are, so a plugin upgrade never waits on — or drags along —
+    a core release.
+    """
+    await _require_local_admin(request, session)
+    plugin = get_registry().plugins.get(plugin_id)
+    if plugin is None or not plugin.distribution:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"No installed distribution found for plugin '{plugin_id}'",
+        )
+    source = installed_source(plugin.distribution)
+    if source.kind == "direct":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            env.reason or "This environment can't be modified from inside the app.",
+            "This plugin was installed from a path or a URL, which has no list of "
+            "releases to upgrade from. Reinstall it by name or GitHub repository.",
         )
-    upgrade = host_upgrade()
-    code, output = await run_install(install_command(payload.package, env))
-    if code != 0:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Install failed:\n{output.strip()[-4000:]}",
+    env = await _installable_environment()
+    try:
+        resolution = await resolve(
+            source.spec,
+            payload.version,
+            token=await _github_token(request, session, source),
+            distribution=source.distribution,
         )
-    return {
-        "package": payload.package,
-        "output": output[-4000:],
-        "restart_required": True,
-        "host_upgrade": upgrade,
-    }
+    except SourceError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    return await _install(resolution, env, upgrade=True)
 
 
 @router.delete("/installed/{plugin_id}")
@@ -427,6 +646,11 @@ async def restart(
     returns.
     """
     await _require_local_admin(request, session)
+    if not restart_supported():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Precursor can't restart itself from here. Restart it the way you started it.",
+        )
 
     async def _later() -> None:
         # Long enough for the response to reach the client and flush.

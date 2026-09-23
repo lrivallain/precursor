@@ -54,6 +54,14 @@ DISTRIBUTION_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?\Z")
 #: plugin registers and can appear in a URL. ``\Z`` for the same reason as above.
 PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
+#: A GitHub repository, in exactly one spelling. An entry's ``repository`` is
+#: where the app lists release wheels to install from, so it gets the same
+#: whole-value discipline as ``distribution``: no deeper path, no query, no
+#: other host.
+REPOSITORY_RE = re.compile(
+    r"^https://github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}\Z"
+)
+
 #: What a plugin may declare that it contributes. Kept closed so the UI can
 #: render each one, and so a typo is a CI failure rather than a silent no-op.
 CONTRIBUTIONS = frozenset({"section", "settings", "mcp", "api"})
@@ -87,6 +95,9 @@ class CatalogEntry:
     title: str
     summary: str
     homepage: str | None = None
+    #: GitHub repository whose releases carry the plugin's wheels — an
+    #: alternative to PyPI, for an index that lags or a release not on it yet.
+    repository: str | None = None
     author: str | None = None
     license: str | None = None
     tags: tuple[str, ...] = ()
@@ -212,6 +223,13 @@ def parse_entry(slug: str, frontmatter: dict[str, Any]) -> CatalogEntry:
     if homepage is not None and not homepage.startswith("https://"):
         raise CatalogError(f"{slug}: 'homepage' must be an https:// URL, got {homepage!r}")
 
+    repository = _optional_str(frontmatter, "repository", slug)
+    if repository is not None and not REPOSITORY_RE.match(repository):
+        raise CatalogError(
+            f"{slug}: 'repository' must be exactly https://github.com/<owner>/<repo>, "
+            f"got {repository!r}"
+        )
+
     contributes = _string_list(frontmatter, "contributes", slug)
     unknown = set(contributes) - CONTRIBUTIONS
     if unknown:
@@ -230,6 +248,7 @@ def parse_entry(slug: str, frontmatter: dict[str, Any]) -> CatalogEntry:
         title=_require_str(frontmatter, "title", slug),
         summary=_require_str(frontmatter, "description", slug),
         homepage=homepage,
+        repository=repository,
         author=_optional_str(frontmatter, "author", slug),
         license=_optional_str(frontmatter, "license", slug),
         tags=_string_list(frontmatter, "tags", slug),

@@ -410,7 +410,16 @@ Two consequences worth knowing:
   Precursor itself was updated too.
 
 Adding or removing one plugin never narrows the rest: both commands rebuild the
-environment from the full receipt. Removal is refused only for a distribution
+environment from the full receipt. Upgrading one moves **only that plugin** —
+the command adds `--upgrade-package <plugin>` and restates everything else as it
+is — so a plugin's cadence is its own, never tied to a core release.
+
+Outside `uv tool`, the installer (`uv pip` or `pip`) resolves only what it is
+asked for and will move anything else to make it fit. So Precursor passes its own
+requirements as a **constraints file**: a plugin release built for an older MCP
+SDK fails to resolve instead of downgrading core's `mcp`. Core's extras are left
+out of it on purpose — an extra that names a plugin must not decide which release
+of it you may pick. Removal is refused only for a distribution
 that was *not* installed alongside the tool, since that one arrived as a
 dependency of Precursor or of an extra, and dropping it would break the install
 — disable the plugin instead.
