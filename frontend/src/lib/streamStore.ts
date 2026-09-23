@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { mcpAuthStore } from "./mcpAuth";
-import { streamChat, streamChatSession } from "./sse";
+import { streamChat, streamChatSession, type ChatStreamBody } from "./sse";
 import type { Attachment, Message } from "./types";
 
 export interface UsageReport {
@@ -23,7 +23,7 @@ function parseKey(key: string): { kind: ConvKind; id: number } {
 }
 
 // FK fields to stamp on buffered messages so they round-trip like persisted ones.
-function containerFields(
+export function containerFields(
   kind: ConvKind,
   id: number,
 ): { topic_id: number | null; chat_id: number | null } {
@@ -46,16 +46,6 @@ interface Session {
 }
 
 type Listener = () => void;
-
-/** Request body shared by the topic and chat stream endpoints. */
-interface ChatStreamBody {
-  content: string;
-  model?: string;
-  prompt_override?: string;
-  attachment_ids?: number[];
-  note_attachment_ids?: number[];
-  retry_message_id?: number;
-}
 
 function hashString(s: string): number {
   let h = 0;

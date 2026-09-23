@@ -17,19 +17,16 @@ export interface StreamChatOptions {
   onEvent: (event: SSEEvent) => void;
 }
 
-export async function streamChat(
-  topicId: number,
-  body: {
-    content: string;
-    model?: string;
-    prompt_override?: string;
-    attachment_ids?: number[];
-    note_attachment_ids?: number[];
-    retry_message_id?: number;
-  },
+/**
+ * POST a JSON body to an SSE endpoint and dispatch each event to `onEvent`.
+ * Every streaming call shares this prologue; they differ only in URL and body.
+ */
+export async function postSSE(
+  url: string,
+  body: unknown,
   { signal, onEvent }: StreamChatOptions,
 ): Promise<void> {
-  const res = await fetch(`/api/topics/${topicId}/messages/stream`, {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -46,11 +43,29 @@ export async function streamChat(
   await consumeStream(res.body, onEvent);
 }
 
+/** Request body shared by the topic and flat-chat stream endpoints. */
+export interface ChatStreamBody {
+  content: string;
+  model?: string;
+  prompt_override?: string;
+  attachment_ids?: number[];
+  note_attachment_ids?: number[];
+  retry_message_id?: number;
+}
+
+export function streamChat(
+  topicId: number,
+  body: ChatStreamBody,
+  opts: StreamChatOptions,
+): Promise<void> {
+  return postSSE(`/api/topics/${topicId}/messages/stream`, body, opts);
+}
+
 /**
  * POST to a Workspace's ephemeral chat endpoint and stream the reply.
  * History is supplied by the caller (workspace chat is not server-persisted).
  */
-export async function streamWorkspaceChat(
+export function streamWorkspaceChat(
   workspaceId: number,
   body: {
     content: string;
@@ -59,82 +74,33 @@ export async function streamWorkspaceChat(
     model?: string;
     prompt_override?: string;
   },
-  { signal, onEvent }: StreamChatOptions,
+  opts: StreamChatOptions,
 ): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/chat/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "X-Client-Id": CLIENT_ID,
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
-  }
-
-  await consumeStream(res.body, onEvent);
+  return postSSE(`/api/workspaces/${workspaceId}/chat/stream`, body, opts);
 }
 
 /**
  * POST to a flat Chat session's stream endpoint and stream the reply.
  * Chats persist server-side like topics, but have no GitHub context.
  */
-export async function streamChatSession(
+export function streamChatSession(
   chatId: number,
-  body: {
-    content: string;
-    model?: string;
-    prompt_override?: string;
-    attachment_ids?: number[];
-    note_attachment_ids?: number[];
-    retry_message_id?: number;
-  },
-  { signal, onEvent }: StreamChatOptions,
+  body: ChatStreamBody,
+  opts: StreamChatOptions,
 ): Promise<void> {
-  const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "X-Client-Id": CLIENT_ID,
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
-  }
-
-  await consumeStream(res.body, onEvent);
+  return postSSE(`/api/chats/${chatId}/messages/stream`, body, opts);
 }
 
 /**
  * POST a question to a live meeting session and stream the answer.
  * The exchange is not persisted server-side; the caller renders it live.
  */
-export async function streamMeetingAsk(
+export function streamMeetingAsk(
   sessionId: number,
   question: string,
-  { signal, onEvent }: StreamChatOptions,
+  opts: StreamChatOptions,
 ): Promise<void> {
-  const res = await fetch(`/api/live/${sessionId}/ask`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "X-Client-Id": CLIENT_ID,
-    },
-    body: JSON.stringify({ question }),
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
-  }
-
-  await consumeStream(res.body, onEvent);
+  return postSSE(`/api/live/${sessionId}/ask`, { question }, opts);
 }
 
 async function consumeStream(

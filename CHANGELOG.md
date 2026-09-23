@@ -422,6 +422,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Stopping the workspace assistant no longer throws away its reply.** Topics
+  and chats keep whatever streamed before you pressed Stop and mark it
+  `_(stopped)_`. The workspace assistant cancelled the request instead, which
+  skipped the step that adds the reply to the conversation, so the partial
+  answer vanished as soon as streaming ended. It now stays in the transcript
+  with the same marker and goes into the history of your next question.
 - **Token usage from one-shot features is recorded more reliably.** Several
   features ask the model once with no tools. Each one used to resolve the model
   and write its usage row on its own, and the copies had drifted apart:

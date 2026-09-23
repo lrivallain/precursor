@@ -1,56 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRightCircle } from "lucide-react";
-import { MessageBubble, AgentExchangeBadge } from "./MessageBubble";
-import { SuggestedReplies } from "./SuggestedReplies";
-import { ToolCallBubble } from "./ToolCallBubble";
+import { AgentExchangeBadge } from "./MessageBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
-import { NotesPanel } from "./NotesPanel";
+import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
+import { TranscriptMessage, TranscriptTail } from "./ConversationTranscript";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { api } from "../lib/api";
-import {
-  commandsForSurface,
-  GITHUB_SLASH_COMMANDS,
-  formatMemoryList,
-  matchSlashCommands,
-  nextSyntheticMessageId,
-  parseMemoryStoreArg,
-  parseMemoryUpdateArg,
-  parseSlashCommand,
-  type SlashCommand,
-} from "../lib/commands";
-import { skillsStore, useSkills } from "../lib/skillsStore";
-import { rolesStore } from "../lib/rolesStore";
-import { streamStore, useStreamVersion, convKey, mergeConversation } from "../lib/streamStore";
-import { failedTurnUserMessageId } from "../lib/systemNotice";
+import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
-import { stripSuggestionBlock } from "../lib/suggestions";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
-import { useChatScroll } from "../lib/useChatScroll";
-import { useWindowedMessages } from "../lib/useWindowedMessages";
-import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useComposerInput } from "../lib/useComposerInput";
+import { useConversation } from "../lib/useConversation";
 import { ResizeHandle } from "./ResizeHandle";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
-import { useReminders } from "../lib/useReminders";
-import { useNotesDraft } from "../lib/useNotesDraft";
 import { useTopicSummary } from "../lib/useTopicSummary";
 import { subscribeTopicSummaryToggle } from "../lib/summaryOpen";
 import { TopicSummaryPanel } from "./TopicSummaryPanel";
-import { usePendingAttachments } from "../lib/usePendingAttachments";
-import { useMessageDeletion } from "../lib/useMessageDeletion";
-import { parseToolMeta } from "../lib/toolMeta";
 import type {
   AgentSession,
   Message,
   Topic,
 } from "../lib/types";
-import { TIMING, Z_INDEX } from "../lib/constants";
-import { Modal } from "./Modal";
+import { TIMING } from "../lib/constants";
 import { RoleSelector } from "./RoleSelector";
 
 interface ChatPanelProps {
@@ -78,10 +55,6 @@ interface PendingCommand {
   issueNumber: number | null;
   error: string | null;
 }
-
-// Topic composer handles every built-in command. Derived from the catalog so
-// it tracks SLASH_COMMANDS automatically (see lib/commands.ts).
-const HANDLED_COMMANDS = commandsForSurface("topic");
 
 function cardTitle(p: PendingCommand): string {
   switch (p.kind) {
@@ -136,39 +109,9 @@ function cardConfirmHint(kind: PendingKind): string | undefined {
 
 export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole }: ChatPanelProps) {
   const confirmAction = useConfirm();
-  const fetchPage = useCallback(
-    (opts: { limit: number; beforeId?: number }) => api.messages.list(topic.id, opts),
-    [topic.id],
-  );
-  const win = useWindowedMessages({ fetchPage });
-  const { persisted, setPersisted, loadingOlder } = win;
-  const {
-    pendingAttachments,
-    setPendingAttachments,
-    uploadingCount,
-    attachmentError,
-    uploadFiles,
-    removeAttachment,
-  } = usePendingAttachments({
-    resetKey: topic.id,
-    upload: (file) => api.attachments.uploadForTopic(topic.id, file),
-  });
-  const { pendingDeletes, hiddenIds, requestDeleteMessage, undoDelete } = useMessageDeletion({
-    resetKey: topic.id,
-    deleteMessage: (mid) => api.messages.remove(topic.id, mid),
-    setPersisted,
-  });
-  const [draft, setDraft] = useState("");
-  const [roleOpen, setRoleOpen] = useState(false);
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
-  // Set while we handle a user-initiated Stop so the streaming→done effect
-  // skips its own reload and lets stop() own the (post-persist) refresh.
-  const stoppingRef = useRef(false);
 
-  // Subscribe to the global streaming store. The store owns the AbortController
-  // and SSE handler so a stream survives switching topics.
-  useStreamVersion();
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
@@ -178,51 +121,24 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     if (!agentsEnabled) set.add("agent");
     return set;
   }, [issueAssociationsEnabled, agentsEnabled]);
-  const streamKey = convKey("topic", topic.id);
-  const streaming = streamStore.isStreaming(streamKey);
-  const pendingContent = streamStore.pendingContent(streamKey);
-  const buffered = streamStore.bufferedMessages(streamKey);
-  const hasSession = streamStore.hasSession(streamKey);
-  const messages = useMemo<Message[]>(
-    () => (hasSession ? mergeConversation(persisted, buffered) : persisted),
-    [persisted, buffered, hasSession],
-  );
-  const visibleMessages = useMemo<Message[]>(
-    () => messages.filter((m) => !hiddenIds.has(m.id)),
-    [messages, hiddenIds],
-  );
-  // The prompt to offer a Retry on: set only while the transcript ends on an
-  // error notice and nothing is streaming.
-  const retryableId = useMemo<number | null>(
-    () => (streaming ? null : failedTurnUserMessageId(visibleMessages)),
-    [visibleMessages, streaming],
-  );
-
-  // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
-  // helpers back into the hook once useChatScroll has produced them.
-  const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
-    [messages, pendingContent],
-    win.onReachTop,
-  );
-  const { bindScroll, reloadMessages } = win;
-  useEffect(() => {
-    bindScroll({ captureTopAnchor, pinToBottom });
-  }, [bindScroll, captureTopAnchor, pinToBottom]);
-
-  const {
-    reminder,
-    reminderModal,
-    setReminderModal,
-    reminderBusy,
-    handleReminderSaved,
-    runReminderClear,
-  } = useReminders({
-    container: "topic",
+  const composer = useComposerInput({ surface: "topic", exclude: excludedCommands });
+  const conv = useConversation({
+    kind: "topic",
     id: topic.id,
-    reload: reloadMessages,
+    composer,
+    onCommand: dispatchCommand,
+    onUpdated: onTopicUpdated,
     onRemindersChanged,
-    systemNote,
+    onSetRole,
+    onPostComment: async (text, attachmentIds) => {
+      const res = await api.github.postUpdate(topic.id, text, attachmentIds);
+      return [
+        ...(res.local_note_message ? [res.local_note_message] : []),
+        res.message,
+      ];
+    },
   });
+  const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
 
   const summary = useTopicSummary(topic.id);
   const toggleSummary = summary.toggleVisible;
@@ -232,53 +148,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     () => subscribeTopicSummaryToggle(topic.id, () => void toggleSummary()),
     [topic.id, toggleSummary],
   );
-
-  const notesApi = useMemo(
-    () => ({
-      getDraft: () => api.notes.getDraft(topic.id),
-      saveDraft: (text: string) => api.notes.saveDraft(topic.id, text),
-      clearDraft: () => api.notes.clearDraft(topic.id),
-      append: (text: string, ids: number[]) => api.notes.append(topic.id, text, ids),
-      rephrase: (text: string) => api.notes.rephrase(topic.id, text),
-      uploadAttachment: (file: File) => api.notes.uploadAttachment(topic.id, file),
-      deleteAttachment: (attId: number) => api.notes.deleteAttachment(topic.id, attId),
-    }),
-    [topic.id],
-  );
-  const {
-    pendingNotes,
-    savedNotesDraft,
-    notesConfirm,
-    resolveNotesConfirm,
-    openNotesPad,
-    resumeSavedNotesDraft,
-    discardSavedNotesDraft,
-    uploadNoteAttachments,
-    removeNoteAttachment,
-    rephraseNotes,
-    saveNotesDraft,
-    runNotesAction,
-    closeNotesPad,
-    dismissPad,
-  } = useNotesDraft({
-    container: "topic",
-    id: topic.id,
-    notesApi,
-    appendMessages: (msgs) => {
-      setPersisted((prev) => [...prev, ...msgs]);
-      onTopicUpdated();
-    },
-    startAppendAndAsk: (body, attachmentIds) =>
-      void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
-    onPostComment: async (text, attachmentIds) => {
-      const res = await api.github.postUpdate(topic.id, text, attachmentIds);
-      return [
-        ...(res.local_note_message ? [res.local_note_message] : []),
-        res.message,
-      ];
-    },
-    systemNote,
-  });
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -295,209 +164,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       max: 480,
     });
 
-  // History recall (Up/Down to cycle through previous user messages).
-  const historyIndexRef = useRef<number | null>(null);
-  const originalDraftRef = useRef<string>("");
-  const userHistory = useMemo(
-    () => persisted.filter((m) => m.role === "user").map((m) => m.content),
-    [persisted],
-  );
-
-  // Live speech-to-text via Azure (when configured server-side). Final chunks
-  // are appended to the draft as the user speaks; the interim transcript is
-  // shown transiently. The mic is hidden entirely when Azure isn't configured.
-  const [interimText, setInterimText] = useState("");
-  const appendFinalChunk = (text: string) => {
-    const chunk = text.trim();
-    if (!chunk) return;
-    historyIndexRef.current = null;
-    setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-    setInterimText("");
-  };
-  const azureReady = settings?.stt_azure_ready ?? false;
-  const sttLanguage = settings?.azure_speech_language || undefined;
-  const speech = useAzureSpeech({
-    onFinalChunk: appendFinalChunk,
-    onInterim: setInterimText,
-    enabled: azureReady,
-    lang: sttLanguage,
-  });
-  // Drop any lingering interim text once dictation stops.
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
-
-  const skills = useSkills();
-  const skillCommands = useMemo<SlashCommand[]>(
-    () =>
-      skills
-        .filter((s) => s.active)
-        .map((s) => ({
-          name: s.name,
-          label: `/${s.name}`,
-          description: s.description ?? "",
-          kind: "skill",
-          argumentHint: "input",
-        })),
-    [skills],
-  );
-
-  const suggestions = useMemo<SlashCommand[]>(
-    () => matchSlashCommands(draft, skillCommands, excludedCommands) ?? [],
-    [draft, skillCommands, excludedCommands],
-  );
-
-  useEffect(() => {
-    historyIndexRef.current = null;
-    originalDraftRef.current = "";
-  }, [topic.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const msgs = await win.fetchFirstPage();
-      if (cancelled) return;
-      win.applyFirstPage(msgs);
-      // If we just switched into a topic whose session has already finished,
-      // drop the buffered copy now that we have the canonical server state.
-      if (
-        streamStore.hasSession(streamKey) &&
-        !streamStore.isStreaming(streamKey)
-      ) {
-        streamStore.clear(streamKey);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [topic.id]);
-
-
-  // refetch persisted messages and discard the buffered turn.
-  const prevStreamingRef = useRef(streaming);
-  useEffect(() => {
-    prevStreamingRef.current = streamStore.isStreaming(streamKey);
-  }, [topic.id]);
-  useEffect(() => {
-    const wasStreaming = prevStreamingRef.current;
-    prevStreamingRef.current = streaming;
-    if (!wasStreaming || streaming) return;
-    // A user-initiated Stop persists + reloads in stop(); don't double-fetch.
-    if (stoppingRef.current) {
-      stoppingRef.current = false;
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const msgs = await reloadMessages();
-      if (cancelled || msgs === null) return;
-      streamStore.clear(streamKey);
-      onTopicUpdated();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [streaming, topic.id, onTopicUpdated]);
-
-  async function send(): Promise<void> {
-    const content = draft.trim();
-    const hasAttachments = pendingAttachments.length > 0;
-    if ((!content && !hasAttachments) || streaming) return;
-    pinToBottom();
-    historyIndexRef.current = null;
-    if (speech.listening) speech.stop();
-
-    const cmd = content
-      ? parseSlashCommand(content, skillCommands, excludedCommands)
-      : null;
-    if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
-      setDraft("");
-      echoCommand(content);
-      await dispatchCommand(cmd.name, cmd.argument);
-      return;
-    }
-    if (cmd) {
-      const skill = skillsStore.byName(cmd.name);
-      if (skill) {
-        setDraft("");
-        const expanded = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
-        const atts = pendingAttachments;
-        setPendingAttachments([]);
-        // Persist the literal slash command as the user message;
-        // the LLM receives the expanded prompt for this turn only.
-        void streamStore.start(streamKey, content, expanded, atts);
-        return;
-      }
-    }
-
-    setDraft("");
-    const atts = pendingAttachments;
-    setPendingAttachments([]);
-    // No leading skill command, but a `/skill-name` may appear mid-prompt: send
-    // the expanded text to the LLM while the transcript keeps what was typed.
-    const inlined = content ? skillsStore.expandReferences(content) : content;
-    void streamStore.start(
-      streamKey,
-      content || "(attachment attached)",
-      inlined && inlined !== content ? inlined : undefined,
-      atts,
-    );
-  }
-
-  function sendSuggestion(text: string): void {
-    if (streaming || !text.trim()) return;
-    pinToBottom();
-    historyIndexRef.current = null;
-    void streamStore.start(streamKey, text.trim());
-  }
-
-  /**
-   * Replay a prompt whose turn ended in an error. The failed tail (partial
-   * answer, tool rows, the error notice) is dropped locally right away and
-   * deleted server-side by the retry, so the prompt is answered afresh instead
-   * of piling a second copy onto the transcript.
-   */
-  function retryTurn(m: Message): void {
-    if (streaming || m.id <= 0) return;
-    pinToBottom();
-    // Ids are monotonic, so "the failed tail" is everything above the prompt.
-    // Client-side notes carry negative ids and are left alone.
-    setPersisted((prev) => prev.filter((p) => p.id < m.id));
-    streamStore.clear(streamKey);
-    void streamStore.retry(streamKey, m.id, m.content, m.attachments);
-  }
-
-  function stop(): void {
-    // Capture whatever the assistant has streamed so far, then cancel the
-    // request. The backend only persists the *final* turn, which never runs
-    // once we disconnect — so we save the partial reply ourselves instead of
-    // letting it vanish. stoppingRef suppresses the streaming→done effect's
-    // reload so this handler owns the post-persist refresh.
-    const partial = streamStore.pendingContent(streamKey).trim();
-    stoppingRef.current = true;
-    streamStore.stop(streamKey);
-    void (async () => {
-      try {
-        if (partial) {
-          await api.messages.saveStopped(topic.id, `${partial}\n\n_(stopped)_`);
-        }
-      } catch {
-        // best-effort — keep going to refresh whatever did persist
-      } finally {
-        await reloadMessages();
-        streamStore.clear(streamKey);
-        onTopicUpdated();
-      }
-    })();
-  }
-
   async function dispatchCommand(name: string, argument: string): Promise<void> {
     if (name === "gh-sync") {
       await runGhSync();
-      return;
-    }
-    if (name === "notes") {
-      await openNotesPad();
       return;
     }
     if (name === "rename") {
@@ -524,30 +193,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       await runArchive();
       return;
     }
-    if (name === "reminder") {
-      setReminderModal({ note: argument });
-      return;
-    }
-    if (name === "reminder-cancel") {
-      await runReminderClear(false);
-      return;
-    }
-    if (name === "done") {
-      await runReminderClear(true);
-      return;
-    }
-    if (name === "memory-store") {
-      await runMemoryStore(argument);
-      return;
-    }
-    if (name === "memory-list") {
-      await runMemoryList();
-      return;
-    }
-    if (name === "memory-update") {
-      await runMemoryUpdate(argument);
-      return;
-    }
     if (name === "show-summary" || name === "hide-summary") {
       await summary.setVisible(name === "show-summary");
       return;
@@ -571,10 +216,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       );
       return;
     }
-    if (name === "role") {
-      await runRole(argument);
-      return;
-    }
     if (name === "collection") {
       await runCollection(argument);
       return;
@@ -585,90 +226,6 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     if (name === "gh-update" || name === "gh-create" || name === "gh-close") {
       await startDraft(name, argument);
-    }
-  }
-
-  /** Append a local-only system note to the transcript (not persisted). */
-  function systemNote(content: string): void {
-    setPersisted((prev) => [
-      ...prev,
-      {
-        id: nextSyntheticMessageId(),
-        topic_id: topic.id,
-        role: "system",
-        content,
-        tool_calls: null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  }
-
-  // Echo a locally-handled slash command into the transcript as a user turn so
-  // it stays visible and is recallable via ↑ history (these commands never hit
-  // the backend, so they aren't persisted server-side).
-  function echoCommand(content: string): void {
-    setPersisted((prev) => [
-      ...prev,
-      {
-        id: nextSyntheticMessageId(),
-        topic_id: topic.id,
-        role: "user",
-        content,
-        tool_calls: null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  }
-
-  async function runMemoryStore(argument: string): Promise<void> {
-    const parsed = parseMemoryStoreArg(argument);
-    if (!parsed) return systemNote("Usage: `/memory-store [kind] <content>`");
-    try {
-      const mem = await api.memories.create(parsed);
-      systemNote(`Saved memory #${mem.id} [${mem.kind}]. Manage in Settings → Memory.`);
-    } catch (err) {
-      systemNote(`Couldn't save memory: ${(err as Error).message}`);
-    }
-  }
-
-  async function runMemoryList(): Promise<void> {
-    try {
-      const memories = await api.memories.list();
-      systemNote(formatMemoryList(memories));
-    } catch (err) {
-      systemNote(`Couldn't list memories: ${(err as Error).message}`);
-    }
-  }
-
-  async function runMemoryUpdate(argument: string): Promise<void> {
-    const parsed = parseMemoryUpdateArg(argument);
-    if (!parsed) return systemNote("Usage: `/memory-update <id> [kind] <content>`");
-    const { id, ...patch } = parsed;
-    try {
-      const mem = await api.memories.update(id, patch);
-      systemNote(`Updated memory #${mem.id} [${mem.kind}].`);
-    } catch (err) {
-      systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
-    }
-  }
-
-  async function runRole(argument: string): Promise<void> {
-    const arg = argument.trim();
-    if (!arg) {
-      setRoleOpen(true);
-      return;
-    }
-    await rolesStore.ensureLoaded();
-    const role = rolesStore.byName(arg);
-    if (!role) {
-      systemNote(`Unknown role "${arg}". Manage roles in Settings → Roles.`);
-      return;
-    }
-    try {
-      await onSetRole?.(role.is_default ? null : role.id);
-      systemNote(`Assistant role set to "${role.name}".`);
-    } catch (err) {
-      systemNote(`Role change failed: ${(err as Error).message}`);
     }
   }
 
@@ -713,7 +270,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   // Prefill the composer with "/agent <uuid> " so the user can type a follow-up
   // and reinstantiate an existing agent session straight from its summary.
   function prefillAgentFollowUp(ref: string): void {
-    setDraft(`/agent ${ref} `);
+    composer.setDraft(`/agent ${ref} `);
     setComposerFocusToken((t) => t + 1);
   }
 
@@ -988,11 +545,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   return (
     <div className="h-full flex min-h-0">
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {reminder && reminder.status === "fired" && (
+        {reminders.reminder && reminders.reminder.status === "fired" && (
           <ReminderBanner
-            reminder={reminder}
-            busy={reminderBusy}
-            onDone={() => void runReminderClear(true)}
+            reminder={reminders.reminder}
+            busy={reminders.reminderBusy}
+            onDone={() => void reminders.runReminderClear(true)}
           />
         )}
         <TopicSummaryPanel
@@ -1009,13 +566,13 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           onToggleVisible={() => void summary.toggleVisible()}
           onDismissError={summary.clearError}
         />
-        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
+        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
           <div
             className="relative mx-auto space-y-3"
             style={{ maxWidth: chatWidth }}
           >
             <ResizeHandle onMouseDown={onChatResize} />
-          {loadingOlder && (
+          {conv.loadingOlder && (
             <div className="text-center text-[11px] text-muted py-1">
               Loading earlier messages…
             </div>
@@ -1026,48 +583,20 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             </div>
           )}
           {(() => {
-            const renderMessage = (m: (typeof visibleMessages)[number], grouped: boolean) => {
-              if (m.role === "tool") {
-                const meta = parseToolMeta(m.tool_calls);
-                return (
-                  <ToolCallBubble
-                    key={m.id}
-                    name={meta?.name ?? "(unknown)"}
-                    arguments={meta?.arguments ?? "{}"}
-                    content={meta?.pending ? null : m.content}
-                    isError={Boolean(meta?.is_error)}
-                    pending={Boolean(meta?.pending)}
-                    link={meta?.link}
-                  />
-                );
-              }
-              // Hide assistant turns that only emitted tool calls (no text):
-              // the tool bubbles below carry the meaningful content.
-              if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
-                return null;
-              }
-              const canDelete =
-                !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
-              // In a scheduled topic the user turn is the repeated automation
-              // prompt — collapse it so generated content gets the room.
-              const collapsible = m.role === "user" && topic.schedule != null;
-              return (
-                <MessageBubble
-                  key={m.id}
-                  role={m.role}
-                  content={m.content}
-                  attachments={m.attachments}
-                  collapsible={collapsible}
-                  agentSessionId={grouped ? undefined : m.agent_session_id}
-                  createdAt={m.created_at}
-                  model={m.model}
-                  elapsedMs={m.elapsed_ms}
-                  isError={m.is_error}
-                  onRetry={m.id === retryableId ? () => retryTurn(m) : undefined}
-                  onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
-                />
-              );
-            };
+            // In a scheduled topic the user turn is the repeated automation
+            // prompt — collapse it so generated content gets the room.
+            const renderMessage = (m: (typeof visibleMessages)[number], grouped: boolean) => (
+              <TranscriptMessage
+                key={m.id}
+                message={m}
+                streaming={streaming}
+                retryable={m.id === conv.retryableId}
+                onRetry={conv.retryTurn}
+                onDelete={conv.deletion.requestDeleteMessage}
+                collapsible={m.role === "user" && topic.schedule != null}
+                hideAgentBadge={grouped}
+              />
+            );
 
             // Wrap consecutive agent-tagged turns (prompt + answer) in a dashed
             // purple frame with a single AGENT badge, so an agent exchange reads
@@ -1117,112 +646,37 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             }
             return out;
           })()}
-          {!streaming &&
-            (() => {
-              const last = visibleMessages[visibleMessages.length - 1];
-              if (last?.role === "assistant" && last.suggestions?.length) {
-                return (
-                  <SuggestedReplies
-                    items={last.suggestions}
-                    onPick={sendSuggestion}
-                    disabled={streaming}
-                  />
-                );
-              }
-              return null;
-            })()}
-          {streaming && (
-            <MessageBubble
-              role="assistant"
-              content={stripSuggestionBlock(pendingContent)}
-              pending
-              onStop={stop}
-            />
-          )}
+          <TranscriptTail
+            visibleMessages={visibleMessages}
+            streaming={streaming}
+            pendingContent={conv.pendingContent}
+            onPickSuggestion={conv.sendSuggestion}
+            onStop={conv.stop}
+          />
         </div>
       </div>
 
       <div className="border-t border-border p-3 pb-safe">
         <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
-          {pendingDeletes.length > 0 && (
+          {conv.deletion.pendingDeletes.length > 0 && (
             <div className="flex flex-col gap-1">
-              {pendingDeletes.map((p) => (
+              {conv.deletion.pendingDeletes.map((p) => (
                 <UndoDeleteToast
                   key={p.message.id}
                   message={p.message}
-                  onUndo={() => undoDelete(p.message.id)}
+                  onUndo={() => conv.deletion.undoDelete(p.message.id)}
                 />
               ))}
             </div>
           )}
-          {!pendingNotes && savedNotesDraft && (
-            <div className="flex items-center justify-between gap-2 rounded border border-border bg-surface px-3 py-1.5 text-xs">
-              <span className="min-w-0 flex-1 truncate text-muted">
-                Saved notes draft:
-                {savedNotesDraft.text ? ` ${savedNotesDraft.text}` : ""}
-                {savedNotesDraft.attachmentCount > 0
-                  ? ` (${savedNotesDraft.attachmentCount} attachment${
-                      savedNotesDraft.attachmentCount > 1 ? "s" : ""
-                    })`
-                  : ""}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  className="shrink-0 rounded px-2 py-0.5 text-accent hover:bg-border"
-                  onClick={() => void resumeSavedNotesDraft()}
-                >
-                  Resume
-                </button>
-                <button
-                  className="shrink-0 rounded px-2 py-0.5 text-muted hover:bg-border"
-                  onClick={() => void discardSavedNotesDraft()}
-                >
-                  Discard
-                </button>
-              </div>
-            </div>
-          )}
-          {pendingNotes && (
-            <NotesPanel
-              hasIssue={
-                issueAssociationsEnabled && topic.github_issue_number !== null
-              }
-              initialText={pendingNotes.initialText}
-              loadingDraft={pendingNotes.loadingDraft}
-              savingDraft={pendingNotes.savingDraft}
-              rephrasing={pendingNotes.rephrasing}
-              acting={pendingNotes.acting}
-              error={pendingNotes.error}
-              attachments={pendingNotes.attachments}
-              uploadingAttachments={pendingNotes.uploadingAttachments}
-              attachmentsError={pendingNotes.attachmentsError}
-              rephrasedText={pendingNotes.rephrasedText}
-              onRephrase={rephraseNotes}
-              onSaveDraft={saveNotesDraft}
-              onAction={runNotesAction}
-              onAttachFiles={uploadNoteAttachments}
-              onRemoveAttachment={removeNoteAttachment}
-              onCancel={closeNotesPad}
-              onPopOut={
-                pendingNotes.loadingDraft
-                  ? undefined
-                  : (text) => {
-                      detachedDraftStore.open({
-                        kind: "notes",
-                        container: "topic",
-                        containerId: topic.id,
-                        title: `Notes — ${topic.title}`,
-                        hasIssue:
-                          issueAssociationsEnabled && topic.github_issue_number !== null,
-                        allowPostComment: true,
-                        initialText: text,
-                        initialAttachments: pendingNotes.attachments,
-                      });
-                      dismissPad();
-                    }
-              }
-            />
-          )}
+          <ConversationNotes
+            notes={conv.notes}
+            container="topic"
+            containerId={topic.id}
+            title={topic.title}
+            hasIssue={issueAssociationsEnabled && topic.github_issue_number !== null}
+            allowPostComment
+          />
           {pendingCommand && (
             <CommandDraftCard
               title={cardTitle(pendingCommand)}
@@ -1268,15 +722,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             />
           )}
           <Composer
-            value={draft}
-            onChange={setDraft}
-            onSend={() => void send()}
-            onStop={stop}
+            value={composer.draft}
+            onChange={composer.setDraft}
+            onSend={() => void conv.send()}
+            onStop={conv.stop}
             streaming={streaming}
-            suggestions={suggestions}
-            userHistory={userHistory}
-            speech={speech}
-            interimText={interimText}
+            suggestions={composer.suggestions}
+            userHistory={conv.userHistory}
+            speech={composer.speech}
+            interimText={composer.interimText}
             height={composerHeight}
             onResizeStart={onComposerResize}
             focusToken={composerFocusToken}
@@ -1286,60 +740,31 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 <RoleSelector
                   value={topic.role_id ?? null}
                   onChange={(roleId) => void onSetRole?.(roleId)}
-                  open={roleOpen}
-                  onOpenChange={setRoleOpen}
+                  open={conv.roleOpen}
+                  onOpenChange={conv.setRoleOpen}
                 />
               </>
             }
-            attachments={{
-              pending: pendingAttachments,
-              uploadingCount,
-              error: attachmentError,
-              onFiles: uploadFiles,
-              onRemove: removeAttachment,
-            }}
+            attachments={conv.attachments}
           />
         </div>
       </div>
       </div>
-      {showStats && <ChatStatsPanel streamKey={streamKey} messages={messages} />}
-      {reminderModal && (
+      {showStats && <ChatStatsPanel streamKey={streamKey} messages={conv.messages} />}
+      {reminders.reminderModal && (
         <ReminderModal
           container="topic"
           containerId={topic.id}
-          existing={reminder}
-          initialNote={reminderModal.note}
-          onClose={() => setReminderModal(null)}
+          existing={reminders.reminder}
+          initialNote={reminders.reminderModal.note}
+          onClose={() => reminders.setReminderModal(null)}
           onSaved={(saved) => {
-            setReminderModal(null);
-            handleReminderSaved(saved);
+            reminders.setReminderModal(null);
+            reminders.handleReminderSaved(saved);
           }}
         />
       )}
-      {notesConfirm && (
-        <Modal
-          zIndex={Z_INDEX.MODAL_NESTED}
-          padded
-          closeOnBackdrop={false}
-          panelClassName="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-2xl"
-        >
-          <div className="text-sm">{notesConfirm.message}</div>
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              className="rounded border border-border px-3 py-1.5 text-xs hover:bg-bg"
-              onClick={() => resolveNotesConfirm(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded bg-accent px-3 py-1.5 text-xs text-white"
-              onClick={() => resolveNotesConfirm(true)}
-            >
-              Confirm
-            </button>
-          </div>
-        </Modal>
-      )}
+      <NotesConfirmModal notes={conv.notes} />
     </div>
   );
 }
