@@ -71,9 +71,9 @@ async def complete_text_with_usage(
 ) -> tuple[str, UsageEvent | None]:
     """Run a tool-less completion and return its text plus token usage.
 
-    Utility callers (slash commands, issue-summary refresh, live meeting
-    analysis) use this instead of ``stream_chat`` so the round-trip's token
-    usage is captured and can be written to the usage ledger. Goes through
+    Provider-level and session-free. Features call
+    :func:`precursor.backend.services.llm.one_shot.complete_once`, which wraps
+    this with model resolution and usage accounting. Goes through
     ``stream_chat_with_tools`` with no tools because that path requests
     ``include_usage`` and emits a UsageEvent.
     """

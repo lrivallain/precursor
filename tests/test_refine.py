@@ -28,13 +28,13 @@ async def test_refine_rewrites_text_and_records_usage(monkeypatch) -> None:
     Force the MockProvider so the test is hermetic; it surfaces a UsageEvent,
     so the round-trip records a ledger row tagged ``/refine``.
     """
-    from precursor.backend.services import text_refine
+    from precursor.backend.services.llm import one_shot
     from precursor.backend.services.llm.mock import MockProvider
 
     async def _mock_provider(_session, **_kwargs) -> MockProvider:
         return MockProvider()
 
-    monkeypatch.setattr(text_refine, "get_llm_provider", _mock_provider)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _mock_provider)
 
     _init_db()
     before = await _ledger_count()

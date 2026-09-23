@@ -23,7 +23,6 @@ from precursor.backend.models import (
     MessageRole,
     NoteDraftAttachment,
 )
-from precursor.backend.routers.commands import _stream_llm
 from precursor.backend.routers.deps import get_chat_or_404
 from precursor.backend.schemas import (
     ChatRequest,
@@ -52,6 +51,7 @@ from precursor.backend.services.events import publish_message_changed_chat
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.note_drafts import (
     consume_note_draft_attachments_to_message,
@@ -311,10 +311,14 @@ async def notes_rephrase(
         instruction=(payload.instruction or "").strip(),
         text=payload.text,
     )
-    rebuilt = await _stream_llm(
-        session, notes_service.REPHRASE_SYSTEM, user_prompt, label="/notes rephrase"
+    result = await complete_once(
+        session,
+        system=notes_service.REPHRASE_SYSTEM,
+        user=user_prompt,
+        usage_source="/notes rephrase",
+        chat_id=chat_id,
     )
-    return NotesRephraseResponse(text=rebuilt or payload.text)
+    return NotesRephraseResponse(text=result.text or payload.text)
 
 
 @router.post("/notes/append", response_model=NotesAppendResponse)

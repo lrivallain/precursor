@@ -422,6 +422,26 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Token usage from one-shot features is recorded more reliably.** Several
+  features ask the model once with no tools. Each one used to resolve the model
+  and write its usage row on its own, and the copies had drifted apart:
+  - **Missing attribution.** In a flat chat, `/notes rephrase` and naming
+    (automatic or `/suggest-name`) recorded usage with no chat attached. Live
+    meeting analysis and translation didn't record the session's topic, although
+    the recap did. Their usage is now attributed to the chat or topic.
+  - **Dropped rows.** When a topic-brief refresh failed because the model
+    returned an empty brief, the tokens it spent were never recorded, so the
+    **Stats** totals missed them. Usage is now written in its own session, so it
+    is recorded even when the output is thrown away.
+  - **Held connections.** Most of these features kept a database connection
+    open for the whole model call. They now release it first, so several slow
+    providers at once can no longer use up the connection pool.
+
+  All eleven call sites now share one helper
+  (`services/llm/one_shot.complete_once`), and a provider failure that a
+  feature doesn't handle returns a `502 LLM call failed: …`, as the `/gh-*`
+  drafts and `/notes rephrase` already did.
+
 - **An installed Precursor failed to start on the migration step.** Startup
   runs `alembic upgrade head`, and the config it built pointed at the
   repository's `alembic.ini` — a file that configures the *CLI* (logging,

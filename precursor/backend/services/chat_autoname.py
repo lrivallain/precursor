@@ -41,9 +41,7 @@ from precursor.backend.services.app_settings import (
     resolve_chat_autoname_model,
 )
 from precursor.backend.services.events import publish_chat_changed, publish_topic_changed
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
-from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.llm.one_shot import complete_once
 
 logger = logging.getLogger(__name__)
 
@@ -137,41 +135,34 @@ def sanitize_title(raw: str) -> str:
     return title
 
 
-async def _generate(session: AsyncSession, source: str, *, topic_id: int | None = None) -> str:
+async def _generate(
+    session: AsyncSession,
+    source: str,
+    *,
+    topic_id: int | None = None,
+    chat_id: int | None = None,
+) -> str:
     """Ask the model for a title for ``source``. Returns ``""`` on any failure."""
     text = source.strip()[:_MAX_SOURCE_CHARS]
     if not text:
         return ""
 
-    model = await resolve_chat_autoname_model(session)
     try:
-        provider = await get_llm_provider(session)
-        raw, usage = await complete_text_with_usage(
-            provider,
-            model=model,
-            messages=[
-                ChatMessage(role="system", content=_SYSTEM),
-                ChatMessage(role="user", content=text),
-            ],
+        result = await complete_once(
+            session,
+            system=_SYSTEM,
+            user=text,
+            usage_source=USAGE_SOURCE,
+            topic_id=topic_id,
+            chat_id=chat_id,
+            model=await resolve_chat_autoname_model(session),
         )
     except Exception as exc:
         # Naming is a nicety riding along with a real turn — never surface this.
         logger.warning("Auto-name: LLM call failed: %s", exc)
         return ""
 
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source=USAGE_SOURCE,
-            model=model,
-            topic_id=topic_id,
-        )
-        await session.commit()
-
-    return sanitize_title(raw)
+    return sanitize_title(result.text)
 
 
 async def _transcript(
@@ -247,7 +238,7 @@ async def _autoname_chat(chat_id: int, *, prompt: str) -> None:
                 # name the conversations that were created while it was off.
                 return
 
-            title = await _generate(session, prompt)
+            title = await _generate(session, prompt, chat_id=chat_id)
             if not title:
                 # Leave the flag set so a transient provider failure gets
                 # another go on the next turn, rather than silently condemning
@@ -279,9 +270,8 @@ async def _autoname_chat(chat_id: int, *, prompt: str) -> None:
 
 async def suggest_chat_name(session: AsyncSession, chat: Chat) -> str:
     """Rename ``chat`` from its transcript. Returns the new title, or ``""``."""
-    title = await _generate(
-        session, await _transcript(session, fk_column=Message.chat_id, container_id=chat.id)
-    )
+    source = await _transcript(session, fk_column=Message.chat_id, container_id=chat.id)
+    title = await _generate(session, source, chat_id=chat.id)
     if not title:
         return ""
     chat.title = title

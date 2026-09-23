@@ -19,6 +19,7 @@ from sqlalchemy import select
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.services import topic_summary as svc
+from precursor.backend.services.llm import one_shot
 
 
 @pytest.fixture
@@ -471,9 +472,9 @@ async def test_refresh_prompt_prefers_no_change_for_every_existing_brief(
     existing = "## My release notes\n- QA approved the build.\n- [ ] Run load test\n"
     complete = AsyncMock(return_value=(existing, None))
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: QA signed off."))
-    monkeypatch.setattr(svc, "get_llm_provider", AsyncMock())
-    monkeypatch.setattr(svc, "resolve_llm_model", AsyncMock(return_value="test"))
-    monkeypatch.setattr(svc, "complete_text_with_usage", complete)
+    monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
+    monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
 
     text, _ = await svc.generate_summary(
         AsyncMock(),
@@ -503,10 +504,10 @@ async def test_an_identical_refresh_preserves_a_user_authored_code_fence(
 ) -> None:
     existing = "\n```text\nKeep the release gate closed.\n```\n"
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="No new facts."))
-    monkeypatch.setattr(svc, "get_llm_provider", AsyncMock())
-    monkeypatch.setattr(svc, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
+    monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
     monkeypatch.setattr(
-        svc, "complete_text_with_usage", AsyncMock(return_value=(existing.strip(), None))
+        one_shot, "complete_text_with_usage", AsyncMock(return_value=(existing.strip(), None))
     )
     text, _ = await svc.generate_summary(
         AsyncMock(), topic_id=1, title="Gate", existing=existing, preserve=True
@@ -520,9 +521,9 @@ async def test_first_generation_still_uses_the_standard_brief_template(
 ) -> None:
     complete = AsyncMock(return_value=("## Status\n- Starting", None))
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: Start a pilot."))
-    monkeypatch.setattr(svc, "get_llm_provider", AsyncMock())
-    monkeypatch.setattr(svc, "resolve_llm_model", AsyncMock(return_value="test"))
-    monkeypatch.setattr(svc, "complete_text_with_usage", complete)
+    monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
+    monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
 
     await svc.generate_summary(
         AsyncMock(), topic_id=1, title="Pilot", existing=existing, preserve=True
@@ -539,7 +540,7 @@ def test_empty_model_output_keeps_the_existing_brief(
 ) -> None:
     path = f"/api/topics/{_topic(client)}/topic-summary"
     before = client.put(path, json={"content": "keep this"}).json()
-    monkeypatch.setattr(svc, "complete_text_with_usage", AsyncMock(return_value=(raw, None)))
+    monkeypatch.setattr(one_shot, "complete_text_with_usage", AsyncMock(return_value=(raw, None)))
     assert client.post(f"{path}/generate", json={}).status_code == 502
     assert client.get(path).json() == before
 
@@ -591,7 +592,7 @@ def test_generation_uses_bounded_context_and_records_usage(
             prompt_tokens=10, completion_tokens=5, total_tokens=15
         )
 
-    monkeypatch.setattr(svc, "complete_text_with_usage", complete)
+    monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
     response = client.post(f"{path}/generate", json={"instruction": "focus on blockers"})
     assert response.status_code == 200, response.text
     assert response.json()["suggestion"]["content"] == "updated brief"

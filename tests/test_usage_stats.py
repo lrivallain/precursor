@@ -100,13 +100,13 @@ async def test_notes_rephrase_records_usage(monkeypatch) -> None:
     Force the MockProvider so the test is hermetic; it surfaces a UsageEvent,
     so the command records a ledger row.
     """
-    from precursor.backend.routers import commands as commands_router
+    from precursor.backend.services.llm import one_shot
     from precursor.backend.services.llm.mock import MockProvider
 
     async def _mock_provider(_session, **_kwargs) -> MockProvider:
         return MockProvider()
 
-    monkeypatch.setattr(commands_router, "get_llm_provider", _mock_provider)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _mock_provider)
 
     _init_db()
     async with SessionLocal() as session:
@@ -136,6 +136,40 @@ async def test_notes_rephrase_records_usage(monkeypatch) -> None:
     assert latest.source == "/notes rephrase"
     assert latest.topic_id == topic_id
     assert latest.total_tokens > 0
+
+
+async def test_chat_notes_rephrase_records_usage_against_the_chat(monkeypatch) -> None:
+    """The flat-chat variant used to land in the ledger with no container."""
+    from precursor.backend.models import Chat
+    from precursor.backend.services.llm import one_shot
+    from precursor.backend.services.llm.mock import MockProvider
+
+    async def _mock_provider(_session, **_kwargs) -> MockProvider:
+        return MockProvider()
+
+    monkeypatch.setattr(one_shot, "get_llm_provider", _mock_provider)
+
+    _init_db()
+    async with SessionLocal() as session:
+        chat = Chat(title="Notes", slug="notes-usage-chat-cmd")
+        session.add(chat)
+        await session.commit()
+        chat_id = chat.id
+
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            f"/api/chats/{chat_id}/messages/notes/rephrase",
+            json={"text": "rough meeting notes: ship the thing", "instruction": None},
+        )
+    assert resp.status_code == 200
+
+    async with SessionLocal() as session:
+        latest = (
+            await session.execute(select(UsageRecord).order_by(UsageRecord.id.desc()).limit(1))
+        ).scalar_one()
+    assert latest.source == "/notes rephrase"
+    assert (latest.chat_id, latest.topic_id) == (chat_id, None)
 
 
 def test_usage_stats_endpoint() -> None:
