@@ -95,6 +95,24 @@ available to the meeting **organizer**, requires the delegated
 minutes **after** the meeting ends. When any of those isn't met, the button
 reports why and leaves your summary untouched.
 
+#### When the meeting has several transcription sessions
+
+Teams starts a **new transcript every time transcription is stopped and
+restarted** — that's why a long or interrupted meeting shows up as *Partie 1*,
+*Partie 2*, … in Teams. Precursor doesn't guess which one you meant: when more
+than one exists, it asks, listing each session with its **start and end time**
+(and duration) so you can tell them apart.
+
+Selection is **multiple**, because the common case is a meeting that simply got
+cut in two: tick the sessions that belong to your meeting and they're stitched
+together **in chronological order** before being summarized as one transcript.
+
+Precursor pre-ticks the sessions that fall inside the linked meeting's scheduled
+slot and tags them *matches this meeting* — a **recurring** meeting reuses the
+same join link for the whole series, so the list can also contain transcripts
+from other occurrences. When there's only one session, nothing is asked and the
+recap is generated straight away.
+
 ## Settings
 
 Configure the section under **Settings → Live**: enable/disable it, choose the

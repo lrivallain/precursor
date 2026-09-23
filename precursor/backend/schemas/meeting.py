@@ -226,8 +226,35 @@ class LinkMeetingRequest(BaseModel):
     body_preview: str | None = None
 
 
+class MeetingTranscriptPart(BaseModel):
+    """One Teams transcription session ("Partie 1", "Partie 2", …).
+
+    ``ended_at`` is absent on older transcripts, so the UI must render a part
+    without an end time.
+    """
+
+    id: str
+    created_at: str | None = None
+    ended_at: str | None = None
+
+
+class MeetingTranscriptListResult(BaseModel):
+    available: bool
+    parts: list[MeetingTranscriptPart] = Field(default_factory=list)
+    detail: str | None = None
+
+
+class MeetingTranscriptSummaryRequest(BaseModel):
+    # Which transcription session(s) to summarise. Empty means "the most recent
+    # one" — the UI only sends ids once the user has picked from several.
+    transcript_ids: list[str] = Field(default_factory=list)
+
+
 class MeetingTranscriptSummaryResult(MeetingSummaryResult):
     """A summary generated from the linked Teams meeting transcript."""
+
+    # Echo back which transcription sessions fed the recap.
+    transcript_ids: list[str] = Field(default_factory=list)
 
 
 class TopicSummaryResult(BaseModel):

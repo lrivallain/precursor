@@ -389,7 +389,10 @@ def test_parse_vtt_speaker_attribution() -> None:
 def test_summarize_from_transcript(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import precursor.backend.routers.live as live_router
 
-    async def _fake_transcript(external_meeting):  # type: ignore[no-untyped-def]
+    seen: list[object] = []
+
+    async def _fake_transcript(external_meeting, transcript_ids=None):  # type: ignore[no-untyped-def]
+        seen.append(transcript_ids)
         return True, "Alex Kim: We agreed to ship on Friday.\nSam Lee: I'll own the release.", None
 
     monkeypatch.setattr(live_router, "fetch_meeting_transcript", _fake_transcript)
@@ -412,6 +415,18 @@ def test_summarize_from_transcript(monkeypatch) -> None:  # type: ignore[no-unty
         res = client.post(f"/api/live/{sid}/summary/from-transcript")
         assert res.status_code == 200
         assert isinstance(res.json()["summary"], str) and res.json()["summary"]
+        # No explicit selection → the service picks the session itself.
+        assert seen[-1] is None
+        assert res.json()["transcript_ids"] == []
+
+        # A user selection is forwarded verbatim and echoed back.
+        res = client.post(
+            f"/api/live/{sid}/summary/from-transcript",
+            json={"transcript_ids": ["T1", "T2"]},
+        )
+        assert res.status_code == 200
+        assert seen[-1] == ["T1", "T2"]
+        assert res.json()["transcript_ids"] == ["T1", "T2"]
 
         # The transcript-derived recap is persisted like the normal summary.
         assert client.get(f"/api/live/{sid}").json()["summary"] == res.json()["summary"]
@@ -420,7 +435,7 @@ def test_summarize_from_transcript(monkeypatch) -> None:  # type: ignore[no-unty
 def test_summarize_from_transcript_unavailable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import precursor.backend.routers.live as live_router
 
-    async def _fake_transcript(external_meeting):  # type: ignore[no-untyped-def]
+    async def _fake_transcript(external_meeting, transcript_ids=None):  # type: ignore[no-untyped-def]
         return False, "", "No transcript is published for this meeting yet."
 
     monkeypatch.setattr(live_router, "fetch_meeting_transcript", _fake_transcript)
@@ -437,14 +452,14 @@ def test_summarize_from_transcript_unavailable(monkeypatch) -> None:  # type: ig
         assert "transcript" in res.json()["detail"].lower()
 
 
-def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Regression: the transcripts collection rejects ``$orderby`` (Graph 400),
-    so the service must list without it and sort client-side, picking the newest.
-    """
-    import asyncio
+def _install_fake_workiq(monkeypatch, transcripts, contents):  # type: ignore[no-untyped-def]
+    """Point the MCP client manager at a fake WorkIQ that answers Graph fetches.
 
+    ``transcripts`` are the raw rows the transcripts collection returns;
+    ``contents`` maps a transcript id to the words its VTT carries. Returns the
+    bundle so a test can assert on the request paths it saw.
+    """
     import precursor.backend.services.mcp.client as mcp_client
-    from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
 
     class _Result:
         def __init__(self, data: object) -> None:
@@ -471,24 +486,13 @@ def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  #
             if "$orderby" in path:
                 return _Result({"results": [{"data": None, "statusCode": 400}]})
             if "/transcripts/" in path and "/content" in path:
-                spoken = "latest" if "/T2/" in path else "older"
+                tid = path.split("/transcripts/")[1].split("/")[0]
+                spoken = contents.get(tid, tid)
                 vtt = f"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Alex>{spoken}</v>"
                 return _Result({"results": [{"data": vtt, "statusCode": 200}]})
             if path.endswith("/transcripts"):
                 return _Result(
-                    {
-                        "results": [
-                            {
-                                "data": {
-                                    "value": [
-                                        {"id": "T1", "createdDateTime": "2026-01-01T00:00:00Z"},
-                                        {"id": "T2", "createdDateTime": "2026-01-02T00:00:00Z"},
-                                    ]
-                                },
-                                "statusCode": 200,
-                            }
-                        ]
-                    }
+                    {"results": [{"data": {"value": list(transcripts)}, "statusCode": 200}]}
                 )
             if "onlineMeetings?$filter" in path:
                 return _Result(
@@ -505,7 +509,37 @@ def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  #
         async def acquire(self, names, **kwargs):  # type: ignore[no-untyped-def]
             return bundle
 
+        async def aclose(self) -> None:  # the app's shutdown closes the manager
+            return None
+
     monkeypatch.setattr(mcp_client, "get_mcp_client_manager", lambda: _Manager())
+    return bundle
+
+
+# Two transcription sessions of one meeting ("Partie 1" / "Partie 2" in Teams).
+_TWO_PARTS = [
+    {
+        "id": "T1",
+        "createdDateTime": "2026-01-01T14:00:00Z",
+        "endDateTime": "2026-01-01T14:30:00Z",
+    },
+    {
+        "id": "T2",
+        "createdDateTime": "2026-01-02T09:00:00Z",
+        "endDateTime": "2026-01-02T10:15:00Z",
+    },
+]
+
+
+def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Regression: the transcripts collection rejects ``$orderby`` (Graph 400),
+    so the service must list without it and sort client-side, picking the newest.
+    """
+    import asyncio
+
+    from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
+
+    bundle = _install_fake_workiq(monkeypatch, _TWO_PARTS, {"T1": "older", "T2": "latest"})
 
     available, text, detail = asyncio.run(
         fetch_meeting_transcript({"join_url": "https://teams.microsoft.com/l/meetup-join/x"})
@@ -515,6 +549,111 @@ def test_fetch_meeting_transcript_no_orderby_and_latest(monkeypatch) -> None:  #
     assert text == "Alex: latest"
     # The transcripts listing must not carry an $orderby (Graph rejects it).
     assert not any(p.endswith("/transcripts") and "$orderby" in p for p in bundle.paths)
+
+
+def test_list_meeting_transcripts_reports_each_session_window(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The picker needs start/end per transcription session, oldest first."""
+    import asyncio
+
+    from precursor.backend.services.meeting_transcript import list_meeting_transcripts
+
+    _install_fake_workiq(monkeypatch, list(reversed(_TWO_PARTS)), {})
+
+    available, parts, detail = asyncio.run(
+        list_meeting_transcripts({"join_url": "https://teams.microsoft.com/l/meetup-join/x"})
+    )
+    assert available is True, detail
+    assert [p.id for p in parts] == ["T1", "T2"]
+    assert parts[0].created_at == "2026-01-01T14:00:00Z"
+    assert parts[0].ended_at == "2026-01-01T14:30:00Z"
+    assert parts[1].ended_at == "2026-01-02T10:15:00Z"
+
+
+def test_list_meeting_transcripts_without_end_time(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Older transcripts carry no ``endDateTime`` — the part must still list."""
+    import asyncio
+
+    from precursor.backend.services.meeting_transcript import list_meeting_transcripts
+
+    _install_fake_workiq(monkeypatch, [{"id": "T9", "createdDateTime": "2026-02-02T08:00:00Z"}], {})
+
+    available, parts, _ = asyncio.run(
+        list_meeting_transcripts({"join_url": "https://teams.microsoft.com/l/meetup-join/x"})
+    )
+    assert available is True
+    assert len(parts) == 1 and parts[0].ended_at is None
+
+
+def test_fetch_meeting_transcript_joins_selected_parts(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A meeting cut in two: both sessions are stitched in chronological order."""
+    import asyncio
+
+    from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
+
+    _install_fake_workiq(monkeypatch, _TWO_PARTS, {"T1": "first half", "T2": "second half"})
+
+    # Selection order must not matter — the transcript follows the clock.
+    available, text, detail = asyncio.run(
+        fetch_meeting_transcript(
+            {"join_url": "https://teams.microsoft.com/l/meetup-join/x"}, ["T2", "T1"]
+        )
+    )
+    assert available is True, detail
+    assert text == "Alex: first half\nAlex: second half"
+
+    # Selecting one session yields only that one.
+    _, only, _ = asyncio.run(
+        fetch_meeting_transcript(
+            {"join_url": "https://teams.microsoft.com/l/meetup-join/x"}, ["T1"]
+        )
+    )
+    assert only == "Alex: first half"
+
+
+def test_fetch_meeting_transcript_rejects_unknown_selection(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A stale id from the picker fails closed rather than silently summarising
+    the wrong session."""
+    import asyncio
+
+    from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
+
+    _install_fake_workiq(monkeypatch, _TWO_PARTS, {"T1": "a", "T2": "b"})
+
+    available, text, detail = asyncio.run(
+        fetch_meeting_transcript(
+            {"join_url": "https://teams.microsoft.com/l/meetup-join/x"}, ["GONE"]
+        )
+    )
+    assert available is False and text == ""
+    assert detail is not None and "no longer available" in detail
+
+
+def test_list_transcripts_endpoint(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """``GET /api/live/{id}/transcripts`` powers the session picker."""
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Teams"}).json()["id"]
+
+        # No meeting linked yet → fail-closed with a reason, not an error.
+        res = client.get(f"/api/live/{sid}/transcripts")
+        assert res.status_code == 200
+        assert res.json()["available"] is False
+        assert res.json()["parts"] == []
+
+        client.post(
+            f"/api/live/{sid}/meeting",
+            json={
+                "subject": "Sprint review",
+                "is_online": True,
+                "join_url": "https://teams.microsoft.com/l/meetup-join/xyz",
+            },
+        )
+        _install_fake_workiq(monkeypatch, _TWO_PARTS, {})
+        body = client.get(f"/api/live/{sid}/transcripts").json()
+        assert body["available"] is True
+        assert [p["id"] for p in body["parts"]] == ["T1", "T2"]
+        assert body["parts"][1]["created_at"] == "2026-01-02T09:00:00Z"
+        assert body["parts"][1]["ended_at"] == "2026-01-02T10:15:00Z"
 
 
 def test_link_meeting_persists_join_url() -> None:

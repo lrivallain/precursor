@@ -54,6 +54,9 @@ from precursor.backend.schemas import (
     MeetingSummaryPost,
     MeetingSummaryPostResult,
     MeetingSummaryResult,
+    MeetingTranscriptListResult,
+    MeetingTranscriptPart,
+    MeetingTranscriptSummaryRequest,
     MeetingTranscriptSummaryResult,
     SpeakerRenameRequest,
     TopicSummaryResult,
@@ -90,7 +93,10 @@ from precursor.backend.services.meeting_summary import (
     generate_summary_from_transcript,
     summarize_topic_conversation,
 )
-from precursor.backend.services.meeting_transcript import fetch_meeting_transcript
+from precursor.backend.services.meeting_transcript import (
+    fetch_meeting_transcript,
+    list_meeting_transcripts,
+)
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.usage_stats import record_usage
@@ -730,18 +736,49 @@ async def summarize(
     return MeetingSummaryResult(summary=text, model=model)
 
 
+@router.get("/{session_id}/transcripts", response_model=MeetingTranscriptListResult)
+async def list_transcripts(
+    session_id: int, session: AsyncSession = Depends(get_session)
+) -> MeetingTranscriptListResult:
+    """List the linked Teams meeting's transcription sessions (fail-closed).
+
+    Teams produces one transcript per *transcription session*, so a meeting
+    where transcription was stopped and restarted (or that got cut in two) has
+    several. The Summary tab lists them with their start/end times and lets the
+    user pick which one(s) to summarise.
+    """
+    ms = await _get_session_or_404(session_id, session)
+    if ms.external_meeting is None:
+        return MeetingTranscriptListResult(
+            available=False, detail="Link a Teams meeting to this session first."
+        )
+    available, parts, detail = await list_meeting_transcripts(ms.external_meeting)
+    return MeetingTranscriptListResult(
+        available=available,
+        parts=[
+            MeetingTranscriptPart(id=p.id, created_at=p.created_at, ended_at=p.ended_at)
+            for p in parts
+        ],
+        detail=detail,
+    )
+
+
 @router.post(
     "/{session_id}/summary/from-transcript",
     response_model=MeetingTranscriptSummaryResult,
 )
 async def summarize_from_transcript(
-    session_id: int, session: AsyncSession = Depends(get_session)
+    session_id: int,
+    payload: MeetingTranscriptSummaryRequest | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> MeetingTranscriptSummaryResult:
     """Build the recap from the linked Teams meeting transcript (via WorkIQ).
 
     A "no local record" path: when a Teams meeting is linked and WorkIQ is
     enabled, scrape the meeting's published transcript and summarise it with our
-    own model instead of a locally-captured recording. Persisted like the normal
+    own model instead of a locally-captured recording. ``transcript_ids`` picks
+    which transcription session(s) to use (several when the meeting got cut);
+    omitted, the most recent one is summarised. Persisted like the normal
     summary so a reopened session shows it.
     """
     ms = await _get_session_or_404(session_id, session)
@@ -751,7 +788,10 @@ async def summarize_from_transcript(
             "Link a Teams meeting to this session first.",
         )
 
-    available, transcript, detail = await fetch_meeting_transcript(ms.external_meeting)
+    transcript_ids = list(payload.transcript_ids) if payload else []
+    available, transcript, detail = await fetch_meeting_transcript(
+        ms.external_meeting, transcript_ids or None
+    )
     if not available:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -770,7 +810,7 @@ async def summarize_from_transcript(
     ms.summary = text
     await session.commit()
     await publish_meeting_changed(ms.id)
-    return MeetingTranscriptSummaryResult(summary=text, model=model)
+    return MeetingTranscriptSummaryResult(summary=text, model=model, transcript_ids=transcript_ids)
 
 
 @router.post(
