@@ -31,8 +31,10 @@ release.
 - **SQLAlchemy 2 (async)** ORM; **Alembic** is the single source of truth for the
   schema (`alembic upgrade head` runs on startup).
 - **sse-starlette** streams chat replies over Server-Sent Events.
-- **Settings** come from a cached `get_settings()`; runtime-editable settings
-  layer over env defaults via `AppSetting` rows.
+- **Settings** come from a cached `get_settings()` for the process-level `.env`
+  values; everything editable in the app lives in `AppSetting` rows and, bar two
+  documented exceptions, has no env twin (see
+  [Configuration](/reference/configuration)).
 
 Key dependencies (floors, from `pyproject.toml`): `fastapi`, `uvicorn[standard]`,
 `sqlalchemy[asyncio]`, `aiosqlite`, `alembic`, `pydantic`, `pydantic-settings`,

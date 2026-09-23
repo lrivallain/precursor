@@ -1715,11 +1715,17 @@ function SystemTab({
 
   return (
     <div className="space-y-6">
+      {/* Every field below is DB-only and read at point of use — see
+          tests/test_settings_surface.py for the split this copy describes. */}
       <p className="text-[11px] text-muted">
-        These values default to the server's environment / .env and are
-        overridden here at runtime. Most apply on the next chat or run; some
-        scheduler internals still require a restart (only the run timeout below
-        is live-applicable).
+        These values are stored in Precursor's database and set only here —
+        none has a{" "}
+        <code data-tooltip="Only process-level settings live in .env: bind address, database URL, data directory, ticker cadences.">
+          .env
+        </code>{" "}
+        equivalent. Changes apply without a restart: the run timeout on the next
+        scheduled run, retention on the next sweep, and the command runner on its
+        next command.
       </p>
 
       <section className="space-y-3">
