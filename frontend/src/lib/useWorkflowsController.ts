@@ -143,7 +143,7 @@ export function useWorkflowsController(deps: WorkflowsControllerDeps): Workflows
   }, [activeWorkflowId, activeWorkflowRunSeg, sidebarMode, atHome]);
 
   // Live sync across windows: workflow changes arrive over the shared event
-  // bus. `start()` is idempotent, so App starting it too is harmless.
+  // bus. `start()` is idempotent, so every controller starting it is harmless.
   useEffect(() => {
     eventBus.start();
     const off = eventBus.subscribe((event) => {

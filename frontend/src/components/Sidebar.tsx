@@ -31,6 +31,8 @@ import {
   X,
 } from "lucide-react";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
+import type { RemindersController } from "../lib/useRemindersController";
+import type { TopicsController } from "../lib/useTopicsController";
 import { sectionColor } from "../lib/sections";
 import type { SectionPlugin } from "../lib/plugins";
 import { Z_INDEX } from "../lib/constants";
@@ -93,67 +95,57 @@ function supportsNew(mode: SidebarMode, section: SectionPlugin | null): boolean 
   return CORE_MODE_KEYS.has(mode);
 }
 
-interface Props {
-  tree: TopicNode[];
-  activeId: number | null;
-  streamingTopicIds: number[];
-  collapsed: boolean;
+/**
+ * The section navigation shared by the sidebar and the standalone home rail:
+ * the current mode, how to change it, and what the switchers badge.
+ */
+export interface SectionNavProps {
   mode: SidebarMode;
-  onModeChange: (mode: SidebarMode) => void;
   /** Whether the root home launcher is active (no mode selected). */
   atHome?: boolean;
   /** Navigate to the root home launcher. */
   onGoHome?: () => void;
-  /** Rendered in the body when mode === "chats" (the chat list). */
-  chatSlot?: ReactNode;
-  /** Rendered in the body when mode === "live" (the meeting session list). */
-  liveSlot?: ReactNode;
-  /** Rendered in the body when mode === "workspaces" (the workspace list). */
-  workspaceSlot?: ReactNode;
-  agentSlot?: ReactNode;
-  workflowSlot?: ReactNode;
-  /** Rendered in the body when a plugin section is active (its own list). */
-  pluginSlot?: ReactNode;
-  onToggleCollapsed: () => void;
-  onSelect: (id: number) => void;
-  /** Mode-aware "New" action (topic / chat / workspace) in the header. */
-  onNew: () => void;
-  onCreate: (parentId: number | null) => void;
-  /** Inline rename of a topic (double-click its name in the tree). */
-  onRename: (id: number, title: string) => void | Promise<void>;
-  onSetRead: (id: number, unread: boolean) => void | Promise<void>;
-  onTogglePin: (id: number, pinned: boolean) => void | Promise<void>;
-  onArchive: (id: number) => void | Promise<void>;
-  onOpenReminder: (id: number) => void;
-  onOpenNotes: (id: number) => void;
-  /** Fired reminders, shown in a dedicated section across topics & chats. */
-  reminders: ReminderItem[];
-  /** Topic ids with a fired reminder, flagged with an alarm icon in the tree. */
-  reminderTopicIds?: Set<number>;
-  onReminderSelect: (item: ReminderItem) => void;
-  onReminderDone: (item: ReminderItem) => void;
-  onRefresh: () => Promise<void> | void;
-  onOpenGlobalSettings: () => void;
-  onOpenArchive: () => void;
   /** Opens the command palette (⌘K) for width-independent section jumps. */
   onOpenPalette?: () => void;
+  onModeChange: (mode: SidebarMode) => void;
+  /** Mode-aware "New" action (topic / chat / workspace) in the header. */
+  onNew: () => void;
   /** Per-mode unread totals, used to badge the mode switcher tabs. */
   unreadByMode?: Partial<Record<SidebarMode, number>>;
   /** Whether the Live section is enabled (hides its tab when off). */
   liveEnabled?: boolean;
   /** Plugin-contributed sections that are installed *and* currently enabled. */
   pluginSections?: SectionPlugin[];
-  /** Collections available to filter the topic tree. */
-  collections?: Collection[];
-  /** Currently selected collection (null while collections are loading). */
-  activeCollectionId?: number | null;
-  /** Unread message count per collection id, for the switcher badges. */
-  unreadByCollection?: Record<number, number>;
-  onCollectionChange?: (id: number) => void;
-  onCollectionCreate?: (name: string) => void | Promise<void>;
-  onManageCollections?: () => void;
-  /** Move a topic (and its subtree) to another collection. */
-  onMoveToCollection?: (topicId: number, collectionId: number) => void | Promise<void>;
+}
+
+/** Each section's own list, rendered in the body in place of the topic tree. */
+export interface SidebarSlots {
+  /** Rendered when mode === "chats" (the chat list). */
+  chats?: ReactNode;
+  /** Rendered when mode === "live" (the meeting session list). */
+  live?: ReactNode;
+  /** Rendered when mode === "workspaces" (the workspace list). */
+  workspaces?: ReactNode;
+  agents?: ReactNode;
+  workflows?: ReactNode;
+  /** Rendered when a plugin section is active (its own list). */
+  plugin?: ReactNode;
+}
+
+interface Props {
+  nav: SectionNavProps;
+  /** The topic tree, its collections and its row actions. */
+  topics: TopicsController;
+  streamingTopicIds: number[];
+  /** Fired reminders, shown in a dedicated section across topics & chats, plus
+      the tree's reminder flags and its "Set reminder" action. */
+  reminders: RemindersController;
+  slots: SidebarSlots;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onOpenGlobalSettings: () => void;
+  onOpenArchive: () => void;
+  onManageCollections: () => void;
   /** Rendered as an off-canvas drawer on phone-sized viewports: the sidebar
       takes a share of the screen instead of the persisted pixel width, and
       trades the resize/collapse affordances for a dismiss button. */
@@ -163,50 +155,56 @@ interface Props {
 }
 
 export function Sidebar({
-  tree,
-  activeId,
+  nav,
+  topics,
   streamingTopicIds,
+  reminders: remindersCtl,
+  slots,
   collapsed,
-  mode,
-  onModeChange,
-  atHome = false,
-  onGoHome,
-  chatSlot,
-  liveSlot,
-  workspaceSlot,
-  agentSlot,
-  workflowSlot,
-  pluginSlot,
   onToggleCollapsed,
-  onSelect,
-  onNew,
-  onCreate,
-  onRename,
-  onSetRead,
-  onTogglePin,
-  onArchive,
-  onOpenReminder,
-  onOpenNotes,
-  reminders,
-  reminderTopicIds,
-  onReminderSelect,
-  onReminderDone,
   onOpenGlobalSettings,
   onOpenArchive,
-  onOpenPalette,
-  unreadByMode,
-  liveEnabled = true,
-  pluginSections = EMPTY_SECTIONS,
-  collections = [],
-  activeCollectionId = null,
-  unreadByCollection,
-  onCollectionChange,
-  onCollectionCreate,
   onManageCollections,
-  onMoveToCollection,
   narrow = false,
   onClose,
 }: Props) {
+  const {
+    mode,
+    atHome = false,
+    onGoHome,
+    onOpenPalette,
+    onModeChange,
+    onNew,
+    unreadByMode,
+    liveEnabled = true,
+    pluginSections = EMPTY_SECTIONS,
+  } = nav;
+  // The topic tree is scoped to the active collection.
+  const {
+    collectionTree: tree,
+    collections,
+    activeCollectionId,
+    unreadByCollection,
+    chooseCollection,
+    createCollection,
+    moveTopicToCollection: onMoveToCollection,
+    handleSelect: onSelect,
+    handleCreate: onCreate,
+    handleRenameTopic: onRename,
+    handleTopicReadState: onSetRead,
+    handleTopicPin: onTogglePin,
+    handleArchiveTopic: onArchive,
+  } = topics;
+  const activeId = topics.activeTopic?.id ?? null;
+  const onOpenNotes = (id: number) => void topics.handleOpenTopicNotes(id);
+  const {
+    reminders,
+    reminderTopicIds,
+    handleReminderSelect: onReminderSelect,
+    handleReminderDone: onReminderDone,
+    setSidebarReminder,
+  } = remindersCtl;
+  const onOpenReminder = (id: number) => setSidebarReminder({ container: "topic", id });
   const [query, setQuery] = useState("");
   const { collapsedIds, toggleCollapsed } = useCollapsedTopics();
   const { collapsed: collapsedSections, toggle: toggleSection } = useCollapsedSections(
@@ -414,33 +412,31 @@ export function Sidebar({
       )}
 
       {mode === "chats" ? (
-        chatSlot
+        slots.chats
       ) : mode === "live" ? (
-        liveSlot
+        slots.live
       ) : mode === "workspaces" ? (
-        workspaceSlot
+        slots.workspaces
       ) : mode === "agents" ? (
-        agentSlot
+        slots.agents
       ) : mode === "workflows" ? (
-        workflowSlot
+        slots.workflows
       ) : activeSection ? (
-        pluginSlot
+        slots.plugin
       ) : !CORE_MODE_KEYS.has(mode) ? (
         // A plugin section whose bundle hasn't arrived yet. Render nothing
         // rather than flashing the topic tree under someone else's route.
         null
       ) : (
         <>
-          {onCollectionChange && (
-            <CollectionSwitcher
-              collections={collections}
-              activeId={activeCollectionId}
-              unreadByCollection={unreadByCollection}
-              onSelect={onCollectionChange}
-              onCreate={onCollectionCreate ?? (() => {})}
-              onManage={onManageCollections ?? (() => {})}
-            />
-          )}
+          <CollectionSwitcher
+            collections={collections}
+            activeId={activeCollectionId}
+            unreadByCollection={unreadByCollection}
+            onSelect={chooseCollection}
+            onCreate={createCollection}
+            onManage={onManageCollections}
+          />
           <div className="px-3 py-2 border-b border-border">
             <div className="relative">
               <Search
@@ -1084,18 +1080,7 @@ export function SectionRail({
   liveEnabled = true,
   pluginSections = EMPTY_SECTIONS,
   footer,
-}: {
-  mode: SidebarMode;
-  atHome?: boolean;
-  onGoHome?: () => void;
-  onOpenPalette?: () => void;
-  onModeChange: (mode: SidebarMode) => void;
-  onNew: () => void;
-  unreadByMode?: Partial<Record<SidebarMode, number>>;
-  liveEnabled?: boolean;
-  pluginSections?: SectionPlugin[];
-  footer?: ReactNode;
-}) {
+}: SectionNavProps & { footer?: ReactNode }) {
   const modeDefs = useModeDefs(pluginSections);
   const allModes = useMemo(() => modeDefs.map((m) => m.mode), [modeDefs]);
   const { order, reorder } = useSectionOrder(allModes);

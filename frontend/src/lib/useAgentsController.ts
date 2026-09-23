@@ -256,7 +256,7 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
   }, []);
 
   // Live sync across windows: agent roster changes arrive over the shared event
-  // bus. `start()` is idempotent, so App starting it too is harmless.
+  // bus. `start()` is idempotent, so every controller starting it is harmless.
   useEffect(() => {
     eventBus.start();
     // A running agent emits SDK events at token cadence and each one lands here
