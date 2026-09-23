@@ -198,17 +198,6 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
     agentsRef.current = agents;
   }, [agents]);
 
-  // Once sessions load, resolve any UUID deep link that arrived before the list
-  // was available (e.g. opening /agents/<uuid> cold).
-  useEffect(() => {
-    if (!pendingAgentRef.current || agents == null) return;
-    const id = resolveAgentRef(pendingAgentRef.current, agents);
-    if (id != null) {
-      pendingAgentRef.current = null;
-      setActiveAgentId(id);
-    }
-  }, [agents]);
-
   // Exclude the agent you're actively viewing (agents mode) from the tab total:
   // unlike topics/chats it isn't re-marked read on every incoming event, so its
   // backend count would otherwise keep the Agents tab badged while you watch it.
@@ -234,8 +223,31 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
     // drop the UUID before the agents-load effect can resolve it.
     if (activeAgentId == null && pendingAgentRef.current) return;
     const target = agentUrl(activeAgentId, agents);
-    if (window.location.pathname !== target) navigate(target);
+    if (window.location.pathname === target) return;
+    // Swapping a legacy integer id for the UUID once the list has loaded only
+    // normalises an entry that already names this agent, so replace it and keep
+    // its `?q=`: the mirror doesn't re-run when only the list changes.
+    const shown = resolveAgentRef(parseAppRoute().agentRef, agents);
+    if (activeAgentId != null && shown === activeAgentId) {
+      navigate(target + window.location.search, { replace: true });
+    } else {
+      navigate(target);
+    }
   }, [activeAgentId, sidebarMode, agents, atHome]);
+
+  // Once sessions load, resolve any UUID deep link that arrived before the list
+  // was available (e.g. opening /agents/<uuid> cold). Runs after the URL effect
+  // above: resolving first would clear the pending UUID while `activeAgentId`
+  // is still null, and that effect would push a transient `/agents` entry
+  // ahead of the resolved one.
+  useEffect(() => {
+    if (!pendingAgentRef.current || agents == null) return;
+    const id = resolveAgentRef(pendingAgentRef.current, agents);
+    if (id != null) {
+      pendingAgentRef.current = null;
+      setActiveAgentId(id);
+    }
+  }, [agents]);
 
   useEffect(() => {
     function onOpenAgent(e: Event): void {

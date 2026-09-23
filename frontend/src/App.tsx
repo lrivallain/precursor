@@ -278,9 +278,8 @@ export default function App() {
   }, []);
 
   // ---- Live meeting sessions -------------------------------------------
-  // Called after the mount `syncFromUrl` above, like the controllers below, and
-  // it matters most here: on a cold `/live/<slug>` load its URL effect first
-  // navigates to `/live`, which would lose the slug before the sync read it.
+  // Called after the mount `syncFromUrl` above, like the controllers below, so
+  // its `/live` URL effect can't navigate before the sync reads the entry URL.
   // Called ahead of the agents and workflows controllers, which take its
   // `confirmLeaveRecording`.
   const liveCtl = useLiveSessionsController({
