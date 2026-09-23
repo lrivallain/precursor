@@ -10,7 +10,6 @@ import {
   X,
 } from "lucide-react";
 import { Sidebar, SectionRail, type SidebarMode } from "./components/Sidebar";
-import { EmptyHero } from "./components/EmptyHero";
 import { resolveSections } from "./lib/plugins";
 import { usePluginDescriptors } from "./lib/pluginStore";
 import type { SectionHost } from "./lib/plugins";
@@ -27,11 +26,6 @@ import { HomePage } from "./components/HomePage";
 import { ArchivePanel } from "./components/ArchivePanel";
 import { IssueStatusBadge } from "./components/IssueStatusBadge";
 import { IssueLabelChip, IssueStateBadge } from "./components/IssueTags";
-import {
-  CreateWorkspaceModal,
-  WorkspaceView,
-} from "./components/WorkspaceView";
-import { WorkspaceList } from "./components/WorkspaceList";
 import {
   LiveHeader,
   LiveHomeSurface,
@@ -51,6 +45,12 @@ import {
   WorkflowsMain,
   WorkflowsSidebarSlot,
 } from "./components/WorkflowsSectionParts";
+import {
+  WorkspacesCreateModal,
+  WorkspacesHeader,
+  WorkspacesMain,
+  WorkspacesSidebarList,
+} from "./components/WorkspacesSectionParts";
 import { PersonaMenu } from "./components/PersonaMenu";
 import { DetachedDraftHost } from "./components/DetachedDraftHost";
 import { InlineTitle } from "./components/InlineTitle";
@@ -76,9 +76,9 @@ import {
   useLiveSessionsLateEffects,
 } from "./lib/useLiveSessionsController";
 import { useWorkflowsController } from "./lib/useWorkflowsController";
+import { useWorkspacesController } from "./lib/useWorkspacesController";
 import { windowFocused } from "./lib/windowFocus";
 import { openNotes } from "./lib/notesOpen";
-import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./lib/workspaceLink";
 import type {
   Chat,
   Collection,
@@ -86,7 +86,6 @@ import type {
   SearchResult,
   Topic,
   TopicNode,
-  Workspace,
 } from "./lib/types";
 import {
   pickInitialCollection,
@@ -99,14 +98,11 @@ import {
   isPluginMode,
   navigate,
   parseAppRoute,
-  parseWsRoute,
   pluginSectionUrl,
   searchTermFromUrl,
   topicsModeUrl,
   topicUrl,
-  workspaceUrl,
   type PluginRoute,
-  type WsRoute,
 } from "./lib/routes";
 import { findTitle, topicAncestors, totalUnread } from "./lib/topicTree";
 
@@ -166,16 +162,11 @@ export default function App() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [activeCollectionId, setActiveCollectionId] = useState<number | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const [wsRoute, setWsRoute] = useState<WsRoute>(parseWsRoute);
-  // Workspaces are loaded lazily when the user first enters workspaces mode.
-  const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null);
   // Route state owned by the active plugin section (opaque to core).
   const [pluginRoute, setPluginRoute] = useState<PluginRoute>(() => {
     const r = parseAppRoute();
     return { segments: r.pluginSegments, hash: r.pluginHash };
   });
-  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [topicSettingsOpen, setTopicSettingsOpen] = useState(false);
   const [topicSettingsTab, setTopicSettingsTab] = useState<"settings" | "context">(
     "settings",
@@ -537,18 +528,18 @@ export default function App() {
       }
       if (isHomePath()) {
         setAtHome(true);
-        setWsRoute({ open: false, slug: null, path: null });
+        wsCtl.closeRoute();
         return;
       }
       setAtHome(false);
       const r = parseAppRoute();
       setSidebarMode(r.mode);
       if (r.mode === "workspaces") {
-        setWsRoute(parseWsRoute());
+        wsCtl.syncFromRoute();
         return;
       }
       // Left workspaces — clear its route state so a stale slug/path can't leak.
-      setWsRoute({ open: false, slug: null, path: null });
+      wsCtl.closeRoute();
       // A plugin section owns everything under its root; hand it the fresh
       // segments/hash and let it reconcile (initial load + back/forward).
       if (isPluginMode(r.mode)) {
@@ -657,6 +648,16 @@ export default function App() {
   });
   const { activeSessionId, confirmLeaveRecording } = liveCtl;
 
+  // ---- Workspaces -------------------------------------------------------
+  // Called after the mount `syncFromUrl` like the other section controllers,
+  // and ahead of the agents and workflows controllers, which take its stable
+  // `closeRoute`. It has no URL effect, so it can't navigate before the sync.
+  const wsCtl = useWorkspacesController({
+    sidebarMode,
+    setSidebarMode,
+    closeMobileNav,
+  });
+
   // ---- Agents -----------------------------------------------------------
   // Called after the mount `syncFromUrl` above so its `/agents` URL effect still
   // runs after it: navigating first would drop `?q=` before the sync reads it.
@@ -674,7 +675,7 @@ export default function App() {
     isViewing,
     setSidebarMode,
     setAtHome,
-    setWsRoute,
+    closeWsRoute: wsCtl.closeRoute,
     closeMobileNav,
     confirmAction,
     confirmLeaveRecording,
@@ -693,7 +694,7 @@ export default function App() {
     notificationsEnabledRef,
     setSidebarMode,
     setAtHome,
-    setWsRoute,
+    closeWsRoute: wsCtl.closeRoute,
     closeMobileNav,
     confirmLeaveRecording,
   });
@@ -874,7 +875,8 @@ export default function App() {
       target = "/ws";
     }
     if (window.location.pathname !== target) navigate(target);
-    setWsRoute(next === "workspaces" ? parseWsRoute() : { open: false, slug: null, path: null });
+    if (next === "workspaces") wsCtl.syncFromRoute();
+    else wsCtl.closeRoute();
     setSidebarMode(next);
     // These section buttons explicitly select the overview, like a list item.
     if (next === "agents" || next === "workflows") closeMobileNav();
@@ -885,7 +887,7 @@ export default function App() {
     if (!(await confirmLeaveRecording())) return;
     closeMobileNav();
     if (window.location.pathname !== "/") navigate("/");
-    setWsRoute({ open: false, slug: null, path: null });
+    wsCtl.closeRoute();
     setAtHome(true);
   }
 
@@ -894,7 +896,7 @@ export default function App() {
   // start surface inline (see the home*FromHome handlers below).
   function startNewFromHome(mode: SidebarMode): void {
     setAtHome(false);
-    setWsRoute({ open: false, slug: null, path: null });
+    wsCtl.closeRoute();
     if (mode === "topics") {
       setActiveTopic(null);
       setTopicDraftParentId(null);
@@ -920,8 +922,8 @@ export default function App() {
     } else {
       navigate("/ws");
       setSidebarMode("workspaces");
-      setWsRoute(parseWsRoute());
-      setCreateWorkspaceOpen(true);
+      wsCtl.syncFromRoute();
+      wsCtl.startNew();
     }
   }
 
@@ -991,14 +993,6 @@ export default function App() {
     navigate("/topics", { replace: true });
     setSidebarMode("topics");
   }, [enabledSections, pluginDescriptors, sidebarMode, settings]);
-
-  // Reflect the active workspace + open file in the URL so a reload returns to
-  // the same place. replaceState keeps it as a single history entry.
-  function navigateWorkspace(slug: string | null, filePath: string | null): void {
-    navigate(workspaceUrl(slug, filePath), { replace: true });
-    setWsRoute({ open: true, slug, path: filePath });
-  }
-
 
   // Whenever any stream finishes, refresh the tree so unread badges and
   // updated_at timestamps reflect the new server state. If the user happens to
@@ -1383,7 +1377,7 @@ export default function App() {
     // `onNew` has no "+" either (see `supportsNew` in Sidebar).
     else if (isPluginMode(sidebarMode)) {
       activeSection?.onNew?.(sectionHost);
-    } else setCreateWorkspaceOpen(true);
+    } else wsCtl.startNew();
   }
 
   // ---- Plugin sections ---------------------------------------------------
@@ -1445,13 +1439,6 @@ export default function App() {
     [pluginRoute, settings],
   );
 
-  // ---- Workspaces -------------------------------------------------------
-  const activeWorkspace =
-    workspaces?.find((w) => w.id === activeWorkspaceId) ?? null;
-  // The route path only applies to the workspace named in the URL.
-  const workspaceInitialPath =
-    activeWorkspace && activeWorkspace.slug === wsRoute.slug ? wsRoute.path : null;
-
   // ---- Assistant roles --------------------------------------------------
   // Each composer owns its own role pill; this is the shared persistence path
   // they and the `/role` command funnel through. Selecting the default role
@@ -1465,13 +1452,8 @@ export default function App() {
     } else if (sidebarMode === "chats" && activeChat) {
       const updated = await api.chats.update(activeChat.id, { role_id: roleId });
       if (activeChatRef.current?.id === activeChat.id) setActiveChat(updated);
-    } else if (sidebarMode === "workspaces" && activeWorkspace) {
-      const updated = await api.workspaces.update(activeWorkspace.id, {
-        role_id: roleId,
-      });
-      setWorkspaces((prev) =>
-        prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
-      );
+    } else if (sidebarMode === "workspaces" && wsCtl.activeWorkspace) {
+      await wsCtl.setRoleForActive(roleId);
     } else if (sidebarMode === "agents" && agentsCtl.activeAgent) {
       const updated = await api.agents.update(agentsCtl.activeAgent.id, { role_id: roleId });
       agentsCtl.setAgents((prev) =>
@@ -1479,55 +1461,6 @@ export default function App() {
       );
     }
   }
-
-  async function loadWorkspaces(): Promise<Workspace[]> {
-    const list = await api.workspaces.list();
-    setWorkspaces(list);
-    return list;
-  }
-
-  // Lazily load workspaces the first time the user enters that mode, then pick
-  // an active one (honouring a slug from the URL, else the first).
-  useEffect(() => {
-    if (sidebarMode !== "workspaces" || workspaces !== null) return;
-    void loadWorkspaces().then((list) => {
-      if (list.length === 0) return;
-      const fromRoute = wsRoute.slug
-        ? list.find((w) => w.slug === wsRoute.slug)
-        : undefined;
-      setActiveWorkspaceId((id) => id ?? fromRoute?.id ?? list[0].id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidebarMode]);
-
-  function handleSelectWorkspace(ws: Workspace): void {
-    closeMobileNav();
-    setActiveWorkspaceId(ws.id);
-    navigateWorkspace(ws.slug, null);
-  }
-
-  // A workspace-file chip on a tool call (see lib/workspaceLink.ts) jumps from
-  // the conversation straight to the file the assistant just wrote. The slug is
-  // resolved to a workspace id here because the lazy loader above only consults
-  // the URL on a cold start — by the time a chip is clicked the list is usually
-  // loaded and an active workspace already picked. pushState (not replace) so
-  // Back returns to the discussion.
-  useEffect(() => {
-    return subscribeOpenWorkspaceFile(({ slug, path }) => {
-      void (async () => {
-        const url = workspaceFileUrl(slug, path);
-        if (url === null) return;
-        const list = workspaces ?? (await loadWorkspaces());
-        const target = list.find((w) => w.slug === slug);
-        if (!target) return;
-        setActiveWorkspaceId(target.id);
-        navigate(url);
-        setWsRoute({ open: true, slug, path });
-        setSidebarMode("workspaces");
-      })();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaces]);
 
   // Reveal the inline "new topic" form in the main pane (the Topics empty
   // state). Top-level "+ create" passes null; if a topic is selected the new one
@@ -1670,13 +1603,7 @@ export default function App() {
             onOpenNotes={(chat) => void handleOpenChatNotes(chat)}
           />
         }
-        workspaceSlot={
-          <WorkspaceList
-            workspaces={workspaces}
-            activeId={activeWorkspaceId}
-            onSelect={handleSelectWorkspace}
-          />
-        }
+        workspaceSlot={<WorkspacesSidebarList controller={wsCtl} />}
         liveSlot={<LiveSidebarList controller={liveCtl} />}
         agentSlot={
           <AgentsSidebarList
@@ -1854,9 +1781,7 @@ export default function App() {
               )}
             </>
           ) : sidebarMode === "workspaces" ? (
-            <span className="truncate font-medium min-w-0 flex-1">
-              {activeWorkspace ? activeWorkspace.name : "Workspaces"}
-            </span>
+            <WorkspacesHeader controller={wsCtl} />
           ) : sidebarMode === "live" ? (
             <LiveHeader
               controller={liveCtl}
@@ -2004,25 +1929,7 @@ export default function App() {
               <ChatStartHero onStart={handleStartChat} />
             )
           ) : sidebarMode === "workspaces" ? (
-            workspaces === null ? (
-              <EmptyHero label="Loading workspaces…" />
-            ) : activeWorkspace ? (
-              <WorkspaceView
-                key={activeWorkspace.id}
-                workspace={activeWorkspace}
-                initialPath={workspaceInitialPath}
-                onPathChange={(p) => navigateWorkspace(activeWorkspace.slug, p)}
-                onDeleted={async () => {
-                  const list = await loadWorkspaces();
-                  const next = list[0] ?? null;
-                  setActiveWorkspaceId(next?.id ?? null);
-                  navigateWorkspace(next?.slug ?? null, null);
-                }}
-                onSetRole={setRoleForActive}
-              />
-            ) : (
-              <EmptyHero label="No workspaces yet." />
-            )
+            <WorkspacesMain controller={wsCtl} onSetRole={setRoleForActive} />
           ) : sidebarMode === "live" ? (
             <LiveMain controller={liveCtl} tree={tree} collections={collections} />
           ) : activeSection ? (
@@ -2109,17 +2016,7 @@ export default function App() {
         onOpenWorkflow={(workflowId) => void workflowsCtl.openWorkflow(workflowId)}
       />
 
-      {createWorkspaceOpen && (
-        <CreateWorkspaceModal
-          onClose={() => setCreateWorkspaceOpen(false)}
-          onCreated={async (workspace) => {
-            setCreateWorkspaceOpen(false);
-            await loadWorkspaces();
-            setActiveWorkspaceId(workspace.id);
-            navigateWorkspace(workspace.slug, null);
-          }}
-        />
-      )}
+      <WorkspacesCreateModal controller={wsCtl} />
 
       {archiveOpen && (
         <ArchivePanel
