@@ -13,6 +13,7 @@ from precursor.backend.main import create_app
 from precursor.backend.routers import chat_messages
 from precursor.backend.services import chat_autoname
 from precursor.backend.services.chat_autoname import MAX_TITLE_CHARS, sanitize_title
+from precursor.backend.services.llm import one_shot
 from precursor.backend.services.llm.base import TextDeltaEvent, TurnDoneEvent, UsageEvent
 
 # --- sanitize_title --------------------------------------------------------
@@ -160,7 +161,7 @@ def _stub_provider_factory(text: str):  # type: ignore[no-untyped-def]
 
 
 def _stub_provider(monkeypatch: pytest.MonkeyPatch, text: str) -> None:
-    monkeypatch.setattr(chat_autoname, "get_llm_provider", _stub_provider_factory(text))
+    monkeypatch.setattr(one_shot, "get_llm_provider", _stub_provider_factory(text))
 
 
 def test_suggest_name_renames_a_chat_without_touching_its_slug(
@@ -246,7 +247,7 @@ def test_suggest_name_survives_a_provider_failure(monkeypatch: pytest.MonkeyPatc
     async def _boom(_session):  # type: ignore[no-untyped-def]
         raise RuntimeError("provider is down")
 
-    monkeypatch.setattr(chat_autoname, "get_llm_provider", _boom)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _boom)
 
     app = create_app()
     with TestClient(app) as client:
@@ -291,6 +292,35 @@ def test_autoname_replaces_the_placeholder_and_clears_the_flag(
         assert client.get(f"/api/chats/{chat['id']}").json()["title"] == "Fixing the login redirect"
 
 
+def test_naming_usage_is_attributed_to_the_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both the automatic pass and ``/suggest-name`` bill the chat they name."""
+    from sqlalchemy import select
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import UsageRecord
+
+    _stub_provider(monkeypatch, "Fixing the login redirect")
+
+    async def _naming_rows(chat_id: int) -> list[str]:
+        async with SessionLocal() as session:
+            rows = await session.scalars(
+                select(UsageRecord.source).where(UsageRecord.chat_id == chat_id)
+            )
+            return list(rows)
+
+    app = create_app()
+    with TestClient(app) as client:
+        chat = client.post("/api/chats", json={"title": "New chat", "autoname": True}).json()
+        asyncio.run(chat_autoname._autoname_chat(chat["id"], prompt="Why does login loop?"))
+        client.post(
+            f"/api/chats/{chat['id']}/messages/notes/append",
+            json={"text": "The login page keeps redirecting in a loop."},
+        )
+        assert client.post(f"/api/chats/{chat['id']}/messages/suggest-name").status_code == 200
+
+        assert asyncio.run(_naming_rows(chat["id"])) == [chat_autoname.USAGE_SOURCE] * 2
+
+
 def test_autoname_leaves_an_unflagged_chat_alone(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_provider(monkeypatch, "Fixing the login redirect")
 
@@ -327,7 +357,7 @@ def test_autoname_never_raises_when_the_provider_dies(monkeypatch: pytest.Monkey
     async def _boom(_session):  # type: ignore[no-untyped-def]
         raise RuntimeError("provider is down")
 
-    monkeypatch.setattr(chat_autoname, "get_llm_provider", _boom)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _boom)
 
     app = create_app()
     with TestClient(app) as client:
@@ -346,7 +376,7 @@ def test_a_failed_naming_pass_is_retried_on_the_next_turn(
     async def _boom(_session):  # type: ignore[no-untyped-def]
         raise RuntimeError("provider is down")
 
-    monkeypatch.setattr(chat_autoname, "get_llm_provider", _boom)
+    monkeypatch.setattr(one_shot, "get_llm_provider", _boom)
 
     app = create_app()
     with TestClient(app) as client:

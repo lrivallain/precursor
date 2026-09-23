@@ -238,6 +238,16 @@ onto the same four provider events — lives in `services/llm/_responses_compat.
 Adding a provider is one `ProviderSpec` in the registry plus an implementation
 class.
 
+**One-shot calls.** Features that ask the model once with no tools (the `/gh-*`
+drafts, `/notes rephrase`, `/refine`, auto-naming, the issue and topic
+summaries, the live recap, analysis and translation) go through
+`services/llm/one_shot.complete_once()`. It resolves the provider and model,
+commits the caller's session before the provider call so a slow model doesn't
+hold a pooled connection, and writes the usage row in its own session with the
+topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
+catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
+fallbacks stay with each feature.
+
 ## MCP
 
 Precursor is *both* an MCP client and an MCP server, with working transports.
