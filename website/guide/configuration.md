@@ -118,7 +118,7 @@ feature it configures:
 | **Workflows** | The [defaults a new pipeline starts from](/features/workflows/building). |
 | **Live / Speech-to-text** | Enable the section, pick the fast insights model, set [transcript retention](/features/live-sessions#transcript-retention) and Azure Speech credentials. |
 | **Backup** | Periodic copy of the database + attachment blobs into a plain folder. |
-| **System** | [Storage retention](/features/storage) and the [command-runner jail](/features/command-runner). |
+| **System** | The scheduled-run timeout, [storage retention](/features/storage) and the [command-runner jail](/features/command-runner). All database-only, and applied without a restart. |
 
 Fleet-wide knobs that aren't per-object — the agent concurrency cap, retry
 backoff — are [`.env` settings](#process-level-configuration-env).

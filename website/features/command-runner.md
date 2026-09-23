@@ -43,4 +43,7 @@ reason not to, and never expose Precursor to a network with the jail disabled.
 - Scheduled topics can invoke commands too — see the
   [scheduler](/features/scheduler).
 
-Configure the jail under **Settings → System**.
+Configure the jail under **Settings → System**. Its settings live only in the
+database — there is no `PRECURSOR_CMD_RUNNER_*` variable — and every command
+reads them when it starts, so a change applies to the next one without a
+restart.

@@ -123,6 +123,9 @@ recurrence is stored in the database.
 | `PRECURSOR_SCHEDULER_CONCURRENCY` | `2` | How many scheduled runs may execute at once. |
 | `PRECURSOR_REMINDER_POLL_SECONDS` | `30` | How often the reminder ticker looks for due reminders. |
 
+How long a single scheduled run may take isn't env-level: it's **Settings →
+System → Scheduled run timeout** (default `600` s), read afresh for every run.
+
 ## Retention
 
 Independent sweeps bound long-term database growth — see

@@ -503,6 +503,17 @@ are the per-version history; releasing does not rewrite this file.
   reply that said something and then called a tool ("Let me read the file
   first.") showed only the tool bubble: the text was read after it had already
   been reset for the next round.
+- **Settings → System no longer says its values come from `.env`.** The panel
+  opened with "These values default to the server's environment / .env", but
+  every field on it has been database-only since the env twins were removed —
+  including `PRECURSOR_CMD_RUNNER_JAIL`, which the note was still pointing
+  readers at. It now says the values live in the database and apply without a
+  restart: the run timeout on the next scheduled run, retention on the next
+  sweep, and the command runner on its next command. The old claim that only the
+  run timeout was live was wrong too. The same "env default, overridden by the
+  database" description is gone from the architecture and stack docs, the
+  command-runner screenshot is retaken, and a test now fails if the panel's copy
+  points back at the environment (#252).
 - **A failed MCP connect now names its cause.** When a remote server could not
   be reached, for example an Agent 365 endpoint timing out, the server card and
   the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup

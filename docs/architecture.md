@@ -181,9 +181,13 @@ remains separate.
   database stamped at a squashed-away revision is auto-adopted to the current
   baseline on next startup (a version-row update only — no schema/data change).
 
-Runtime settings layer over env defaults: `services/app_settings.py` resolves
-each setting as "env/`.env` default, overridden by an `AppSetting` row if
-present, clamped to a sane range".
+Runtime settings are owned by the database: `services/app_settings.py` resolves
+each one as "the `AppSetting` row if present and valid, clamped to a sane range,
+else a factory default declared beside its `resolve_*` helper". Anything the
+Settings panel can change has no `PRECURSOR_*` env twin — bar
+`playwright_browser` and `workiq_tenant_id`, which `.env` may seed — and
+`tests/test_settings_surface.py` pins that split. `.env` (`config.Settings`)
+keeps only what must be known before the database exists.
 
 ## GitHub integration
 
