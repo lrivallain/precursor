@@ -442,6 +442,31 @@ are the per-version history; releasing does not rewrite this file.
   feature doesn't handle returns a `502 LLM call failed: …`, as the `/gh-*`
   drafts and `/notes rephrase` already did.
 
+- **Usage stats now count workspace chat and scheduled turns.** Two turn paths
+  never wrote the usage ledger, so **Settings → Usage stats** undercounted
+  tokens: the workspace assistant (it dropped the provider's usage report on
+  every round), and every unattended topic turn — scheduled prompts and MCP
+  `post_message` calls. Both now record one ledger row per model round, like a
+  topic or chat turn does; workspace rows carry `source="workspace"` because
+  there is no conversation to attribute them to.
+
+- **The workspace assistant now shows an Open chip for files its tools touch.**
+  Its `tool_result` events never carried the `link` the topic and chat streams
+  send, so a file read or written from the workspace assistant had no chip to
+  jump to. It also applies the context budget when no MCP tools are enabled —
+  that path used to send the whole history uncapped.
+
+- **Scheduled and `post_message` answers no longer show a raw `suggest` block.**
+  The unattended turn stored the model's follow-up block verbatim in the
+  transcript instead of lifting it into suggestion chips, and saved no model or
+  duration on the answer. It now stores answers exactly as a streamed turn does.
+
+  Under the hood the topic, chat, scheduled and workspace turns now share one
+  preparation service (`services/conversation_turn.py`) and one set of
+  persistence helpers, so fixes to retries, attachments, prompt overrides or the
+  tool loop land everywhere at once
+  ([#332](https://github.com/lrivallain/precursor/issues/332)).
+
 - **An installed Precursor failed to start on the migration step.** Startup
   runs `alembic upgrade head`, and the config it built pointed at the
   repository's `alembic.ini` — a file that configures the *CLI* (logging,
