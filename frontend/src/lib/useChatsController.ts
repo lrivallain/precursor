@@ -289,6 +289,9 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   // Drop the selection to reveal the chat start hero.
   function startNew(): void {
     setActiveChat(null);
+    // Push rather than leave the chat's URL behind: a reload would reopen it,
+    // and Back should return to the chat you were reading.
+    if (window.location.pathname !== "/chats") navigate("/chats");
   }
 
   return {

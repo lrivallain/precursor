@@ -37,6 +37,13 @@ when the panel is collapsed. Agents and Workflows each offer a searchable list
 plus an **Overview** entry for their card dashboard. Clicking either section in
 the rail or tabs opens that overview; selecting a list row opens the item.
 
+**The browser tab names what's open.** The tab title follows the open item and
+its section, most specific first — `Search latency regression · Topics ·
+Precursor`, `README.md · Design notes · Files · Precursor` — and falls back to
+the section (or `Home`) when nothing is open. Every history entry keeps its own
+title, so the list behind a long-press on Back or Forward reads as real page
+names. Unread counts and the 🔔 for a waiting agent still lead the title.
+
 ## Cross-cutting capabilities
 
 These work across the sections above:

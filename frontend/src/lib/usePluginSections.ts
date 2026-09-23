@@ -31,14 +31,16 @@ export interface PluginSectionsDeps {
 
 export interface PluginSectionsController {
   sectionHost: SectionHost;
+  // What the open section reported for the tab title, if it's still the open one.
+  pageTitle: string | null;
   syncFromRoute: (r: AppRoute) => void;
   sectionUrl: (mode: SidebarMode) => string;
 }
 
 // Hosts the active plugin section: its opaque sub-route, the services core
-// hands it, and the guard that bounces a section which went away, like the
-// live-disabled one. Called after the `?q=` mirror, where App's bounce used to
-// run.
+// hands it (the tab title it reports included), and the guard that bounces a
+// section which went away, like the live-disabled one. Called after the `?q=`
+// mirror, where App's bounce used to run.
 export function usePluginSections(deps: PluginSectionsDeps): PluginSectionsController {
   const {
     sidebarMode,
@@ -80,6 +82,18 @@ export function usePluginSections(deps: PluginSectionsDeps): PluginSectionsContr
   useEffect(() => {
     pluginRouteRef.current = pluginRoute;
   }, [pluginRoute]);
+
+  // The item a plugin section reports for the tab title, tagged with the
+  // section that reported it so no other section ever inherits it.
+  const [pluginPageTitle, setPluginPageTitle] = useState<{
+    section: string;
+    title: string | null;
+  } | null>(null);
+  // Leaving the section forgets it. This runs after the entered section's own
+  // mount effects, hence the tag check rather than an unconditional reset.
+  useEffect(() => {
+    setPluginPageTitle((prev) => (prev && prev.section !== sidebarMode ? null : prev));
+  }, [sidebarMode]);
 
   // `changeMode` and `handleSelect` are plain function declarations, so every
   // render makes new ones closing over that render's state. The host below is
@@ -125,9 +139,19 @@ export function usePluginSections(deps: PluginSectionsDeps): PluginSectionsContr
       openSettings: (pluginPageId?: string) => {
         openSettings(pluginPageId ? pluginSettingsTab(pluginPageId) : "plugins");
       },
+      // Tagged with this render's mode, not `sidebarModeRef`: a section entering
+      // reports from its mount effects, which run before App's ref catches up.
+      setPageTitle: (title) => {
+        const next = title?.trim() || null;
+        setPluginPageTitle((prev) =>
+          prev?.section === sidebarMode && prev.title === next
+            ? prev
+            : { section: sidebarMode, title: next },
+        );
+      },
       settings,
     }),
-    [pluginRoute, settings],
+    [pluginRoute, settings, sidebarMode],
   );
 
   // App's mount + back/forward URL sync: a plugin section owns everything under
@@ -141,5 +165,7 @@ export function usePluginSections(deps: PluginSectionsDeps): PluginSectionsContr
     return pluginSectionUrl(mode, pluginRouteRef.current.segments);
   }
 
-  return { sectionHost, syncFromRoute, sectionUrl };
+  const pageTitle = pluginPageTitle?.section === sidebarMode ? pluginPageTitle.title : null;
+
+  return { sectionHost, pageTitle, syncFromRoute, sectionUrl };
 }

@@ -81,6 +81,22 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **The browser tab names what's open.** The tab title was always just
+  `Precursor`, so a row of Precursor tabs — or the long-press list behind the
+  Back and Forward buttons — gave no clue which page was which. It now reads
+  `<item> · <section> · Precursor`: `Search latency regression · Topics ·
+  Precursor`, `README.md · Design notes · Files · Precursor`,
+  `Weekly platform sync · Live · Precursor`. A section with nothing open shows its
+  own name (plus the collection in Topics), the home launcher shows
+  `Home · Precursor`, and the unread `(n)` count and the 🔔 still lead. Each
+  history entry keeps the title of the page it points to, so Back/Forward menus
+  list real names. Along the way the Chats **+** now leaves the open chat's URL
+  behind (a reload used to reopen it) and adds a history entry, so Back returns
+  to that chat, as it already did in Topics.
+
+  Plugin sections get `host.setPageTitle(title)` to name their own open item;
+  until a plugin calls it, its tab shows the section label.
+
 - **Pick which Teams transcription session to summarize.** *Generate from Teams
   transcript* silently used the most recent transcript, which is the wrong one
   as soon as a meeting has several: Teams starts a **new transcript every time

@@ -78,7 +78,8 @@ import { useReadSync } from "./lib/useReadSync";
 import { useRemindersController } from "./lib/useRemindersController";
 import { useSearchHighlightController } from "./lib/useSearchHighlightController";
 import { useTopicsController } from "./lib/useTopicsController";
-import { useUnreadTitle } from "./lib/useUnreadTitle";
+import { useDocumentTitle } from "./lib/useDocumentTitle";
+import { pageTitle } from "./lib/pageTitle";
 import { useWorkflowsController } from "./lib/useWorkflowsController";
 import { useWorkspacesController } from "./lib/useWorkspacesController";
 import type { SearchResult } from "./lib/types";
@@ -375,13 +376,6 @@ export default function App() {
   });
   const { tree, collections, activeTopic, activeCollectionId } = topicsCtl;
 
-  const unreadByMode = useUnreadTitle({
-    topicsUnread: topicsCtl.topicsUnread,
-    chatsUnread,
-    agentsUnread,
-    agentsWaiting,
-  });
-
   // ---- Search highlight ---------------------------------------------------
   // Called after every section controller: its `?q=` mirror must run after
   // their pathname URL effects in the same commit, or a navigation drops `q`.
@@ -451,7 +445,6 @@ export default function App() {
       setSidebarMode("topics");
     } else if (mode === "chats") {
       chatsCtl.startNew();
-      navigate("/chats");
       setSidebarMode("chats");
     } else if (mode === "live") {
       liveCtl.startNew();
@@ -557,6 +550,25 @@ export default function App() {
       activeSection?.onNew?.(sectionHost);
     } else wsCtl.startNew();
   }
+
+  // After every hook that navigates from an effect (see useDocumentTitle).
+  const unreadByMode = useDocumentTitle({
+    page: pageTitle({
+      atHome,
+      mode: sidebarMode,
+      topics: topicsCtl,
+      chats: chatsCtl,
+      live: liveCtl,
+      agents: agentsCtl,
+      workflows: workflowsCtl,
+      workspaces: wsCtl,
+      pluginItem: pluginsCtl.pageTitle,
+    }),
+    topicsUnread: topicsCtl.topicsUnread,
+    chatsUnread,
+    agentsUnread,
+    agentsWaiting,
+  });
 
   // ---- Assistant roles --------------------------------------------------
   // Each composer owns its own role pill; this is the shared persistence path
