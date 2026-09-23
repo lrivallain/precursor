@@ -8,7 +8,6 @@ import {
   parseAppRoute,
   workflowUrl,
   type AppRoute,
-  type WsRoute,
 } from "./routes";
 import { useWorkflowCollection } from "./useWorkflowCollection";
 
@@ -35,7 +34,7 @@ export interface WorkflowsControllerDeps {
   notificationsEnabledRef: RefObject<boolean>;
   setSidebarMode: Dispatch<SetStateAction<SidebarMode>>;
   setAtHome: Dispatch<SetStateAction<boolean>>;
-  setWsRoute: Dispatch<SetStateAction<WsRoute>>;
+  closeWsRoute: () => void;
   closeMobileNav: () => void;
   confirmLeaveRecording: () => Promise<boolean>;
 }
@@ -68,7 +67,7 @@ export function useWorkflowsController(deps: WorkflowsControllerDeps): Workflows
     notificationsEnabledRef,
     setSidebarMode,
     setAtHome,
-    setWsRoute,
+    closeWsRoute,
     closeMobileNav,
     confirmLeaveRecording,
   } = deps;
@@ -169,7 +168,7 @@ export function useWorkflowsController(deps: WorkflowsControllerDeps): Workflows
   async function openWorkflow(id: number | null): Promise<void> {
     if (!(await confirmLeaveRecording())) return;
     setAtHome(false);
-    setWsRoute({ open: false, slug: null, path: null });
+    closeWsRoute();
     setWorkflowEditor(null);
     setActiveWorkflowId(id);
     setActiveWorkflowRunSeg(null);

@@ -12,7 +12,6 @@ import {
   parseAppRoute,
   resolveAgentRef,
   type AppRoute,
-  type WsRoute,
 } from "./routes";
 import type { AgentSession } from "./types";
 import { windowFocused } from "./windowFocus";
@@ -49,7 +48,7 @@ export interface AgentsControllerDeps {
   isViewing: (kind: "topic" | "chat" | "agent", id: number) => boolean;
   setSidebarMode: Dispatch<SetStateAction<SidebarMode>>;
   setAtHome: Dispatch<SetStateAction<boolean>>;
-  setWsRoute: Dispatch<SetStateAction<WsRoute>>;
+  closeWsRoute: () => void;
   closeMobileNav: () => void;
   confirmAction: ReturnType<typeof useConfirm>;
   confirmLeaveRecording: () => Promise<boolean>;
@@ -108,7 +107,7 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
     isViewing,
     setSidebarMode,
     setAtHome,
-    setWsRoute,
+    closeWsRoute,
     closeMobileNav,
     confirmAction,
     confirmLeaveRecording,
@@ -249,7 +248,7 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
       setAgentComposerOpen(id == null);
       setAtHome(false);
       closeMobileNav();
-      setWsRoute({ open: false, slug: null, path: null });
+      closeWsRoute();
       setSidebarMode("agents");
     }
     window.addEventListener("precursor:open-agent", onOpenAgent);
@@ -357,7 +356,7 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
     if (!(await confirmLeaveRecording())) return;
     pendingAgentRef.current = null;
     setAtHome(false);
-    setWsRoute({ open: false, slug: null, path: null });
+    closeWsRoute();
     setAgentComposerOpen(id == null);
     setActiveAgentId(id);
     setSidebarMode("agents");
