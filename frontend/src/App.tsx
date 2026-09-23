@@ -15,13 +15,10 @@ import { usePluginDescriptors } from "./lib/pluginStore";
 import type { SectionHost } from "./lib/plugins";
 import { CommandPalette } from "./components/CommandPalette";
 import { ChatPanel } from "./components/ChatPanel";
-import { ChatList } from "./components/ChatList";
-import { ChatSessionPanel } from "./components/ChatSessionPanel";
-import { ChatSettingsPanel } from "./components/ChatSettingsPanel";
 import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel, pluginSettingsTab } from "./components/SettingsPanel";
 import { TopicSettingsPanel } from "./components/TopicSettingsPanel";
-import { ChatStartHero, TopicStartHero } from "./components/StartHero";
+import { TopicStartHero } from "./components/StartHero";
 import { HomePage } from "./components/HomePage";
 import { ArchivePanel } from "./components/ArchivePanel";
 import { IssueStatusBadge } from "./components/IssueStatusBadge";
@@ -40,6 +37,13 @@ import {
   AgentsMain,
   AgentsSidebarList,
 } from "./components/AgentsSection";
+import {
+  ChatsHeader,
+  ChatsHomeSurface,
+  ChatsMain,
+  ChatsSettingsModal,
+  ChatsSidebarList,
+} from "./components/ChatsSectionParts";
 import {
   WorkflowsHeader,
   WorkflowsMain,
@@ -72,6 +76,7 @@ import { useGlobalShortcuts } from "./lib/useGlobalShortcuts";
 import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { useAgentsController } from "./lib/useAgentsController";
+import { useChatsController } from "./lib/useChatsController";
 import {
   useLiveSessionsController,
   useLiveSessionsLateEffects,
@@ -81,7 +86,6 @@ import { useWorkspacesController } from "./lib/useWorkspacesController";
 import { windowFocused } from "./lib/windowFocus";
 import { openNotes } from "./lib/notesOpen";
 import type {
-  Chat,
   Collection,
   ReminderItem,
   SearchResult,
@@ -94,7 +98,6 @@ import {
   writeStoredCollectionId,
 } from "./lib/collections";
 import {
-  chatUrl,
   isHomePath,
   isPluginMode,
   navigate,
@@ -127,10 +130,6 @@ export default function App() {
   // search-open so the transition to it isn't mistaken for a navigation-away.
   const highlightKeyRef = useRef<string | null>(null);
   const pendingHighlightKeyRef = useRef<string | null>(null);
-  const [activeChat, setActiveChat] = useState<Chat | null>(null);
-  const [chatListReloadKey, setChatListReloadKey] = useState(0);
-  const [activeChatReloadKey, setActiveChatReloadKey] = useState(0);
-  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   // Core categories plus, via `SectionHost.openSettings`, a plugin page's tab id
   // (`plugin:<id>` — see SettingsPanel), which is why this isn't a closed union.
@@ -181,9 +180,6 @@ export default function App() {
   // its title) even when the preselected parent is unchanged.
   const [topicDraftNonce, setTopicDraftNonce] = useState(0);
   const [chatReloadKey, setChatReloadKey] = useState(0);
-  // Total unread across chats, lifted from ChatList so the mode switcher can
-  // badge the Chats tab even when that list isn't mounted.
-  const [chatsUnread, setChatsUnread] = useState(0);
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [sidebarReminder, setSidebarReminder] = useState<{
@@ -249,12 +245,6 @@ export default function App() {
     activeTopicRef.current = activeTopic;
   }, [activeTopic]);
 
-  // Mirror activeChat into a ref for the (registered-once) event subscription.
-  const activeChatRef = useRef<Chat | null>(activeChat);
-  useEffect(() => {
-    activeChatRef.current = activeChat;
-  }, [activeChat]);
-
   // Mirror the current sidebar mode into a ref. The active item refs persist
   // across mode switches (changeMode doesn't clear them), so "the user is
   // actually looking at this conversation" means its ref matches AND its mode is
@@ -282,8 +272,8 @@ export default function App() {
     if (mode === "topics" && activeTopicRef.current) {
       return { kind: "topic", id: activeTopicRef.current.id };
     }
-    if (mode === "chats" && activeChatRef.current) {
-      return { kind: "chat", id: activeChatRef.current.id };
+    if (mode === "chats" && chatsCtl.activeChatRef.current) {
+      return { kind: "chat", id: chatsCtl.activeChatRef.current.id };
     }
     if (mode === "agents" && agentsCtl.activeAgentIdRef.current != null) {
       return { kind: "agent", id: agentsCtl.activeAgentIdRef.current };
@@ -348,18 +338,6 @@ export default function App() {
     await Promise.all([refreshTree(), refreshCollections()]);
   }
 
-  // Total chat unread, kept current in App (not just in ChatList) so the mode
-  // switcher can badge the Chats tab from any mode. ChatList also reports its
-  // own total via onUnreadChange for instant updates while it's mounted.
-  async function refreshChatsUnread(): Promise<void> {
-    try {
-      const list = await api.chats.list();
-      setChatsUnread(list.reduce((n, c) => n + (c.unread_count ?? 0), 0));
-    } catch {
-      // transient — keep the previous total
-    }
-  }
-
   // Reload fired reminders and fire a browser notification for any that became
   // fired since the last load (when enabled + window unfocused).
   async function loadReminders(): Promise<void> {
@@ -392,7 +370,7 @@ export default function App() {
   useEffect(() => {
     void refreshTree();
     void refreshCollections();
-    void refreshChatsUnread();
+    void chatsCtl.refreshChatsUnread();
     void skillsStore.load();
     void rolesStore.load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -588,22 +566,7 @@ export default function App() {
         return;
       }
       // chats
-      const slug = r.chatSlug;
-      if (!slug || activeChatRef.current?.slug === slug) return;
-      void (async () => {
-        try {
-          const c = await api.chats.getBySlug(slug);
-          setActiveChat(c);
-          try {
-            await api.chats.markRead(c.id);
-            setChatListReloadKey((k) => k + 1);
-          } catch {
-            // non-fatal
-          }
-        } catch {
-          // unknown slug — ignore
-        }
-      })();
+      chatsCtl.syncFromRoute(r);
     };
     syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
@@ -677,6 +640,21 @@ export default function App() {
     confirmLeaveRecording,
   });
 
+  // ---- Chats ------------------------------------------------------------
+  // Called after the mount `syncFromUrl` like the other section controllers, so
+  // its `/chats` URL effect can't navigate before the sync reads the entry URL.
+  // Called last of them so its event bus subscription runs where App's chat
+  // branches used to: after the other sections' handlers, ahead of App's.
+  const chatsCtl = useChatsController({
+    sidebarMode,
+    atHome,
+    isViewing,
+    setSidebarMode,
+    setAtHome,
+    closeMobileNav,
+  });
+  const { activeChat, chatsUnread } = chatsCtl;
+
   // Reflect the total unread count in the tab title (always, independent of the
   // notification permission/setting). Cleared title falls back to the base.
   const topicsUnread = useMemo(() => totalUnread(tree), [tree]);
@@ -729,14 +707,6 @@ export default function App() {
     const target = topicsModeUrl(collections, activeCollectionId);
     if (window.location.pathname !== target) navigate(target, { replace: true });
   }, [activeTopic, sidebarMode, collections, activeCollectionId, atHome]);
-
-  // activeChat -> /chats/<slug>.
-  useEffect(() => {
-    if (atHome) return;
-    if (sidebarMode !== "chats" || !activeChat) return;
-    const target = chatUrl(activeChat);
-    if (window.location.pathname !== target) navigate(target);
-  }, [activeChat, sidebarMode, atHome]);
 
   // Auto-clear the search highlight when the user navigates to a *different*
   // conversation than the one it was opened for. The highlight is tied to a
@@ -836,7 +806,7 @@ export default function App() {
         ? topicUrl(treeRef.current, activeTopicRef.current, collectionsRef.current)
         : topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current);
     } else if (next === "chats") {
-      target = activeChatRef.current ? chatUrl(activeChatRef.current) : "/chats";
+      target = chatsCtl.sectionUrl();
     } else if (next === "live") {
       liveCtl.enterOverview();
       target = "/live";
@@ -882,7 +852,7 @@ export default function App() {
       navigate(topicsModeUrl(collectionsRef.current, activeCollectionIdRef.current));
       setSidebarMode("topics");
     } else if (mode === "chats") {
-      setActiveChat(null);
+      chatsCtl.startNew();
       navigate("/chats");
       setSidebarMode("chats");
     } else if (mode === "live") {
@@ -922,13 +892,6 @@ export default function App() {
     setActiveTopic(topic);
   }
 
-  // The "New chat" card's inline composer: create + stream, then reveal the chat.
-  async function startChatFromHome(prompt: string, roleId: number | null = null): Promise<void> {
-    setAtHome(false);
-    setSidebarMode("chats");
-    await handleStartChat(prompt, roleId);
-  }
-
   // The live-disabled bounce and the live lazy load. Called here, after the
   // `?q=` mirror, to keep their original place in the effect order.
   useLiveSessionsLateEffects(liveCtl, { sidebarMode, liveEnabled, setSidebarMode });
@@ -958,15 +921,7 @@ export default function App() {
       const id = Number(rawId);
       void (async () => {
         if (kind === "chat") {
-          if (isViewing("chat", id) && windowFocused()) {
-            try {
-              await api.chats.markRead(id);
-            } catch {
-              // non-fatal
-            }
-          }
-          setChatListReloadKey((k) => k + 1);
-          void refreshChatsUnread();
+          await chatsCtl.handleStreamComplete(id);
           return;
         }
         if (isViewing("topic", id) && windowFocused()) {
@@ -986,7 +941,8 @@ export default function App() {
 
   // Live sync across windows: any mutation in another tab/process pushes an
   // event over /api/events. Echoes (events tagged with our own client id)
-  // are filtered out inside the bus.
+  // are filtered out inside the bus. The chats controller handles the chat
+  // events, and a chat id wins over a topic or agent id on the shared types.
   useEffect(() => {
     eventBus.start();
     const off = eventBus.subscribe((event) => {
@@ -1003,45 +959,8 @@ export default function App() {
             }
           })();
         }
-      } else if (event.type === "chat.changed") {
-        // A chat's own metadata moved — most often auto-naming replacing the
-        // placeholder title. Refresh the list, and the open chat if it's this one.
-        setChatListReloadKey((k) => k + 1);
-        const active = activeChatRef.current;
-        if (active && (event.chat_id == null || event.chat_id === active.id)) {
-          void (async () => {
-            try {
-              setActiveChat(await api.chats.get(active.id));
-            } catch {
-              // chat may have been deleted in another window; ignore
-            }
-          })();
-        }
       } else if (event.type === "message.changed") {
-        if (event.chat_id != null) {
-          const chatId = event.chat_id;
-          const isActive = isViewing("chat", chatId);
-          // A chat turn changed — refresh the list badges and, if the user is
-          // viewing it, remount the panel so it re-fetches from scratch. When
-          // the change lands in the actively-viewed chat (e.g. a linked agent
-          // posted into it), keep it read so its unread badge doesn't resurrect
-          // when the user navigates away.
-          void (async () => {
-            if (isActive && windowFocused()) {
-              try {
-                await api.chats.markRead(chatId);
-              } catch {
-                // non-fatal
-              }
-            }
-            setChatListReloadKey((k) => k + 1);
-            void refreshChatsUnread();
-          })();
-          if (isActive) {
-            setActiveChatReloadKey((k) => k + 1);
-          }
-          return;
-        }
+        if (event.chat_id != null) return;
         const topicId = event.topic_id;
         const topicActive = topicId != null && isViewing("topic", topicId);
         // Sidebar badge tracking depends on the tree, so always refresh — and
@@ -1061,18 +980,12 @@ export default function App() {
           setChatReloadKey((k) => k + 1);
         }
       } else if (event.type === "stream.started") {
-        if (event.chat_id != null) {
-          streamStore.setRemoteStreaming(convKey("chat", event.chat_id), true);
-        } else if (event.topic_id != null) {
+        if (event.chat_id != null) return;
+        if (event.topic_id != null) {
           streamStore.setRemoteStreaming(convKey("topic", event.topic_id), true);
         }
       } else if (event.type === "stream.ended") {
-        if (event.chat_id != null) {
-          streamStore.setRemoteStreaming(convKey("chat", event.chat_id), false);
-          setChatListReloadKey((k) => k + 1);
-          void refreshChatsUnread();
-          return;
-        }
+        if (event.chat_id != null) return;
         if (event.topic_id != null) {
           streamStore.setRemoteStreaming(convKey("topic", event.topic_id), false);
           // A turn finished elsewhere (another window or a scheduled task). The
@@ -1091,11 +1004,9 @@ export default function App() {
         // This never re-marks anything, so it can't loop with the active-view
         // read logic.
         //
-        // The agents controller refreshes its own section on an agent id.
-        if (event.chat_id != null) {
-          setChatListReloadKey((k) => k + 1);
-          void refreshChatsUnread();
-        } else if (event.agent_session_id == null) {
+        // The agents and chats controllers refresh their own sections on an
+        // agent or chat id.
+        if (event.chat_id == null && event.agent_session_id == null) {
           void refreshTree();
         }
       }
@@ -1118,8 +1029,8 @@ export default function App() {
         try {
           if (v.kind === "chat") {
             await api.chats.markRead(v.id);
-            setChatListReloadKey((k) => k + 1);
-            void refreshChatsUnread();
+            chatsCtl.setChatListReloadKey((k) => k + 1);
+            void chatsCtl.refreshChatsUnread();
           } else if (v.kind === "topic") {
             await api.topics.markRead(v.id);
             await refreshTree();
@@ -1183,22 +1094,6 @@ export default function App() {
     openNotes("topic", id);
   }
 
-  async function handleOpenChatNotes(chat: Chat): Promise<void> {
-    await handleSelectChat(chat);
-    openNotes("chat", chat.id);
-  }
-
-  async function handleSelectChat(chat: Chat): Promise<void> {
-    closeMobileNav();
-    setActiveChat(chat);
-    try {
-      await api.chats.markRead(chat.id);
-      setChatListReloadKey((k) => k + 1);
-    } catch {
-      // non-fatal
-    }
-  }
-
   // Open a content-search hit from the command palette. Mirrors the per-section
   // deep-link resolution: leave home, switch mode, and reveal the entity by its
   // stable id (topic/chat/live-session row id, or agent internal id).
@@ -1218,7 +1113,7 @@ export default function App() {
         await handleSelect(result.entity_id);
       } else if (result.section === "chats") {
         setSidebarMode("chats");
-        await handleSelectChat(await api.chats.get(result.entity_id));
+        await chatsCtl.selectChatById(result.entity_id);
       } else if (result.section === "agents") {
         setSidebarMode("agents");
         agentsCtl.setActiveAgentId(result.entity_id);
@@ -1232,12 +1127,6 @@ export default function App() {
     }
   }
 
-  async function handleArchiveChats(ids: number[]): Promise<void> {
-    await Promise.all(ids.map((id) => api.chats.archive(id)));
-    if (activeChat && ids.includes(activeChat.id)) setActiveChat(null);
-    setChatListReloadKey((k) => k + 1);
-  }
-
   // Open the conversation behind a fired reminder, switching mode if needed.
   async function handleReminderSelect(item: ReminderItem): Promise<void> {
     try {
@@ -1246,7 +1135,7 @@ export default function App() {
         await handleSelect(item.topic_id);
       } else if (item.container === "chat" && item.chat_id != null) {
         changeMode("chats");
-        await handleSelectChat(await api.chats.get(item.chat_id));
+        await chatsCtl.selectChatById(item.chat_id);
       }
     } catch {
       // conversation may have been deleted — refresh the list to drop it
@@ -1267,48 +1156,9 @@ export default function App() {
     // Remount the active panel so its banner clears if it was the one acked.
     if (item.container === "topic" && activeTopicRef.current?.id === item.topic_id) {
       setChatReloadKey((k) => k + 1);
-    } else if (item.container === "chat" && activeChatRef.current?.id === item.chat_id) {
-      setActiveChatReloadKey((k) => k + 1);
+    } else if (item.container === "chat" && chatsCtl.activeChatRef.current?.id === item.chat_id) {
+      chatsCtl.setActiveChatReloadKey((k) => k + 1);
     }
-  }
-
-  // Re-fetch the active chat + nudge the list (after rename / pin / clear).
-  async function refreshActiveChat(): Promise<void> {
-    setChatListReloadKey((k) => k + 1);
-    const active = activeChatRef.current;
-    if (!active) return;
-    try {
-      setActiveChat(await api.chats.get(active.id));
-    } catch {
-      // chat may have been deleted elsewhere; ignore
-    }
-  }
-
-  async function toggleChatPin(): Promise<void> {
-    if (!activeChat) return;
-    const updated = await api.chats.update(activeChat.id, { pinned: !activeChat.pinned });
-    setActiveChat(updated);
-    setChatListReloadKey((k) => k + 1);
-  }
-
-  async function handleRenameChat(id: number, title: string): Promise<void> {
-    const updated = await api.chats.update(id, { title });
-    if (activeChatRef.current?.id === id) setActiveChat(updated);
-    setChatListReloadKey((k) => k + 1);
-  }
-
-  // Start hero: create a fresh chat and immediately send the user's first
-  // prompt. Streaming is kicked off through the global store so it survives the
-  // switch to the newly-mounted ChatSessionPanel. `autoname` marks the title as
-  // a placeholder, so the backend replaces it with one derived from this prompt
-  // while the answer is still streaming.
-  async function handleStartChat(prompt: string, roleId: number | null = null): Promise<void> {
-    const text = prompt.trim();
-    if (!text) return;
-    const chat = await api.chats.create({ title: "New chat", autoname: true, role_id: roleId });
-    setActiveChat(chat);
-    setChatListReloadKey((k) => k + 1);
-    void streamStore.start(convKey("chat", chat.id), text);
   }
 
   // The sidebar header's single "New" button adapts to the active mode so the
@@ -1324,7 +1174,7 @@ export default function App() {
       return;
     }
     if (sidebarMode === "topics") handleCreate(null);
-    else if (sidebarMode === "chats") setActiveChat(null);
+    else if (sidebarMode === "chats") chatsCtl.startNew();
     else if (sidebarMode === "live") liveCtl.startNew();
     else if (sidebarMode === "agents") agentsCtl.startNew();
     else if (sidebarMode === "workflows") workflowsCtl.startNew();
@@ -1405,8 +1255,7 @@ export default function App() {
       const updated = await api.topics.update(activeTopic.id, { role_id: roleId });
       if (activeTopicRef.current?.id === activeTopic.id) setActiveTopic(updated);
     } else if (sidebarMode === "chats" && activeChat) {
-      const updated = await api.chats.update(activeChat.id, { role_id: roleId });
-      if (activeChatRef.current?.id === activeChat.id) setActiveChat(updated);
+      await chatsCtl.setRoleForActive(roleId);
     } else if (sidebarMode === "workspaces" && wsCtl.activeWorkspace) {
       await wsCtl.setRoleForActive(roleId);
     } else if (sidebarMode === "agents" && agentsCtl.activeAgent) {
@@ -1541,21 +1390,11 @@ export default function App() {
         onGoHome={goHome}
         onOpenPalette={() => setPaletteOpen(true)}
         chatSlot={
-          <ChatList
-            activeId={activeChat?.id ?? null}
-            reloadKey={chatListReloadKey}
+          <ChatsSidebarList
+            controller={chatsCtl}
             streamingIds={streamingChatIds}
             reminderChatIds={reminderChatIds}
-            onSelect={handleSelectChat}
-            onOpenSettings={(chat) => {
-              setActiveChat(chat);
-              setChatSettingsOpen(true);
-            }}
-            onChatsChanged={() => void refreshActiveChat()}
-            onUnreadChange={setChatsUnread}
-            onArchiveMany={handleArchiveChats}
             onOpenReminder={(chat) => setSidebarReminder({ container: "chat", id: chat.id })}
-            onOpenNotes={(chat) => void handleOpenChatNotes(chat)}
           />
         }
         workspaceSlot={<WorkspacesSidebarList controller={wsCtl} />}
@@ -1697,44 +1536,7 @@ export default function App() {
               )}
             </>
           ) : sidebarMode === "chats" ? (
-            <>
-              {activeChat ? (
-                <InlineTitle
-                  title={activeChat.title}
-                  onRename={(t) => handleRenameChat(activeChat.id, t)}
-                  className="truncate font-medium min-w-0 flex-1"
-                  inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-sm font-medium outline-none"
-                />
-              ) : (
-                <span className="truncate font-medium min-w-0 flex-1">
-                  Select or create a chat
-                </span>
-              )}
-              {activeChat && (
-                <button
-                  className="p-2 rounded hover:bg-surface shrink-0"
-                  aria-label={activeChat.pinned ? "Unpin chat" : "Pin chat"}
-                  data-tooltip={activeChat.pinned ? "Unpin chat" : "Pin chat"}
-                  onClick={toggleChatPin}
-                >
-                  {activeChat.pinned ? (
-                    <PinOff size={18} className="text-accent" />
-                  ) : (
-                    <Pin size={18} />
-                  )}
-                </button>
-              )}
-              {activeChat && (
-                <button
-                  className="p-2 rounded hover:bg-surface shrink-0"
-                  aria-label="Chat settings"
-                  data-tooltip="Chat settings"
-                  onClick={() => setChatSettingsOpen(true)}
-                >
-                  <SettingsIcon size={18} />
-                </button>
-              )}
-            </>
+            <ChatsHeader controller={chatsCtl} />
           ) : sidebarMode === "workspaces" ? (
             <WorkspacesHeader controller={wsCtl} />
           ) : sidebarMode === "live" ? (
@@ -1811,7 +1613,7 @@ export default function App() {
                   onCreated={handleTopicCreated}
                 />
               }
-              chatSurface={<ChatStartHero onStart={startChatFromHome} />}
+              chatSurface={<ChatsHomeSurface controller={chatsCtl} />}
               liveSurface={
                 <LiveHomeSurface controller={liveCtl} tree={tree} collections={collections} />
               }
@@ -1868,21 +1670,11 @@ export default function App() {
               />
             )
           ) : sidebarMode === "chats" ? (
-            activeChat ? (
-              <ChatSessionPanel
-                key={`${activeChat.id}:${activeChatReloadKey}`}
-                chat={activeChat}
-                onChatUpdated={refreshActiveChat}
-                onArchived={() => {
-                  setActiveChat(null);
-                  setChatListReloadKey((k) => k + 1);
-                }}
-                onRemindersChanged={loadReminders}
-                onSetRole={setRoleForActive}
-              />
-            ) : (
-              <ChatStartHero onStart={handleStartChat} />
-            )
+            <ChatsMain
+              controller={chatsCtl}
+              onRemindersChanged={loadReminders}
+              onSetRole={setRoleForActive}
+            />
           ) : sidebarMode === "workspaces" ? (
             <WorkspacesMain controller={wsCtl} onSetRole={setRoleForActive} />
           ) : sidebarMode === "live" ? (
@@ -1930,41 +1722,16 @@ export default function App() {
         />
       )}
 
-      {chatSettingsOpen && activeChat && (
-        <ChatSettingsPanel
-          chat={activeChat}
-          collectionId={activeCollectionId}
-          onClose={() => setChatSettingsOpen(false)}
-          onSaved={(updated) => {
-            setActiveChat(updated);
-            setChatListReloadKey((k) => k + 1);
-          }}
-          onCleared={() => {
-            setActiveChatReloadKey((k) => k + 1);
-            setChatSettingsOpen(false);
-          }}
-          onArchived={() => {
-            setActiveChat(null);
-            setChatSettingsOpen(false);
-            setChatListReloadKey((k) => k + 1);
-          }}
-          onDeleted={() => {
-            setActiveChat(null);
-            setChatSettingsOpen(false);
-            setChatListReloadKey((k) => k + 1);
-          }}
-          onPromoted={async (topic) => {
-            // The chat became a topic: leave Chats, switch to Topics, select it.
-            setChatSettingsOpen(false);
-            setActiveChat(null);
-            setChatListReloadKey((k) => k + 1);
-            changeMode("topics");
-            if (topic.collection_id != null) selectCollection(topic.collection_id);
-            setActiveTopic(topic);
-            await refreshTree();
-          }}
-        />
-      )}
+      <ChatsSettingsModal
+        controller={chatsCtl}
+        collectionId={activeCollectionId}
+        onPromoted={async (topic) => {
+          changeMode("topics");
+          if (topic.collection_id != null) selectCollection(topic.collection_id);
+          setActiveTopic(topic);
+          await refreshTree();
+        }}
+      />
 
       <AgentSettingsModal
         controller={agentsCtl}
@@ -1983,10 +1750,10 @@ export default function App() {
             if (activeTopic?.id === id) setActiveTopic(null);
             await refreshTree();
           }}
-          onChatRestored={() => setChatListReloadKey((k) => k + 1)}
+          onChatRestored={() => chatsCtl.setChatListReloadKey((k) => k + 1)}
           onChatDeleted={(id) => {
-            if (activeChat?.id === id) setActiveChat(null);
-            setChatListReloadKey((k) => k + 1);
+            if (activeChat?.id === id) chatsCtl.setActiveChat(null);
+            chatsCtl.setChatListReloadKey((k) => k + 1);
           }}
           onAgentRestored={() => void agentsCtl.loadAgents()}
           onAgentDeleted={(id) => {

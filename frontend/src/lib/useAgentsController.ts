@@ -284,7 +284,8 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
     const off = eventBus.subscribe((event) => {
       if (event.type === "read.changed") {
         // Another tab marked a conversation read. A chat id wins over an agent
-        // id, as in App's handler, which owns the other read.changed branches.
+        // id, as in the chats controller and App's handler, which own the other
+        // read.changed branches.
         if (event.chat_id == null && event.agent_session_id != null) refreshAgents();
       } else if (event.type === "agent.changed") {
         // An agent session was created, advanced, or finished (possibly in the
