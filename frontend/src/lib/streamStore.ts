@@ -23,7 +23,7 @@ function parseKey(key: string): { kind: ConvKind; id: number } {
 }
 
 // FK fields to stamp on buffered messages so they round-trip like persisted ones.
-function containerFields(
+export function containerFields(
   kind: ConvKind,
   id: number,
 ): { topic_id: number | null; chat_id: number | null } {

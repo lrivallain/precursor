@@ -1,46 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageBubble } from "./MessageBubble";
-import { SuggestedReplies } from "./SuggestedReplies";
-import { ToolCallBubble } from "./ToolCallBubble";
-import { NotesPanel } from "./NotesPanel";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
+import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
+import { TranscriptMessage, TranscriptTail } from "./ConversationTranscript";
 import { ResizeHandle } from "./ResizeHandle";
 import { api } from "../lib/api";
-import {
-  commandsForSurface,
-  formatMemoryList,
-  nextSyntheticMessageId,
-  parseMemoryStoreArg,
-  parseMemoryUpdateArg,
-} from "../lib/commands";
-import { skillsStore } from "../lib/skillsStore";
-import { rolesStore } from "../lib/rolesStore";
-import { streamStore, useStreamVersion, convKey, mergeConversation } from "../lib/streamStore";
-import { failedTurnUserMessageId } from "../lib/systemNotice";
-import { detachedDraftStore } from "../lib/detachedDraftStore";
-import { stripSuggestionBlock } from "../lib/suggestions";
+import { streamStore } from "../lib/streamStore";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
-import { useChatScroll } from "../lib/useChatScroll";
-import { useWindowedMessages } from "../lib/useWindowedMessages";
-import { useReminders } from "../lib/useReminders";
-import { useNotesDraft } from "../lib/useNotesDraft";
-import { usePendingAttachments } from "../lib/usePendingAttachments";
-import { useMessageDeletion } from "../lib/useMessageDeletion";
-import { parseToolMeta } from "../lib/toolMeta";
 import { useComposerInput } from "../lib/useComposerInput";
+import { useConversation } from "../lib/useConversation";
 import { useConfirm } from "./ConfirmDialog";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
-import type {
-  Chat,
-  Message,
-} from "../lib/types";
-import { Z_INDEX } from "../lib/constants";
-import { Modal } from "./Modal";
+import type { Chat } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
 
 interface ChatSessionPanelProps {
@@ -56,11 +30,8 @@ interface ChatSessionPanelProps {
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands, the
-// tree-only /new and the topic-only /agent don't apply. The handled set is
-// derived from the catalog (see lib/commands.ts) so it can't drift from
-// SLASH_COMMANDS; useComposerInput excludes the rest.
-const HANDLED_COMMANDS = commandsForSurface("chat");
-
+// tree-only /new and the topic-only /agent don't apply: the "chat" command
+// surface (see lib/commands.ts) leaves them out.
 export function ChatSessionPanel({
   chat,
   onChatUpdated,
@@ -69,122 +40,20 @@ export function ChatSessionPanel({
   onSetRole,
 }: ChatSessionPanelProps) {
   const confirmAction = useConfirm();
-  const fetchPage = useCallback(
-    (opts: { limit: number; beforeId?: number }) => api.chats.listMessages(chat.id, opts),
-    [chat.id],
-  );
-  const win = useWindowedMessages({ fetchPage });
-  const { persisted, setPersisted, loadingOlder } = win;
-  const {
-    pendingAttachments,
-    setPendingAttachments,
-    uploadingCount,
-    attachmentError,
-    uploadFiles,
-    removeAttachment,
-  } = usePendingAttachments({
-    resetKey: chat.id,
-    upload: (file) => api.attachments.uploadForChat(chat.id, file),
-  });
-  const { pendingDeletes, hiddenIds, requestDeleteMessage, undoDelete } = useMessageDeletion({
-    resetKey: chat.id,
-    deleteMessage: (mid) => api.chats.deleteMessage(chat.id, mid),
-    setPersisted,
-  });
-  const { draft, setDraft, interimText, speech, suggestions, parseCommand } =
-    useComposerInput({ surface: "chat" });
-  const [roleOpen, setRoleOpen] = useState(false);
-  const stoppingRef = useRef(false);
-
-  useStreamVersion();
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
 
-  const streamKey = convKey("chat", chat.id);
-  const streaming = streamStore.isStreaming(streamKey);
-  const pendingContent = streamStore.pendingContent(streamKey);
-  const buffered = streamStore.bufferedMessages(streamKey);
-  const hasSession = streamStore.hasSession(streamKey);
-  const messages = useMemo<Message[]>(
-    () => (hasSession ? mergeConversation(persisted, buffered) : persisted),
-    [persisted, buffered, hasSession],
-  );
-  const visibleMessages = useMemo<Message[]>(
-    () => messages.filter((m) => !hiddenIds.has(m.id)),
-    [messages, hiddenIds],
-  );
-  // The prompt to offer a Retry on: set only while the transcript ends on an
-  // error notice and nothing is streaming.
-  const retryableId = useMemo<number | null>(
-    () => (streaming ? null : failedTurnUserMessageId(visibleMessages)),
-    [visibleMessages, streaming],
-  );
-
-  // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
-  // helpers back into the hook once useChatScroll has produced them.
-  const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
-    [messages, pendingContent],
-    win.onReachTop,
-  );
-  const { bindScroll, reloadMessages } = win;
-  useEffect(() => {
-    bindScroll({ captureTopAnchor, pinToBottom });
-  }, [bindScroll, captureTopAnchor, pinToBottom]);
-
-  const {
-    reminder,
-    reminderModal,
-    setReminderModal,
-    reminderBusy,
-    handleReminderSaved,
-    runReminderClear,
-  } = useReminders({
-    container: "chat",
+  const composer = useComposerInput({ surface: "chat" });
+  const conv = useConversation({
+    kind: "chat",
     id: chat.id,
-    reload: reloadMessages,
+    composer,
+    onCommand: dispatchCommand,
+    onUpdated: onChatUpdated,
     onRemindersChanged,
-    systemNote,
+    onSetRole,
   });
-
-  const notesApi = useMemo(
-    () => ({
-      getDraft: () => api.chats.getNotesDraft(chat.id),
-      saveDraft: (text: string) => api.chats.saveNotesDraft(chat.id, text),
-      clearDraft: () => api.chats.clearNotesDraft(chat.id),
-      append: (text: string, ids: number[]) => api.chats.appendNotes(chat.id, text, ids),
-      rephrase: (text: string) => api.chats.rephraseNotes(chat.id, text),
-      uploadAttachment: (file: File) => api.chats.uploadNoteAttachment(chat.id, file),
-      deleteAttachment: (attId: number) => api.chats.deleteNoteAttachment(chat.id, attId),
-    }),
-    [chat.id],
-  );
-  const {
-    pendingNotes,
-    savedNotesDraft,
-    notesConfirm,
-    resolveNotesConfirm,
-    openNotesPad,
-    resumeSavedNotesDraft,
-    discardSavedNotesDraft,
-    uploadNoteAttachments,
-    removeNoteAttachment,
-    rephraseNotes,
-    saveNotesDraft,
-    runNotesAction,
-    closeNotesPad,
-    dismissPad,
-  } = useNotesDraft({
-    container: "chat",
-    id: chat.id,
-    notesApi,
-    appendMessages: (msgs) => {
-      setPersisted((prev) => [...prev, ...msgs]);
-      onChatUpdated();
-    },
-    startAppendAndAsk: (body, attachmentIds) =>
-      void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
-    systemNote,
-  });
+  const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -200,95 +69,7 @@ export function ChatSessionPanel({
       max: 480,
     });
 
-  const userHistory = useMemo(
-    () => persisted.filter((m) => m.role === "user").map((m) => m.content),
-    [persisted],
-  );
-
-  // Load persisted history when the chat changes.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const msgs = await win.fetchFirstPage();
-      if (cancelled) return;
-      win.applyFirstPage(msgs);
-      if (
-        streamStore.hasSession(streamKey) &&
-        !streamStore.isStreaming(streamKey)
-      ) {
-        streamStore.clear(streamKey);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.id]);
-
-  const prevStreamingRef = useRef(streaming);
-  useEffect(() => {
-    prevStreamingRef.current = streamStore.isStreaming(streamKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.id]);
-  useEffect(() => {
-    const wasStreaming = prevStreamingRef.current;
-    prevStreamingRef.current = streaming;
-    if (!wasStreaming || streaming) return;
-    if (stoppingRef.current) {
-      stoppingRef.current = false;
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const msgs = await reloadMessages();
-      if (cancelled || msgs === null) return;
-      streamStore.clear(streamKey);
-      onChatUpdated();
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streaming, chat.id]);
-
-  function systemNote(content: string): void {
-    setPersisted((prev) => [
-      ...prev,
-      {
-        id: nextSyntheticMessageId(),
-        topic_id: null,
-        chat_id: chat.id,
-        role: "system",
-        content,
-        tool_calls: null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  }
-
-  // Echo a locally-handled slash command into the transcript as a user turn so
-  // it stays visible and is recallable via ↑ history (these commands never hit
-  // the backend, so they aren't persisted server-side).
-  function echoCommand(content: string): void {
-    setPersisted((prev) => [
-      ...prev,
-      {
-        id: nextSyntheticMessageId(),
-        topic_id: null,
-        chat_id: chat.id,
-        role: "user",
-        content,
-        tool_calls: null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  }
-
   async function dispatchCommand(name: string, argument: string): Promise<void> {
-    if (name === "notes") {
-      await openNotesPad();
-      return;
-    }
     if (name === "rename") {
       const title = argument.trim();
       if (!title) return systemNote("Usage: `/rename <new title>`");
@@ -351,179 +132,23 @@ export function ChatSessionPanel({
       } catch (err) {
         systemNote(`Archive failed: ${(err as Error).message}`);
       }
-      return;
     }
-    if (name === "reminder") {
-      setReminderModal({ note: argument });
-      return;
-    }
-    if (name === "reminder-cancel") {
-      await runReminderClear(false);
-      return;
-    }
-    if (name === "done") {
-      await runReminderClear(true);
-      return;
-    }
-    if (name === "memory-store") {
-      await runMemoryStore(argument);
-      return;
-    }
-    if (name === "memory-list") {
-      await runMemoryList();
-      return;
-    }
-    if (name === "memory-update") {
-      await runMemoryUpdate(argument);
-      return;
-    }
-    if (name === "role") {
-      const arg = argument.trim();
-      if (!arg) {
-        setRoleOpen(true);
-        return;
-      }
-      await rolesStore.ensureLoaded();
-      const role = rolesStore.byName(arg);
-      if (!role) {
-        systemNote(`Unknown role "${arg}". Manage roles in Settings → Roles.`);
-        return;
-      }
-      try {
-        await onSetRole?.(role.is_default ? null : role.id);
-        systemNote(`Assistant role set to "${role.name}".`);
-      } catch (err) {
-        systemNote(`Role change failed: ${(err as Error).message}`);
-      }
-    }
-  }
-
-  async function runMemoryStore(argument: string): Promise<void> {
-    const parsed = parseMemoryStoreArg(argument);
-    if (!parsed) return systemNote("Usage: `/memory-store [kind] <content>`");
-    try {
-      const mem = await api.memories.create(parsed);
-      systemNote(`Saved memory #${mem.id} [${mem.kind}]. Manage in Settings → Memory.`);
-    } catch (err) {
-      systemNote(`Couldn't save memory: ${(err as Error).message}`);
-    }
-  }
-
-  async function runMemoryList(): Promise<void> {
-    try {
-      const memories = await api.memories.list();
-      systemNote(formatMemoryList(memories));
-    } catch (err) {
-      systemNote(`Couldn't list memories: ${(err as Error).message}`);
-    }
-  }
-
-  async function runMemoryUpdate(argument: string): Promise<void> {
-    const parsed = parseMemoryUpdateArg(argument);
-    if (!parsed) return systemNote("Usage: `/memory-update <id> [kind] <content>`");
-    const { id, ...patch } = parsed;
-    try {
-      const mem = await api.memories.update(id, patch);
-      systemNote(`Updated memory #${mem.id} [${mem.kind}].`);
-    } catch (err) {
-      systemNote(`Couldn't update memory #${id}: ${(err as Error).message}`);
-    }
-  }
-
-  async function send(): Promise<void> {
-    const content = draft.trim();
-    const hasAttachments = pendingAttachments.length > 0;
-    if ((!content && !hasAttachments) || streaming) return;
-    pinToBottom();
-    if (speech.listening) speech.stop();
-
-    const cmd = content ? parseCommand(content) : null;
-    if (cmd && HANDLED_COMMANDS.has(cmd.name)) {
-      setDraft("");
-      echoCommand(content);
-      await dispatchCommand(cmd.name, cmd.argument);
-      return;
-    }
-    if (cmd) {
-      const skill = skillsStore.byName(cmd.name);
-      if (skill) {
-        setDraft("");
-        const expanded = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
-        const atts = pendingAttachments;
-        setPendingAttachments([]);
-        void streamStore.start(streamKey, content, expanded, atts);
-        return;
-      }
-    }
-    setDraft("");
-    const atts = pendingAttachments;
-    setPendingAttachments([]);
-    // No leading skill command, but a `/skill-name` may appear mid-prompt: send
-    // the expanded text to the LLM while the transcript keeps what was typed.
-    const inlined = content ? skillsStore.expandReferences(content) : content;
-    void streamStore.start(
-      streamKey,
-      content || "(attachment attached)",
-      inlined && inlined !== content ? inlined : undefined,
-      atts,
-    );
-  }
-
-  function sendSuggestion(text: string): void {
-    if (streaming || !text.trim()) return;
-    pinToBottom();
-    void streamStore.start(streamKey, text.trim());
-  }
-
-  /**
-   * Replay a prompt whose turn ended in an error. The failed tail (partial
-   * answer, tool rows, the error notice) is dropped locally right away and
-   * deleted server-side by the retry, so the prompt is answered afresh instead
-   * of piling a second copy onto the transcript.
-   */
-  function retryTurn(m: Message): void {
-    if (streaming || m.id <= 0) return;
-    pinToBottom();
-    // Ids are monotonic, so "the failed tail" is everything above the prompt.
-    // Client-side notes carry negative ids and are left alone.
-    setPersisted((prev) => prev.filter((p) => p.id < m.id));
-    streamStore.clear(streamKey);
-    void streamStore.retry(streamKey, m.id, m.content, m.attachments);
-  }
-
-  function stop(): void {
-    const partial = streamStore.pendingContent(streamKey).trim();
-    stoppingRef.current = true;
-    streamStore.stop(streamKey);
-    void (async () => {
-      try {
-        if (partial) {
-          await api.chats.saveStoppedMessage(chat.id, `${partial}\n\n_(stopped)_`);
-        }
-      } catch {
-        // best-effort
-      } finally {
-        await reloadMessages();
-        streamStore.clear(streamKey);
-        onChatUpdated();
-      }
-    })();
   }
 
   return (
     <div className="h-full flex min-h-0">
       <div className="flex-1 flex flex-col min-h-0">
-        {reminder && reminder.status === "fired" && (
+        {reminders.reminder && reminders.reminder.status === "fired" && (
           <ReminderBanner
-            reminder={reminder}
-            busy={reminderBusy}
-            onDone={() => void runReminderClear(true)}
+            reminder={reminders.reminder}
+            busy={reminders.reminderBusy}
+            onDone={() => void reminders.runReminderClear(true)}
           />
         )}
-        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4">
+        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4">
           <div className="relative mx-auto space-y-3" style={{ maxWidth: chatWidth }}>
             <ResizeHandle onMouseDown={onChatResize} />
-            {loadingOlder && (
+            {conv.loadingOlder && (
               <div className="text-center text-[11px] text-muted py-1">
                 Loading earlier messages…
               </div>
@@ -533,72 +158,31 @@ export function ChatSessionPanel({
                 Send a message to start the conversation.
               </div>
             )}
-            {visibleMessages.map((m) => {
-              if (m.role === "tool") {
-                const meta = parseToolMeta(m.tool_calls);
-                return (
-                  <ToolCallBubble
-                    key={m.id}
-                    name={meta?.name ?? "(unknown)"}
-                    arguments={meta?.arguments ?? "{}"}
-                    content={meta?.pending ? null : m.content}
-                    isError={Boolean(meta?.is_error)}
-                    pending={Boolean(meta?.pending)}
-                    link={meta?.link}
-                  />
-                );
-              }
-              if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
-                return null;
-              }
-              const canDelete =
-                !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
-              return (
-                <MessageBubble
-                  key={m.id}
-                  role={m.role}
-                  content={m.content}
-                  attachments={m.attachments}
-                  agentSessionId={m.agent_session_id}
-                  createdAt={m.created_at}
-                  model={m.model}
-                  elapsedMs={m.elapsed_ms}
-                  isError={m.is_error}
-                  onRetry={m.id === retryableId ? () => retryTurn(m) : undefined}
-                  onDelete={canDelete ? () => requestDeleteMessage(m) : undefined}
-                />
-              );
-            })}
-            {!streaming &&
-              (() => {
-                const last = visibleMessages[visibleMessages.length - 1];
-                if (last?.role === "assistant" && last.suggestions?.length) {
-                  return (
-                    <SuggestedReplies
-                      items={last.suggestions}
-                      onPick={sendSuggestion}
-                      disabled={streaming}
-                    />
-                  );
-                }
-                return null;
-              })()}
-            {streaming && (
-              <MessageBubble
-                role="assistant"
-                content={stripSuggestionBlock(pendingContent)}
-                pending
-                onStop={stop}
+            {visibleMessages.map((m) => (
+              <TranscriptMessage
+                key={m.id}
+                message={m}
+                streaming={streaming}
+                retryable={m.id === conv.retryableId}
+                onRetry={conv.retryTurn}
+                onDelete={conv.deletion.requestDeleteMessage}
               />
-            )}
+            ))}
+            <TranscriptTail
+              visibleMessages={visibleMessages}
+              streaming={streaming}
+              pendingContent={conv.pendingContent}
+              onPickSuggestion={conv.sendSuggestion}
+              onStop={conv.stop}
+            />
           </div>
         </div>
 
         <div className="border-t border-border p-3 pb-safe">
           <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
-            {pendingDeletes.length > 0 && (
+            {conv.deletion.pendingDeletes.length > 0 && (
               <div className="flex flex-col gap-1">
-                {pendingDeletes.map((p) => (
+                {conv.deletion.pendingDeletes.map((p) => (
                   <div
                     key={p.message.id}
                     className="flex items-center justify-between gap-2 rounded border border-border bg-surface px-3 py-1.5 text-xs"
@@ -606,7 +190,7 @@ export function ChatSessionPanel({
                     <span className="truncate text-muted">Message deleted</span>
                     <button
                       className="shrink-0 rounded px-2 py-0.5 text-accent hover:bg-border"
-                      onClick={() => undoDelete(p.message.id)}
+                      onClick={() => conv.deletion.undoDelete(p.message.id)}
                     >
                       Undo
                     </button>
@@ -614,82 +198,24 @@ export function ChatSessionPanel({
                 ))}
               </div>
             )}
-            {!pendingNotes && savedNotesDraft && (
-              <div className="flex items-center justify-between gap-2 rounded border border-border bg-surface px-3 py-1.5 text-xs">
-                <span className="min-w-0 flex-1 truncate text-muted">
-                  Saved notes draft:
-                  {savedNotesDraft.text ? ` ${savedNotesDraft.text}` : ""}
-                  {savedNotesDraft.attachmentCount > 0
-                    ? ` (${savedNotesDraft.attachmentCount} attachment${
-                        savedNotesDraft.attachmentCount > 1 ? "s" : ""
-                      })`
-                    : ""}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    className="shrink-0 rounded px-2 py-0.5 text-accent hover:bg-border"
-                    onClick={() => void resumeSavedNotesDraft()}
-                  >
-                    Resume
-                  </button>
-                  <button
-                    className="shrink-0 rounded px-2 py-0.5 text-muted hover:bg-border"
-                    onClick={() => void discardSavedNotesDraft()}
-                  >
-                    Discard
-                  </button>
-                </div>
-              </div>
-            )}
-            {pendingNotes && (
-              <NotesPanel
-                hasIssue={false}
-                allowPostComment={false}
-                initialText={pendingNotes.initialText}
-                loadingDraft={pendingNotes.loadingDraft}
-                savingDraft={pendingNotes.savingDraft}
-                rephrasing={pendingNotes.rephrasing}
-                acting={pendingNotes.acting}
-                error={pendingNotes.error}
-                attachments={pendingNotes.attachments}
-                uploadingAttachments={pendingNotes.uploadingAttachments}
-                attachmentsError={pendingNotes.attachmentsError}
-                rephrasedText={pendingNotes.rephrasedText}
-                onRephrase={rephraseNotes}
-                onSaveDraft={saveNotesDraft}
-                onAction={runNotesAction}
-                onAttachFiles={uploadNoteAttachments}
-                onRemoveAttachment={removeNoteAttachment}
-                onCancel={closeNotesPad}
-                onPopOut={
-                  pendingNotes.loadingDraft
-                    ? undefined
-                    : (text) => {
-                        detachedDraftStore.open({
-                          kind: "notes",
-                          container: "chat",
-                          containerId: chat.id,
-                          title: `Notes — ${chat.title}`,
-                          hasIssue: false,
-                          allowPostComment: false,
-                          initialText: text,
-                          initialAttachments: pendingNotes.attachments,
-                        });
-                        dismissPad();
-                      }
-                }
-              />
-            )}
+            <ConversationNotes
+              notes={conv.notes}
+              container="chat"
+              containerId={chat.id}
+              title={chat.title}
+              hasIssue={false}
+              allowPostComment={false}
+            />
             <Composer
-              value={draft}
-              onChange={setDraft}
-              onSend={() => void send()}
-              onStop={stop}
+              value={composer.draft}
+              onChange={composer.setDraft}
+              onSend={() => void conv.send()}
+              onStop={conv.stop}
               streaming={streaming}
-              suggestions={suggestions}
-              userHistory={userHistory}
-              speech={speech}
-              interimText={interimText}
+              suggestions={composer.suggestions}
+              userHistory={conv.userHistory}
+              speech={composer.speech}
+              interimText={composer.interimText}
               height={composerHeight}
               onResizeStart={onComposerResize}
               toolbarStart={
@@ -698,61 +224,32 @@ export function ChatSessionPanel({
                   <RoleSelector
                     value={chat.role_id ?? null}
                     onChange={(roleId) => void onSetRole?.(roleId)}
-                    open={roleOpen}
-                    onOpenChange={setRoleOpen}
+                    open={conv.roleOpen}
+                    onOpenChange={conv.setRoleOpen}
                   />
                 </>
               }
-              attachments={{
-                pending: pendingAttachments,
-                uploadingCount,
-                error: attachmentError,
-                onFiles: uploadFiles,
-                onRemove: removeAttachment,
-              }}
+              attachments={conv.attachments}
             />
           </div>
         </div>
       </div>
 
-      {showStats && <ChatStatsPanel streamKey={streamKey} messages={messages} />}
-      {reminderModal && (
+      {showStats && <ChatStatsPanel streamKey={streamKey} messages={conv.messages} />}
+      {reminders.reminderModal && (
         <ReminderModal
           container="chat"
           containerId={chat.id}
-          existing={reminder}
-          initialNote={reminderModal.note}
-          onClose={() => setReminderModal(null)}
+          existing={reminders.reminder}
+          initialNote={reminders.reminderModal.note}
+          onClose={() => reminders.setReminderModal(null)}
           onSaved={(saved) => {
-            setReminderModal(null);
-            handleReminderSaved(saved);
+            reminders.setReminderModal(null);
+            reminders.handleReminderSaved(saved);
           }}
         />
       )}
-      {notesConfirm && (
-        <Modal
-          zIndex={Z_INDEX.MODAL_NESTED}
-          padded
-          closeOnBackdrop={false}
-          panelClassName="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-2xl"
-        >
-          <div className="text-sm">{notesConfirm.message}</div>
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              className="rounded border border-border px-3 py-1.5 text-xs hover:bg-bg"
-              onClick={() => resolveNotesConfirm(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded bg-accent px-3 py-1.5 text-xs text-white"
-              onClick={() => resolveNotesConfirm(true)}
-            >
-              Confirm
-            </button>
-          </div>
-        </Modal>
-      )}
+      <NotesConfirmModal notes={conv.notes} />
     </div>
   );
 }
