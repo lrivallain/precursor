@@ -30,6 +30,16 @@ Responsibilities:
 All SDK objects are treated as ``Any`` (loaded lazily via
 ``services.agents.runtime``) so this module imports cleanly without the optional
 dependency installed.
+
+The pure pieces live in leaf modules this one only imports from: the agent text
+protocol in ``directives``, MCP server scoping in ``mcp_scope``, SDK shutdown
+log filtering in ``sdk_logging`` and the live-session record in
+``live_session``. Cohesive method groups are delegated to collaborators the
+manager owns, each holding a back-reference and reading shared state through it
+at call time: MCP config assembly (``mcp_config``), permission handling
+(``permissions``), slash commands (``commands``), the event timeline
+(``timeline``), model selection (``models``), token metering (``usage``), the
+artifact blackboard (``artifacts``) and the system preamble (``prompting``).
 """
 
 from __future__ import annotations
@@ -37,18 +47,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
-import hashlib
 import json
 import logging
 import os
-import re
-import sys
-from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import delete, select
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
@@ -56,31 +62,54 @@ from precursor.backend.models import (
     AgentEventRecord,
     AgentRun,
     AgentSession,
-    AppSetting,
     Chat,
     Message,
     MessageRole,
-    Role,
     Topic,
 )
 from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
-from precursor.backend.services.agent_state import build_state_index_prompt
-from precursor.backend.services.agents import fleet, runtime
-from precursor.backend.services.agents.event_normalizer import normalize_event
-from precursor.backend.services.agents.permissions import (
-    describe_permission,
-    permission_signature,
-    should_auto_approve,
+from precursor.backend.services.agents import (
+    commands,
+    fleet,
+    mcp_config,
+    permissions,
+    prompting,
+    runtime,
+    timeline,
+    usage,
 )
+from precursor.backend.services.agents.artifacts import ArtifactStore, clear_artifacts
+from precursor.backend.services.agents.directives import (
+    _CONTINUE_NUDGE,
+    RESULT_SUMMARY_CAP,
+    _clean_narration,
+    parse_agent_command,
+    parse_agent_directives,
+    strip_control_directives,
+)
+from precursor.backend.services.agents.event_normalizer import normalize_event
+from precursor.backend.services.agents.live_session import _Caps, _LiveSession
+from precursor.backend.services.agents.mcp_config import (
+    _OAUTH_FALLBACK_TTL,
+    _OAUTH_REFRESH_MARGIN,
+    MCPConfigBuilder,
+)
+from precursor.backend.services.agents.mcp_scope import (
+    MCP_SCOPE_MAX_LEN,
+    normalize_mcp_scope,
+    parse_mcp_scope,
+    scope_includes_precursor,
+)
+from precursor.backend.services.agents.models import ModelSelector
+from precursor.backend.services.agents.permissions import PermissionBroker
+from precursor.backend.services.agents.sdk_logging import _quiet_sdk_teardown_pipe_noise
+from precursor.backend.services.agents.timeline import Timeline
+from precursor.backend.services.agents.usage import UsageMeter
 from precursor.backend.services.app_settings import (
-    AGENTS_APPROVAL_POLICIES,
-    DEFAULT_AGENTS_APPROVAL_POLICY,
-    resolve_agents_approval_policy,
     resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_enabled,
     resolve_agents_reasoning_effort,
-    resolve_agents_system_prompt,
     resolve_agents_watchdog_timeout,
 )
 from precursor.backend.services.events import (
@@ -89,13 +118,26 @@ from precursor.backend.services.events import (
     publish_message_changed_chat,
     set_current_client_id,
 )
-from precursor.backend.services.memories import build_memory_prompt
-from precursor.backend.services.roles import resolve_role_prompt
-from precursor.backend.services.suggestions import (
-    SUGGESTIONS_INSTRUCTION,
-    split_suggestions,
-)
-from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.suggestions import split_suggestions
+
+# The pure helpers and the live-session record moved to their own modules;
+# listing them here keeps existing ``from …agents.manager import …`` callers
+# working (and explicit for mypy).
+__all__ = [
+    "MCP_SCOPE_MAX_LEN",
+    "RESULT_SUMMARY_CAP",
+    "_OAUTH_FALLBACK_TTL",
+    "_OAUTH_REFRESH_MARGIN",
+    "AgentManager",
+    "_LiveSession",
+    "get_agent_manager",
+    "normalize_mcp_scope",
+    "parse_agent_command",
+    "parse_agent_directives",
+    "parse_mcp_scope",
+    "scope_includes_precursor",
+    "strip_control_directives",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -143,32 +185,6 @@ _RUN_ONLY_FIELDS = frozenset(
     }
 )
 
-#: Anything carrying the capability toggles a live session is built from: the
-#: executing ``AgentRun``'s immutable snapshot, or the ``AgentSession`` itself
-#: when a caller has no run in hand.
-_Caps = AgentRun | AgentSession
-# Slash commands the system intercepts inside an agent session map to real actions
-# (rename/clear/archive) handled in ``AgentManager.run_command`` rather than being
-# forwarded to the SDK as prompt text. Every *other* slash command is rejected.
-_SLASH_RE = re.compile(r"^/([a-zA-Z][a-zA-Z0-9-]*)\s*([\s\S]*)$")
-
-
-def parse_agent_command(message: str) -> tuple[str, str] | None:
-    """Recognise a leading slash command in a message sent to an agent.
-
-    Returns ``(name, argument)`` for *any* ``/word …`` input (so the caller can
-    reject unknown commands instead of leaking them to the SDK), or ``None`` when
-    the text is a normal message.
-    """
-    text = message.lstrip()
-    if not text.startswith("/"):
-        return None
-    match = _SLASH_RE.match(text)
-    if not match:
-        return None
-    return match.group(1).lower(), match.group(2).strip()
-
-
 # Cap how long we wait for the out-of-process runtime to come up so a stuck or
 # unauthenticated CLI can't block app startup or a settings save indefinitely.
 _START_TIMEOUT_SECONDS = 30.0
@@ -195,512 +211,10 @@ def _runtime_env() -> dict[str, str]:
 
 
 # --- Autonomy goal loop --------------------------------------------------------
-# When an autonomous agent finishes a turn without declaring completion, we nudge
-# it to take the next step toward its objective with this message. It's phrased so
-# the model keeps pursuing the durable goal rather than treating it as a new task.
-_CONTINUE_NUDGE = (
-    "Continue working autonomously toward your objective. Narrate what you're "
-    "about to do in one short plain sentence, then take the next concrete step "
-    "now. When the objective is fully met, reply with a line "
-    "'OBJECTIVE_COMPLETE: <2-3 sentence summary>'. If you are blocked on a "
-    "decision only the human can make, reply with 'NEED_INPUT: <your question>'. "
-    "Otherwise keep going and report progress several times across the run with "
-    "'PROGRESS: <0-100> | <what you just did>'. Publish durable results other "
-    "agents may need — one as you finish each phase — with 'ARTIFACT: <title> | "
-    "<content>' for a short value, or a multi-line block 'ARTIFACT: <title>' … "
-    "'END_ARTIFACT' for a substantial deliverable so its full body is captured."
-)
-
 # After this many consecutive no-progress continuation steps, the loop stops and
 # parks the agent as ``blocked`` so a human can course-correct instead of letting
 # it spin. Kept small — autonomy is about steady progress, not infinite retries.
 _STALL_LIMIT = 3
-
-# Appended when an agent has skills switched off. Skills live as files the SDK
-# discovers on disk, so there's no kwarg to withhold them — this is a directive,
-# not a sandbox. It exists so a focused step ("just translate this") doesn't
-# detour through a stored skill that was written for a different context.
-_NO_SKILLS_INSTRUCTION = (
-    "Do not invoke any stored skill for this task. Solve it directly with your own "
-    "reasoning and the material you have been given."
-)
-
-# Appended to an autonomous agent's system preamble. It teaches the sentinel
-# protocol the goal loop reads back — the agent controls its own lifecycle by
-# emitting these lines, so it can run unattended and only pull the human in when
-# it genuinely needs a decision.
-_AUTONOMY_PROTOCOL = (
-    "You are running in AUTONOMOUS mode. Your task above is a durable OBJECTIVE, "
-    "not a single question: keep working toward it across multiple turns without "
-    "waiting to be prompted each time. After each step you will be nudged to "
-    "continue automatically. As you work, narrate what you're doing in one short "
-    "plain sentence before each action, so the human can follow along live from "
-    "the dashboard.\n\n"
-    "Use these control lines to steer your own lifecycle (put each on its own "
-    "line, exactly as shown):\n"
-    "- 'PROGRESS: <0-100> | <what you just accomplished>' — report several times "
-    "across the run (early, middle, and late — not only at the end) so the human "
-    "can watch from the dashboard.\n"
-    "- 'NEED_INPUT: <question>' — only when you are truly blocked on a decision "
-    "or approval that only the human can give. You will pause until they answer.\n"
-    "- 'OBJECTIVE_COMPLETE: <2-3 sentence summary>' — when the objective is fully "
-    "met. This ends the mission.\n\n"
-    "Share durable outputs with the rest of the fleet using ARTIFACT directives "
-    "so agents that depend on you receive them as their input; publish one as you "
-    "finish each phase or reach a finding.\n"
-    "- For a short single-line value: 'ARTIFACT: <title> | <content>'.\n"
-    "- For a SUBSTANTIAL or multi-line deliverable (an inventory, a draft, a "
-    "review), always use a block so nothing is truncated: put the title on the "
-    "ARTIFACT line with NO pipe, then the full Markdown body on the following "
-    "lines, then a closing 'END_ARTIFACT' line. For example:\n"
-    "    ARTIFACT: Release notes\n"
-    "    ## Highlights\n"
-    "    - First thing\n"
-    "    - Second thing\n"
-    "    END_ARTIFACT\n"
-    "Put the ENTIRE deliverable inside the artifact (inline body or block) — it "
-    "is the real output other agents and the human consume, so never leave it "
-    "only in your surrounding prose, and do not append PROGRESS/OBJECTIVE_COMPLETE "
-    "onto the artifact body.\n\n"
-    "Prefer making progress over asking. Don't ask for confirmation on steps you "
-    "can safely take yourself. Stop only when complete or genuinely blocked. The "
-    "control lines above are required output: always emit the relevant one even "
-    "when base guidance would have you end tersely without a status or recap, "
-    "since the system reads them to follow and resurface your mission."
-)
-
-# Sentinel directives an autonomous agent embeds in its assistant messages to
-# drive its own lifecycle. Parsed only when ``autonomy_enabled`` so a normal
-# agent that happens to type these words is unaffected.
-#
-# Anchored to the *start of a line* (``re.M``) so a directive quoted or explained
-# mid-sentence in prose — e.g. an agent narrating "I don't need to emit
-# **NEED_INPUT:** to your dashboard" — never misfires and falsely blocks the run.
-# ``_DIR_LEAD`` tolerates leading markdown/quote decoration (blockquote, list
-# marker, bold/italic, inline code) on the directive line; ``_DIR_POST`` eats the
-# closing emphasis of a ``**LABEL:**`` so a stray ``**`` doesn't leak into — and
-# unbalance the Markdown of — the captured question/summary.
-_DIR_LEAD = r"^[ \t>*_`-]*"
-_DIR_POST = r"[ \t*_`]*"
-_DIRECTIVE_COMPLETE_RE = re.compile(
-    _DIR_LEAD + r"OBJECTIVE[_ ]COMPLETE\s*:" + _DIR_POST + r"(.+)", re.I | re.M
-)
-_DIRECTIVE_NEED_INPUT_RE = re.compile(
-    _DIR_LEAD + r"NEED[_ ]INPUT\s*:" + _DIR_POST + r"(.+)", re.I | re.M
-)
-_DIRECTIVE_PROGRESS_RE = re.compile(
-    _DIR_LEAD + r"PROGRESS\s*:\s*(\d{1,3})\s*(?:\|\s*(.+))?", re.I | re.M
-)
-# Publish a durable named output to the shared fleet blackboard. Two shapes are
-# accepted (see ``_extract_artifacts``): a one-line ``ARTIFACT: <title> | <body>``
-# for short values, and a multi-line block that starts with ``ARTIFACT: <title>``
-# (no pipe) and runs until an ``END_ARTIFACT`` terminator or the next directive —
-# so a substantial deliverable (a list, a draft, a review) is captured whole.
-_ARTIFACT_HEADER_RE = re.compile(r"^\s*ARTIFACT\s*:\s*(.*)$", re.I)
-_ARTIFACT_END_RE = re.compile(r"^\s*(?:END[_ ]ARTIFACT|/ARTIFACT|ARTIFACT[_ ]END)\s*$", re.I)
-
-# An ordered-list marker (" 1. ", "2. ", …) with a following space, anchored to a
-# word boundary so decimals/prices/versions like "3.50" or "v2.0" (no space after
-# the dot) are never matched.
-_ORDERED_MARKER_RE = re.compile(r"(?:(?<=\s)|^)(\d{1,2})\.\s")
-
-
-def _split_inline_ordered_list(text: str) -> str:
-    """Break a numbered list packed onto one physical line into separate lines.
-
-    A single ``ARTIFACT:`` directive is one line, so a model that writes
-    "1. a 2. b 3. c" yields a run-on Markdown paragraph. We split *only* a
-    strictly sequential ``1, 2, 3, …`` run so incidental "2." tokens (decimals,
-    versions, prices) are left untouched.
-    """
-    markers = list(_ORDERED_MARKER_RE.finditer(text))
-    nums = [int(m.group(1)) for m in markers]
-    if len(nums) < 2 or nums != list(range(1, len(nums) + 1)):
-        return text
-    pieces: list[str] = []
-    prev = 0
-    for i, m in enumerate(markers):
-        if i == 0:
-            continue
-        pieces.append(text[prev : m.start()].rstrip())
-        prev = m.start()
-    pieces.append(text[prev:])
-    return "\n".join(p for p in pieces if p).strip()
-
-
-def _normalize_artifact_content(content: str) -> str:
-    """Coax single-line ``ARTIFACT:`` content into well-formed Markdown.
-
-    A model can't press Enter inside a one-line directive, so multi-line
-    deliverables (lists, paragraphs) collapse. We let it express breaks with an
-    escaped ``\\n`` (unescaped here) and, as a safety net, break a packed
-    sequential inline numbered list onto its own lines so it renders as a real
-    list instead of a run-on line.
-    """
-    if "\\n" in content or "\\t" in content or "\\r" in content:
-        content = (
-            content.replace("\\r\\n", "\n")
-            .replace("\\r", "\n")
-            .replace("\\n", "\n")
-            .replace("\\t", "\t")
-        )
-    if "\n" not in content:
-        content = _split_inline_ordered_list(content)
-    return content
-
-
-# Control directives never read as "what the agent is doing" — skip them when
-# distilling a live narration line so a mission's control channel doesn't leak
-# into the dashboard's plain-language activity hint.
-_NARRATION_SKIP_RE = re.compile(
-    r"^\s*(PROGRESS|NEED[_ ]INPUT|OBJECTIVE[_ ]COMPLETE|ARTIFACT)\s*:", re.I
-)
-
-
-def _clean_narration(text: str) -> str | None:
-    """Distil an assistant message into a one-line "what it's doing now" label.
-
-    The Copilot base prompt has the model emit short natural-language *commentary
-    preambles* before it acts (e.g. "Let me check the migration script"). Those
-    arrive as ordinary assistant text; surfacing the first meaningful line as a
-    live narration makes a working agent far more monitorable from the dashboard
-    than a bare tool name. We take the first prose line, drop control directives
-    and light markdown noise, and cap the length.
-    """
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or _NARRATION_SKIP_RE.match(line):
-            continue
-        line = re.sub(r"^[#>*\-\s]+", "", line)  # leading heading/list markers
-        line = re.sub(r"[*_`]+", "", line).strip()  # inline emphasis/code ticks
-        if line:
-            return line[:160]
-    return None
-
-
-def _strip_trailing_directives(content: str) -> str:
-    """Drop trailing control-directive lines a model glued onto artifact content.
-
-    A model sometimes appends its ``OBJECTIVE_COMPLETE:``/``PROGRESS:`` line to
-    the same inline ``ARTIFACT:`` body (often via an escaped ``\\n``), so the
-    published artifact ends with a stray control line. We peel those off the tail
-    so the stored deliverable is just the deliverable.
-    """
-    lines = content.split("\n")
-    while lines and (not lines[-1].strip() or _NARRATION_SKIP_RE.match(lines[-1])):
-        lines.pop()
-    return "\n".join(lines).strip()
-
-
-# How much of a turn's answer we keep in ``result_summary``. This is a *display*
-# budget — the column feeds the agent list and the run cards, where an unbounded
-# body would be unreadable — not a limit on what the agent produced. The full
-# message stays in the durable event archive, so any consumer that needs the
-# whole thing (the topic repost, a workflow step's trace) reads it back from
-# there rather than inheriting this cut. See
-# ``precursor.backend.services.agents.workflow._step_output``.
-RESULT_SUMMARY_CAP = 2000
-
-# Whole-line control directives (anywhere in the text) plus an ``ARTIFACT`` block
-# terminator. Used to scrub a value that will be *shown to the user* as a result,
-# so the agent's control channel never leaks into its displayed deliverable.
-_CONTROL_LINE_RE = re.compile(
-    r"^[ \t>*_`-]*(?:OBJECTIVE[_ ]COMPLETE|NEED[_ ]INPUT|PROGRESS|ARTIFACT|"
-    r"END[_ ]ARTIFACT|/ARTIFACT|ARTIFACT[_ ]END)\b.*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def strip_control_directives(text: str) -> str:
-    """Remove control-directive lines from a value surfaced to the user.
-
-    Directives (``OBJECTIVE_COMPLETE`` / ``NEED_INPUT`` / ``PROGRESS`` /
-    ``ARTIFACT`` …) are the agent's control channel, not part of the deliverable.
-    We keep the raw assistant message for parsing, forwarding, and gate verdicts,
-    but scrub these tokens from anything stored as a displayed *result* so a step's
-    output reads as the work itself — not the plumbing that produced it.
-    """
-    cleaned = _CONTROL_LINE_RE.sub("", text)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse blank runs the removal left
-    return cleaned.strip()
-
-
-def _extract_artifacts(text: str) -> list[dict[str, str]]:
-    """Pull every published artifact from an assistant message.
-
-    Supports two shapes so a substantial deliverable is never truncated:
-
-    * **Inline** — ``ARTIFACT: <title> | <body>`` on one line, for short values.
-    * **Block** — a line ``ARTIFACT: <title>`` with no ``|``, then the full
-      Markdown body on the following lines, terminated by an ``END_ARTIFACT``
-      line, the next control directive, or end of message. This is what lets a
-      research inventory, a draft, or a review land whole rather than as a bare
-      heading with the real content stranded in prose.
-    """
-    lines = text.splitlines()
-    artifacts: list[dict[str, str]] = []
-    i, n = 0, len(lines)
-    while i < n:
-        header = _ARTIFACT_HEADER_RE.match(lines[i])
-        if header is None:
-            i += 1
-            continue
-        rest = header.group(1).strip()
-        if "|" in rest:  # inline: 'title | body' on this single line
-            title, _, body = rest.partition("|")
-            title, body = title.strip(), _normalize_artifact_content(body.strip())
-            i += 1
-        else:  # block: 'ARTIFACT: title' then body lines until a terminator
-            title = rest
-            i += 1
-            collected: list[str] = []
-            while i < n:
-                if _ARTIFACT_END_RE.match(lines[i]):
-                    i += 1
-                    break
-                if _NARRATION_SKIP_RE.match(lines[i]):  # next directive ends it
-                    break
-                collected.append(lines[i])
-                i += 1
-            body = "\n".join(collected).strip()
-        body = _strip_trailing_directives(body)
-        if title and body:
-            artifacts.append({"title": title[:200], "content": body[:100000]})
-    return artifacts
-
-
-def parse_agent_directives(text: str | None) -> dict[str, Any]:
-    """Extract autonomy control directives from an assistant message.
-
-    Returns a dict that may contain ``complete`` (summary str), ``blocked``
-    (question str), ``progress`` (``{"value": int, "label": str | None}``),
-    and/or ``artifacts`` (``list[{"title": str, "content": str}]``).
-    Completion and a raised question are mutually exclusive in effect (completion
-    wins), but progress and artifacts can accompany either. Empty dict when
-    nothing matched.
-    """
-    result: dict[str, Any] = {}
-    if not text:
-        return result
-    if (m := _DIRECTIVE_COMPLETE_RE.search(text)) is not None:
-        result["complete"] = m.group(1).strip()
-    if (m := _DIRECTIVE_NEED_INPUT_RE.search(text)) is not None:
-        result["blocked"] = m.group(1).strip()
-    if (m := _DIRECTIVE_PROGRESS_RE.search(text)) is not None:
-        value = max(0, min(100, int(m.group(1))))
-        label = (m.group(2) or "").strip() or None
-        result["progress"] = {"value": value, "label": label}
-    artifacts = _extract_artifacts(text)
-    if artifacts:
-        result["artifacts"] = artifacts
-    return result
-
-
-# Long-lived agent SDK sessions bake an OAuth bearer header in at create time
-# (the SDK can't refresh a static header). We rebuild the session a little before
-# the token actually expires so a transparent re-mint never races a live call.
-_OAUTH_REFRESH_MARGIN = timedelta(minutes=5)
-
-# Conservative time-to-live when a token's real expiry can't be determined
-# (legacy token saved before we stamped issue time, or no ``expires_in``).
-_OAUTH_FALLBACK_TTL = timedelta(minutes=30)
-
-# Sentinel fingerprint for "this session has no MCP servers at all", so that
-# switching tools back on rebuilds it rather than reusing a tool-less session.
-# Not a valid server name, so it can never collide with a real catalogue.
-_MCP_OFF_FINGERPRINT = frozenset({"\x00mcp-off"})
-
-
-def parse_mcp_scope(raw: str | None) -> frozenset[str] | None:
-    """Parse an ``mcp_servers`` CSV into the set of servers a session may see.
-
-    Tri-state, and the empty case is *not* the same as the absent one:
-
-    * ``None`` → ``None``: no scope, attach every enabled server (the behaviour
-      before per-step scoping existed).
-    * ``"fetch, workiq"`` → ``{"fetch", "workiq"}``: only those.
-    * ``""`` (or all-blank) → ``frozenset()``: no servers at all, which the
-      caller treats exactly like ``use_mcp=False``.
-
-    Names are never validated against the registry here: a workflow travels
-    between machines with different servers installed, and an unknown name
-    should simply match nothing rather than fail the run.
-    """
-    if raw is None:
-        return None
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
-
-
-#: Ceiling for a stored scope, matching the ``mcp_servers`` column width on
-#: ``AgentSession``, ``AgentRun`` and ``WorkflowStep``.
-MCP_SCOPE_MAX_LEN = 400
-
-
-def normalize_mcp_scope(raw: str | None) -> str | None:
-    """Tidy an ``mcp_servers`` allowlist for storage without collapsing its empty case.
-
-    Deliberately *not* the ``(x or "").strip() or None`` idiom used for other
-    optional strings: here null and empty mean different things (every enabled
-    server versus none at all), so an explicitly empty selection has to survive
-    the round-trip. Names are de-duplicated with their order kept, and never
-    checked against the local registry — the parse half makes the same promise,
-    and an agent or workflow is portable, so a server absent on this machine
-    simply matches nothing.
-
-    Paired with :func:`parse_mcp_scope`: everything that writes a scope goes
-    through this, everything that reads one goes through that, so the stored and
-    effective forms can't drift.
-    """
-    if raw is None:
-        return None
-    seen: list[str] = []
-    for part in raw.split(","):
-        name = part.strip()
-        if name and name not in seen:
-            seen.append(name)
-    return ",".join(seen)[:MCP_SCOPE_MAX_LEN]
-
-
-#: The built-in server, attached from :meth:`AgentManager._precursor_mcp_config`
-#: rather than from the enabled catalogue.
-_PRECURSOR_SERVER = "precursor"
-
-
-def scope_includes_precursor(scope: frozenset[str] | None) -> bool:
-    """Whether a parsed scope lets the first-party ``precursor`` server attach.
-
-    It is exempt from the **Settings → MCP** enabled toggle — it's first-party
-    and always available — but not from a step's allowlist: it carries one of
-    the larger tool catalogues on a normal install, so a step scoped to one
-    server shouldn't pay for topic, memory and schedule schemas it can't need.
-
-    Shared between the attach path and the session fingerprint so the two can't
-    disagree about whether it's there; if they did, a step that re-points only
-    this server would reuse the wrong catalogue.
-    """
-    return scope is None or _PRECURSOR_SERVER in scope
-
-
-# Cap the tool result/error text we archive per event. Tool output (e.g. a
-# fetched page) can be huge; the timeline only needs enough to show "what was
-# done / why it failed", and the model already got the full payload live.
-
-# Broken-pipe family raised when a JSON-RPC write races the CLI child's stdin
-# closing during shutdown. The SDK spawns the Copilot CLI in *our* process group
-# (no ``start_new_session``), so on Ctrl+C the child takes the same terminal
-# SIGINT and can exit — closing its stdin — before our graceful ``client.stop()``
-# finishes its ``runtime.shutdown`` request. The SDK already swallows the write
-# error (into a ``StopError`` we suppress), but logs it at WARNING with a full
-# traceback first: pure noise on an otherwise-clean shutdown.
-_TEARDOWN_PIPE_ERRORS = (
-    BrokenPipeError,
-    ConnectionResetError,
-    ConnectionAbortedError,
-    EOFError,
-)
-
-# copilot SDK loggers that emit those teardown write failures.
-_SDK_PIPE_LOGGERS = ("copilot._jsonrpc", "copilot.client")
-
-
-class _TeardownPipeNoiseFilter(logging.Filter):
-    """Drop copilot SDK records whose exception is an expected teardown pipe error."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        exc: BaseException | None = record.exc_info[1] if record.exc_info else None
-        while exc is not None:
-            if isinstance(exc, _TEARDOWN_PIPE_ERRORS):
-                return False
-            # Walk the chain — the SDK may wrap/chain the underlying pipe error.
-            exc = exc.__cause__ or exc.__context__
-        return True
-
-
-@contextlib.contextmanager
-def _quiet_sdk_teardown_pipe_noise() -> Iterator[None]:
-    """Silence the expected broken-pipe tracebacks the SDK logs while stopping."""
-    noise_filter = _TeardownPipeNoiseFilter()
-    sdk_loggers = [logging.getLogger(name) for name in _SDK_PIPE_LOGGERS]
-    for sdk_logger in sdk_loggers:
-        sdk_logger.addFilter(noise_filter)
-    try:
-        yield
-    finally:
-        for sdk_logger in sdk_loggers:
-            sdk_logger.removeFilter(noise_filter)
-
-
-@dataclass
-class _LiveSession:
-    """A live SDK session handle plus its pending permission requests."""
-
-    sdk_session: Any
-    pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
-    # request_id -> normalised description of what's being requested, so the UI
-    # can render an inline approval card explaining the action.
-    pending_info: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # "Approve for session" grants made during this live session's lifetime, kept
-    # so Settings can recap and revoke them. Session-scoped on purpose: these
-    # mirror the SDK's per-session approvals and reset when the session does.
-    grants: list[dict[str, Any]] = field(default_factory=list)
-    # Signatures (type, target) the user approved "for the session". We enforce
-    # session scope ourselves — auto-approving matching requests — rather than
-    # returning the SDK's approve-for-session decision, whose ``approval`` object
-    # is mandatory for command/write prompts and easy to get wrong.
-    session_approvals: set[tuple[str, str | None]] = field(default_factory=set)
-    # Approval policy resolved once per turn (in ``start_task``/``send_message``)
-    # and read by the permission handler. We deliberately do NOT hit the DB from
-    # inside the SDK's permission callback — under concurrent writes a transient
-    # SQLite lock there would otherwise raise and the SDK turns a raising handler
-    # into an opaque, detail-less denial (even in autonomous mode).
-    approval_policy: str | None = None
-    # The prompt for the turn currently in flight, set when we send a task or a
-    # follow-up and cleared once posted to the linked container. Lets us post
-    # *every* turn's exchange to the topic/chat (not just the first), keyed to
-    # the right prompt rather than always the initial ``task_prompt``.
-    pending_prompt: str | None = None
-    # Full text of the most recent assistant message for the in-flight turn.
-    # ``result_summary`` is capped for the agent list, so we keep the untruncated
-    # answer here to repost the complete exchange into the linked topic/chat.
-    pending_answer: str | None = None
-    # Soonest expiry across any OAuth-protected MCP server attached to this SDK
-    # session (today only WorkIQ preview). The bearer header is static, so once
-    # this passes we rebuild the session to re-mint it. ``None`` means nothing
-    # attached needs refreshing.
-    oauth_expires_at: datetime | None = None
-    # Set of enabled+registered catalog server names this session was built with
-    # (see ``_enabled_catalog_fingerprint``). MCP servers are wired at build time
-    # only, so we snapshot the effective set here and rebuild the session when it
-    # changes — otherwise a server toggled on in Settings after the session was
-    # built stays invisible to the agent until a restart. ``None`` means we didn't
-    # attach a catalog (SDK unavailable) and should never rebuild on this basis.
-    mcp_fingerprint: frozenset[str] | None = None
-    # Enabled OAuth servers this session was built *without*, because no valid
-    # credential could be minted for them — each paired with a stamp of the
-    # credential as it stood at build time (see ``_auth_skipped_stamps``). The
-    # fingerprint above deliberately tracks *enabled* servers, so a signed-out
-    # server doesn't read as a change there; without this second signal the
-    # tool-less session would be reused forever, even after the user signs back
-    # in. Comparing stamps rather than bare names is what keeps it loop-free: a
-    # rebuild that still can't attach re-records the same stamps, so nothing
-    # fires again until fresh tokens are actually persisted.
-    mcp_auth_skipped: frozenset[tuple[str, str]] = frozenset()
-    # The (model, reasoning_effort, context_tier) triple currently applied to the
-    # live SDK session — set at build time and whenever we ``set_model``. Lets us
-    # skip a redundant model switch when the selection hasn't drifted, so every
-    # next turn can cheaply reconcile to the current selection.
-    model_signature: tuple[str, str | None, str] | None = None
-    # --- Autonomy goal-loop state (in-memory, per live session) --------------
-    # The last directive block parsed from an assistant message (complete /
-    # blocked / progress). Retained for debugging and to avoid double-handling.
-    directive: dict[str, Any] | None = None
-    # The most recent PROGRESS value the agent self-reported; a fresh value
-    # resets the stall counter, a repeated one advances it.
-    last_progress: int | None = None
-    # Consecutive autonomous steps that produced no measurable progress. When it
-    # crosses ``_STALL_LIMIT`` the loop parks the agent as ``blocked`` rather
-    # than churning silently.
-    stall_count: int = 0
 
 
 class AgentManager:
@@ -716,7 +230,7 @@ class AgentManager:
         # every streamed event. This in-memory copy is a write-through cache over
         # the ``agent_events`` table: it survives ``teardown_session`` (e.g. on
         # topic link) and, because every event is also persisted, the timeline is
-        # reloaded from the DB after a process restart (see ``_ensure_loaded``).
+        # reloaded from the DB after a process restart (see ``Timeline.ensure_loaded``).
         # Deliberately keyed by *agent*, not run: the visible transcript spans an
         # agent's whole history (each record carries ``agent_run_id`` so a single
         # run's slice can still be filtered out).
@@ -754,6 +268,15 @@ class AgentManager:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._lock = asyncio.Lock()
         self._watchdog_task: asyncio.Task[Any] | None = None
+        # Collaborators owning cohesive method groups. Each reads the shared
+        # state above through its back-reference, so tests that swap ``_live``
+        # or patch a manager method still reach them.
+        self._mcp = MCPConfigBuilder(self)
+        self._permissions = PermissionBroker(self)
+        self._transcript = Timeline(self)
+        self._model_selection = ModelSelector(self)
+        self._usage = UsageMeter(self)
+        self._artifacts = ArtifactStore(self)
 
     @property
     def ready(self) -> bool:
@@ -948,363 +471,27 @@ class AgentManager:
             _ok, detail = runtime.agents_available()
             raise RuntimeError(f"Agents runtime not available: {detail}")
 
-    def _precursor_mcp_config(self, agent: AgentSession) -> dict[str, Any] | None:
-        """Translate the built-in 'precursor' MCP entry into an SDK stdio config.
-
-        Attaching it lets the agent read topic context and post results back via
-        the existing ``post_message`` tool (subject to the user's mcp_expose
-        toggles). Returns ``None`` if the SDK isn't loadable.
-        """
-        try:
-            sdk = runtime.load_sdk()
-        except RuntimeError:
-            return None
-        # Reuse the same launcher the in-app MCP client uses, so there's one
-        # definition of how to run the precursor server.
-        env = dict(os.environ)
-        # First-party access: agents bypass the external mcp_expose toggles so
-        # they can read topic content and post results back.
-        env["PRECURSOR_MCP_FULL_ACCESS"] = "1"
-        # Identity, so the ``state_*`` tools can default to *this* agent's
-        # scratchpad. Without it the agent would have to discover its own row id
-        # before it could save a cursor for its next run.
-        env["PRECURSOR_AGENT_ID"] = str(agent.id)
-        config: Any = sdk.MCPStdioServerConfig(
-            type="stdio",
-            command=sys.executable,
-            args=["-m", "precursor.backend.services.mcp.precursor_server"],
-            env=env,
-            # Expose all precursor tools — without this the runtime includes none
-            # ([] is the default), so the agent can't read/post topic content.
-            tools=["*"],
-        )
-        return {"precursor": config}
-
-    @staticmethod
-    def _entry_to_sdk_config(sdk: Any, entry: Any, github_token: str) -> Any:
-        """Translate one ``MCPServerEntry`` into an SDK MCP server config.
-
-        Raises ``ValueError`` for entries the SDK can't represent (missing
-        command/url, unknown transport) so the caller can skip + log them.
-        """
-        if entry.transport == "stdio":
-            if not entry.command:
-                raise ValueError("stdio server has no command")
-            return sdk.MCPStdioServerConfig(
-                type="stdio",
-                command=entry.command,
-                args=list(entry.args),
-                # Built-ins set their own env (or None → inherit ours so PATH and
-                # the venv resolve); user entries always inherit ours.
-                env=entry.env if entry.env is not None else dict(os.environ),
-                tools=["*"],
-            )
-        if entry.transport == "streamable_http":
-            if not entry.url:
-                raise ValueError("streamable_http server has no url")
-            # headers_provider folds in per-request secrets — the GitHub bearer
-            # token for the built-in 'github' server, or a user entry's stored
-            # headers. Resolved here, never persisted in agent events.
-            headers = entry.headers_provider(github_token) if entry.headers_provider else None
-            return sdk.MCPHTTPServerConfig(
-                type="http",
-                url=entry.url,
-                headers=headers or None,
-                tools=["*"],
-            )
-        raise ValueError(f"unsupported transport {entry.transport!r}")
-
     async def _enabled_catalog_fingerprint(
         self, scope: frozenset[str] | None = None
     ) -> frozenset[str]:
-        """Names of catalog MCP servers currently enabled *and* registered.
-
-        Excludes ``precursor`` (always attached with full access). Computed the
-        same way on both sides of the comparison in :meth:`_ensure_live`, so it
-        deliberately reflects the user's toggles rather than which servers
-        actually attached — an OAuth server skipped for missing credentials must
-        not read as a change and trigger an endless rebuild loop.
-
-        ``scope`` narrows it to a per-agent allowlist (see :func:`parse_mcp_scope`)
-        so that re-pointing a shared agent at a differently-scoped workflow step
-        reads as a change and rebuilds the session.
-        """
-        from precursor.backend.services.app_settings import resolve_mcp_enabled
-        from precursor.backend.services.mcp.client import get_mcp_client_manager
-
-        async with SessionLocal() as session:
-            enabled = await resolve_mcp_enabled(session)
-        registered = {entry.name for entry in get_mcp_client_manager().list_entries()}
-        return frozenset(
-            name
-            for name, on in enabled.items()
-            if on
-            and name != "precursor"
-            and name in registered
-            and (scope is None or name in scope)
-        )
+        return await self._mcp.enabled_catalog_fingerprint(scope)
 
     async def _expected_mcp_fingerprint(self, caps: _Caps) -> frozenset[str]:
-        """The fingerprint a session created for ``caps`` right now would carry.
-
-        Comparing a live session against *this* — rather than against the raw
-        enabled set — is what makes both halves of the tool configuration
-        rebuild-sensitive: flipping ``use_mcp``, and narrowing or widening the
-        per-step server scope. It also keeps a tools-off agent stable, which the
-        raw comparison did not: its stored fingerprint is the off sentinel, so it
-        never matched the enabled set and every dispatch tore down and rebuilt a
-        session that was already correct.
-
-        ``precursor`` is folded in here rather than in
-        :meth:`_enabled_catalog_fingerprint`, which answers a narrower question
-        (what the user's toggles enable). The first-party server ignores those
-        toggles but *is* scopable, so a step that only re-points precursor still
-        has to read as a change.
-        """
-        scope = parse_mcp_scope(caps.mcp_servers)
-        if not caps.use_mcp or (scope is not None and not scope):
-            return _MCP_OFF_FINGERPRINT
-        catalog = await self._enabled_catalog_fingerprint(scope)
-        if scope_includes_precursor(scope):
-            return catalog | {_PRECURSOR_SERVER}
-        return catalog
+        return await self._mcp.expected_mcp_fingerprint(caps)
 
     async def _catalog_mcp_configs(
-        self,
-        scope: frozenset[str] | None = None,
+        self, scope: frozenset[str] | None = None
     ) -> tuple[dict[str, Any], datetime | None, list[str]]:
-        """SDK configs for every catalog MCP server the user has *enabled*.
+        return await self._mcp.catalog_mcp_configs(scope)
 
-        Mirrors the chat/topics surface: both built-in servers (``github``,
-        ``fetch``, ``workspace-fs``, …) and user-defined ones are attached when
-        their ``mcp_enabled`` toggle is on, so an agent can call the same tools.
-        ``precursor`` is excluded here — it's attached separately with full
-        access in :meth:`_precursor_mcp_config`.
-
-        ``scope``, when given, narrows that to an allowlist of server names (a
-        workflow step's ``mcp_servers``); ``None`` attaches everything enabled.
-
-        Returns ``(configs, oauth_expires_at, auth_required)``: ``oauth_expires_at``
-        is the soonest expiry across any OAuth-protected server whose bearer token
-        we baked into a static header (so the caller can refresh before it lapses,
-        ``None`` when nothing attached needs it); ``auth_required`` lists enabled
-        OAuth servers we *skipped* because no valid credentials are available, so
-        the caller can surface an interactive sign-in prompt instead of leaving
-        the agent to discover the tools are silently missing. Returns
-        ``({}, None, [])`` if the SDK isn't loadable.
-        """
-        try:
-            sdk = runtime.load_sdk()
-        except RuntimeError:
-            return {}, None, []
-
-        # Imported lazily to keep this module importable without the MCP service
-        # graph in the import path of the agents-unavailable case.
-        from precursor.backend.services.app_settings import resolve_mcp_enabled
-        from precursor.backend.services.github_auth import resolve_github_token
-        from precursor.backend.services.mcp.client import get_mcp_client_manager
-
-        async with SessionLocal() as session:
-            enabled = await resolve_mcp_enabled(session)
-            github_token = await resolve_github_token(session)
-
-        manager = get_mcp_client_manager()
-        configs: dict[str, Any] = {}
-        oauth_expires_at: datetime | None = None
-        auth_required: list[str] = []
-        for entry in manager.list_entries():
-            # 'precursor' is first-party and attached with full access elsewhere;
-            # never gate or duplicate it here.
-            if entry.name == "precursor":
-                continue
-            # Out of the caller's allowlist. Filtered *before* the credential
-            # check below so a step scoped away from an OAuth server doesn't
-            # raise a sign-in prompt for tools it was never going to use.
-            if scope is not None and entry.name not in scope:
-                continue
-            if not enabled.get(entry.name, False):
-                continue
-            try:
-                config = self._entry_to_sdk_config(sdk, entry, github_token)
-            except ValueError as exc:
-                logger.warning("Skipping MCP server '%s': %s", entry.name, exc)
-                continue
-            # OAuth-protected catalog servers (the hosted WorkIQ preview and the
-            # Agent 365 pair) authenticate via an httpx.Auth provider that the
-            # SDK's static-header HTTP config can't carry. Mint a concrete bearer
-            # token and inject it, or skip the server entirely when sign-in is
-            # required — attaching it without credentials would just surface 401s
-            # as missing tools to the agent.
-            if entry.transport == "streamable_http" and entry.auth_provider is not None:
-                bearer = await self._oauth_bearer_header(entry.name)
-                if bearer is None:
-                    logger.warning(
-                        "Skipping MCP server '%s' for agent: no valid credentials "
-                        "(surfacing an in-app sign-in prompt)",
-                        entry.name,
-                    )
-                    auth_required.append(entry.name)
-                    continue
-                header, expires_at = bearer
-                # Unknown lifetime → assume a conservative TTL so we still rebuild
-                # the session periodically rather than letting a stale header rot.
-                if expires_at is None:
-                    expires_at = datetime.now(UTC) + _OAUTH_FALLBACK_TTL
-                oauth_expires_at = (
-                    expires_at if oauth_expires_at is None else min(oauth_expires_at, expires_at)
-                )
-                existing = dict(config.get("headers") or {})
-                existing.update(header)
-                config["headers"] = existing
-            configs[entry.name] = config
-        return configs, oauth_expires_at, auth_required
-
-    @staticmethod
-    async def _oauth_bearer_header(name: str) -> tuple[dict[str, str], datetime | None] | None:
-        """Resolve a static ``Authorization`` header for an OAuth catalog server.
-
-        Works for every server Precursor can sign in to — the hosted WorkIQ
-        preview *and* the Agent 365 pair — by resolving the server's credential
-        profile and minting a bearer from it. Returns ``None`` when the server
-        has no usable credential (not an OAuth server, preview mode off, no
-        tenant resolved, or no valid token) so the caller skips attaching it
-        rather than handing the agent an unauthenticated endpoint. On success
-        returns ``(header, expires_at)`` where ``expires_at`` may be ``None`` if
-        the token's lifetime can't be determined.
-        """
-        from precursor.backend.services.mcp.oauth_registry import profile_for_server
-        from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
-
-        profile = await profile_for_server(name)
-        if profile is None:
-            return None
-        resolved = await resolve_workiq_bearer_token(profile, caller="agent attach")
-        if resolved is None:
-            return None
-        token, expires_at = resolved
-        if not token:
-            return None
-        return {"Authorization": f"Bearer {token}"}, expires_at
-
-    @staticmethod
-    async def _auth_skipped_stamps(servers: list[str]) -> frozenset[tuple[str, str]]:
-        """Stamp each of ``servers`` with the credential it would sign in with.
-
-        Answers "has anything changed about the sign-in for the servers we had to
-        skip?" cheaply enough to run on every dispatch: it reads the stored
-        credential rows straight from the DB and does no network I/O, no bearer
-        minting and no profile/tenant resolution — unlike
-        :meth:`_oauth_bearer_header`, which drives a real token refresh.
-
-        The stamp is a digest of the stored credential (empty string when the row
-        is absent), never the credential itself, so no token material is retained
-        in the manager's memory. Servers sharing one credential — the Agent 365
-        pair — naturally stamp identically, since
-        :func:`~precursor.backend.services.mcp.oauth_registry.credential_key`
-        resolves both to the same row.
-        """
-        if not servers:
-            return frozenset()
-
-        from precursor.backend.services.mcp.oauth_registry import credential_key
-
-        keys = {credential_key(name) for name in servers}
-        async with SessionLocal() as session:
-            rows = (
-                (await session.execute(select(AppSetting).where(AppSetting.key.in_(keys))))
-                .scalars()
-                .all()
-            )
-        values = {row.key: row.value or "" for row in rows}
-        return frozenset(
-            (name, hashlib.sha256(values.get(credential_key(name), "").encode()).hexdigest())
-            for name in servers
-        )
-
-    async def _topic_context(self, agent: AgentSession) -> str | None:
-        """Build a system-message preamble binding the agent to its topic.
-
-        Without this the agent has no idea which topic it's attached to, so a
-        request like "summarise the topic description" gets answered from the
-        tool's field schema instead of the actual record. We give it the id,
-        title and description, and point it at the precursor MCP tools to pull
-        the rest on demand (and post results back).
-        """
-        if not agent.topic_id:
-            return None
-        async with SessionLocal() as session:
-            topic = await session.get(Topic, agent.topic_id)
-        if topic is None:
-            return None
-        lines = [
-            "## Bound Precursor topic",
-            "",
-            f'You are operating on Precursor topic #{topic.id} ("{topic.title}").',
-        ]
-        description = (topic.description or "").strip()
-        if description:
-            lines += ["", "Topic description:", description]
-        lines += [
-            "",
-            "Use the `precursor` MCP tools to work with it: `get_topic("
-            f"{topic.id})` for metadata, `list_messages({topic.id})` to read the "
-            "conversation, `search(...)` to find related content, and "
-            f"`post_message({topic.id}, ...)` to write your results back to the "
-            "topic. Prefer reading the live topic over assumptions.",
-        ]
-        return "\n".join(lines)
-
-    async def _system_preamble(self, agent: AgentSession, caps: _Caps | None = None) -> str | None:
-        """Combined system-message append: role persona + operator custom prompt + memory + topic binding.
-
-        The SDK base prompt isn't ours to set, so each piece is *appended*. The
-        agent's Assistant Role persona comes first (it defines who the agent is),
-        then the custom prompt (Settings → Agents) as general guidance, long-term
-        memory as standing context (matching chat/topic turns), then the topic
-        binding so the agent always knows which record it's on.
-
-        ``caps`` supplies the capability toggles — the executing run's immutable
-        snapshot, so a definition edit mid-run can't change the preamble the
-        session was built with. Identity (topic binding, scratchpad, autonomy)
-        always comes from the agent.
-        """
-        caps = caps or agent
-        async with SessionLocal() as session:
-            role_prompt = (await resolve_role_prompt(session, caps.role_id)).strip()
-            custom = (await resolve_agents_system_prompt(session)).strip()
-            # Long-term memory is standing context, not always wanted: a pure
-            # transform step ("translate this") is better off not consulting it.
-            memory = await build_memory_prompt(session) if caps.use_memory else ""
-            # The agent's own scratchpad from previous runs. Only the *key index*
-            # goes in the prompt — the bodies stay in the DB until the agent asks
-            # for one with ``state_get``, so a large saved cursor costs nothing
-            # per turn. Tool-less agents can't call ``state_get``, so telling them
-            # what they can't read would just burn context.
-            state = (
-                (await build_state_index_prompt(session, agent.id) or "") if caps.use_mcp else ""
-            )
-        persona = (
-            f"Active assistant role — adopt this persona for the whole task:\n{role_prompt}"
-            if role_prompt
-            else ""
-        )
-        topic = await self._topic_context(agent)
-        autonomy = _AUTONOMY_PROTOCOL if agent.autonomy_enabled else ""
-        # Follow-up "suggest" chips are for a human replying turn-by-turn. An
-        # autonomous agent drives itself via the control directives and runs
-        # unattended, so inviting user-facing follow-ups there just burns tokens
-        # and pulls against the "keep going, don't ask" autonomy contract (and the
-        # base prompt's "don't offer to continue" tone rule). Only plain agents,
-        # which the user converses with, get the suggestions instruction.
-        suggestions = "" if agent.autonomy_enabled else SUGGESTIONS_INSTRUCTION
-        # Skills are files the SDK discovers on disk, so this is a *directive*
-        # rather than a hard sandbox — it tells the agent to solve the task
-        # directly instead of reaching for a stored skill.
-        skills = "" if caps.use_skills else _NO_SKILLS_INSTRUCTION
-        parts = [
-            p for p in (persona, custom, memory, state, topic, autonomy, skills, suggestions) if p
-        ]
-        return "\n\n".join(parts) if parts else None
+    # Aliased rather than delegated: collaborators call these through the manager
+    # at call time, so patching them on the class (as tests do) still reaches them.
+    _entry_to_sdk_config = staticmethod(mcp_config.entry_to_sdk_config)
+    _oauth_bearer_header = staticmethod(mcp_config.oauth_bearer_header)
+    _auth_skipped_stamps = staticmethod(mcp_config.auth_skipped_stamps)
+    _oauth_stale = staticmethod(mcp_config.oauth_stale)
+    _auth_server_from_failed_tool = staticmethod(mcp_config.auth_server_from_failed_tool)
+    _blocked_on_missing_auth = staticmethod(mcp_config.blocked_on_missing_auth)
 
     # ------------------------------------------------------------------ runs
 
@@ -1495,7 +682,7 @@ class AgentManager:
 
         assert self._client is not None
         kwargs: dict[str, Any] = {
-            "on_permission_request": self._make_permission_handler(run.id),
+            "on_permission_request": self._permissions.make_handler(run.id),
         }
         # Reasoning effort + context tier are global agent prefs (Settings →
         # Agents / composer toolbar). Applied at session creation, mirroring how
@@ -1537,7 +724,7 @@ class AgentManager:
             # scope_includes_precursor. Attached here rather than via
             # _catalog_mcp_configs so it keeps its full-access env.
             if scope_includes_precursor(scope):
-                mcp.update(self._precursor_mcp_config(agent) or {})
+                mcp.update(self._mcp.precursor_mcp_config(agent) or {})
             # Every enabled catalog server the scope allows (built-in +
             # user-defined). _catalog_mcp_configs already skips 'precursor', so
             # the first-party full-access entry above can't be shadowed.
@@ -1549,7 +736,7 @@ class AgentManager:
         # with a different scope — rebuilds it. Computed by the same method the
         # reuse check compares against, so the two can't drift.
         mcp_fingerprint = await self._expected_mcp_fingerprint(run)
-        preamble = await self._system_preamble(agent, run)
+        preamble = await prompting.system_preamble(agent, run)
         if preamble:
             # Append (don't replace) so the agent keeps its SDK base instructions
             # but also gets the operator's custom guidance and any topic binding.
@@ -1586,42 +773,6 @@ class AgentManager:
         await self._announce_auth_required(agent.id, auth_required)
         return live
 
-    @staticmethod
-    def _oauth_stale(live: _LiveSession) -> bool:
-        """True when ``live``'s baked-in OAuth token is at/within the refresh margin."""
-        expires_at = live.oauth_expires_at
-        if expires_at is None:
-            return False
-        return datetime.now(UTC) >= expires_at - _OAUTH_REFRESH_MARGIN
-
-    async def _auth_server_from_failed_tool(self, event: AgentEvent) -> str | None:
-        """Return the OAuth server to prompt for when a tool failure looks like
-        an expired sign-in, else ``None``.
-
-        We require the event to name a server Precursor can actually sign in to
-        *and* the bearer to be genuinely unavailable, so a routine tool error
-        (bad args, server-side fault) never nags the user to re-auth. Servers
-        that can't sign in as things stand resolve to no profile and are
-        ignored — notably ``workiq`` with preview mode off, which runs as local
-        stdio with no OAuth, so a routine stdio tool error must not surface a
-        prompt the user can't act on (re-auth 400s with "Enable WorkIQ preview
-        mode before signing in").
-        """
-        if event.tool_status != "error":
-            return None
-        server = (event.data or {}).get("server_name")
-        if not isinstance(server, str) or not server:
-            return None
-        from precursor.backend.services.mcp.oauth_registry import profile_for_server
-        from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
-
-        profile = await profile_for_server(server)
-        if profile is None:
-            return None
-        if await resolve_workiq_bearer_token(profile, caller="agent tool failure") is not None:
-            return None
-        return server
-
     async def _emit_synthetic(self, agent_id: int, event: AgentEvent) -> None:
         """Append a manager-originated event to the timeline (archive + publish).
 
@@ -1629,10 +780,10 @@ class AgentManager:
         so they persist in the durable timeline and reach the frontend over the
         same ``agent.changed`` bus as real SDK events.
         """
-        await self._ensure_loaded(agent_id)
+        await self._transcript.ensure_loaded(agent_id)
         event.at = datetime.now(UTC)
         self._events.setdefault(agent_id, []).append(event)
-        await self._archive_event(agent_id, event)
+        await timeline.archive_event(agent_id, event)
         agent = await self._load(agent_id)
         await publish_agent_changed(
             agent_session_id=agent_id,
@@ -1641,38 +792,7 @@ class AgentManager:
         )
 
     async def _announce_auth_required(self, agent_id: int, servers: list[str]) -> None:
-        """Surface a sign-in prompt for each ``server`` we couldn't authenticate.
-
-        Collapsed per credential first: the Agent 365 servers share one Entra
-        token, so announcing both would raise two prompts the user can only
-        answer once. De-duped per agent on top of that, so a held session
-        doesn't re-announce on every rebuild. Servers that are *not* currently
-        blocked are dropped from the announced set, so a later token expiry (or
-        a sign-in that's since lapsed) prompts again rather than staying silent.
-        """
-        from precursor.backend.services.mcp.oauth_registry import (
-            collapse_by_credential,
-            server_label,
-        )
-
-        pending = collapse_by_credential(servers)
-        announced = self._auth_announced.setdefault(agent_id, set())
-        for server in pending:
-            if server in announced:
-                continue
-            announced.add(server)
-            label = server_label(server)
-            await self._emit_synthetic(
-                agent_id,
-                AgentEvent(
-                    kind="mcp_auth_required",
-                    tool_name=server,
-                    text=f"{label} needs you to sign in to use its tools.",
-                    data={"server": server},
-                ),
-            )
-        # Reset servers that authenticated this build so a future lapse re-fires.
-        announced.intersection_update(pending)
+        await self._mcp.announce_auth_required(agent_id, servers)
 
     async def refresh_oauth_sessions(self) -> None:
         """Drop idle live sessions after an interactive MCP sign-in.
@@ -1697,32 +817,6 @@ class AgentManager:
             await self._teardown_run(run_id, forget=False)
             if run is not None:
                 self._auth_announced.pop(run.agent_id, None)
-
-    async def _release_parked_turn(self, agent_id: int, live: Any) -> None:
-        """Free a session parked on an unanswered permission before re-driving it.
-
-        A turn that stopped at a permission gate is still *open*: the SDK is
-        awaiting a decision that, by the time we're starting a new task, nobody is
-        going to give. Sending the next prompt into that session just queues it
-        behind the gate, so the "retry" burns its whole watchdog window without
-        running anything and dies with the same stall it was meant to fix.
-
-        Rejecting the pending futures lets the old turn unwind, and the abort
-        stops whatever it does next, so the new prompt lands on an idle session.
-        Nothing to do for a session that wasn't parked — the common case.
-        """
-        if not getattr(live, "pending", None):
-            return
-        logger.info(
-            "agent %s: releasing %d unanswered permission request(s) before re-driving",
-            agent_id,
-            len(live.pending),
-        )
-        for fut in list(live.pending.values()):
-            if not fut.done():
-                fut.set_result(self._reject("superseded by a new run"))
-        with contextlib.suppress(Exception):
-            await live.sdk_session.abort()
 
     async def start_task(
         self,
@@ -1765,8 +859,8 @@ class AgentManager:
             if blocked_on:
                 await self._block_turn(run.id, blocked_on)
                 return
-            await self._release_parked_turn(agent_id, live)
-            await self._sync_selected_model(agent, run)
+            await self._permissions.release_parked_turn(agent_id, live)
+            await self._model_selection.sync_selected_model(agent, run)
             live.approval_policy = await self._approval_policy(agent, run)
             prompt = (agent.task_prompt or "").strip() or None
             live.pending_prompt = prompt
@@ -1829,7 +923,7 @@ class AgentManager:
             if run is None:
                 return
             live = await self._ensure_live(agent, run)
-            await self._sync_selected_model(agent, run)
+            await self._model_selection.sync_selected_model(agent, run)
             live.approval_policy = await self._approval_policy(agent, run)
             prompt = text.strip() or None
             live.pending_prompt = prompt
@@ -1875,7 +969,7 @@ class AgentManager:
             return
         try:
             live = await self._ensure_live(agent, run)
-            await self._sync_selected_model(agent, run)
+            await self._model_selection.sync_selected_model(agent, run)
             live.approval_policy = await self._approval_policy(agent, run)
             live.pending_prompt = prompt
             live.pending_answer = None
@@ -1908,74 +1002,11 @@ class AgentManager:
 
     async def resolve_permission(self, agent_id: int, request_id: str, decision: str) -> bool:
         """Resolve a parked permission request. Returns True if one matched."""
-        run = await self._resolve_run(agent_id)
-        live = self._live.get(run.id) if run is not None else None
-        if live is None or run is None:
-            return False
-        fut = live.pending.get(request_id)
-        if fut is None or fut.done():
-            return False
-        if decision == "approve-always":
-            # Remember the action for the rest of the session (enforced locally by
-            # the permission handler) and record the grant for the Settings recap.
-            info = live.pending_info.get(request_id, {})
-            live.session_approvals.add(permission_signature(info))
-            live.grants.append(
-                {
-                    "type": info.get("type", "tool"),
-                    "title": info.get("title"),
-                    "target": info.get("command")
-                    or info.get("path")
-                    or info.get("url")
-                    or info.get("tool")
-                    or info.get("server"),
-                    "at": datetime.now(UTC),
-                }
-            )
-        fut.set_result(self._decision(decision))
-        # The turn resumes, so the agent is working again. This *must* happen
-        # here rather than at each call site: ``needs_approval`` is a sticky
-        # status the idle handler deliberately skips (so a trailing idle can't
-        # mask a genuinely parked agent), which means an agent left sitting in it
-        # never reaches ``_on_idle`` — its turn finishes, the workflow is never
-        # told, and the step stays "Running" forever.
-        await self._patch_run(run.id, status="running", blocked_question=None)
-        agent = await self._load(agent_id)
-        await publish_agent_changed(
-            agent_session_id=agent_id,
-            topic_id=agent.topic_id if agent else None,
-            chat_id=agent.chat_id if agent else None,
-            agent_run_id=run.id,
-        )
-        return True
+        return await self._permissions.resolve(agent_id, request_id, decision)
 
     async def list_permissions(self) -> list[dict[str, Any]]:
-        """Recap of active "approve for session" grants across live sessions.
-
-        Grants are held per *run*; the recap is agent-addressed (that's the row
-        the user recognises in Settings), so runs are resolved back to their
-        agents here.
-        """
-        out: list[dict[str, Any]] = []
-        run_ids = [rid for rid, live in self._live.items() if live.grants]
-        if not run_ids:
-            return out
-        async with SessionLocal() as session:
-            runs = (
-                (await session.execute(select(AgentRun).where(AgentRun.id.in_(run_ids))))
-                .scalars()
-                .all()
-            )
-        agent_by_run = {r.id: r.agent_id for r in runs}
-        for run_id in run_ids:
-            live = self._live[run_id]
-            agent_id = agent_by_run.get(run_id)
-            if agent_id is None:
-                continue
-            for grant in live.grants:
-                out.append({"agent_id": agent_id, "agent_run_id": run_id, **grant})
-        out.sort(key=lambda g: g.get("at") or datetime.min.replace(tzinfo=UTC), reverse=True)
-        return out
+        """Recap of active "approve for session" grants across live sessions."""
+        return await self._permissions.list_grants()
 
     def live_activity(self, agent_ids: list[int]) -> dict[int, dict[str, Any]]:
         """Snapshot each agent's in-flight work for the dashboard cockpit.
@@ -2055,110 +1086,21 @@ class AgentManager:
         return out
 
     async def reset_permissions(self) -> int:
-        """Revoke all session grants by disconnecting every live session.
-
-        Tearing the SDK sessions down drops their in-session approvals; they're
-        recreated fresh (and will ask again) on next use. Returns the count of
-        grants cleared.
-        """
-        cleared = sum(len(live.grants) for live in self._live.values())
-        for run_id in list(self._live.keys()):
-            await self._teardown_run(run_id)
-        return cleared
-
-    async def _timeline(
-        self, agent_id: int, *, agent_run_id: int | None = None
-    ) -> tuple[list[AgentEvent], list[AgentEvent]]:
-        """Split the transcript into its stable prefix and its volatile tail.
-
-        The archived history is append-only, which is what lets a live reader ask
-        for only what it hasn't seen (:meth:`get_events_page`). Unresolved
-        permission cards are *not* archived — they appear and vanish as approvals
-        are answered — so they are returned separately instead of being counted
-        into a cursor they would immediately invalidate.
-
-        The archive is per *agent* — the transcript the user reads spans every
-        execution — but the live fallback and the pending-approval cards belong
-        to the agent's **current** run, the only execution they can act on.
-
-        Pass ``agent_run_id`` to read a single execution. Two workflows driving
-        one reusable agent at the same time otherwise interleave into a single
-        unreadable conversation, each answering the other's prompt (issue #242).
-        """
-        await self._ensure_loaded(agent_id)
-        # Which execution this read is about: the requested one, else the
-        # agent's current run (the only one an approval card could act on).
-        run = (
-            await self._run(agent_run_id)
-            if agent_run_id is not None
-            else await self._resolve_run(agent_id)
-        )
-        live = self._live.get(run.id) if run is not None else None
-        events = [
-            ev
-            for ev in self._events.get(agent_id, [])
-            if agent_run_id is None or ev.agent_run_id == agent_run_id
-        ]
-        if not events:
-            # Nothing archived (neither in memory nor the DB) — e.g. a session
-            # resumed after a restart that hasn't re-emitted yet. Fall back to
-            # whatever the live session can replay.
-            if live is None:
-                loaded = await self._load_run(run.id) if run is not None else None
-                if loaded is None or not loaded[0].copilot_session_id:
-                    return [], []
-                live = await self._ensure_live(loaded[1], loaded[0])
-            try:
-                raw = await live.sdk_session.get_events()
-            except Exception:
-                logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
-                raw = []
-            events = [normalize_event(ev) for ev in raw or []]
-        # Unresolved permission requests render as inline workflow steps so the
-        # approval card appears in-place (with details of what's requested)
-        # rather than floating detached from the timeline.
-        pending = (
-            [
-                AgentEvent(
-                    kind="permission_request",
-                    text=info.get("title"),
-                    request_id=info.get("request_id"),
-                    data=info,
-                )
-                for info in live.pending_info.values()
-            ]
-            if live is not None
-            else []
-        )
-        return events, pending
+        """Revoke all session grants by disconnecting every live session."""
+        return await self._permissions.reset()
 
     async def get_events(
         self, agent_id: int, *, agent_run_id: int | None = None
     ) -> list[AgentEvent]:
-        """The whole transcript: stable history followed by any parked approvals.
-
-        See :meth:`_timeline` for how ``agent_run_id`` scopes the read.
-        """
-        stable, pending = await self._timeline(agent_id, agent_run_id=agent_run_id)
-        return [*stable, *pending]
+        """The whole transcript: stable history followed by any parked approvals."""
+        return await self._transcript.get_events(agent_id, agent_run_id=agent_run_id)
 
     async def get_events_page(
         self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
     ) -> AgentEventPage:
-        """The transcript from ``after`` onward, for an incremental live reader.
-
-        A cursor past the end no longer addresses this transcript — it was
-        cleared, pruned by retention, or was taken against a different run — so
-        answer with the whole thing and flag it as a replacement rather than
-        silently skipping the events the caller is missing.
-        """
-        stable, pending = await self._timeline(agent_id, agent_run_id=agent_run_id)
-        reset = after < 0 or after > len(stable)
-        return AgentEventPage(
-            events=stable[0 if reset else after :],
-            pending=pending,
-            cursor=len(stable),
-            reset=reset,
+        """The transcript from ``after`` onward, for an incremental live reader."""
+        return await self._transcript.get_events_page(
+            agent_id, agent_run_id=agent_run_id, after=after
         )
 
     async def _teardown_run(self, run_id: int, *, forget: bool = False) -> None:
@@ -2327,67 +1269,11 @@ class AgentManager:
             )
         await handler(self, agent_id, argument)
 
-    async def _cmd_rename(self, agent_id: int, argument: str) -> None:
-        title = " ".join(argument.split())[:200]
-        if not title:
-            raise ValueError("Usage: /rename <new title>")
-        await self._patch(agent_id, title=title)
-        await self._publish(agent_id)
-
-    async def _cmd_archive(self, agent_id: int, argument: str) -> None:
-        agent = await self._load(agent_id)
-        if agent is not None and agent.archived_at is None:
-            await self._patch(agent_id, archived_at=datetime.now(UTC))
-            await self._publish(agent_id)
-
-    async def _cmd_clear(self, agent_id: int, argument: str) -> None:
-        await self.clear_session(agent_id)
-
-    async def _cmd_role(self, agent_id: int, argument: str) -> None:
-        name = " ".join(argument.split())
-        if not name:
-            # The bare form opens the composer's role picker client-side, so it
-            # normally never reaches here.
-            raise ValueError("Usage: /role <name>")
-        async with SessionLocal() as session:
-            role = (
-                await session.execute(select(Role).where(func.lower(Role.name) == name.lower()))
-            ).scalar_one_or_none()
-        if role is None:
-            raise ValueError(f'Unknown role "{name}". Manage roles in Settings → Roles.')
-        # The default role is persisted as NULL, never by its own id.
-        await self._patch(agent_id, role_id=None if role.is_default else role.id)
-        await self._publish(agent_id)
-
-    async def _cmd_memory_store(self, agent_id: int, argument: str) -> None:
-        from precursor.backend.services import memories as memory_service
-
-        payload = memory_service.parse_store_arg(argument)
-        async with SessionLocal() as session:
-            await memory_service.create_memory(session, payload)
-
-    async def _cmd_memory_update(self, agent_id: int, argument: str) -> None:
-        from precursor.backend.services import memories as memory_service
-
-        memory_id, payload = memory_service.parse_update_arg(argument)
-        async with SessionLocal() as session:
-            try:
-                await memory_service.update_memory(session, memory_id, payload)
-            except LookupError as exc:
-                raise ValueError(str(exc)) from exc
-
-    # Registry of system slash commands available inside an agent session:
-    # name -> async handler. The set of supported names (used for validation and
-    # the rejection message) is derived from these keys, and the frontend picker
-    # mirrors it via AGENT_SLASH_COMMANDS, so a new command is a single entry.
-    _COMMAND_HANDLERS: ClassVar[dict[str, Callable[[AgentManager, int, str], Awaitable[None]]]] = {
-        "rename": _cmd_rename,
-        "archive": _cmd_archive,
-        "clear": _cmd_clear,
-        "role": _cmd_role,
-        "memory-store": _cmd_memory_store,
-        "memory-update": _cmd_memory_update,
-    }
+    # The registry lives in ``commands``; ``supported_commands`` and the
+    # frontend's AGENT_SLASH_COMMANDS are derived from its keys.
+    _COMMAND_HANDLERS: ClassVar[dict[str, Callable[[AgentManager, int, str], Awaitable[None]]]] = (
+        commands.COMMAND_HANDLERS
+    )
 
     @classmethod
     def supported_commands(cls) -> tuple[str, ...]:
@@ -2406,59 +1292,8 @@ class AgentManager:
             else (agent.current_run_id if agent else None),
         )
 
-    async def _available_model_ids(self) -> set[str]:
-        """Model ids the runtime currently offers (empty when unavailable).
-
-        Guards against a stale persisted default: the SDK's catalogue rotates
-        over time, so a model that was valid when it was saved can vanish, and
-        passing a now-unknown id to ``create_session`` fails the whole turn.
-        """
-        return {m["id"] for m in await self.list_models()}
-
     async def _sanitize_model(self, agent_id: int, model: str) -> str:
-        """Return ``model`` if the runtime still offers it, else ``"auto"``.
-
-        Only downgrades when we actually have a catalogue to check against: an
-        empty catalogue (runtime momentarily down) leaves the selection intact
-        so we never mask a transient failure as a model change. ``"auto"`` is
-        always accepted, so it's the safe fallback for a vanished pin.
-        """
-        if not model or model == "auto":
-            return model
-        available = await self._available_model_ids()
-        if available and model not in available:
-            logger.warning(
-                "agent %s: model %r is no longer offered by the runtime — falling back to 'auto'",
-                agent_id,
-                model,
-            )
-            return "auto"
-        return model
-
-    @staticmethod
-    def _blocked_on_missing_auth(agent: AgentSession, live: _LiveSession) -> list[str]:
-        """Servers this agent *explicitly* asked for but couldn't authenticate.
-
-        Restricted to an explicit allowlist on purpose. An operator who named a
-        server in a workflow step's ``mcp_servers`` stated a hard requirement:
-        running the step without it produces a confident answer improvised from
-        the model's own knowledge, which the workflow then records as a success.
-        An agent left on the whole enabled catalogue made no such claim, and
-        hard-blocking it on one lapsed credential would be a regression.
-
-        Returns human-facing labels, collapsed per credential so a pair sharing
-        one sign-in reads as one thing to fix.
-        """
-        scope = parse_mcp_scope(agent.mcp_servers)
-        if not scope:
-            return []
-        from precursor.backend.services.mcp.oauth_registry import (
-            collapse_by_credential,
-            server_label,
-        )
-
-        missing = [name for name, _ in live.mcp_auth_skipped if name in scope]
-        return [server_label(name) for name in collapse_by_credential(sorted(missing))]
+        return await self._model_selection.sanitize(agent_id, model)
 
     async def _block_turn(self, run_id: int, labels: list[str]) -> None:
         """Park this run as ``blocked`` instead of dispatching a tool-less turn.
@@ -2507,332 +1342,20 @@ class AgentManager:
             self.enqueue(self._advance_workflows(run_id))
 
     async def list_models(self) -> list[dict[str, Any]]:
-        """Return the runtime's available models, or empty.
-
-        Used to populate the model picker. Surfaces each model's context window
-        and advertised reasoning-effort set so the composer can adapt its
-        controls. The SDK caches the result after the first call.
-        """
-        if not self._ready or self._client is None:
-            return []
-        try:
-            models = await self._client.list_models()
-        except Exception:
-            logger.debug("list_models failed", exc_info=True)
-            return []
-        out: list[dict[str, Any]] = []
-        for m in models or []:
-            mid = getattr(m, "id", None)
-            if not mid:
-                continue
-            caps = getattr(m, "capabilities", None)
-            limits = getattr(caps, "limits", None) if caps is not None else None
-            ctx = None
-            if limits is not None:
-                ctx = getattr(limits, "max_prompt_tokens", None) or getattr(
-                    limits, "max_context_window_tokens", None
-                )
-            efforts = getattr(m, "supported_reasoning_efforts", None) or []
-            out.append(
-                {
-                    "id": str(mid),
-                    "name": str(getattr(m, "name", None) or mid),
-                    "context_window": int(ctx) if isinstance(ctx, (int, float)) else None,
-                    "supported_reasoning_efforts": [str(e) for e in efforts],
-                }
-            )
-        return out
-
-    async def _apply_agent_model(
-        self,
-        agent: AgentSession,
-        live: _LiveSession,
-        *,
-        default_model: str,
-        effort: str,
-        tier: str,
-        pinned: str | None = None,
-    ) -> None:
-        """``set_model`` a single idle live agent to its selected model.
-
-        The model is ``pinned or agent.model or default_model`` — the executing
-        run's snapshot wins (a workflow step can pin a model for its turn), then
-        an explicit per-agent pin, otherwise the current composer/Settings
-        selection applies. History preserving and effective on the agent's next
-        turn. No-op when the target (model, effort, tier) already matches what we
-        last applied.
-        """
-        model = pinned or agent.model or default_model
-        if not model:
-            return
-        signature = (model, effort or None, tier or "default")
-        if live.model_signature == signature:
-            return
-        # Always send the tier (incl. "default") so toggling back resets it;
-        # a falsy effort is sent as None so the runtime restores the model
-        # default rather than pinning a stale level.
-        kwargs: dict[str, Any] = {"context_tier": tier or "default"}
-        if effort:
-            kwargs["reasoning_effort"] = effort
-        try:
-            await live.sdk_session.set_model(model, **kwargs)
-            live.model_signature = signature
-        except Exception:
-            logger.debug("set_model failed for agent %s", agent.id, exc_info=True)
-
-    async def _sync_selected_model(self, agent: AgentSession, run: AgentRun) -> None:
-        """Reconcile ``run``'s live session to the current model selection.
-
-        Called right before a turn is dispatched so every next turn follows the
-        composer/Settings selection, even on a long-lived reused session. Skipped
-        when there's no live session yet (a fresh build already bakes in the
-        selection).
-        """
-        live = self._live.get(run.id)
-        if live is None:
-            return
-        async with SessionLocal() as s:
-            default_model = await resolve_agents_default_model(s)
-            effort = await resolve_agents_reasoning_effort(s)
-            tier = await resolve_agents_context_tier(s)
-        await self._apply_agent_model(
-            agent, live, default_model=default_model, effort=effort, tier=tier, pinned=run.model
-        )
+        """Return the runtime's available models, or empty."""
+        return await self._model_selection.list_models()
 
     async def apply_session_overrides(self) -> None:
-        """Apply the current global model / reasoning-effort / context-tier prefs
-        onto idle live sessions.
+        """Apply the current global model prefs onto idle live sessions."""
+        await self._model_selection.apply_session_overrides()
 
-        Lets a change in the composer (or Settings → Agents) take effect on the
-        next message of an in-progress conversation instead of only new sessions.
-        Uses the SDK's ``set_model`` — history-preserving, effective next turn.
-        Skips sessions with a turn in flight, where switching the model is unsafe;
-        those pick the change up on their next idle dispatch.
-        """
-        if not self._ready:
-            return
-        run_ids = list(self._live.keys())
-        if not run_ids:
-            return
-        async with SessionLocal() as s:
-            default_model = await resolve_agents_default_model(s)
-            effort = await resolve_agents_reasoning_effort(s)
-            tier = await resolve_agents_context_tier(s)
-            runs = (
-                (await s.execute(select(AgentRun).where(AgentRun.id.in_(run_ids)))).scalars().all()
-            )
-            agent_ids = {r.agent_id for r in runs}
-            rows = (
-                (await s.execute(select(AgentSession).where(AgentSession.id.in_(agent_ids))))
-                .scalars()
-                .all()
-                if agent_ids
-                else []
-            )
-        by_id = {a.id: a for a in rows}
-        by_run = {r.id: r for r in runs}
-        for run_id in run_ids:
-            live = self._live.get(run_id)
-            run = by_run.get(run_id)
-            agent = by_id.get(run.agent_id) if run is not None else None
-            if live is None or run is None or agent is None:
-                continue
-            if run.status in {"running", "needs_approval", "pending"}:
-                continue
-            await self._apply_agent_model(
-                agent,
-                live,
-                default_model=default_model,
-                effort=effort,
-                tier=tier,
-                pinned=run.model,
-            )
-
-    def _make_permission_handler(self, run_id: int) -> Any:
-        async def handler(request: Any, invocation: Any) -> Any:
-            # The default approval policy decides how much we gate. ``autonomous``
-            # approves everything; ``balanced`` (default) auto-approves read-only
-            # intents (reads, URL fetches, read-only MCP) and our own precursor
-            # MCP calls; ``manual`` asks for everything. Anything not auto-approved
-            # is parked for explicit user approval.
-            #
-            # Read the policy cached on the live session (resolved once per turn);
-            # never touch the DB here. If anything in the body raises, fall back to
-            # the in-memory settings policy instead of letting the exception become
-            # a silent, detail-less SDK denial.
-            req_name = type(request).__name__
-            try:
-                live = self._live.get(run_id)
-                policy = (live.approval_policy if live else None) or DEFAULT_AGENTS_APPROVAL_POLICY
-                logger.info(
-                    "run %s: permission handler hit — request=%s policy=%s live=%s",
-                    run_id,
-                    req_name,
-                    policy,
-                    live is not None,
-                )
-                if policy == "autonomous":
-                    logger.info("run %s: %s auto-approved (autonomous)", run_id, req_name)
-                    return self._approve_once()
-                if policy != "manual" and should_auto_approve(request):
-                    logger.info("run %s: %s auto-approved (read-only)", run_id, req_name)
-                    return self._approve_once()
-                info = describe_permission(request)
-                # Honour a prior "approve for session" for the same action.
-                if live is not None and permission_signature(info) in live.session_approvals:
-                    logger.info("run %s: %s auto-approved (session grant)", run_id, req_name)
-                    return self._approve_once()
-                logger.info(
-                    "run %s: %s requires approval — parking (%s)",
-                    run_id,
-                    req_name,
-                    info.get("title"),
-                )
-                return await self._park_permission(run_id, request, info)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                fallback = DEFAULT_AGENTS_APPROVAL_POLICY
-                logger.exception(
-                    "run %s: permission handler failed for %s; falling back to %r policy",
-                    run_id,
-                    req_name,
-                    fallback,
-                )
-                # Don't silently deny in unattended modes — that's the bug we're
-                # guarding against. Manual mode can't safely auto-approve, so emit
-                # an explicit rejection the UI can show rather than a crash.
-                if fallback != "manual":
-                    return self._approve_once()
-                return self._reject("permission handler error")
-
-        return handler
-
-    async def _approval_policy(
-        self, agent: AgentSession | None = None, run: AgentRun | None = None
-    ) -> str:
-        # The executing run's snapshot wins (it froze the policy a workflow step
-        # asked for), then a per-agent override, then the DB-backed global
-        # setting. ``None``/unset at each level falls through.
-        for source in (run, agent):
-            override = getattr(source, "approval_policy", None)
-            if override in AGENTS_APPROVAL_POLICIES:
-                return str(override)
-        try:
-            async with SessionLocal() as session:
-                return await resolve_agents_approval_policy(session)
-        except Exception:
-            fallback = DEFAULT_AGENTS_APPROVAL_POLICY
-            logger.warning(
-                "agent: approval-policy DB read failed; using in-memory default %r",
-                fallback,
-                exc_info=True,
-            )
-            return fallback
-
-    async def _park_permission(
-        self, run_id: int, request: Any, info: dict[str, Any] | None = None
-    ) -> Any:
-        live = self._live.get(run_id)
-        if live is None:
-            logger.warning("run %s: cannot park permission — no live session; rejecting", run_id)
-            return self._reject("session gone")
-        request_id = str(getattr(request, "tool_call_id", "") or id(request))
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[Any] = loop.create_future()
-        live.pending[request_id] = fut
-        live.pending_info[request_id] = {
-            "request_id": request_id,
-            **(info if info is not None else describe_permission(request)),
-        }
-        await self._patch_run(run_id, status="needs_approval")
-        loaded = await self._load_run(run_id)
-        agent = loaded[1] if loaded else None
-        await publish_agent_changed(
-            agent_session_id=agent.id if agent else 0,
-            topic_id=agent.topic_id if agent else None,
-            chat_id=agent.chat_id if agent else None,
-            agent_run_id=run_id,
-        )
-        try:
-            return await fut
-        finally:
-            live.pending.pop(request_id, None)
-            live.pending_info.pop(request_id, None)
-
-    def _approve_once(self) -> Any:
-        return runtime.load_rpc().PermissionDecisionApproveOnce()
-
-    def _reject(self, feedback: str) -> Any:
-        return runtime.load_rpc().PermissionDecisionReject(feedback=feedback)
-
-    def _decision(self, decision: str) -> Any:
-        rpc = runtime.load_rpc()
-        if decision == "deny":
-            return rpc.PermissionDecisionReject(feedback="Denied by user")
-        # Both approve-once and approve-for-session approve the *current* request
-        # with the same SDK call. We don't emit PermissionDecisionApproveForSession
-        # — its mandatory ``approval`` object for command/write prompts is what
-        # triggers the runtime's "missing approval field" error. Session scope is
-        # instead enforced by ``session_approvals`` in the permission handler.
-        return rpc.PermissionDecisionApproveOnce()
+    # Aliased so the broker's calls through the manager honour a patched decision.
+    _approval_policy = staticmethod(permissions.approval_policy)
+    _approve_once = staticmethod(permissions.approve_once)
+    _reject = staticmethod(permissions.reject)
+    _decision = staticmethod(permissions.decision)
 
     # ------------------------------------------------------------------ events
-
-    async def _ensure_loaded(self, agent_id: int) -> None:
-        """Hydrate the in-memory timeline from the ``agent_events`` archive once.
-
-        After a process restart the live cache is empty and the SDK only replays
-        ``SessionStartData`` on resume, so the durable history lives only in the
-        DB. Load it lazily the first time an agent is touched (an event arriving
-        or a timeline read) and mark it loaded so we don't re-read per event.
-        """
-        if agent_id in self._loaded:
-            return
-        async with self._events_lock:
-            if agent_id in self._loaded:
-                return
-            async with SessionLocal() as session:
-                rows = (
-                    await session.execute(
-                        select(AgentEventRecord.payload, AgentEventRecord.agent_run_id)
-                        .where(AgentEventRecord.agent_session_id == agent_id)
-                        .order_by(AgentEventRecord.id)
-                    )
-                ).all()
-            archived: list[AgentEvent] = []
-            for payload, run_id in rows:
-                try:
-                    parsed = AgentEvent.model_validate_json(payload)
-                    # The column is the authority: rows archived before the event
-                    # payload carried a run id still resolve to their execution.
-                    if run_id is not None:
-                        parsed.agent_run_id = run_id
-                    archived.append(parsed)
-                except Exception:
-                    logger.debug(
-                        "skipping malformed archived event for agent %s", agent_id, exc_info=True
-                    )
-            if archived:
-                self._events[agent_id] = archived
-            self._loaded.add(agent_id)
-
-    async def _archive_event(
-        self, agent_id: int, event: AgentEvent, *, agent_run_id: int | None = None
-    ) -> None:
-        """Persist one normalised event to the durable timeline archive."""
-        try:
-            async with SessionLocal() as session:
-                session.add(
-                    AgentEventRecord(
-                        agent_session_id=agent_id,
-                        agent_run_id=agent_run_id,
-                        payload=event.model_dump_json(),
-                    )
-                )
-                await session.commit()
-        except Exception:
-            logger.debug("failed to archive event for agent %s", agent_id, exc_info=True)
 
     async def _handle_event(self, run_id: int, event: Any) -> None:
         # Events arrive keyed by the *run* that produced them, but are serialised
@@ -2857,10 +1380,10 @@ class AgentManager:
         # Archive every event so the timeline persists across session teardown
         # (e.g. on topic link) and process restart, where the SDK would otherwise
         # drop it (``get_events`` only replays ``SessionStartData`` on resume).
-        await self._ensure_loaded(agent_id)
+        await self._transcript.ensure_loaded(agent_id)
         # The status *before* this event is handled, read up front rather than
         # around the final patch below: handlers reached from here (``_on_idle``,
-        # and ``_enforce_budget`` via ``_record_usage``) commit status changes of
+        # and ``UsageMeter.enforce_budget`` via ``_record_usage``) commit status changes of
         # their own mid-flight, and those are transitions the workflow seam must
         # still see. Read from the *run* — a sibling execution's status must not
         # look like this one transitioning.
@@ -2870,7 +1393,7 @@ class AgentManager:
         # Stamp the producing run so the timeline can be split per execution.
         normalised.agent_run_id = run_id
         self._events.setdefault(agent_id, []).append(normalised)
-        await self._archive_event(agent_id, normalised, agent_run_id=run_id)
+        await timeline.archive_event(agent_id, normalised, agent_run_id=run_id)
 
         # A workiq tool that errors after the session was built with valid creds
         # usually means the OAuth token lapsed mid-turn. Surface the same sign-in
@@ -2968,107 +1491,10 @@ class AgentManager:
             self.enqueue(self._advance_workflows(run_id))
 
     async def _record_usage(self, run_id: int, data: Any) -> None:
-        """Meter an ``AssistantUsageData`` round into the shared usage ledger.
-
-        Each agent LLM call lands as one ``source="agent"`` row tagged with the
-        agent's linked container, so agent spend shows up in the global usage
-        stats alongside chat/topic turns. ``SessionUsageInfoData`` is *not*
-        recorded — it reports context-window occupancy, not billable deltas, so
-        counting it would double-charge the turn.
-        """
-        prompt_tokens = int(getattr(data, "input_tokens", None) or 0)
-        completion_tokens = int(getattr(data, "output_tokens", None) or 0)
-        if not prompt_tokens and not completion_tokens:
-            return
-        model = getattr(data, "model", None)
-        loaded = await self._load_run(run_id)
-        if loaded is None:
-            return
-        run, agent = loaded
-        try:
-            async with SessionLocal() as session:
-                await record_usage(
-                    session,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    source="agent",
-                    model=str(model) if model else (run.model or agent.model),
-                    topic_id=agent.topic_id,
-                    chat_id=agent.chat_id,
-                )
-                await session.commit()
-        except Exception:
-            logger.debug("failed to record agent usage for run %s", run_id, exc_info=True)
-
-        # Accumulate the running totals on the run (drives the workflow step's
-        # token delta and aggregate observability; mirrored onto the agent row for
-        # the list view). Kept in a separate write so a usage-ledger failure above
-        # doesn't lose the meter, and vice versa.
-        await self._patch_run(
-            run_id,
-            total_input_tokens=run.total_input_tokens + prompt_tokens,
-            total_output_tokens=run.total_output_tokens + completion_tokens,
-        )
-        await self._enforce_budget(run_id)
+        await self._usage.record(run_id, data)
 
     async def _agent_spend(self, agent_id: int) -> int:
-        """Total tokens this agent has ever burned, across every execution.
-
-        Summed from the runs rather than read off ``AgentSession.total_*``: those
-        columns are a write-through mirror of the agent's *current* run, so they
-        reset whenever a new one opens and flip between concurrent drivers. The
-        budget is cumulative governance, so it needs the real total — which the
-        migration preserved by backfilling pre-split spend onto a synthetic run.
-        """
-        async with SessionLocal() as session:
-            total = await session.execute(
-                select(
-                    func.coalesce(
-                        func.sum(AgentRun.total_input_tokens + AgentRun.total_output_tokens), 0
-                    )
-                ).where(AgentRun.agent_id == agent_id)
-            )
-            return int(total.scalar() or 0)
-
-    async def _enforce_budget(self, run_id: int) -> None:
-        """Park an agent as ``blocked`` once it burns through its token budget.
-
-        The governor is a *soft* cap checked after each metered round: an
-        in-flight turn finishes, but the next autonomous step won't start. Null
-        budget = ungoverned. Already-terminal/blocked runs are left alone so we
-        don't clobber a completion that landed in the same turn.
-
-        The budget itself is cumulative governance and lives on the **definition**
-        (spend across every execution counts against it), while the status change
-        it triggers lands on the run that tripped it.
-        """
-        loaded = await self._load_run(run_id)
-        if loaded is None:
-            return
-        run, agent = loaded
-        if agent.token_budget is None:
-            return
-        spent = await self._agent_spend(agent.id)
-        if spent < agent.token_budget:
-            return
-        if run.status not in ("running", "needs_approval"):
-            return
-        await self._patch_run(
-            run_id,
-            status="blocked",
-            active_prompt=None,
-            blocked_question=(
-                f"I've reached my token budget ({agent.token_budget:,} tokens; "
-                f"{spent:,} spent). Review my progress and raise the budget or "
-                "adjust the objective to continue."
-            ),
-        )
-        await publish_agent_changed(
-            agent_session_id=agent.id,
-            topic_id=agent.topic_id,
-            chat_id=agent.chat_id,
-            agent_run_id=run_id,
-        )
+        return await usage.agent_spend(agent_id)
 
     async def _on_idle(self, agent: AgentSession, run: AgentRun, patch: dict[str, Any]) -> None:
         """Resolve what a finished turn means for an agent's mission.
@@ -3321,95 +1747,10 @@ class AgentManager:
     async def _persist_artifacts(
         self, run_id: int, artifacts: list[dict[str, str]], *, kind: str
     ) -> None:
-        """Write published outputs to the shared blackboard (``agent_artifacts``).
-
-        ``kind`` here is the *provenance* — ``"result"`` for the auto-captured
-        completion summary, ``"output"`` for a model-emitted ``ARTIFACT:`` line —
-        stored on the row's ``key`` so downstream injection and the UI can tell
-        them apart. The stored ``kind`` column is a rendering hint (kept as plain
-        ``text``). De-duplicates an identical ``result`` so a completion that
-        reposts the same summary doesn't stack duplicates. Best-effort: a
-        blackboard write must never break the turn.
-
-        Artifacts are scoped to the **run** that published them (``agent_id`` is
-        kept alongside for agent-wide queries), so two workflows driving the same
-        agent keep separate blackboards.
-        """
-        from precursor.backend.models.agent_artifact import AgentArtifact
-
-        loaded = await self._load_run(run_id)
-        if loaded is None:
-            return
-        _run, agent = loaded
-        try:
-            async with SessionLocal() as session:
-                for art in artifacts:
-                    title = (art.get("title") or "Untitled").strip()[:200]
-                    content = (art.get("content") or "").strip()[:100000]
-                    if not content:
-                        continue
-                    if kind == "result":
-                        existing = await session.execute(
-                            select(AgentArtifact.id).where(
-                                AgentArtifact.agent_run_id == run_id,
-                                AgentArtifact.key == "result",
-                                AgentArtifact.content == content,
-                            )
-                        )
-                        if existing.first() is not None:
-                            continue
-                    session.add(
-                        AgentArtifact(
-                            agent_id=agent.id,
-                            agent_run_id=run_id,
-                            key=kind,
-                            kind="text",
-                            title=title,
-                            content=content,
-                        )
-                    )
-                await session.commit()
-        except Exception:
-            logger.debug("failed to persist artifacts for run %s", run_id, exc_info=True)
+        await self._artifacts.persist(run_id, artifacts, kind=kind)
 
     async def _clear_artifacts(self, run_id: int) -> None:
-        """Wipe a run's published artifacts ahead of a fresh objective.
-
-        A re-run (manual restart, retry, edited task, a webhook re-trigger, or an
-        upstream re-driving an already-completed dependent) should start with a
-        clean blackboard so the new turn's outputs replace the previous run's
-        rather than accumulating. Best-effort and idempotent — a no-op on first
-        run. Deliberately *not* called from :meth:`send_message`: a conversational
-        follow-up keeps the existing artifacts.
-
-        Scoped to the run: a sibling execution of the same agent keeps its own
-        blackboard intact. Rows with no run attribution at all — published
-        straight through the API, or predating the split — belong to the agent
-        rather than to any one execution, so they go too; leaving them would
-        make them permanently unclearable.
-        """
-        from precursor.backend.models.agent_artifact import AgentArtifact
-        from precursor.backend.models.agent_run import AgentRun
-
-        try:
-            async with SessionLocal() as session:
-                run = await session.get(AgentRun, run_id)
-                if run is None:
-                    return
-                await session.execute(
-                    delete(AgentArtifact).where(
-                        or_(
-                            AgentArtifact.agent_run_id == run_id,
-                            and_(
-                                AgentArtifact.agent_id == run.agent_id,
-                                AgentArtifact.agent_run_id.is_(None),
-                            ),
-                        )
-                    )
-                )
-                await session.commit()
-        except Exception:
-            logger.debug("failed to clear artifacts for run %s", run_id, exc_info=True)
+        await clear_artifacts(run_id)
 
     def _retry_due_at(self, retry_count: int) -> datetime:
         """Next-attempt time with exponential backoff off the base interval."""

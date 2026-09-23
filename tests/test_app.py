@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
-from precursor.backend.routers import chat as chat_router
+from precursor.backend.services import conversation_turn as conversation_turn_mod
 from precursor.backend.services import turn_engine as turn_engine_mod
 from precursor.backend.services.llm.base import TextDeltaEvent, TurnDoneEvent, UsageEvent
 
@@ -443,7 +443,7 @@ def test_topic_stream_passes_non_image_attachment_context_to_llm(monkeypatch) ->
         _ = args, kwargs
         return None
 
-    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(conversation_turn_mod, "get_llm_provider", _fake_get_llm_provider)
     monkeypatch.setattr(turn_engine_mod, "record_usage", _fake_record_usage)
 
     app = create_app()
@@ -499,7 +499,7 @@ def test_topic_stream_extracts_ooxml_header_and_notes_text(monkeypatch) -> None:
         _ = args, kwargs
         return None
 
-    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(conversation_turn_mod, "get_llm_provider", _fake_get_llm_provider)
     monkeypatch.setattr(turn_engine_mod, "record_usage", _fake_record_usage)
 
     app = create_app()
@@ -568,7 +568,7 @@ def test_topic_stream_passes_text_file_content_to_llm(monkeypatch) -> None:
         _ = args, kwargs
         return None
 
-    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(conversation_turn_mod, "get_llm_provider", _fake_get_llm_provider)
     monkeypatch.setattr(turn_engine_mod, "record_usage", _fake_record_usage)
 
     app = create_app()
@@ -623,7 +623,7 @@ def test_topic_stream_records_model_and_elapsed_on_answer(monkeypatch) -> None:
     async def _fake_get_llm_provider(_session):
         return EchoProvider()
 
-    monkeypatch.setattr(chat_router, "get_llm_provider", _fake_get_llm_provider)
+    monkeypatch.setattr(conversation_turn_mod, "get_llm_provider", _fake_get_llm_provider)
 
     app = create_app()
     with TestClient(app) as client:

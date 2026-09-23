@@ -35,7 +35,9 @@ plus a frontend extension registry.
 - Routers are thin; logic goes in `services/`.
 - When streaming responses, persist the assistant turn in a **fresh session**
   (`async with SessionLocal() as ...`) because the request-scoped one may be
-  closed by the time the generator finishes — see `routers/chat.py`.
+  closed by the time the generator finishes — see `persist_final_turn` in
+  `services/turn_engine.py`. Turn preparation (user message, attachments,
+  history, settings) for topics and chats lives in `services/conversation_turn.py`.
 
 ### TypeScript (frontend)
 

@@ -27,11 +27,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import Attachment, Message, MessageRole, NoteDraft, TopicSummary
-from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.events import publish_topic_summary_changed
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
-from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.llm.one_shot import complete_once
 
 #: Ledger source for the generation round-trip.
 USAGE_SOURCE = "/update-summary"
@@ -429,28 +426,14 @@ async def generate_summary(
     if instruction and instruction.strip():
         user_parts.append(f"Extra instruction from the user: {instruction.strip()}")
 
-    provider = await get_llm_provider(session)
-    model = await resolve_llm_model(session)
-    # Release the read connection too: slow providers must not exhaust the pool.
-    await session.commit()
-    text, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content="\n\n".join(user_parts)),
-        ],
+    result = await complete_once(
+        session,
+        system=system,
+        user="\n\n".join(user_parts),
+        usage_source=USAGE_SOURCE,
+        topic_id=topic_id,
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source=USAGE_SOURCE,
-            model=model,
-            topic_id=topic_id,
-        )
+    text, model = result.text, result.model
     # Completion helpers trim response boundaries; an otherwise identical
     # reply must not turn the user's spacing or enclosing fence into a diff.
     if has_existing and text.strip() == existing.strip():

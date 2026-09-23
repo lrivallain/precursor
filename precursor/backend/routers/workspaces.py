@@ -8,13 +8,10 @@ file's content.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -43,32 +40,13 @@ from precursor.backend.schemas import (
 from precursor.backend.schemas.workspace import WorkspaceChatRequest
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services import workspace_git as git
-from precursor.backend.services.app_settings import (
-    resolve_llm_max_input_tokens,
-    resolve_llm_max_tool_result_tokens,
-    resolve_llm_model,
-    resolve_llm_reasoning_effort,
-    resolve_max_tool_rounds,
-)
-from precursor.backend.services.context_budget import trim_messages
+from precursor.backend.services.conversation_turn import resolve_turn_settings
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.base import (
-    ChatMessage,
-    TextDeltaEvent,
-    ToolCallsEvent,
-    TurnDoneEvent,
-    UsageEvent,
-)
-from precursor.backend.services.mcp.client import (
-    AUTH_PAUSE_TIMEOUT_SECONDS,
-    get_mcp_client_manager,
-)
-from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.slugs import slugify
-from precursor.backend.services.suggestions import (
-    SUGGESTIONS_INSTRUCTION,
-    split_suggestions,
+from precursor.backend.services.workspace_chat import (
+    build_workspace_system_prompt,
+    run_workspace_stream,
+    workspace_history,
 )
 
 logger = logging.getLogger(__name__)
@@ -460,34 +438,6 @@ async def git_diff(
 # Chat — ephemeral authoring assistant bound to the active file
 # --------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = (
-    "You are a writing assistant helping the user author and improve Markdown "
-    "knowledge-base content. Be concise and practical. When proposing changes "
-    "to a file, return Markdown the user can paste directly. Do not invent "
-    "facts; ask for clarification when the source material is insufficient."
-)
-
-
-def _workspace_tool_context(ws: Workspace, path: str | None) -> str:
-    """Tell the model which workspace it's operating on for file tools.
-
-    The workspace-fs MCP tools take a ``workspace_id``; surfacing it (and the
-    active file) means the model doesn't have to call ``list_workspaces`` first.
-    """
-    lines = [
-        "\n\nWorkspace tools (if enabled) operate on this workspace:",
-        f"- workspace_id: {ws.id}",
-        f"- slug: {ws.slug}",
-        f"- name: {ws.name}",
-    ]
-    if path:
-        lines.append(f"- the user is currently viewing the file: {path}")
-    lines.append(
-        "When using workspace filesystem tools, pass this workspace_id and use "
-        "paths relative to the workspace root."
-    )
-    return "\n".join(lines)
-
 
 @router.post("/{workspace_id}/chat/stream")
 async def chat_stream(
@@ -495,256 +445,13 @@ async def chat_stream(
     payload: WorkspaceChatRequest,
     session: AsyncSession = Depends(get_session),
 ) -> EventSourceResponse:
-    # Reuse the proven tool-loop helpers from the shared turn engine. Imported
-    # lazily to keep the module import graph flat.
-    from precursor.backend.services.turn_engine import (
-        ToolAuthRequired,
-        call_tool_with_auth_retry,
-        load_enabled_mcp_servers,
-        mcp_tools_to_provider,
-    )
-
     ws = await _get_workspace(workspace_id, session)
-
-    file_context = ""
-    if payload.path:
-        try:
-            content = fs.read_text(browse_root(ws), payload.path)
-            file_context = (
-                f"\n\nThe user is currently editing `{payload.path}`. "
-                f"Its current content is:\n\n```markdown\n{content}\n```"
-            )
-        except (
-            fs.UnsafePathError,
-            FileNotFoundError,
-            IsADirectoryError,
-            UnicodeDecodeError,
-        ):
-            file_context = ""
-
-    model = payload.model or await resolve_llm_model(session)
-    reasoning_effort = await resolve_llm_reasoning_effort(session)
-    max_tool_rounds = await resolve_max_tool_rounds(session)
-    max_input_tokens = await resolve_llm_max_input_tokens(session)
-    max_tool_result_tokens = await resolve_llm_max_tool_result_tokens(session)
-    enabled_servers = await load_enabled_mcp_servers(session)
-    provider = await get_llm_provider(session)
-    github_token = await resolve_github_token(session)
-    manager = get_mcp_client_manager()
-
-    system_prompt = _SYSTEM_PROMPT + file_context + _workspace_tool_context(ws, payload.path)
-    role_prompt = await resolve_role_prompt(session, ws.role_id)
-    if role_prompt:
-        system_prompt += (
-            f"\n\nActive assistant role — adopt this persona for every reply:\n{role_prompt}"
+    system_prompt = await build_workspace_system_prompt(session, ws, browse_root(ws), payload.path)
+    settings = await resolve_turn_settings(session, model_override=payload.model)
+    return EventSourceResponse(
+        run_workspace_stream(
+            system_prompt=system_prompt,
+            history=workspace_history(payload),
+            settings=settings,
         )
-    system_prompt += f"\n\n{SUGGESTIONS_INSTRUCTION}"
-
-    base_messages: list[ChatMessage] = [
-        ChatMessage(role="system", content=system_prompt),
-    ]
-    for turn in payload.history:
-        base_messages.append(ChatMessage(role=turn.role, content=turn.content))
-    # Skills: the UI shows the literal `content`, but the model receives the
-    # expanded `prompt_override` for this turn only.
-    base_messages.append(
-        ChatMessage(role="user", content=payload.prompt_override or payload.content)
     )
-
-    async def event_stream() -> AsyncIterator[dict[str, str]]:
-        # No pre-LLM auth gate: the turn starts now. A server whose credential
-        # has lapsed still contributes its stored catalogue, so the model can't
-        # quietly answer from memory instead of calling the tool, and a question
-        # that never touches that server isn't held hostage by it. The sign-in is
-        # requested at call time, naming the tool that needs it. Mirrors the
-        # topic/chat flow.
-        async with manager.acquired(
-            enabled_servers, github_token=github_token, advertise_cached=True
-        ) as active:
-            tool_to_server = active.tool_to_server
-            for server_name, err in active.unavailable:
-                logger.warning(
-                    "Workspace chat: MCP server %s unavailable: %s",
-                    server_name,
-                    err,
-                )
-                if server_name in active.advertised_from_cache:
-                    continue
-                yield {
-                    "event": "system",
-                    "data": json.dumps(
-                        {"message": f"MCP server '{server_name}' unavailable: {err}"}
-                    ),
-                }
-
-            provider_tools = mcp_tools_to_provider(active.tools)
-            messages = list(base_messages)
-
-            # No tools enabled → simple text stream (matches the old behaviour).
-            if not provider_tools:
-                try:
-                    text_chunks: list[str] = []
-                    async for delta in provider.stream_chat(
-                        model=model, messages=messages, reasoning_effort=reasoning_effort
-                    ):
-                        text_chunks.append(delta)
-                        yield {
-                            "event": "delta",
-                            "data": json.dumps({"content": delta}),
-                        }
-                    clean, suggestions = split_suggestions("".join(text_chunks))
-                    yield {"event": "done", "data": json.dumps({"content": clean})}
-                    if suggestions:
-                        yield {
-                            "event": "suggestions",
-                            "data": json.dumps({"items": suggestions}),
-                        }
-                except Exception as exc:
-                    logger.exception("Workspace chat failed")
-                    yield {"event": "error", "data": json.dumps({"message": str(exc)})}
-                return
-
-            try:
-                for _round in range(max_tool_rounds):
-                    text_chunks = []
-                    tool_calls: list[Any] = []
-
-                    async for event in provider.stream_chat_with_tools(
-                        model=model,
-                        messages=trim_messages(
-                            messages,
-                            max_input_tokens=max_input_tokens,
-                            per_message_max_tokens=max_tool_result_tokens,
-                        ),
-                        tools=provider_tools,
-                        reasoning_effort=reasoning_effort,
-                    ):
-                        if isinstance(event, TextDeltaEvent):
-                            text_chunks.append(event.content)
-                            yield {
-                                "event": "delta",
-                                "data": json.dumps({"content": event.content}),
-                            }
-                        elif isinstance(event, ToolCallsEvent):
-                            tool_calls = event.calls
-                        elif isinstance(event, UsageEvent | TurnDoneEvent):
-                            pass
-
-                    assistant_text = "".join(text_chunks)
-
-                    if not tool_calls:
-                        clean, suggestions = split_suggestions(assistant_text)
-                        yield {
-                            "event": "done",
-                            "data": json.dumps({"content": clean}),
-                        }
-                        if suggestions:
-                            yield {
-                                "event": "suggestions",
-                                "data": json.dumps({"items": suggestions}),
-                            }
-                        return
-
-                    openai_tool_calls = [
-                        {
-                            "id": c.id,
-                            "type": "function",
-                            "function": {"name": c.name, "arguments": c.arguments},
-                        }
-                        for c in tool_calls
-                    ]
-                    yield {
-                        "event": "tool_calls",
-                        "data": json.dumps(
-                            {
-                                "calls": [
-                                    {
-                                        "id": c.id,
-                                        "name": c.name,
-                                        "arguments": c.arguments,
-                                    }
-                                    for c in tool_calls
-                                ],
-                            }
-                        ),
-                    }
-                    messages.append(
-                        ChatMessage(
-                            role="assistant",
-                            content=assistant_text,
-                            tool_calls=openai_tool_calls,
-                        )
-                    )
-
-                    for call in tool_calls:
-                        server_lookup = tool_to_server.get(call.name)
-                        is_error = False
-                        if server_lookup is None:
-                            result_text = f"Unknown tool '{call.name}'. No MCP server exposes it."
-                            is_error = True
-                        else:
-                            server_name, raw_name = server_lookup
-                            try:
-                                args = json.loads(call.arguments or "{}")
-                            except json.JSONDecodeError as exc:
-                                args = None
-                                result_text = f"Invalid JSON arguments: {exc}"
-                                is_error = True
-                            if args is not None:
-                                # Shared with the topic/chat tool loop so the
-                                # sign-in retry policy can't drift between them.
-                                async for step in call_tool_with_auth_retry(
-                                    active=active,
-                                    server=server_name,
-                                    raw_name=raw_name,
-                                    tool_name=call.name,
-                                    args=args,
-                                    auth_wait_timeout=AUTH_PAUSE_TIMEOUT_SECONDS,
-                                ):
-                                    if isinstance(step, ToolAuthRequired):
-                                        yield {
-                                            "event": "mcp_auth_required",
-                                            "data": json.dumps(
-                                                {
-                                                    "server": step.server,
-                                                    "message": step.message,
-                                                    "tool": step.tool,
-                                                }
-                                            ),
-                                        }
-                                    else:
-                                        result_text = step.result_text
-                                        is_error = step.is_error
-
-                        yield {
-                            "event": "tool_result",
-                            "data": json.dumps(
-                                {
-                                    "tool_call_id": call.id,
-                                    "name": call.name,
-                                    "arguments": call.arguments,
-                                    "content": result_text,
-                                    "is_error": is_error,
-                                }
-                            ),
-                        }
-                        messages.append(
-                            ChatMessage(
-                                role="tool",
-                                content=result_text,
-                                tool_call_id=call.id,
-                                name=call.name,
-                            )
-                        )
-
-                yield {
-                    "event": "error",
-                    "data": json.dumps(
-                        {"message": f"Stopped after {max_tool_rounds} tool rounds."}
-                    ),
-                }
-            except Exception as exc:
-                logger.exception("Workspace chat failed")
-                yield {"event": "error", "data": json.dumps({"message": str(exc)})}
-
-    return EventSourceResponse(event_stream())

@@ -11,8 +11,6 @@ Adding a new command means adding two routes here, an entry to
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -41,10 +39,7 @@ from precursor.backend.schemas import (
     SuggestNameResponse,
 )
 from precursor.backend.services import notes as notes_service
-from precursor.backend.services.app_settings import (
-    resolve_issue_associations_enabled,
-    resolve_llm_model,
-)
+from precursor.backend.services.app_settings import resolve_issue_associations_enabled
 from precursor.backend.services.chat_autoname import suggest_topic_name
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.events import (
@@ -53,15 +48,11 @@ from precursor.backend.services.events import (
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.llm.one_shot import LLMCallFailed, complete_once
 from precursor.backend.services.note_drafts import (
     consume_note_draft_attachments_to_message,
     load_note_draft_attachments,
 )
-from precursor.backend.services.usage_stats import record_usage
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/topics/{topic_id}/commands", tags=["commands"])
 
@@ -182,44 +173,6 @@ async def _build_transcript(session: AsyncSession, topic_id: int) -> str:
     return body or "(no prior discussion)"
 
 
-async def _stream_llm(
-    session: AsyncSession,
-    system: str,
-    user: str,
-    *,
-    label: str,
-    topic_id: int | None = None,
-) -> str:
-    provider = await get_llm_provider(session)
-    model = await resolve_llm_model(session)
-    try:
-        text, usage = await complete_text_with_usage(
-            provider,
-            model=model,
-            messages=[
-                ChatMessage(role="system", content=system),
-                ChatMessage(role="user", content=user),
-            ],
-        )
-    except Exception as exc:
-        logger.warning("%s: LLM call failed: %s", label, exc)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"LLM call failed: {exc}") from exc
-
-    if usage is not None:
-        async with SessionLocal() as us:
-            await record_usage(
-                us,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                total_tokens=usage.total_tokens,
-                source=label,
-                model=model,
-                topic_id=topic_id,
-            )
-            await us.commit()
-    return text
-
-
 # ---------------------------------------------------------------------------
 # /gh-update — prompt-driven status comment on the linked issue.
 #
@@ -252,11 +205,15 @@ async def gh_update_draft(
         f"Recent conversation transcript:\n{transcript}"
     )
 
-    draft = await _stream_llm(
-        session, system, user_prompt, label="/gh-update draft", topic_id=topic_id
+    result = await complete_once(
+        session,
+        system=system,
+        user=user_prompt,
+        usage_source="/gh-update draft",
+        topic_id=topic_id,
     )
     return CommentDraftResponse(
-        draft=draft,
+        draft=result.text,
         source="llm",
         repo=repo,
         issue_number=issue_number,
@@ -396,7 +353,7 @@ async def gh_sync(
             token=token,
             session=session,
         )
-    except HTTPException:
+    except (HTTPException, LLMCallFailed):
         raise
     except Exception as exc:
         raise HTTPException(
@@ -477,10 +434,14 @@ async def gh_create_draft(
         f"Recent conversation transcript:\n{transcript}"
     )
 
-    raw = await _stream_llm(
-        session, system, user_prompt, label="/gh-create draft", topic_id=topic_id
+    result = await complete_once(
+        session,
+        system=system,
+        user=user_prompt,
+        usage_source="/gh-create draft",
+        topic_id=topic_id,
     )
-    title, body = _split_title_body(raw, fallback_title=topic.title)
+    title, body = _split_title_body(result.text, fallback_title=topic.title)
     return GhCreateDraftResponse(title=title, body=body, repo=repo, source="llm")
 
 
@@ -585,11 +546,15 @@ async def gh_close_draft(
         f"Recent conversation transcript:\n{transcript}"
     )
 
-    draft = await _stream_llm(
-        session, system, user_prompt, label="/gh-close draft", topic_id=topic_id
+    result = await complete_once(
+        session,
+        system=system,
+        user=user_prompt,
+        usage_source="/gh-close draft",
+        topic_id=topic_id,
     )
     return CommentDraftResponse(
-        draft=draft,
+        draft=result.text,
         source="llm",
         repo=repo,
         issue_number=issue_number,
@@ -703,14 +668,14 @@ async def notes_rephrase(
         instruction=(payload.instruction or "").strip(),
         text=payload.text,
     )
-    rebuilt = await _stream_llm(
+    result = await complete_once(
         session,
-        notes_service.REPHRASE_SYSTEM,
-        user_prompt,
-        label="/notes rephrase",
+        system=notes_service.REPHRASE_SYSTEM,
+        user=user_prompt,
+        usage_source="/notes rephrase",
         topic_id=topic_id,
     )
-    return NotesRephraseResponse(text=rebuilt or payload.text)
+    return NotesRephraseResponse(text=result.text or payload.text)
 
 
 @router.post("/notes/append", response_model=NotesAppendResponse)

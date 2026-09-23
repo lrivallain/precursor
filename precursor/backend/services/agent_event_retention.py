@@ -13,7 +13,7 @@ which a pure time window would not touch for weeks.
 * ``agent_event_max_per_session`` — keep only the newest N events per agent.
 
 Both skip agents that are currently live: the in-memory timeline is rehydrated
-from these rows on restart (``manager._ensure_loaded``), so pruning a running
+from these rows on restart (``Timeline.ensure_loaded``), so pruning a running
 session would truncate the trace a user is actively watching. Terminal and
 archived agents keep their ``result_summary`` and artifacts either way — only
 the verbose event trace is dropped.

@@ -23,10 +23,8 @@ from precursor.backend.services.app_settings import (
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
 )
-from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.roles import resolve_role_prompt
-from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -443,24 +441,23 @@ async def analyze_session(
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    provider = await get_llm_provider(session)
     model = await resolve_live_fast_model(session)
     effort = await resolve_live_reasoning_effort(session)
     try:
-        text, usage = await complete_text_with_usage(
-            provider,
+        result = await complete_once(
+            session,
+            system=system,
+            user="\n".join(user_parts),
+            usage_source="/live-analysis",
+            topic_id=ms.topic_id,
             model=model,
-            messages=[
-                ChatMessage(role="system", content=system),
-                ChatMessage(role="user", content="\n".join(user_parts)),
-            ],
-            reasoning_effort=effort or None,
+            reasoning_effort=effort,
         )
-    except Exception as exc:  # keep the meeting alive even if analysis fails
+    except Exception as exc:
         logger.warning("Meeting analysis LLM call failed: %s", exc)
         raise
 
-    insights, _help, suggestion = _parse_insights(text)
+    insights, _help, suggestion = _parse_insights(result.text)
 
     existing = list(
         (
@@ -495,15 +492,6 @@ async def analyze_session(
     else:
         result_rows = existing
 
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-analysis",
-            model=model,
-        )
     await session.commit()
     if insights:
         for row in result_rows:
@@ -538,28 +526,16 @@ async def translate_transcript(
         "structure and line order exactly; translate only the spoken text, not the "
         "speaker labels. Output only the translation, with no commentary."
     )
-    provider = await get_llm_provider(session)
-    model = await resolve_live_fast_model(session)
-    effort = await resolve_live_reasoning_effort(session)
-    translated, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content=source),
-        ],
-        reasoning_effort=effort or None,
+    result = await complete_once(
+        session,
+        system=system,
+        user=source,
+        usage_source="/live-translate",
+        topic_id=ms.topic_id,
+        model=await resolve_live_fast_model(session),
+        reasoning_effort=await resolve_live_reasoning_effort(session),
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-translate",
-            model=model,
-        )
-        await session.commit()
+    translated, model = result.text, result.model
     return translated, model
 
 
@@ -590,28 +566,16 @@ async def translate_lines(
         "the text — no labels, no commentary, no extra lines."
     )
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(clean))
-    provider = await get_llm_provider(session)
-    model = await resolve_live_fast_model(session)
-    effort = await resolve_live_reasoning_effort(session)
-    out, usage = await complete_text_with_usage(
-        provider,
-        model=model,
-        messages=[
-            ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content=numbered),
-        ],
-        reasoning_effort=effort or None,
+    completion = await complete_once(
+        session,
+        system=system,
+        user=numbered,
+        usage_source="/live-translate",
+        topic_id=ms.topic_id,
+        model=await resolve_live_fast_model(session),
+        reasoning_effort=await resolve_live_reasoning_effort(session),
     )
-    if usage is not None:
-        await record_usage(
-            session,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            source="/live-translate",
-            model=model,
-        )
-        await session.commit()
+    out, model = completion.text, completion.model
 
     # Parse "N. translation" lines back into position; fall back to the source
     # text for any line the model dropped or mis-numbered.
