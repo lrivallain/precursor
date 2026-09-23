@@ -96,9 +96,9 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   }, [activeChat, sidebarMode, atHome]);
 
   // Live sync across windows: chat changes arrive over the shared event bus.
-  // `start()` is idempotent, so App starting it too is harmless. App's handler
-  // keeps the topic branches of the event types both sections share; a chat id
-  // wins over a topic or agent id there.
+  // `start()` is idempotent, so App starting it too is harmless. The topics
+  // controller's handler keeps the topic branches of the event types both
+  // sections share; a chat id wins over a topic or agent id there.
   useEffect(() => {
     eventBus.start();
     const off = eventBus.subscribe((event) => {
@@ -165,8 +165,8 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
     };
   }, []);
 
-  // The chat branch of App's stream completion: keep the chat read if the user
-  // is watching it, then refresh the list badges.
+  // The chat branch of the stream completion (`useReadSync`): keep the chat
+  // read if the user is watching it, then refresh the list badges.
   async function handleStreamComplete(id: number): Promise<void> {
     if (isViewing("chat", id) && windowFocused()) {
       try {
