@@ -512,6 +512,12 @@ are the per-version history; releasing does not rewrite this file.
   tool loop land everywhere at once
   ([#332](https://github.com/lrivallain/precursor/issues/332)).
 
+- **A large meeting invite no longer buries the live-session summary.** The
+  Summary tab's *Suggested* attendees were an unbounded wrap of pills, so a
+  meeting with a hundred-plus invitees filled the pane and pushed the recap
+  editor out of view. The suggestions now sit in a compact strip about four rows
+  tall that scrolls on its own, with the *Suggested:* label pinned beside it.
+
 - **An installed Precursor failed to start on the migration step.** Startup
   runs `alembic upgrade head`, and the config it built pointed at the
   repository's `alembic.ini` — a file that configures the *CLI* (logging,

@@ -163,18 +163,22 @@ export function SummarySection({
           />
         </div>
         {suggestedAttendees.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            <span className="text-[11px] text-muted">Suggested:</span>
-            {suggestedAttendees.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => addAttendee(s)}
-                className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-accent"
-              >
-                <Plus size={10} /> {s}
-              </button>
-            ))}
+          <div className="mt-1.5 flex items-start gap-1">
+            <span className="shrink-0 py-[3px] text-[11px] text-muted">Suggested:</span>
+            {/* A big invite list would otherwise push the summary editor off
+                screen, so the pills scroll inside a few rows instead. */}
+            <div className="flex max-h-24 min-w-0 flex-1 flex-wrap gap-1 overflow-y-auto overscroll-contain pr-1">
+              {suggestedAttendees.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => addAttendee(s)}
+                  className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-accent"
+                >
+                  <Plus size={10} /> {s}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
