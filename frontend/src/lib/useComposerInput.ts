@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   matchSlashCommands,
   parseSlashCommand,
@@ -7,9 +7,8 @@ import {
   type ParsedCommand,
   type SlashCommand,
 } from "./commands";
-import { useSettings } from "./settingsStore";
 import { useSkills } from "./skillsStore";
-import { useAzureSpeech } from "./useAzureSpeech";
+import { useDictation, type Dictation } from "./useDictation";
 
 export interface UseComposerInputOptions {
   /** Which surface's built-in commands the picker and parser accept. */
@@ -18,12 +17,9 @@ export interface UseComposerInputOptions {
   exclude?: ReadonlySet<string>;
 }
 
-export interface ComposerInput {
+export interface ComposerInput extends Dictation {
   draft: string;
   setDraft: Dispatch<SetStateAction<string>>;
-  /** Transient dictation text, shown until Azure finalises the chunk. */
-  interimText: string;
-  speech: ReturnType<typeof useAzureSpeech>;
   /** Active skills, shaped as slash commands. */
   skillCommands: SlashCommand[];
   /** Built-ins this composer never offers or parses. */
@@ -40,27 +36,7 @@ export interface ComposerInput {
  */
 export function useComposerInput({ surface, exclude }: UseComposerInputOptions): ComposerInput {
   const [draft, setDraft] = useState("");
-  const settings = useSettings();
-
-  // Live speech-to-text via Azure (when configured server-side). Final chunks
-  // are appended to the draft as the user speaks; the interim transcript is
-  // shown transiently. The mic is hidden entirely when Azure isn't configured.
-  const [interimText, setInterimText] = useState("");
-  const speech = useAzureSpeech({
-    onFinalChunk: (text) => {
-      const chunk = text.trim();
-      if (!chunk) return;
-      setDraft((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-      setInterimText("");
-    },
-    onInterim: setInterimText,
-    enabled: settings?.stt_azure_ready ?? false,
-    lang: settings?.azure_speech_language || undefined,
-  });
-  // Drop any lingering interim text once dictation stops.
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
+  const { interimText, speech } = useDictation(setDraft);
 
   const skills = useSkills();
   const skillCommands = useMemo<SlashCommand[]>(

@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { MessageSquarePlus, MessagesSquare } from "lucide-react";
 import type { SlashCommand } from "../lib/commands";
-import { useSettings } from "../lib/settingsStore";
-import { useAzureSpeech } from "../lib/useAzureSpeech";
+import { useDictation } from "../lib/useDictation";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
@@ -56,7 +55,6 @@ export function ChatStartHero({
 }: {
   onStart: (prompt: string, roleId: number | null) => void | Promise<void>;
 }) {
-  const settings = useSettings();
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   // Assistant Role the new chat is created with. Null = the default role.
@@ -69,21 +67,7 @@ export function ChatStartHero({
       min: 40,
       max: 480,
     });
-  const [interimText, setInterimText] = useState("");
-  const speech = useAzureSpeech({
-    onFinalChunk: (text) => {
-      const chunk = text.trim();
-      if (!chunk) return;
-      setPrompt((d) => (d ? `${d.replace(/\s+$/, "")} ${chunk}` : chunk));
-      setInterimText("");
-    },
-    onInterim: setInterimText,
-    enabled: settings?.stt_azure_ready ?? false,
-    lang: settings?.azure_speech_language || undefined,
-  });
-  useEffect(() => {
-    if (!speech.listening) setInterimText("");
-  }, [speech.listening]);
+  const { interimText, speech } = useDictation(setPrompt);
 
   const suggestions = useMemo<SlashCommand[]>(() => [], []);
 
