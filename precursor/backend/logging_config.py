@@ -95,6 +95,18 @@ _LEVEL_COLORS = {
     "CRITICAL": "\033[1;31m",  # bold red
 }
 
+# Longest traceback line kept verbatim. SQLAlchemy embeds the full statement in
+# its errors, and an ``IN (…)`` over a large id list renders one placeholder per
+# id — a single such line reached 2 MB, rotating the whole log history away on
+# every startup.
+_MAX_EXC_LINE = 2_000
+
+
+def _clamp_line(line: str) -> str:
+    if len(line) <= _MAX_EXC_LINE:
+        return line
+    return f"{line[:_MAX_EXC_LINE]}… [{len(line) - _MAX_EXC_LINE} more chars truncated]"
+
 
 class UTCFormatter(logging.Formatter):
     """One-line formatter: ISO-8601 UTC timestamp (``Z``), level, name, message.
@@ -109,6 +121,9 @@ class UTCFormatter(logging.Formatter):
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)) + "Z"
+
+    def formatException(self, ei: Any) -> str:
+        return "\n".join(_clamp_line(line) for line in super().formatException(ei).splitlines())
 
     def format(self, record: logging.LogRecord) -> str:
         ts = self.formatTime(record)

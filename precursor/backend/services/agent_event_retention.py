@@ -45,6 +45,15 @@ logger = logging.getLogger(__name__)
 # to the UI and rebuilt from these rows after a restart.
 LIVE_STATUSES = ("pending", "running", "needs_approval")
 
+# Ids bound per statement. SQLite caps host parameters per statement (999 on
+# older builds, 32766 since 3.32) and a large backlog yields far more prunable
+# ids than that, so every ``IN (…)`` over them is chunked.
+_CHUNK = 500
+
+
+def _chunks(ids: list[int]) -> list[list[int]]:
+    return [ids[start : start + _CHUNK] for start in range(0, len(ids), _CHUNK)]
+
 
 def _prunable_agents() -> Any:
     """Subquery of agent ids whose archived events are safe to prune."""
@@ -93,14 +102,17 @@ async def _overflow_ids(session: AsyncSession, max_per_session: int) -> list[int
 
 async def _measure(session: AsyncSession, ids: list[int]) -> SweepResult:
     """Row count and payload bytes for ``ids``, without deleting anything."""
-    if not ids:
-        return SweepResult()
-    total = await session.scalar(
-        select(func.coalesce(func.sum(func.length(AgentEventRecord.payload)), 0)).where(
-            AgentEventRecord.id.in_(ids)
+    total = 0
+    for chunk in _chunks(ids):
+        total += int(
+            await session.scalar(
+                select(func.coalesce(func.sum(func.length(AgentEventRecord.payload)), 0)).where(
+                    AgentEventRecord.id.in_(chunk)
+                )
+            )
+            or 0
         )
-    )
-    return SweepResult(rows=len(ids), bytes=int(total or 0))
+    return SweepResult(rows=len(ids), bytes=total)
 
 
 async def prune_agent_events(
@@ -132,11 +144,9 @@ async def prune_agent_events(
             return measured
 
         deleted = 0
-        # Chunked to stay clear of the SQLite host-parameter ceiling (999 by
-        # default) on installs with a large backlog.
-        for start in range(0, len(ids), 500):
+        for chunk in _chunks(ids):
             result = await session.execute(
-                delete(AgentEventRecord).where(AgentEventRecord.id.in_(ids[start : start + 500]))
+                delete(AgentEventRecord).where(AgentEventRecord.id.in_(chunk))
             )
             deleted += int(cast("CursorResult[Any]", result).rowcount or 0)
         await session.commit()

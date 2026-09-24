@@ -536,6 +536,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Agent-timeline retention works on large archives again.** Once more than
+  ~32k archived agent events were due for pruning, the sweep measured them in a
+  single `IN (…)` query and SQLite rejected it with "too many SQL variables" —
+  at every startup, again on the retention ticker, and in the Storage cockpit
+  preview — so the table was never trimmed. The measurement is now chunked like
+  the delete already was. Log tracebacks also clamp any single line to 2,000
+  characters: the failing statement was written out in full, a ~2 MB line per
+  error, which rotated the whole log history away on each restart.
 - **Opening a Live session no longer lights the browser's recording
   indicator.** Every session opened — ended ones included, or ones you never
   record — briefly grabbed the microphone just to read the input devices' names,
