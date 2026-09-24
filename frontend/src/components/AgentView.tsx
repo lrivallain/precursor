@@ -1,4 +1,13 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -39,10 +48,17 @@ import { matchAgentSlashCommands, type SlashCommand } from "../lib/commands";
 import { useSettings } from "../lib/settingsStore";
 import { useAgentRuntime } from "../lib/useAgentRuntime";
 import {
-  normalizeArtifactMarkdown,
   parseAgentDirectives,
   stripAgentDirectives,
+  type AgentArtifactDirective,
 } from "../lib/directives";
+import {
+  buildResultVersions,
+  findPublished,
+  isAutonomyNudge,
+  type ExchangeAnchor,
+  type ResultVersion,
+} from "../lib/agentResults";
 import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
 import { useDictation } from "../lib/useDictation";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -62,11 +78,21 @@ import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
 import { AgentUsageSection } from "./AgentUsage";
 import { PermissionBody } from "./AgentPermissionBody";
 import {
+  AgentPaneTabs,
+  AgentResultView,
+  InlineArtifact,
+  ResultCard,
+  type AgentPane,
+} from "./AgentResults";
+import {
   CATEGORY_STYLE,
   classify,
   toolIcon,
+  ContinueMarker,
   StepConnector,
   HookGutter,
+  WorkFold,
+  type WorkStats,
 } from "./AgentTimeline";
 import type {
   AgentApprovalPolicy,
@@ -152,6 +178,9 @@ function AgentInsightsPanel({
   runs,
   runFilter,
   onRunFilterChange,
+  artifacts,
+  artifactLabel,
+  onOpenArtifact,
 }: {
   showPrefs: ShowPrefs;
   toggleShow: (k: keyof ShowPrefs) => void;
@@ -161,6 +190,9 @@ function AgentInsightsPanel({
   runs: AgentRun[];
   runFilter: number | null;
   onRunFilterChange: (choice: number | "all") => void;
+  artifacts: AgentArtifact[];
+  artifactLabel: (a: AgentArtifact) => string | null;
+  onOpenArtifact: (a: AgentArtifact) => void;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -210,7 +242,12 @@ function AgentInsightsPanel({
         <div className="border-t border-border" />
         <AgentRunsSection agent={agent} runs={runs} selected={runFilter} onSelect={onRunFilterChange} />
         <div className="border-t border-border" />
-        <AgentOrchestrationSection agent={agent} />
+        <AgentOrchestrationSection
+          agent={agent}
+          artifacts={artifacts}
+          artifactLabel={artifactLabel}
+          onOpenArtifact={onOpenArtifact}
+        />
         <div className="border-t border-border" />
         <div className="space-y-2">
           <div className="flex items-center gap-1.5 text-sm font-medium">
@@ -238,6 +275,11 @@ function AgentInsightsPanel({
               active={showPrefs.lifecycle}
               onClick={() => toggleShow("lifecycle")}
               label="Lifecycle"
+            />
+            <ToggleChip
+              active={showPrefs.fold}
+              onClick={() => toggleShow("fold")}
+              label="Fold finished turns"
             />
           </div>
         </div>
@@ -362,23 +404,28 @@ function AgentRunsSection({
 // an isolated transcript.
 function AgentOrchestrationSection({
   agent,
+  artifacts,
+  artifactLabel,
+  onOpenArtifact,
 }: {
   agent: AgentSession;
+  /** Loaded by the view, which also renders them as the Result tab. */
+  artifacts: AgentArtifact[];
+  /** The result version an artifact belongs to ("v2"), if it's one. */
+  artifactLabel: (a: AgentArtifact) => string | null;
+  onOpenArtifact: (a: AgentArtifact) => void;
 }) {
-  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [triggers, setTriggers] = useState<AgentTrigger[]>([]);
   const [state, setState] = useState<AgentState[]>([]);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
-  const [viewing, setViewing] = useState<AgentArtifact | null>(null);
   const [expandedState, setExpandedState] = useState<string | null>(null);
 
   const loadOrch = useCallback(
     (): Promise<void> =>
-      // Awaited as a unit so the coalesced refresh treats all three as one
-      // in-flight round-trip and won't start another until they land.
+      // Awaited as a unit so the coalesced refresh treats both as one in-flight
+      // round-trip and won't start another until they land.
       Promise.all([
-        api.agents.listArtifacts(agent.id).then(setArtifacts).catch(() => setArtifacts([])),
         api.agents.listTriggers(agent.id).then(setTriggers).catch(() => setTriggers([])),
         api.agents.listState(agent.id).then(setState).catch(() => setState([])),
       ]).then(() => undefined),
@@ -387,26 +434,10 @@ function AgentOrchestrationSection({
 
   useEffect(() => {
     void loadOrch();
-    // Refresh live: mid-mission ARTIFACT directives publish to the blackboard as
-    // they're emitted, and a completed turn publishes its result — the sidebar
-    // must reflect those without waiting for a manual reload (mirrors the
-    // in-chat AgentDeliverables refresh). Coalesced: this is three requests per
-    // signal, and a running turn signals at token cadence.
+    // Refresh live: a running agent saves state as it goes. Coalesced, since a
+    // running turn signals at token cadence.
     return subscribeAgentChanged(agent.id, loadOrch);
   }, [loadOrch, agent.id]);
-
-  // Auto-open an artifact from a `?artifact={id}` permalink once the list has
-  // loaded, then strip the param so it doesn't re-fire on later reloads.
-  useEffect(() => {
-    if (artifacts.length === 0) return;
-    const raw = new URLSearchParams(window.location.search).get("artifact");
-    if (!raw) return;
-    const target = artifacts.find((a) => String(a.id) === raw);
-    if (target) setViewing(target);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("artifact");
-    navigate(url.pathname + url.search + url.hash, { replace: true });
-  }, [artifacts]);
 
   async function addWebhook(): Promise<void> {
     setBusy(true);
@@ -480,29 +511,32 @@ function AgentOrchestrationSection({
             Nothing published yet. Completed runs post their result here for downstream agents.
           </p>
         ) : (
-          artifacts.slice(0, 8).map((a) => (
-            <button
-              type="button"
-              key={a.id}
-              onClick={() => setViewing(a)}
-              className="block w-full rounded border border-border bg-surface/50 px-2 py-1 text-left transition hover:border-accent/50 hover:bg-surface"
-              title={a.kind === "link" ? a.content : "Open artifact"}
-            >
-              <div className="flex items-center gap-1.5">
-                {a.kind === "link" ? (
-                  <ExternalLink size={11} className="shrink-0 text-accent" />
-                ) : (
-                  <Link2 size={11} className="shrink-0 text-muted" />
-                )}
-                <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{a.title}</span>
-                {a.key && (
-                  <span className="shrink-0 rounded bg-border/60 px-1 text-[10px] text-muted">
-                    {a.key}
-                  </span>
-                )}
-              </div>
-            </button>
-          ))
+          artifacts.slice(0, 8).map((a) => {
+            const label = artifactLabel(a) ?? a.key;
+            return (
+              <button
+                type="button"
+                key={a.id}
+                onClick={() => onOpenArtifact(a)}
+                className="block w-full rounded border border-border bg-surface/50 px-2 py-1 text-left transition hover:border-accent/50 hover:bg-surface"
+                data-tooltip={a.kind === "link" ? a.content : `Open ${a.title}`}
+              >
+                <div className="flex items-center gap-1.5">
+                  {a.kind === "link" ? (
+                    <ExternalLink size={11} className="shrink-0 text-accent" />
+                  ) : (
+                    <Link2 size={11} className="shrink-0 text-muted" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{a.title}</span>
+                  {label && (
+                    <span className="shrink-0 rounded bg-border/60 px-1 text-[10px] text-muted">
+                      {label}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })
         )}
       </div>
 
@@ -627,9 +661,6 @@ function AgentOrchestrationSection({
         )}
       </div>
 
-      {viewing && (
-        <ArtifactViewer agent={agent} artifact={viewing} onClose={() => setViewing(null)} />
-      )}
     </div>
   );
 }
@@ -852,165 +883,9 @@ function ArtifactViewer({
   );
 }
 
-// The `ARTIFACT:` directive's payload is no longer rendered inline in the message
-// body: published outputs are surfaced once, at the foot of the turn, by
-// `AgentDeliverables` (below) — the single, non-duplicated home for the answer.
-
-// One deliverable, rendered unboxed into the discussion flow: a horizontal rule
-// slips it off from the streamed prose, then the artifact body renders as plain
-// Markdown (JSON in a fenced block, a `link` as a real anchor) so it reads as the
-// agent's answer to the request — no card, no tinted background. A quiet title
-// row labels it, and the copy/link/raw actions surface on hover.
-function DeliverableAnswer({
-  agent,
-  artifact,
-}: {
-  agent: AgentSession;
-  artifact: AgentArtifact;
-}) {
-  const [copied, setCopied] = useState<null | "content" | "link">(null);
-  const rawUrl = api.agents.rawArtifactUrl(agent.id, artifact.id);
-  const ref = agent.public_id ?? String(agent.id);
-  const permalink = `${window.location.origin}/agents/${encodeURIComponent(
-    ref,
-  )}?artifact=${artifact.id}`;
-
-  // Compose a Markdown document from the payload so every kind renders as prose:
-  // JSON is fenced (pretty-printed), text/markdown pass through verbatim.
-  const markdownBody = useMemo(() => {
-    if (artifact.kind !== "json") return normalizeArtifactMarkdown(artifact.content);
-    try {
-      return `\`\`\`json\n${JSON.stringify(JSON.parse(artifact.content), null, 2)}\n\`\`\``;
-    } catch {
-      return `\`\`\`\n${artifact.content}\n\`\`\``;
-    }
-  }, [artifact.kind, artifact.content]);
-
-  async function copy(kind: "content" | "link"): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(kind === "link" ? permalink : artifact.content);
-      setCopied(kind);
-      window.setTimeout(() => setCopied(null), 1200);
-    } catch {
-      // Clipboard may be unavailable (insecure context); fail silently.
-    }
-  }
-
-  return (
-    <div className="group/deliv w-full max-w-xl">
-      <hr className="mb-3 border-t border-border" />
-      <div className="mb-1.5 flex items-center gap-1.5">
-        <Package size={12} className="shrink-0 text-emerald-500/80" />
-        <span className="min-w-0 flex-1 truncate text-[10px] font-medium uppercase tracking-wide text-muted">
-          {artifact.title}
-        </span>
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/deliv:opacity-100">
-          {artifact.kind !== "link" && (
-            <button
-              type="button"
-              onClick={() => void copy("content")}
-              className="rounded p-1 text-muted hover:text-accent"
-              aria-label="Copy content"
-              data-tooltip="Copy content"
-            >
-              {copied === "content" ? (
-                <Check size={12} className="text-emerald-500" />
-              ) : (
-                <Copy size={12} />
-              )}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => void copy("link")}
-            className="rounded p-1 text-muted hover:text-accent"
-            aria-label="Copy permalink"
-            data-tooltip="Copy link"
-          >
-            {copied === "link" ? (
-              <Check size={12} className="text-emerald-500" />
-            ) : (
-              <Link2 size={12} />
-            )}
-          </button>
-          <a
-            href={rawUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded p-1 text-muted hover:text-accent"
-            aria-label="Open raw"
-            data-tooltip="Open raw"
-          >
-            <ExternalLink size={12} />
-          </a>
-        </div>
-      </div>
-
-      {artifact.kind === "link" ? (
-        <a
-          href={artifact.content.trim()}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 break-all text-sm font-medium text-accent hover:underline"
-        >
-          <ExternalLink size={14} className="shrink-0" />
-          {artifact.content.trim()}
-        </a>
-      ) : (
-        <Markdown className="text-sm leading-relaxed text-text">{markdownBody}</Markdown>
-      )}
-    </div>
-  );
-}
-
-// The agent's deliverables, surfaced inline at the foot of the transcript so the
-// published outputs read as the agent's answer to the request — consumable right
-// in the discussion, not only indexed in the insights sidebar. These are the
-// *persisted* blackboard artifacts (stable id/kind), so each is the real,
-// addressable deliverable. The sidebar list stays as a compact, agent-to-agent
-// index.
-function AgentDeliverables({ agent }: { agent: AgentSession }) {
-  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
-
-  useEffect(() => {
-    let alive = true;
-    const load = (): Promise<void> =>
-      api.agents
-        .listArtifacts(agent.id)
-        .then((rows) => {
-          if (alive) setArtifacts(rows);
-        })
-        .catch(() => {
-          if (alive) setArtifacts([]);
-        });
-    void load();
-    // Refresh on agent.changed: a completed turn publishes its result and
-    // mid-mission ARTIFACT directives publish as they're emitted.
-    const off = subscribeAgentChanged(agent.id, load);
-    return () => {
-      alive = false;
-      off();
-    };
-  }, [agent.id]);
-
-  // A single, non-duplicated answer to the request. Prefer the model's explicit
-  // `ARTIFACT:` outputs (provenance `key !== "result"`) — those are the real
-  // deliverable. Fall back to the auto-captured completion summary (`key ===
-  // "result"`) only when nothing explicit was published, because that summary is
-  // otherwise already shown on the Objective-complete milestone. This stops the
-  // same content repeating as prose, milestone, and deliverable.
-  const outputs = artifacts.filter((a) => a.key !== "result");
-  const shown = outputs.length > 0 ? outputs : artifacts.filter((a) => a.key === "result");
-  if (shown.length === 0) return null;
-
-  return (
-    <div className="flex w-full flex-col items-start gap-3">
-      {shown.map((a) => (
-        <DeliverableAnswer key={a.id} agent={agent} artifact={a} />
-      ))}
-    </div>
-  );
-}
+// A message's `ARTIFACT:` payload isn't rendered inside its bubble: the body is
+// the deliverable, and it's shown once — in the Result tab — with a compact
+// `ResultCard` under the answer pointing at it (see ./AgentResults).
 
 // One simple message node (user/system/assistant/reasoning/error).
 function MessageNode({
@@ -1024,6 +899,7 @@ function MessageNode({
   onPickSuggestion,
   onReply,
   suggestionsDisabled,
+  renderArtifact,
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
@@ -1039,6 +915,12 @@ function MessageNode({
   // Focus the reply composer — offered on a raised NEED_INPUT question.
   onReply?: () => void;
   suggestionsDisabled?: boolean;
+  /**
+   * How an `ARTIFACT:` this message published is shown in its place. The
+   * cockpit links it to the Result tab; without a renderer (a workflow step's
+   * trace) it folds inline, so the deliverable is never lost with the prose.
+   */
+  renderArtifact?: (artifact: AgentArtifactDirective, index: number) => ReactNode;
 }) {
   const style = CATEGORY_STYLE[category];
   const box = isLastAnswer
@@ -1092,6 +974,17 @@ function MessageNode({
       // Clipboard may be unavailable (e.g. insecure context); fail silently.
     }
   };
+  // A heartbeat-only message (`PROGRESS:` and nothing else) is drawn as its
+  // milestone on the spine; an empty bubble above it would only add noise.
+  if (
+    isAssistant &&
+    autonomy &&
+    !bodyText &&
+    !directives?.needInput &&
+    (directives?.artifacts.length ?? 0) === 0
+  ) {
+    return null;
+  }
   return (
     <div
       className={`group/node relative w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
@@ -1152,6 +1045,11 @@ function MessageNode({
                 {bodyText}
               </Markdown>
             )}
+            {directives?.artifacts.map((a, i) => (
+              <Fragment key={i}>
+                {renderArtifact ? renderArtifact(a, i) : <InlineArtifact artifact={a} />}
+              </Fragment>
+            ))}
             {directives?.needInput && (
               <NeedInputCallout question={directives.needInput} onReply={onReply} />
             )}
@@ -1403,6 +1301,8 @@ type ShowPrefs = {
   thinking: boolean;
   tool: boolean;
   lifecycle: boolean;
+  /** Fold a finished turn's steps behind a one-line summary above its answer. */
+  fold: boolean;
 };
 
 const SHOW_PREFS_KEY = "precursor:agent-show-prefs";
@@ -1413,6 +1313,7 @@ const DEFAULT_SHOW_PREFS: ShowPrefs = {
   thinking: true,
   tool: true,
   lifecycle: true,
+  fold: true,
 };
 
 function readShowPrefs(): ShowPrefs {
@@ -1614,6 +1515,210 @@ function computeModelByEvent(events: AgentEvent[]): Map<AgentEvent, string> {
   return map;
 }
 
+type NodeRow = Extract<WorkflowRow, { type: "node" }>;
+
+// An entry of the cockpit timeline: a row, or the fold standing in for a
+// finished turn's steps.
+type TimelineEntry =
+  | {
+      kind: "row";
+      key: string;
+      row: WorkflowRow;
+      exchange: number;
+      role: "prompt" | "answer" | "work";
+    }
+  | { kind: "fold"; key: string; exchange: number; stats: WorkStats; open: boolean };
+
+interface TimelineSegment {
+  entry: TimelineEntry;
+  // Lifecycle hooks since the previous entry, drawn beside its connector.
+  hooks: AgentEvent[];
+}
+
+interface CockpitTimeline {
+  segments: TimelineSegment[];
+  trailingHooks: AgentEvent[];
+  /** Every human prompt, for attributing published results to it. */
+  anchors: ExchangeAnchor[];
+  /** Segment index of each exchange's prompt — where "Show in activity" lands. */
+  exchangeStart: Map<number, number>;
+  /** Key of the newest answer, the only one that offers suggested replies. */
+  latestAnswerKey: string | null;
+}
+
+function workStats(
+  prompt: NodeRow,
+  answer: WorkflowRow,
+  work: { row: WorkflowRow }[],
+): WorkStats {
+  const stats: WorkStats = { durationMs: null, tools: 0, thoughts: 0, messages: 0, errors: 0 };
+  for (const { row } of work) {
+    if (row.type === "tool") stats.tools += 1;
+    else if (row.type === "node" && row.cat === "reasoning") stats.thoughts += 1;
+    else if (row.type === "node" && row.cat === "assistant") stats.messages += 1;
+    else if (row.type === "node" && row.cat === "error") stats.errors += 1;
+  }
+  const start = Date.parse(prompt.ev.at ?? "");
+  const end = answer.type === "node" ? Date.parse(answer.ev.at ?? "") : Number.NaN;
+  if (!Number.isNaN(start) && !Number.isNaN(end) && end >= start) stats.durationMs = end - start;
+  return stats;
+}
+
+/**
+ * Shape the cockpit timeline as exchanges: each human prompt, the work it set
+ * off, and the answer that concluded it.
+ *
+ * Once a turn has its answer, the work in between folds into a one-line summary
+ * (unless the "Fold finished turns" preference is off or the user opened it),
+ * so a session refined over several follow-ups reads as prompt → answer →
+ * prompt → answer instead of hundreds of tool boxes. The turn still in flight,
+ * and any turn holding an approval card, stay open.
+ */
+function buildCockpitTimeline(
+  events: AgentEvent[],
+  opts: {
+    showPrefs: ShowPrefs;
+    /** The agent is at rest, so its last assistant message is an answer. */
+    terminal: boolean;
+    /** A turn is in flight — its exchange is the live one. */
+    live: boolean;
+    autonomy: boolean;
+    expanded: ReadonlySet<number>;
+  },
+): CockpitTimeline {
+  const { showPrefs } = opts;
+  const rows = buildRows(events);
+
+  // A turn's answer is its last assistant message before the session idled
+  // (or before now, once the agent has come to rest).
+  const answerRows = new Set<WorkflowRow>();
+  let lastAssistant: WorkflowRow | null = null;
+  for (const r of rows) {
+    if (r.type === "node" && r.cat === "assistant") {
+      lastAssistant = r;
+    } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("idle")) {
+      if (lastAssistant) answerRows.add(lastAssistant);
+      lastAssistant = null;
+    }
+  }
+  if (opts.terminal && lastAssistant) answerRows.add(lastAssistant);
+
+  interface Exchange {
+    index: number;
+    prompt: NodeRow | null;
+    promptIdx: number;
+    items: { row: WorkflowRow; idx: number }[];
+    answer: WorkflowRow | null;
+  }
+  const exchanges: Exchange[] = [];
+  for (let idx = 0; idx < rows.length; idx += 1) {
+    const row = rows[idx];
+    // The goal loop's nudge arrives as a user turn but continues the exchange.
+    const opens = row.type === "node" && row.cat === "user" && !isAutonomyNudge(row.ev.text);
+    if (opens || exchanges.length === 0) {
+      exchanges.push({
+        index: exchanges.length,
+        prompt: opens ? row : null,
+        promptIdx: idx,
+        items: [],
+        answer: null,
+      });
+      if (opens) continue;
+    }
+    exchanges[exchanges.length - 1].items.push({ row, idx });
+  }
+  exchanges.forEach((ex, i) => {
+    for (const { row } of ex.items) if (answerRows.has(row)) ex.answer = row;
+    // A turn a later prompt followed has ended even without an idle marker
+    // (older archives): its last assistant message is what it concluded with.
+    if (!ex.answer && i < exchanges.length - 1) {
+      for (const { row } of ex.items) {
+        if (row.type === "node" && row.cat === "assistant") ex.answer = row;
+      }
+    }
+  });
+
+  const visible = (r: WorkflowRow, isAnswer: boolean): boolean => {
+    if (r.type === "hook") return showPrefs.lifecycle;
+    if (r.type === "tool") return showPrefs.tool;
+    if (r.cat === "user" && isAutonomyNudge(r.ev.text)) return showPrefs.lifecycle;
+    if (r.cat === "system" && !showPrefs.system) return false;
+    if (r.cat === "reasoning" && !showPrefs.thinking) return false;
+    // Keep answers visible even when assistant chatter is hidden.
+    if (r.cat === "assistant" && !showPrefs.assistant && !isAnswer) return false;
+    return true;
+  };
+
+  const entries: TimelineEntry[] = [];
+  const anchors: ExchangeAnchor[] = [];
+  let latestAnswerKey: string | null = null;
+  exchanges.forEach((ex, i) => {
+    const entry = (
+      row: WorkflowRow,
+      idx: number,
+      role: "prompt" | "answer" | "work",
+    ): TimelineEntry => ({ kind: "row", key: `r${idx}`, row, exchange: ex.index, role });
+    if (ex.prompt) {
+      entries.push(entry(ex.prompt, ex.promptIdx, "prompt"));
+      anchors.push({
+        index: ex.index,
+        at: ex.prompt.ev.at,
+        prompt: ex.prompt.ev.text ?? null,
+        summary:
+          opts.autonomy && ex.answer?.type === "node"
+            ? parseAgentDirectives(ex.answer.ev.text).complete
+            : null,
+      });
+    }
+    const answerItem = ex.items.find((it) => it.row === ex.answer);
+    if (answerItem) latestAnswerKey = `r${answerItem.idx}`;
+    const work = ex.items.filter((it) => it !== answerItem);
+    const holdsApproval = ex.items.some((it) => it.row.type === "tool" && it.row.step.pending);
+    const isLive = opts.live && i === exchanges.length - 1;
+    if (
+      !showPrefs.fold ||
+      !ex.prompt ||
+      !answerItem ||
+      work.length === 0 ||
+      holdsApproval ||
+      isLive
+    ) {
+      for (const it of ex.items) {
+        const isAnswer = it === answerItem;
+        if (visible(it.row, isAnswer)) entries.push(entry(it.row, it.idx, isAnswer ? "answer" : "work"));
+      }
+      return;
+    }
+    const open = opts.expanded.has(ex.index);
+    entries.push({
+      kind: "fold",
+      key: `f${ex.index}`,
+      exchange: ex.index,
+      stats: workStats(ex.prompt, answerItem.row, work),
+      open,
+    });
+    if (open) {
+      for (const it of work) if (visible(it.row, false)) entries.push(entry(it.row, it.idx, "work"));
+    }
+    entries.push(entry(answerItem.row, answerItem.idx, "answer"));
+  });
+
+  const segments: TimelineSegment[] = [];
+  const exchangeStart = new Map<number, number>();
+  let pendingHooks: AgentEvent[] = [];
+  for (const e of entries) {
+    if (e.kind === "row" && e.row.type === "hook") {
+      pendingHooks.push(e.row.ev);
+      continue;
+    }
+    if (e.kind === "row" && e.role === "prompt") exchangeStart.set(e.exchange, segments.length);
+    segments.push({ entry: e, hooks: pendingHooks });
+    pendingHooks = [];
+  }
+  return { segments, trailingHooks: pendingHooks, anchors, exchangeStart, latestAnswerKey };
+}
+
+// How many timeline segments are mounted at once; older ones are kept
 // out of the DOM until the user scrolls toward the top, where another window's
 // worth is revealed. Keeps very long agent runs from rendering thousands of
 // nodes up front.
@@ -1700,6 +1805,10 @@ export function AgentActivity({
                 // Read-only: a historical attempt has no live session to decide
                 // a permission against, so the box renders its detail only.
                 <ToolBox step={seg.row.step} busy onDecision={() => {}} closed={closed} />
+              ) : seg.row.type === "node" &&
+                seg.row.cat === "user" &&
+                isAutonomyNudge(seg.row.ev.text) ? (
+                <ContinueMarker at={seg.row.ev.at} />
               ) : seg.row.type === "node" ? (
                 <MessageNode
                   event={seg.row.ev}
@@ -1872,54 +1981,37 @@ export function AgentView({
     () => agents.find((a) => a.id === agentId) ?? null,
     [agents, agentId],
   );
+  const hasSelected = selected != null;
   useEffect(() => {
-    selectedRef.current = selected != null;
-  }, [selected]);
+    selectedRef.current = hasSelected;
+  }, [hasSelected]);
 
-  // Derive the workflow timeline (segments + trailing hooks + which assistant
-  // rows are the real "answers") from the raw events. Memoised so windowing
-  // effects can react to the segment count without rebuilding on every render.
+  // Which finished turns the user unfolded, by exchange index. Scoped to the
+  // agent and run on screen — indices mean nothing on another transcript.
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
+
+  // Derive the workflow timeline (exchanges, folds, segments + trailing hooks)
+  // from the raw events. Memoised so windowing effects can react to the segment
+  // count without rebuilding on every render.
   const selectedStatus = selected?.status ?? null;
-  const timeline = useMemo(() => {
-    const rows = buildRows(events);
-    const terminal = ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
-      selectedStatus ?? "",
-    );
-    const answerRows = new Set<WorkflowRow>();
-    let lastAssistant: WorkflowRow | null = null;
-    for (const r of rows) {
-      if (r.type === "node" && r.cat === "assistant") {
-        lastAssistant = r;
-      } else if (r.type === "hook" && r.ev.kind.toLowerCase().includes("idle")) {
-        if (lastAssistant) answerRows.add(lastAssistant);
-        lastAssistant = null;
-      }
-    }
-    if (terminal && lastAssistant) answerRows.add(lastAssistant);
-
-    const visible = rows.filter((r) => {
-      if (r.type === "hook") return showPrefs.lifecycle;
-      if (r.type === "tool") return showPrefs.tool;
-      if (r.type !== "node") return true;
-      if (r.cat === "system" && !showPrefs.system) return false;
-      if (r.cat === "reasoning" && !showPrefs.thinking) return false;
-      // Keep answers visible even when assistant chatter is hidden.
-      if (r.cat === "assistant" && !showPrefs.assistant && !answerRows.has(r)) return false;
-      return true;
-    });
-
-    const segments: { row: WorkflowRow; hooks: AgentEvent[] }[] = [];
-    let pendingHooks: AgentEvent[] = [];
-    for (const r of visible) {
-      if (r.type === "hook") {
-        pendingHooks.push(r.ev);
-        continue;
-      }
-      segments.push({ row: r, hooks: pendingHooks });
-      pendingHooks = [];
-    }
-    return { segments, trailingHooks: pendingHooks, answerRows };
-  }, [events, showPrefs, selectedStatus]);
+  const selectedAutonomy = selected?.autonomy_enabled ?? false;
+  const turnActive =
+    selectedStatus === "running" ||
+    selectedStatus === "pending" ||
+    selectedStatus === "needs_approval";
+  const timeline = useMemo(
+    () =>
+      buildCockpitTimeline(events, {
+        showPrefs,
+        terminal: ["idle", "completed", "interrupted", "failed", "cancelled"].includes(
+          selectedStatus ?? "",
+        ),
+        live: turnActive,
+        autonomy: selectedAutonomy,
+        expanded,
+      }),
+    [events, showPrefs, selectedStatus, turnActive, selectedAutonomy, expanded],
+  );
 
   // Per-assistant-answer generation time, derived from event timestamps and
   // looked up by event object while rendering each node's metadata line.
@@ -1935,7 +2027,8 @@ export function AgentView({
   const pendingLanded = useMemo(() => {
     if (!pending) return false;
     for (let i = events.length - 1; i >= 0; i--) {
-      if (classify(events[i]) !== "user") continue;
+      // The goal loop's nudge can land in the same read as the prompt it follows.
+      if (classify(events[i]) !== "user" || isAutonomyNudge(events[i].text)) continue;
       return (events[i].text ?? "").trim() === pending.text.trim();
     }
     return false;
@@ -2018,7 +2111,7 @@ export function AgentView({
   const userHistory = useMemo(
     () =>
       events
-        .filter((e) => classify(e) === "user")
+        .filter((e) => classify(e) === "user" && !isAutonomyNudge(e.text))
         .map((e) => e.text ?? "")
         .filter(Boolean),
     [events],
@@ -2040,7 +2133,8 @@ export function AgentView({
     return subscribeAgentChanged(agentId, load);
   }, [agentId]);
 
-  const runs = runsState.agentId === agentId ? runsState.items : [];
+  const runsLoaded = runsState.agentId === agentId;
+  const runs = runsLoaded ? runsState.items : [];
   // `runChoice` is what the user asked for; this is what the transcript shows.
   // Left alone it tracks the newest run, so starting the agent again pulls the
   // view along instead of stranding you on a finished conversation.
@@ -2072,6 +2166,172 @@ export function AgentView({
   useEffect(() => {
     setRunChoice(null);
   }, [agentId]);
+
+  // The agent's published artifacts: the Result tab's versions and the insights
+  // sidebar's index. Tagged with their agent, like the runs, so switching agents
+  // can't briefly show the previous one's result.
+  const [artifactsState, setArtifactsState] = useState<{
+    agentId: number | null;
+    items: AgentArtifact[];
+    loaded: boolean;
+  }>({ agentId: null, items: [], loaded: false });
+  useEffect(() => {
+    if (agentId == null) {
+      setArtifactsState({ agentId: null, items: [], loaded: false });
+      return;
+    }
+    let alive = true;
+    const load = (): Promise<void> =>
+      api.agents
+        .listArtifacts(agentId)
+        .then((items) => {
+          if (alive) setArtifactsState({ agentId, items, loaded: true });
+        })
+        .catch(() => {
+          if (alive) setArtifactsState({ agentId, items: [], loaded: true });
+        });
+    void load();
+    // A completed turn publishes its result, and mid-mission ARTIFACT
+    // directives publish as they're emitted.
+    const off = subscribeAgentChanged(agentId, load);
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [agentId]);
+  const artifacts = useMemo(
+    () => (artifactsState.agentId === agentId ? artifactsState.items : []),
+    [artifactsState, agentId],
+  );
+  const artifactsLoaded = artifactsState.agentId === agentId && artifactsState.loaded;
+
+  // The result, as numbered versions — one per exchange that published.
+  const versions = useMemo(
+    () => buildResultVersions(artifacts, timeline.anchors, runFilter),
+    [artifacts, timeline.anchors, runFilter],
+  );
+  const latestVersion = versions.length > 0 ? versions[versions.length - 1] : null;
+  const versionOfArtifact = useMemo(() => {
+    const map = new Map<number, ResultVersion>();
+    for (const v of versions) for (const a of v.artifacts) map.set(a.id, v);
+    return map;
+  }, [versions]);
+  // The version on screen, remembered by one of its artifacts so a regrouping
+  // (the transcript loading after the artifacts) can't renumber it away. Null
+  // follows the newest.
+  const [versionPick, setVersionPick] = useState<number | null>(null);
+  const shownVersion =
+    (versionPick != null ? versionOfArtifact.get(versionPick) : undefined) ?? latestVersion;
+
+  // Result or Activity. Left alone (`null`) the pane follows the agent: the
+  // result once it has come to rest on a turn that published one, the live
+  // timeline otherwise — while a turn runs, needs you, or stopped short. A click
+  // pins the choice until the next turn starts or the agent needs you.
+  const [paneChoice, setPaneChoice] = useState<AgentPane | null>(null);
+  const lastAnchor =
+    timeline.anchors.length > 0 ? timeline.anchors[timeline.anchors.length - 1] : null;
+  const resultIsFresh =
+    latestVersion != null &&
+    (lastAnchor == null || (latestVersion.exchange?.index ?? -1) >= lastAnchor.index);
+  const atRest = selectedStatus === "idle" || selectedStatus === "completed";
+  const needsYou = selectedStatus === "needs_approval" || selectedStatus === "blocked";
+  const followPane: AgentPane =
+    resultIsFresh && atRest && !showPending ? "result" : "activity";
+  const pane: AgentPane = latestVersion ? (paneChoice ?? followPane) : "activity";
+  // An artifact that isn't a result version (a superseded completion summary,
+  // another run's output) opens in a viewer over the page instead.
+  const [viewing, setViewing] = useState<AgentArtifact | null>(null);
+
+  useEffect(() => {
+    setPaneChoice(null);
+    setVersionPick(null);
+    setViewing(null);
+  }, [agentId]);
+  // Another run is another transcript and another set of versions.
+  useEffect(() => {
+    setExpanded(new Set());
+    setVersionPick(null);
+  }, [agentId, runFilter]);
+  // A new turn hands the pane back to the follow rule — its live steps, then
+  // the newest version it concludes with, not one picked before it started.
+  useEffect(() => {
+    if (!turnActive) return;
+    setPaneChoice(null);
+    setVersionPick(null);
+  }, [turnActive]);
+  // So does the agent stopping on you, even mid-turn (running → needs approval).
+  useEffect(() => {
+    if (needsYou) setPaneChoice(null);
+  }, [needsYou]);
+
+  const openVersion = useCallback(
+    (v: ResultVersion | null) => {
+      setVersionPick(v == null || v === latestVersion ? null : v.artifacts[0].id);
+      setPaneChoice("result");
+    },
+    [latestVersion],
+  );
+  const openArtifact = useCallback(
+    (a: AgentArtifact) => {
+      const v = versionOfArtifact.get(a.id);
+      if (v) openVersion(v);
+      else setViewing(a);
+    },
+    [versionOfArtifact, openVersion],
+  );
+  const artifactLabel = useCallback(
+    (a: AgentArtifact) => {
+      const v = versionOfArtifact.get(a.id);
+      return v ? `v${v.n}` : null;
+    },
+    [versionOfArtifact],
+  );
+
+  // Open an artifact from a `?artifact={id}` permalink once the list has
+  // loaded, then strip the param so it doesn't re-fire on later reloads.
+  useEffect(() => {
+    // Wait for the runs too: until they land the run filter isn't settled, and
+    // an artifact of an earlier run would pass for a version of the latest.
+    if (!artifactsLoaded || !runsLoaded || artifacts.length === 0) return;
+    const raw = new URLSearchParams(window.location.search).get("artifact");
+    if (!raw) return;
+    const target = artifacts.find((a) => String(a.id) === raw);
+    if (target) openArtifact(target);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("artifact");
+    navigate(url.pathname + url.search + url.hash, { replace: true });
+  }, [artifactsLoaded, runsLoaded, artifacts, openArtifact]);
+
+  // How an answer shows what it published: a card for its result version, or
+  // (not on the blackboard) the payload folded inline.
+  const latestN = latestVersion?.n ?? 0;
+  const renderPublished = useCallback(
+    (at: string | null) => (a: AgentArtifactDirective, i: number) => {
+      const hit = findPublished(versions, a.title, at);
+      if (!hit) return <InlineArtifact key={i} artifact={a} />;
+      return (
+        <ResultCard
+          key={i}
+          artifact={hit.artifact}
+          version={hit.version}
+          latest={latestN}
+          onOpen={() => openVersion(hit.version)}
+        />
+      );
+    },
+    [versions, latestN, openVersion],
+  );
+
+  const toggleFold = useCallback((exchange: number) => {
+    // Opening a fold near the bottom must not yank the view down to the end.
+    pinnedRef.current = false;
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(exchange)) next.delete(exchange);
+      else next.add(exchange);
+      return next;
+    });
+  }, []);
 
   // Drive the app-global sign-in banner when a turn surfaces an MCP server that
   // needs interactive auth (e.g. WorkIQ OAuth lapsed). The agent runtime emits a
@@ -2110,7 +2370,9 @@ export function AgentView({
     });
     ro.observe(inner);
     return () => ro.disconnect();
-  }, [scrollToBottom]);
+    // The timeline's container only exists on the Activity pane of a selected
+    // agent, so re-attach whenever it (re)mounts.
+  }, [scrollToBottom, pane, hasSelected]);
 
   // New steps: follow to the bottom while pinned, once layout has settled.
   useEffect(() => {
@@ -2125,6 +2387,49 @@ export function AgentView({
     pinnedRef.current = true;
     requestAnimationFrame(scrollToBottom);
   }, [agentId, scrollToBottom]);
+
+  // Back on the timeline: rejoin the newest step — unless we came to show a
+  // particular exchange (below).
+  const jumpRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (pane !== "activity" || jumpRef.current != null) return;
+    pinnedRef.current = true;
+    requestAnimationFrame(scrollToBottom);
+  }, [pane, scrollToBottom]);
+
+  // "Show in activity" from a result version: bring its exchange into the
+  // render window, then scroll its prompt to the top.
+  const showInActivity = useCallback((exchange: number) => {
+    jumpRef.current = exchange;
+    pinnedRef.current = false;
+    setPaneChoice("activity");
+  }, []);
+  useEffect(() => {
+    const target = jumpRef.current;
+    if (pane !== "activity" || target == null) return;
+    const at = timeline.exchangeStart.get(target);
+    if (at == null) {
+      jumpRef.current = null;
+      return;
+    }
+    if (at < windowStart) {
+      setWindowStart(at);
+      return;
+    }
+    jumpRef.current = null;
+    requestAnimationFrame(() => {
+      innerRef.current
+        ?.querySelector(`[data-exchange="${target}"]`)
+        ?.scrollIntoView({ block: "start" });
+    });
+  }, [pane, timeline.exchangeStart, windowStart]);
+
+  // A different version reads from its top.
+  const resultScrollRef = useRef<HTMLDivElement>(null);
+  const shownVersionN = shownVersion?.n ?? null;
+  useEffect(() => {
+    if (resultScrollRef.current) resultScrollRef.current.scrollTop = 0;
+  }, [shownVersionN, pane]);
 
   const onScroll = useCallback(() => {
     const box = scrollRef.current;
@@ -2196,6 +2501,12 @@ export function AgentView({
     // message left, even before the backend records the real turn.
     if (explicit === undefined) setFollowUp("");
     setPending({ agentId: selected.id, text: message });
+    // A new prompt (not a slash command) starts a turn: follow it from now,
+    // rather than from when the backend reports it running.
+    if (!message.startsWith("/")) {
+      setPaneChoice(null);
+      setVersionPick(null);
+    }
     try {
       await api.agents.send(selected.id, message);
       onReload();
@@ -2489,78 +2800,26 @@ export function AgentView({
     );
   }
 
-  return (
-    <div className="flex h-full min-h-0 w-full">
-      <div className="mx-auto flex h-full min-w-0 w-full max-w-3xl flex-col">
-        {(needsRuntime || !enabled) && (
-          <div className="max-h-[50%] shrink-0 space-y-2 overflow-y-auto px-5 py-3">
-            {needsRuntime && runtimeCard}
-            {!enabled && <p className="text-[12px] text-muted">Agents mode is off. Your timeline is still available.</p>}
-            <button type="button" onClick={onOpenSettings} className="text-[12px] text-accent">
-              Open Settings
-            </button>
-          </div>
-        )}
-        {/* Scrollable workflow region. */}
-        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-5 py-3">
-          <div ref={innerRef}>
-        {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
-
-        {/* The transcript is scoped to one execution. Shown in the transcript
-            itself, not only in the Runs rail, so the filter can't strand a user
-            who has the insights panel collapsed. Silent on a single-run agent,
-            where "the latest run" and "everything" are the same timeline. */}
-        {runFilter != null && runs.length > 1 && (
-          <div className="mb-3 flex items-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[11px]">
-            <History size={13} className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate">
-              {runChoice == null
-                ? `Showing the latest run (#${runFilter}). Earlier executions are hidden.`
-                : `Showing run #${runFilter} only — other executions of this agent are hidden.`}
-            </span>
-            <button
-              type="button"
-              onClick={() => setRunChoice("all")}
-              className="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/15"
-            >
-              Show all runs
-            </button>
-          </div>
-        )}
-
+  // What needs you — an approval, a question, a parked or interrupted run, a
+  // failure. Shown on both panes: a result on screen mustn't hide the Resume
+  // button or the question the agent is waiting on.
+  const attention = (
+    <>
         {selected.status === "needs_approval" && (
           <div className="mb-3 flex items-center gap-1.5 rounded border border-orange-500/30 bg-orange-500/10 px-2 py-1 text-[11px] text-orange-600 dark:text-orange-400">
-            <ShieldQuestion size={13} /> Waiting for your approval — see the highlighted step
-            below.
-          </div>
-        )}
-
-        {/* Mission strip: objective + self-reported progress for autonomous
-            agents, so the transcript reads as a tracked mission, not a chat. */}
-        {selected.autonomy_enabled && selected.status !== "completed" && (
-          <div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-500/[0.06] px-2.5 py-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-violet-600 dark:text-violet-300">
-              <Radar size={13} className="shrink-0" />
-              <span className="min-w-0 flex-1 truncate">Objective: {selected.task_prompt}</span>
-              <span className="shrink-0 rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] tabular-nums">
-                step {selected.step_count}/{selected.max_steps}
-              </span>
-            </div>
-            {selected.progress != null && (
-              <div className="mt-1.5 flex flex-col gap-1">
-                <div className="flex items-center justify-between text-[10px] text-muted">
-                  <span className="min-w-0 truncate">{selected.progress_label ?? "Progress"}</span>
-                  <span className="shrink-0 font-semibold tabular-nums">{selected.progress}%</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-border/60">
-                  <span
-                    className="block h-full rounded-full bg-violet-500 transition-all"
-                    style={{
-                      width: `${Math.min(100, Math.max(0, selected.progress))}%`,
-                    }}
-                  />
-                </div>
-              </div>
+            <ShieldQuestion size={13} className="shrink-0" />
+            <span className="min-w-0 flex-1">
+              Waiting for your approval
+              {pane === "activity" ? " — see the highlighted step below." : "."}
+            </span>
+            {pane === "result" && (
+              <button
+                type="button"
+                onClick={() => setPaneChoice("activity")}
+                className="shrink-0 rounded px-1.5 py-0.5 font-medium hover:bg-orange-500/15"
+              >
+                Review
+              </button>
             )}
           </div>
         )}
@@ -2626,9 +2885,118 @@ export function AgentView({
             {selected.error}
           </div>
         )}
+    </>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 w-full">
+      <div className="mx-auto flex h-full min-w-0 w-full max-w-3xl flex-col">
+        {(needsRuntime || !enabled) && (
+          <div className="max-h-[50%] shrink-0 space-y-2 overflow-y-auto px-5 py-3">
+            {needsRuntime && runtimeCard}
+            {!enabled && <p className="text-[12px] text-muted">Agents mode is off. Your timeline is still available.</p>}
+            <button type="button" onClick={onOpenSettings} className="text-[12px] text-accent">
+              Open Settings
+            </button>
+          </div>
+        )}
+        {latestVersion && (
+          <AgentPaneTabs
+            pane={pane}
+            onChange={setPaneChoice}
+            latest={latestVersion.n}
+            live={turnActive}
+          />
+        )}
+        {pane === "result" && shownVersion ? (
+          <div
+            ref={resultScrollRef}
+            role="tabpanel"
+            id="agent-panel-result"
+            aria-labelledby="agent-pane-result"
+            className="flex-1 overflow-y-auto"
+          >
+            <div className="px-5 pt-3 empty:hidden">
+              {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
+              {attention}
+            </div>
+            <AgentResultView
+              agent={selected}
+              versions={versions}
+              shown={shownVersion}
+              onSelect={openVersion}
+              onShowInActivity={showInActivity}
+            />
+          </div>
+        ) : (
+        /* Scrollable workflow region. */
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          role={latestVersion ? "tabpanel" : undefined}
+          id={latestVersion ? "agent-panel-activity" : undefined}
+          aria-labelledby={latestVersion ? "agent-pane-activity" : undefined}
+          className="flex-1 overflow-y-auto px-5 py-3"
+        >
+          <div ref={innerRef}>
+        {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
+
+        {/* The transcript is scoped to one execution. Shown in the transcript
+            itself, not only in the Runs rail, so the filter can't strand a user
+            who has the insights panel collapsed. Silent on a single-run agent,
+            where "the latest run" and "everything" are the same timeline. */}
+        {runFilter != null && runs.length > 1 && (
+          <div className="mb-3 flex items-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-[11px]">
+            <History size={13} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {runChoice == null
+                ? `Showing the latest run (#${runFilter}). Earlier executions are hidden.`
+                : `Showing run #${runFilter} only — other executions of this agent are hidden.`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setRunChoice("all")}
+              className="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/15"
+            >
+              Show all runs
+            </button>
+          </div>
+        )}
+
+        {/* Mission strip: objective + self-reported progress for autonomous
+            agents, so the transcript reads as a tracked mission, not a chat. */}
+        {selected.autonomy_enabled && selected.status !== "completed" && (
+          <div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-500/[0.06] px-2.5 py-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-violet-600 dark:text-violet-300">
+              <Radar size={13} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate">Objective: {selected.task_prompt}</span>
+              <span className="shrink-0 rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] tabular-nums">
+                step {selected.step_count}/{selected.max_steps}
+              </span>
+            </div>
+            {selected.progress != null && (
+              <div className="mt-1.5 flex flex-col gap-1">
+                <div className="flex items-center justify-between text-[10px] text-muted">
+                  <span className="min-w-0 truncate">{selected.progress_label ?? "Progress"}</span>
+                  <span className="shrink-0 font-semibold tabular-nums">{selected.progress}%</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-border/60">
+                  <span
+                    className="block h-full rounded-full bg-violet-500 transition-all"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, selected.progress))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {attention}
 
         {(() => {
-          const { segments, trailingHooks, answerRows } = timeline;
+          const { segments, trailingHooks, latestAnswerKey } = timeline;
 
           if (segments.length === 0 && trailingHooks.length === 0)
             return showPending ? (
@@ -2642,9 +3010,9 @@ export function AgentView({
             );
 
           // Window the rendered segments: only those from `windowStart` onward
-          // are mounted. `windowStart` is an absolute index, so keys stay stable
-          // and appended steps never shift on-screen history; scrolling up
-          // lowers it to reveal older boxes.
+          // are mounted. `windowStart` is an absolute index and keys come from
+          // the rows themselves, so appended steps never shift on-screen
+          // history; scrolling up lowers it to reveal older boxes.
           const hiddenCount = Math.min(windowStart, segments.length);
           const shownSegments = hiddenCount > 0 ? segments.slice(hiddenCount) : segments;
 
@@ -2657,68 +3025,91 @@ export function AgentView({
               )}
               {shownSegments.map((seg, idx) => {
                 const absoluteIdx = hiddenCount + idx;
-                // Chat-style placement over the workflow spine: the user's own
-                // prompts sit to the right, the assistant's answers to the left,
-                // and everything else (system, tools, thinking, errors) centered.
-                const align =
-                  seg.row.type === "node" && seg.row.cat === "user"
-                    ? "justify-end"
-                    : seg.row.type === "node" && seg.row.cat === "assistant"
-                      ? "justify-start"
-                      : "justify-center";
-                return (
-                <Fragment key={absoluteIdx}>
-                  {absoluteIdx === 0 ? (
+                const { entry } = seg;
+                const connector =
+                  absoluteIdx === 0 ? (
                     seg.hooks.length > 0 && <HookGutter hooks={seg.hooks} />
                   ) : (
                     <StepConnector hooks={seg.hooks} />
-                  )}
-                  <div className={`flex w-full ${align}`}>
-                    {seg.row.type === "tool" ? (
+                  );
+                if (entry.kind === "fold") {
+                  return (
+                    <Fragment key={entry.key}>
+                      {connector}
+                      <WorkFold
+                        stats={entry.stats}
+                        open={entry.open}
+                        onToggle={() => toggleFold(entry.exchange)}
+                      />
+                    </Fragment>
+                  );
+                }
+                const { row } = entry;
+                // Chat-style placement over the workflow spine: the user's own
+                // prompts sit to the right, the assistant's answers to the left,
+                // and everything else (system, tools, thinking, errors) centered.
+                const nudge = row.type === "node" && row.cat === "user" && isAutonomyNudge(row.ev.text);
+                const align =
+                  row.type === "node" && row.cat === "user" && !nudge
+                    ? "justify-end"
+                    : row.type === "node" && row.cat === "assistant"
+                      ? "justify-start"
+                      : "justify-center";
+                return (
+                <Fragment key={entry.key}>
+                  {connector}
+                  <div
+                    className={`flex w-full scroll-mt-3 ${align}`}
+                    data-exchange={entry.role === "prompt" ? entry.exchange : undefined}
+                  >
+                    {row.type === "tool" ? (
                       <ToolBox
-                        step={seg.row.step}
+                        step={row.step}
                         busy={busy || !runtimeReady}
                         onDecision={approve}
                       />
-                    ) : seg.row.type === "node" ? (
+                    ) : nudge ? (
+                      <ContinueMarker at={row.ev.at} />
+                    ) : row.type === "node" ? (
                       <MessageNode
-                        event={seg.row.ev}
-                        category={seg.row.cat}
-                        isLastAnswer={answerRows.has(seg.row)}
+                        event={row.ev}
+                        category={row.cat}
+                        isLastAnswer={entry.role === "answer"}
                         autonomy={selected.autonomy_enabled}
                         user={userPersona}
-                        model={modelByEvent.get(seg.row.ev) ?? selected.model ?? null}
-                        elapsedMs={elapsedByEvent.get(seg.row.ev) ?? null}
-                        onPickSuggestion={(text) => void sendFollowUp(text)}
-                        onReply={focusComposer}
-                        suggestionsDisabled={
-                          !runtimeReady ||
-                          selected.status === "running" ||
-                          selected.status === "pending" ||
-                          selected.status === "needs_approval"
+                        model={modelByEvent.get(row.ev) ?? selected.model ?? null}
+                        elapsedMs={elapsedByEvent.get(row.ev) ?? null}
+                        // Suggested replies follow up on where things stand now,
+                        // so only the newest answer offers them.
+                        onPickSuggestion={
+                          entry.key === latestAnswerKey
+                            ? (text) => void sendFollowUp(text)
+                            : undefined
                         }
+                        onReply={focusComposer}
+                        suggestionsDisabled={!runtimeReady || turnActive}
+                        renderArtifact={renderPublished(row.ev.at)}
                       />
                     ) : null}
                   </div>
-                  {seg.row.type === "node" &&
-                    seg.row.cat === "assistant" &&
+                  {row.type === "node" &&
+                    row.cat === "assistant" &&
                     selected.autonomy_enabled &&
                     (() => {
-                      const d = parseAgentDirectives(seg.row.ev.text ?? "");
+                      const d = parseAgentDirectives(row.ev.text ?? "");
                       // The terminal OBJECTIVE_COMPLETE is folded into the answer
                       // bubble itself (completion badge + summary), so it's no
                       // longer repeated as a spine node — only progress
                       // heartbeats remain on the spine.
                       if (d.complete != null || !d.progress) return null;
                       return (
-                        <MissionMilestone progress={d.progress} at={seg.row.ev.at} />
+                        <MissionMilestone progress={d.progress} at={row.ev.at} />
                       );
                     })()}
                 </Fragment>
                 );
               })}
               {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
-              {selected && <AgentDeliverables agent={selected} />}
               {showPending && (
                 <>
                   <StepConnector hooks={[]} />
@@ -2732,15 +3123,12 @@ export function AgentView({
         })()}
           </div>
       </div>
+        )}
 
       {/* Follow-up: always visible. While a turn is in flight the input is
           disabled and the send button becomes a Stop control, matching the
           topic/chat composer pattern. */}
       {(() => {
-        const turnActive =
-          selected.status === "running" ||
-          selected.status === "pending" ||
-          selected.status === "needs_approval";
         // While the send request is still in flight (`busy`) the turn hasn't
         // reported active yet — lock the input so the prompt can't be sent twice,
         // but don't flash a Stop control until there's actually a turn to stop.
@@ -2765,7 +3153,9 @@ export function AgentView({
                   ? "Agent is working… use Stop to interrupt"
                   : sending
                     ? "Sending…"
-                    : "Send a follow-up message…"
+                    : pane === "result"
+                      ? "Ask for changes to this result…"
+                      : "Send a follow-up message…"
               }
               toolbarStart={
                 <>
@@ -2792,7 +3182,13 @@ export function AgentView({
         runs={runs}
         runFilter={runFilter}
         onRunFilterChange={setRunChoice}
+        artifacts={artifacts}
+        artifactLabel={artifactLabel}
+        onOpenArtifact={openArtifact}
       />
+      {viewing && (
+        <ArtifactViewer agent={selected} artifact={viewing} onClose={() => setViewing(null)} />
+      )}
     </div>
   );
 }

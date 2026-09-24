@@ -39,7 +39,10 @@ def _guard() -> None:
 
 _guard()
 
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+
 from precursor.backend.db import SessionLocal, init_db  # noqa: E402
+from precursor.backend.models.agent_artifact import AgentArtifact  # noqa: E402
 from precursor.backend.models.agent_event import AgentEventRecord  # noqa: E402
 from precursor.backend.models.agent_run import AgentRun  # noqa: E402
 from precursor.backend.models.agent_session import AgentSession  # noqa: E402
@@ -67,6 +70,10 @@ from precursor.backend.models.workflow import (  # noqa: E402
 from precursor.backend.models.workflow_state import WorkflowState  # noqa: E402
 from precursor.backend.models.workspace import Workspace  # noqa: E402
 from precursor.backend.schemas.agent import AgentEvent  # noqa: E402
+from precursor.backend.services.agents.directives import (  # noqa: E402
+    _CONTINUE_NUDGE,
+    strip_control_directives,
+)
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
 
 NOW = datetime.now(UTC)
@@ -113,6 +120,236 @@ def write_skill_files(skills_dir: Path) -> None:
         (folder / "SKILL.md").write_text(
             f"---\nname: {name}\ndescription: {description}\n---\n\n{instructions}\n",
             encoding="utf-8",
+        )
+
+
+# --------------------------------------------------------------------------
+# An autonomous agent whose deliverable was refined over two follow-ups, so the
+# cockpit shows a result with three versions and three folded turns.
+# --------------------------------------------------------------------------
+_GUIDE_SERVICES = (
+    "- **Gateway** — every request enters here; it owns rate limiting.\n"
+    "- **Ledger** — the source of truth for billing events.\n"
+    "- **Notifier** — email and push, driven by the event bus.\n"
+)
+_GUIDE_V1 = (
+    "# Platform onboarding guide\n\n"
+    "## Week one\n"
+    "1. Request access to the cloud console, the deploy pipeline and the on-call rota.\n"
+    "2. Clone the service catalogue and run `make dev` for the gateway.\n"
+    "3. Pair with your buddy on one small fix and ship it.\n\n"
+    "## The services you'll touch first\n" + _GUIDE_SERVICES + "\n"
+    "## How we ship\n"
+    "Small pull requests, reviewed within a day. A merge to `main` deploys to staging; "
+    "production releases go out every Tuesday."
+)
+_GUIDE_V2 = (
+    _GUIDE_V1 + "\n\n## Joining on-call\n"
+    "- Shadow two rotations before you carry the pager.\n"
+    "- Every alert links a runbook. If one doesn't, write it after the incident.\n"
+    "- Hand over at 10:00 on Mondays with a written summary in #platform-oncall."
+)
+_GUIDE_V3 = (
+    "# Platform onboarding guide\n\n"
+    "## First-week checklist\n"
+    "- [ ] Access: cloud console, deploy pipeline, on-call rota\n"
+    "- [ ] Run the gateway locally with `make dev`\n"
+    "- [ ] Ship one small fix with your buddy\n"
+    "- [ ] Read the Gateway, Ledger and Notifier runbooks\n"
+    "- [ ] Shadow one on-call handover\n\n"
+    "## The services\n" + _GUIDE_SERVICES + "\n"
+    "## Shipping and on-call\n"
+    "Small pull requests, reviewed within a day. `main` deploys to staging and production "
+    "ships on Tuesdays. Shadow two on-call rotations before you carry the pager."
+)
+_GUIDE_TURNS = [
+    {
+        "at": {"hours": 3},
+        "prompt": (
+            "Write an onboarding guide for engineers joining the platform team, "
+            "from the handbook and the service catalogue."
+        ),
+        "steps": [
+            ("say", "I'll start from the team handbook, then map the services a newcomer meets."),
+            ("tool", "workspace-read_file", '{"path": "handbook/README.md"}', "412 lines read."),
+            ("say", "PROGRESS: 40 | Read the handbook; mapping the services next."),
+            ("nudge",),
+            ("tool", "workspace-search", '{"query": "owner: platform"}', "3 services match."),
+            ("think", "Lead with access and tooling, then the services, then how we ship."),
+        ],
+        "prose": "",
+        "title": "Platform onboarding guide",
+        "body": _GUIDE_V1,
+        "complete": (
+            "Drafted a first onboarding guide: week-one access and setup, the three "
+            "services a newcomer touches first, and how the team ships."
+        ),
+    },
+    {
+        "at": {"hours": 2, "minutes": 30},
+        "prompt": "Add a section on joining on-call.",
+        "steps": [
+            ("tool", "workspace-read_file", '{"path": "runbooks/oncall.md"}', "96 lines read."),
+            ("say", "The on-call runbook covers shadowing and handover, so I'll draw on it."),
+        ],
+        "prose": "",
+        "title": "Platform onboarding guide (with on-call)",
+        "body": _GUIDE_V2,
+        "complete": (
+            "Added a Joining on-call section, drawn from the on-call runbook: shadowing "
+            "first, runbooks for every alert, and the Monday handover."
+        ),
+    },
+    {
+        "at": {"hours": 2},
+        "prompt": "Too long for day one. Make it shorter and lead with a first-week checklist.",
+        "steps": [
+            ("think", "Newcomers skim: move every action into a checklist, merge the prose."),
+            ("say", "PROGRESS: 70 | Folded the actions into a checklist; tightening the rest."),
+        ],
+        "prose": (
+            "I cut the guide by about half. Everything a newcomer has to *do* is now a "
+            "checklist at the top; shipping and on-call share one short section."
+        ),
+        "title": "Platform onboarding guide — first-week checklist",
+        "body": _GUIDE_V3,
+        "complete": (
+            "Shortened the guide by half and led with a first-week checklist; shipping "
+            "and on-call now share one section."
+        ),
+    },
+]
+
+
+async def _seed_refined_agent(s: AsyncSession) -> None:
+    """Add "Onboarding guide writer": one run, three prompts, three result versions."""
+    last = _GUIDE_TURNS[-1]
+    agent = AgentSession(
+        title="Onboarding guide writer",
+        task_prompt=_GUIDE_TURNS[0]["prompt"],
+        status="completed",
+        autonomy_enabled=True,
+        max_steps=12,
+        progress=100,
+        model="gpt-5",
+        result_summary=last["complete"],
+        total_input_tokens=212_400,
+        total_output_tokens=9_800,
+        finished_at=ago(hours=1, minutes=56),
+        last_activity_at=ago(hours=1, minutes=56),
+        last_read_at=NOW,
+    )
+    s.add(agent)
+    await s.flush()
+    run = AgentRun(
+        agent_id=agent.id,
+        status="completed",
+        model=agent.model,
+        progress=100,
+        result_summary=agent.result_summary,
+        total_input_tokens=agent.total_input_tokens,
+        total_output_tokens=agent.total_output_tokens,
+        started_at=ago(hours=3),
+        finished_at=agent.finished_at,
+        last_activity_at=agent.finished_at,
+    )
+    s.add(run)
+    await s.flush()
+    agent.current_run_id = run.id
+
+    events: list[AgentEvent] = []
+    for n, turn in enumerate(_GUIDE_TURNS):
+        start: datetime = ago(**turn["at"])
+        clock = [start]
+
+        def tick(seconds: float, clock: list[datetime] = clock) -> datetime:
+            clock[0] = clock[0] + timedelta(seconds=seconds)
+            return clock[0]
+
+        events.append(AgentEvent(kind="UserMessageData", text=turn["prompt"], at=start))
+        events.append(AgentEvent(kind="turn_start", at=tick(1)))
+        for i, step in enumerate(turn["steps"]):
+            if step[0] == "say":
+                events.append(AgentEvent(kind="assistant_message", text=step[1], at=tick(6)))
+            elif step[0] == "think":
+                events.append(AgentEvent(kind="reasoning", text=step[1], at=tick(9)))
+            elif step[0] == "nudge":
+                events.append(AgentEvent(kind="turn_end", at=tick(1)))
+                events.append(AgentEvent(kind="AssistantIdleData", at=tick(1)))
+                events.append(AgentEvent(kind="UserMessageData", text=_CONTINUE_NUDGE, at=tick(1)))
+                events.append(AgentEvent(kind="turn_start", at=tick(1)))
+            else:
+                _, tool, args, result = step
+                request_id = f"demo-{n}-{i}"
+                events.append(
+                    AgentEvent(
+                        kind="ToolExecutionStartData",
+                        tool_name=tool,
+                        request_id=request_id,
+                        data={"arguments": args},
+                        at=tick(4),
+                    )
+                )
+                events.append(
+                    AgentEvent(
+                        kind="ToolExecutionCompleteData",
+                        tool_status="done",
+                        request_id=request_id,
+                        data={"result": result},
+                        at=tick(18),
+                    )
+                )
+        final = "\n\n".join(
+            part
+            for part in (
+                turn["prose"],
+                f"ARTIFACT: {turn['title']}\n{turn['body']}\nEND_ARTIFACT",
+                f"OBJECTIVE_COMPLETE: {turn['complete']}",
+            )
+            if part
+        )
+        events.append(
+            AgentEvent(kind="usage", data={"model": "gpt-5", "output_tokens": 1800}, at=tick(20))
+        )
+        final_at = tick(24)
+        events.append(AgentEvent(kind="assistant_message", text=final, at=final_at))
+        events.append(AgentEvent(kind="turn_end", at=tick(1)))
+        events.append(AgentEvent(kind="AssistantIdleData", at=tick(0.2)))
+        events.append(AgentEvent(kind="idle", at=tick(0.1)))
+        # What the goal loop publishes when the turn settles: the ARTIFACT block as
+        # an output, and the completion as the auto-captured result.
+        s.add_all(
+            [
+                AgentArtifact(
+                    agent_id=agent.id,
+                    agent_run_id=run.id,
+                    key="output",
+                    kind="text",
+                    title=turn["title"],
+                    content=turn["body"],
+                    created_at=tick(0.1),
+                ),
+                AgentArtifact(
+                    agent_id=agent.id,
+                    agent_run_id=run.id,
+                    key="result",
+                    kind="text",
+                    title="Result",
+                    content=strip_control_directives(final),
+                    created_at=tick(0.1),
+                ),
+            ]
+        )
+
+    for event in events:
+        event.agent_run_id = run.id
+        s.add(
+            AgentEventRecord(
+                agent_session_id=agent.id,
+                agent_run_id=run.id,
+                payload=event.model_dump_json(),
+                created_at=event.at,
+            )
         )
 
 
@@ -548,6 +785,8 @@ async def seed() -> None:
                     created_at=event.at,
                 )
             )
+
+        await _seed_refined_agent(s)
 
         wf = Workflow(
             name="Weekly release digest",

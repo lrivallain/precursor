@@ -15,6 +15,29 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **An agent's page now separates its result from its activity.** Refining a
+  deliverable over several follow-ups used to stack every draft at the foot of
+  the page, oldest last, so the current one was the hardest to find. The body
+  also showed twice: once in the answer bubble, and again as a deliverable.
+  - **Result tab.** Once an agent publishes an artifact, its page offers
+    **Result** and **Activity** tabs. Result opens on the newest version, with
+    the earlier ones on a rail (newest first). Each version shows the prompt that
+    produced it and the agent's summary of what changed. Artifact permalinks open
+    the Result tab on their version. The page shows Activity while a turn runs,
+    needs you or stopped short, and Result once the agent comes to rest on a new
+    version. Approvals, questions and **Resume** show on both tabs.
+  - **No duplicate result.** The frontend now parses multi-line `ARTIFACT:` …
+    `END_ARTIFACT` blocks, as the backend already did. The answer bubble shows
+    only the prose around the block, plus a compact card (*v2 · superseded by
+    v3*) that opens the version in the Result tab.
+  - **Finished turns fold.** A turn with an answer folds its steps into one
+    line (*Worked for 3m 13s · 19 tool calls · 7 updates*) that opens on click.
+    The turn in flight and any turn awaiting approval stay open. **Show → Fold
+    finished turns** turns this off. The goal loop's nudge between autonomous
+    steps shows as a *Continued autonomously* marker, not as your message.
+    Progress-only messages no longer leave an empty bubble above their milestone,
+    and suggested replies appear on the newest answer only.
+
 - **Topics, chats and the workspace assistant now behave the same when you
   delete, clear or stop** (#343). The #335 refactor had kept three differences
   on purpose:
