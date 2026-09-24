@@ -506,13 +506,21 @@ export function LiveView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
 
-  // Enumerate input devices once STT is configured (labels need permission).
-  useEffect(() => {
-    if (!sttReady) return;
-    void listAudioInputDevices()
+  // List input devices once STT is configured, without touching the mic: a
+  // capture here would light the browser's recording indicator on every session
+  // opened, recorded or not. Labels a missing grant withholds are filled in when
+  // the picker is opened (a user gesture) or once a recording holds the mic.
+  const refreshDevices = useCallback((probe: boolean) => {
+    void listAudioInputDevices({ probe })
       .then(setDevices)
       .catch(() => {});
-  }, [sttReady]);
+  }, []);
+  useEffect(() => {
+    if (sttReady) refreshDevices(false);
+  }, [sttReady, refreshDevices]);
+  useEffect(() => {
+    if (recording) refreshDevices(false);
+  }, [recording, refreshDevices]);
 
   // Persist the audio-capture prefs so they survive across sessions/restarts.
   useEffect(() => {
@@ -1066,6 +1074,7 @@ export function LiveView({
           devices={devices}
           value={deviceId}
           onChange={setDeviceId}
+          onOpen={() => refreshDevices(true)}
           disabled={recording || !sttReady}
         />
         <button

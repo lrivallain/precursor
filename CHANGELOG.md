@@ -513,6 +513,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Opening a Live session no longer lights the browser's recording
+  indicator.** Every session opened — ended ones included, or ones you never
+  record — briefly grabbed the microphone just to read the input devices' names,
+  so the tab's favicon turned into the browser's "recording" dot while nothing
+  was being captured. The device list is now read without opening the mic, so
+  the indicator shows only while a recording is actually running. Where the
+  browser still hides device names (microphone access never granted), opening
+  the input picker asks for access once to fill them in.
 - **"Restart now" works under `precursor --dev`.** After a plugin install, the
   in-app restart re-exec'd the process with its original arguments — but under
   `--dev` that process is uvicorn's reload worker, a multiprocessing child, and

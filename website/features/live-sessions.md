@@ -35,6 +35,11 @@ has step-by-step, OS-specific instructions:
 For **hybrid** meetings, tick **+ mic** to also capture your local microphone
 alongside the virtual device — both streams are mixed and transcribed together.
 
+Precursor only opens an input device while you record, so the browser's
+recording indicator on the tab means a recording is really running. If the
+browser has never been granted microphone access, the picker lists device names
+once you open it (it asks for access then) or once you start recording.
+
 ## Starting and protecting a recording
 
 The **record controls** — **Record**, the capture-device picker, **+ mic**, and
