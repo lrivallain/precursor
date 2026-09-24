@@ -52,26 +52,46 @@ interface Result {
   stop: () => void;
 }
 
-/**
- * Enumerate audio input devices for the capture picker. Requests microphone
- * permission first so device *labels* are populated (browsers hide labels until
- * the user has granted access at least once). The temporary stream is released
- * immediately — we only needed it to unlock labels.
- */
-export async function listAudioInputDevices(): Promise<AudioInputDevice[]> {
-  try {
-    const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
-    for (const track of probe.getTracks()) track.stop();
-  } catch {
-    // Permission denied / no device — enumerate anyway (labels may be blank).
-  }
+async function enumerateAudioInputs(): Promise<MediaDeviceInfo[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
   const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices
-    .filter((d) => d.kind === "audioinput")
-    .map((d, i) => ({
-      deviceId: d.deviceId,
-      label: d.label || `Microphone ${i + 1}`,
-    }));
+  return devices.filter((d) => d.kind === "audioinput");
+}
+
+/**
+ * Enumerate audio input devices for the capture picker.
+ *
+ * Browsers withhold device labels (and real ids) until the page has microphone
+ * access. With a persistent grant — any browser that has recorded here before —
+ * plain enumeration already returns them. Otherwise `probe` opens and
+ * immediately releases a throwaway stream to unlock them. Only pass it from a
+ * user gesture: even a momentary capture lights the browser's recording
+ * indicator (which replaces the tab favicon), so it must never run just because
+ * a session was opened.
+ */
+export async function listAudioInputDevices({
+  probe = false,
+}: { probe?: boolean } = {}): Promise<AudioInputDevice[]> {
+  let inputs = await enumerateAudioInputs();
+  if (probe && (inputs.length === 0 || inputs.some((d) => !d.label))) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      for (const track of stream.getTracks()) track.stop();
+    } catch {
+      // Permission denied / no device — keep what we have (labels may be blank).
+    }
+    inputs = await enumerateAudioInputs();
+  }
+  return (
+    inputs
+      // Before access is granted, browsers return an id-less placeholder that
+      // can't be selected and would just duplicate "Default input".
+      .filter((d) => d.deviceId)
+      .map((d, i) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Microphone ${i + 1}`,
+      }))
+  );
 }
 
 /**

@@ -11,11 +11,14 @@ export function DevicePicker({
   devices,
   value,
   onChange,
+  onOpen,
   disabled,
 }: {
   devices: AudioInputDevice[];
   value: string;
   onChange: (deviceId: string) => void;
+  /** Called each time the list is opened, e.g. to refresh the devices. */
+  onOpen?: () => void;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -44,7 +47,8 @@ export function DevicePicker({
         disabled={disabled}
         onClick={() => {
           setQuery("");
-          setOpen((v) => !v);
+          if (!open) onOpen?.();
+          setOpen(!open);
         }}
         className="flex max-w-[15rem] items-center gap-1 rounded border border-border bg-bg px-2 py-1 text-[11px] disabled:opacity-50"
       >
