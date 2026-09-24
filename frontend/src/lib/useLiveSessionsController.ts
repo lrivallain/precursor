@@ -113,9 +113,12 @@ export function useLiveSessionsController(
 
   // The "New live session" card's inline form: create, then reveal the session.
   async function createLiveFromHome(session: MeetingSession): Promise<void> {
+    // Load the list first, then leave home and select in one batch. Switching
+    // first would commit the session still selected in Live (or its start
+    // page), and the URL effect would push an entry for it.
+    await loadMeetingSessions();
     setAtHome(false);
     setSidebarMode("live");
-    await loadMeetingSessions();
     setActiveSessionId(session.id);
     navigate(liveUrl(session));
   }

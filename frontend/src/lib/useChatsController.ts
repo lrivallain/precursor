@@ -243,10 +243,15 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   // switch to the newly-mounted ChatSessionPanel. `autoname` marks the title as
   // a placeholder, so the backend replaces it with one derived from this prompt
   // while the answer is still streaming.
-  async function handleStartChat(prompt: string, roleId: number | null = null): Promise<void> {
+  async function handleStartChat(
+    prompt: string,
+    roleId: number | null = null,
+    reveal?: () => void,
+  ): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
     const chat = await api.chats.create({ title: "New chat", autoname: true, role_id: roleId });
+    reveal?.();
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
     void streamStore.start(convKey("chat", chat.id), text);
@@ -254,9 +259,13 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
 
   // The "New chat" card's inline composer: create + stream, then reveal the chat.
   async function startChatFromHome(prompt: string, roleId: number | null = null): Promise<void> {
-    setAtHome(false);
-    setSidebarMode("chats");
-    await handleStartChat(prompt, roleId);
+    // Leave home only once the chat exists, in the batch that selects it.
+    // Switching first would commit the chat still open in Chats, and the URL
+    // effect would push an entry for it ahead of the new one.
+    await handleStartChat(prompt, roleId, () => {
+      setAtHome(false);
+      setSidebarMode("chats");
+    });
   }
 
   // The chats branch of App's shared role persistence (`setRoleForActive`).

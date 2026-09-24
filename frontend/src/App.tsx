@@ -423,6 +423,16 @@ export default function App() {
     if (next === "agents" || next === "workflows") closeMobileNav();
   }
 
+  // Enter Topics or Chats to show a conversation the caller has already fetched
+  // and selects in the same batch, e.g. a fired reminder's. Unlike changeMode it
+  // doesn't navigate: that section's URL effect pushes the one entry.
+  function enterSection(next: "topics" | "chats"): void {
+    closeMobileNav();
+    setAtHome(false);
+    wsCtl.closeRoute();
+    setSidebarMode(next);
+  }
+
   // Navigate to the root home launcher.
   async function goHome(): Promise<void> {
     if (!(await confirmLeaveRecording())) return;
@@ -496,7 +506,8 @@ export default function App() {
     notificationsEnabledRef,
     topics: topicsCtl,
     chats: chatsCtl,
-    changeMode,
+    confirmLeaveRecording,
+    enterSection,
   });
 
   // Open a content-search hit from the command palette. Mirrors the per-section

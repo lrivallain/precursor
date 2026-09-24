@@ -482,12 +482,15 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   // leave home, clear the draft parent, and reveal the new topic.
   async function handleTopicCreated(topic: Topic): Promise<void> {
     setTopicDraftParentId(null);
-    setAtHome(false);
-    setSidebarMode("topics");
     // A sub-topic inherits its parent's collection, which may differ from the
     // one on screen — follow the topic we just created.
     if (topic.collection_id != null) selectCollection(topic.collection_id);
     await refreshTree();
+    // Leave home (the "New topic" card) only now, in the batch that selects the
+    // topic. Switching first would commit the topic still open in Topics, or
+    // with none open replace the entry being left, before the new one lands.
+    setAtHome(false);
+    setSidebarMode("topics");
     setActiveTopic(topic);
   }
 
