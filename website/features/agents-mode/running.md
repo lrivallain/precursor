@@ -13,6 +13,21 @@ Give an agent a **task prompt** and it works autonomously, streaming its steps
 into a **timeline** you can watch: tool calls visualised inline, permission
 prompts surfaced for actions needing approval, and per-session token accounting.
 
+The timeline reads as **exchanges**: your prompt, the work it set off, and the
+answer it concluded with. Once a turn has its answer, the steps in between fold
+into one line (*Worked for 3m 13s · 19 tool calls · 7 updates*). Click it to see
+every step. The turn still in flight, and any turn waiting on an approval, stay
+open. The goal loop's "keep going" nudge between steps of an autonomous mission
+shows as a quiet *Continued autonomously* marker, not as a message from you. To
+see every step all the time, switch off **Fold finished turns** under **Show** in
+the insights sidebar.
+
+<Screenshot src="/screenshots/agents-activity.png" alt="An agent's Activity tab: each follow-up prompt is followed by a folded Worked-for summary and the answer, which links to the result version it published" caption="Finished turns fold above their answers. Each answer links to the result version it published." />
+
+An agent that publishes a result gets a **Result** tab next to this timeline,
+with each refinement kept as a version. See
+[Reading an agent's result](/features/agents-mode/artifacts-state#reading-an-agent-s-result).
+
 Use the **Run agent** play button in the header to start a parked agent or run
 its saved task again without opening settings or typing a follow-up. It starts
 a **new execution** with the saved definition; it does not send the composer

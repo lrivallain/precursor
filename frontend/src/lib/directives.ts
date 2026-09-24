@@ -30,9 +30,16 @@ const POST = "[ \\t*_`]*";
 const NEED_INPUT_RE = new RegExp(`^${LEAD}NEED[_ ]INPUT\\s*:${POST}(.+)`, "im");
 const COMPLETE_RE = new RegExp(`^${LEAD}OBJECTIVE[_ ]COMPLETE\\s*:${POST}(.+)`, "im");
 const PROGRESS_RE = new RegExp(`^${LEAD}PROGRESS\\s*:\\s*(\\d{1,3})\\s*(?:\\|\\s*(.+))?`, "im");
-// Every `ARTIFACT: <title> | <content>` line (repeatable per message). Global +
-// multiline so we can walk all of them; mirrors the backend's per-line capture.
-const ARTIFACT_RE = new RegExp(`^${LEAD}ARTIFACT\\s*:\\s*([^|\\n]+?)\\s*\\|\\s*(.+)$`, "gim");
+// An `ARTIFACT:` header line, a block terminator, and the directive line that
+// ends an unterminated block — exactly `_ARTIFACT_HEADER_RE`, `_ARTIFACT_END_RE`
+// and `_NARRATION_SKIP_RE` in the backend's directives module, with no tolerance
+// for decoration. What the page shows as a published result must be what the
+// backend published: a looser match would cut a deliverable short at an
+// ordinary `- **Progress:** …` bullet, or swallow prose that merely mentions an
+// artifact. Per-line (no `m` flag): artifacts are walked line by line.
+const ARTIFACT_HEADER_RE = /^\s*ARTIFACT\s*:\s*(.*)$/i;
+const ARTIFACT_END_RE = /^\s*(?:END[_ ]ARTIFACT|\/ARTIFACT|ARTIFACT[_ ]END)\s*$/i;
+const DIRECTIVE_HEAD_RE = /^\s*(?:PROGRESS|NEED[_ ]INPUT|OBJECTIVE[_ ]COMPLETE|ARTIFACT)\s*:/i;
 
 // A whole line that is *only* a directive marker — used to delete it from the
 // rendered body. Anchored to line bounds with the multiline flag.
@@ -77,13 +84,75 @@ export function parseAgentDirectives(text: string | null | undefined): AgentDire
     const value = Math.max(0, Math.min(100, Number.parseInt(prog[1], 10)));
     out.progress = { value, label: (prog[2] ?? "").trim() || null };
   }
-  ARTIFACT_RE.lastIndex = 0;
-  for (let m = ARTIFACT_RE.exec(text); m; m = ARTIFACT_RE.exec(text)) {
-    const title = m[1].trim();
-    const content = m[2].trim();
-    if (title && content) out.artifacts.push({ title, content });
-  }
+  out.artifacts = walkArtifacts(text).artifacts;
   return out;
+}
+
+// Drop trailing directive lines a model glued onto an artifact body. Mirrors
+// `_strip_trailing_directives` in the backend.
+function stripTrailingDirectiveLines(content: string): string {
+  const lines = content.split("\n");
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1];
+    if (last.trim() && !DIRECTIVE_HEAD_RE.test(last)) break;
+    lines.pop();
+  }
+  return lines.join("\n").trim();
+}
+
+/**
+ * Walk a message for its published artifacts, in both shapes the backend's
+ * `_extract_artifacts` accepts: an inline `ARTIFACT: <title> | <body>` line, and
+ * a block — `ARTIFACT: <title>` (no pipe), the body on the following lines, then
+ * `END_ARTIFACT` (or the next directive, or the end of the message).
+ *
+ * Returns the artifacts plus the message with every artifact removed, so the
+ * prose around a deliverable can be rendered without repeating it.
+ */
+function walkArtifacts(text: string): { artifacts: AgentArtifactDirective[]; rest: string } {
+  const lines = text.split(/\r?\n/);
+  const artifacts: AgentArtifactDirective[] = [];
+  const kept: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const header = ARTIFACT_HEADER_RE.exec(lines[i]);
+    if (!header) {
+      // A stray terminator (its header already consumed, or never sent) is
+      // plumbing too.
+      if (!ARTIFACT_END_RE.test(lines[i])) kept.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    const rest = header[1].trim();
+    let title: string;
+    let body: string;
+    const collected: string[] = [];
+    if (rest.includes("|")) {
+      const cut = rest.indexOf("|");
+      title = rest.slice(0, cut).trim();
+      body = normalizeArtifactMarkdown(rest.slice(cut + 1).trim());
+      i += 1;
+    } else {
+      title = rest;
+      i += 1;
+      while (i < lines.length) {
+        if (ARTIFACT_END_RE.test(lines[i])) {
+          i += 1;
+          break;
+        }
+        if (DIRECTIVE_HEAD_RE.test(lines[i])) break;
+        collected.push(lines[i]);
+        i += 1;
+      }
+      body = collected.join("\n").trim();
+    }
+    body = stripTrailingDirectiveLines(body);
+    if (title && body) artifacts.push({ title: title.slice(0, 200), content: body });
+    // Nothing was published (a block with no title): its body is still what the
+    // agent wrote, so it stays in the prose rather than vanishing.
+    else kept.push(...collected);
+  }
+  return { artifacts, rest: kept.join("\n") };
 }
 
 /** True when the text carries any autonomy directive marker. */
@@ -94,16 +163,19 @@ export function hasAgentDirective(text: string | null | undefined): boolean {
 }
 
 /**
- * Remove directive marker lines so the rendered body reads as clean prose. The
- * markers are surfaced separately (progress bar, completion state, and the
- * NEED_INPUT callout), so dropping them here avoids duplicating them as raw
- * text. Collapses the blank lines the removal leaves behind.
+ * Remove directive markers so the rendered body reads as clean prose. The
+ * markers are surfaced separately (progress bar, completion state, the
+ * NEED_INPUT callout, and published results), so dropping them here avoids
+ * duplicating them as raw text. An `ARTIFACT` block goes as a whole — header,
+ * body and terminator — because its body is the deliverable, rendered once as a
+ * result rather than a second time inside the message. Collapses the blank
+ * lines the removal leaves behind.
  */
 export function stripAgentDirectives(text: string): string {
   if (!text) return text;
   DIRECTIVE_LINE_RE.lastIndex = 0;
-  return text
-    .replace(DIRECTIVE_LINE_RE, "")
+  return walkArtifacts(text)
+    .rest.replace(DIRECTIVE_LINE_RE, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

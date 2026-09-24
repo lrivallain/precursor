@@ -198,6 +198,15 @@ async function stubPluginReleases(page, { installed }) {
   });
 }
 
+// The seeded "Onboarding guide writer": one run whose result was refined twice.
+async function gotoRefinedAgent(page) {
+  const response = await page.request.get(`${BASE}/api/agents`);
+  const agents = await response.json();
+  const agent = agents.find((item) => item.title === "Onboarding guide writer");
+  if (!agent) throw new Error("Seed the demo Onboarding guide writer before capturing it.");
+  await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+}
+
 // --------------------------------------------------------------------------
 // Scenes. `viewport` is per scene because these surfaces have very different
 // natural heights; the clip trims whatever is left over.
@@ -280,6 +289,38 @@ const scenes = {
       await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
       await page.getByRole("button", { name: "Run agent", exact: true }).waitFor();
       await page.getByText("The draft is ready for review before publishing.").waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      await sleep(800);
+      return undefined;
+    },
+  },
+
+  // A deliverable refined over two follow-ups: the Result tab opens on v3,
+  // with the earlier versions on the rail above it.
+  "agents-results": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await gotoRefinedAgent(page);
+      await page.getByRole("tab", { name: /Result/ }).waitFor();
+      await page.getByRole("heading", { name: "First-week checklist", exact: true }).waitFor();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      await sleep(800);
+      return undefined;
+    },
+  },
+
+  // The same agent's Activity tab: each finished turn folded above its answer,
+  // and each answer pointing at the result version it published.
+  "agents-activity": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await gotoRefinedAgent(page);
+      await page.getByRole("tab", { name: /Activity/ }).click();
+      await page.getByRole("button", { name: /Worked for/ }).first().waitFor();
+      await page.evaluate(() => {
+        const panel = document.querySelector("#agent-panel-activity");
+        if (panel) panel.scrollTop = panel.scrollHeight;
+      });
       await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
       await sleep(800);
       return undefined;
