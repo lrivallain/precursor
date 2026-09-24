@@ -74,6 +74,11 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
+  // Set while a `/chats/<slug>` entry is being resolved on Back/Forward, so the
+  // URL effect doesn't push the chat still on screen over the entry being
+  // entered (it re-runs when the mode switches to Chats). Cleared just before
+  // the resolved chat is selected.
+  const pendingChatRouteRef = useRef(false);
 
   // Total chat unread, kept current in App (not just in ChatList) so the mode
   // switcher can badge the Chats tab from any mode. ChatList also reports its
@@ -91,6 +96,7 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "chats" || !activeChat) return;
+    if (pendingChatRouteRef.current) return;
     const target = chatUrl(activeChat);
     if (window.location.pathname !== target) navigate(target);
   }, [activeChat, sidebarMode, atHome]);
@@ -274,9 +280,11 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
       return;
     }
     if (activeChatRef.current?.slug === slug) return;
+    pendingChatRouteRef.current = true;
     void (async () => {
       try {
         const c = await api.chats.getBySlug(slug);
+        pendingChatRouteRef.current = false;
         setActiveChat(c);
         try {
           await api.chats.markRead(c.id);
@@ -286,6 +294,8 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
         }
       } catch {
         // unknown slug — ignore
+      } finally {
+        pendingChatRouteRef.current = false;
       }
     })();
   }

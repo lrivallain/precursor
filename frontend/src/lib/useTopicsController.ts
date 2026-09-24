@@ -56,6 +56,7 @@ export interface TopicsController {
   createCollection: (name: string) => Promise<void>;
   moveTopicToCollection: (topicId: number, collectionId: number) => Promise<void>;
   handleSelect: (id: number) => Promise<void>;
+  selectTopic: (topic: Topic) => Promise<void>;
   handleRenameTopic: (id: number, title: string) => Promise<void>;
   handleTopicReadState: (id: number, unread: boolean) => Promise<void>;
   handleTopicPin: (id: number, pinned: boolean) => Promise<void>;
@@ -211,9 +212,12 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   // Set while resolving a `/t/<uuid>` permalink so the readable URL replaces it
   // instead of stacking a second history entry for the same topic.
   const permalinkRewriteRef = useRef(false);
-  // Set while a topic URL is being resolved. The "nothing selected" effect must
-  // not normalise the address bar in the meantime — it would drop the incoming
-  // deep link (or permalink) before it has had a chance to land.
+  // Set while a topic URL is being resolved. The URL effects must not write the
+  // address bar in the meantime: the "nothing selected" one would drop the
+  // incoming deep link (or permalink) before it has had a chance to land, and
+  // on Back/Forward from another section the other would push the topic still
+  // on screen over the entry being entered. Cleared just before the resolved
+  // topic is selected, so its path can be normalised in that same commit.
   const pendingTopicRouteRef = useRef(false);
 
   // Fire a browser notification for a completed turn, when enabled and the
@@ -254,6 +258,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
         try {
           const t = await api.topics.getByPublicId(publicId);
           permalinkRewriteRef.current = true;
+          pendingTopicRouteRef.current = false;
           await adoptTopicFromUrl(t);
         } catch {
           // unknown permalink — leave the user where they are
@@ -271,6 +276,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     void (async () => {
       try {
         const t = await api.topics.getBySlug(slug);
+        pendingTopicRouteRef.current = false;
         await adoptTopicFromUrl(t);
       } catch {
         // Not a topic slug. A lone segment is the bare collection route
@@ -305,6 +311,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "topics" || !activeTopic) return;
+    if (pendingTopicRouteRef.current) return;
     // Wait for both, otherwise a deep link like /topics/work/a/b/c would be
     // rewritten to the bare /topics/c and then back again.
     if (tree.length === 0 || collections.length === 0) return;
@@ -426,8 +433,15 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
 
   async function handleSelect(id: number): Promise<void> {
     closeMobileNav();
-    setActiveTopic(await api.topics.get(id));
-    try {      await api.topics.markRead(id);
+    await selectTopic(await api.topics.get(id));
+  }
+
+  // Select a topic that's already fetched, e.g. a search hit App resolved
+  // before switching to Topics.
+  async function selectTopic(topic: Topic): Promise<void> {
+    setActiveTopic(topic);
+    try {
+      await api.topics.markRead(topic.id);
       await refreshTree();
     } catch {
       // non-fatal
@@ -567,6 +581,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     createCollection,
     moveTopicToCollection,
     handleSelect,
+    selectTopic,
     handleRenameTopic,
     handleTopicReadState,
     handleTopicPin,
