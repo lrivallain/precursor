@@ -591,6 +591,18 @@ are the per-version history; releasing does not rewrite this file.
   its target, and Back returns to where you opened the palette. A hit whose
   item was deleted since the search now leaves you where you were.
 
+- **The Home "New …" cards and fired reminders add exactly one history
+  entry.** Starting a chat, a live session or a topic from its Home card, while
+  that section still had something open, first added an entry for the old item,
+  so Back showed it instead of Home. With no topic open, the **New topic** card
+  overwrote the Home entry with the collection's start page, so Back skipped
+  Home entirely. Clicking a fired reminder from another section did the same
+  with whatever that section had open, or its start page. Each now adds a
+  single entry for the item it opens, and Back returns to where you were. If
+  you click a reminder while Live is recording and choose **Keep recording**,
+  nothing changes now. Before, the reminder's chat or topic was still selected
+  behind the scenes and opened the next time you visited that section.
+
 - **A failed MCP connect now names its cause.** When a remote server could not
   be reached, for example an Agent 365 endpoint timing out, the server card and
   the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import type { SidebarMode } from "../components/Sidebar";
 import { api } from "./api";
 import { eventBus } from "./events";
 import { notifyIfUnfocused } from "./notifications";
@@ -15,7 +14,10 @@ export interface RemindersControllerDeps {
   notificationsEnabledRef: RefObject<boolean>;
   topics: TopicsController;
   chats: ChatsController;
-  changeMode: (next: SidebarMode) => Promise<void>;
+  confirmLeaveRecording: () => Promise<boolean>;
+  // Leaves home or the current section for Topics or Chats without writing the
+  // address bar: the caller selects the conversation in the same batch.
+  enterSection: (mode: "topics" | "chats") => void;
 }
 
 // The conversation a sidebar "Set reminder" action opened the modal for.
@@ -36,7 +38,7 @@ export interface RemindersController {
 }
 
 export function useRemindersController(deps: RemindersControllerDeps): RemindersController {
-  const { notificationsEnabledRef, topics, chats, changeMode } = deps;
+  const { notificationsEnabledRef, topics, chats, confirmLeaveRecording, enterSection } = deps;
 
   // Fired reminders awaiting acknowledgment, surfaced in the sidebar.
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
@@ -103,14 +105,19 @@ export function useRemindersController(deps: RemindersControllerDeps): Reminders
   }, []);
 
   // Open the conversation behind a fired reminder, switching mode if needed.
+  // Fetch it first, then switch and select in one batch: switching first would
+  // push an entry for whatever that section had open, then another for this.
   async function handleReminderSelect(item: ReminderItem): Promise<void> {
+    if (!(await confirmLeaveRecording())) return;
     try {
       if (item.container === "topic" && item.topic_id != null) {
-        changeMode("topics");
-        await topics.handleSelect(item.topic_id);
+        const topic = await api.topics.get(item.topic_id);
+        enterSection("topics");
+        await topics.selectTopic(topic);
       } else if (item.container === "chat" && item.chat_id != null) {
-        changeMode("chats");
-        await chats.selectChatById(item.chat_id);
+        const chat = await api.chats.get(item.chat_id);
+        enterSection("chats");
+        await chats.handleSelectChat(chat);
       }
     } catch {
       // conversation may have been deleted — refresh the list to drop it
