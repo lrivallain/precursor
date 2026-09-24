@@ -38,7 +38,7 @@ export interface LiveSessionsController {
   syncFromRoute: (r: AppRoute) => void;
   enterOverview: () => void;
   startNew: () => void;
-  openSearchHit: (sessionId: number) => Promise<void>;
+  resolveSearchHit: (sessionId: number) => Promise<MeetingSession | null>;
 }
 
 export interface LiveSessionsLateEffectsDeps {
@@ -113,9 +113,12 @@ export function useLiveSessionsController(
 
   // The "New live session" card's inline form: create, then reveal the session.
   async function createLiveFromHome(session: MeetingSession): Promise<void> {
+    // Load the list first, then leave home and select in one batch. Switching
+    // first would commit the session still selected in Live (or its start
+    // page), and the URL effect would push an entry for it.
+    await loadMeetingSessions();
     setAtHome(false);
     setSidebarMode("live");
-    await loadMeetingSessions();
     setActiveSessionId(session.id);
     navigate(liveUrl(session));
   }
@@ -198,14 +201,14 @@ export function useLiveSessionsController(
     setActiveSessionId(null);
   }
 
-  // The live branch of App's content-search open.
-  async function openSearchHit(sessionId: number): Promise<void> {
-    // Ensure the session list is loaded so the URL-sync effect can resolve
-    // the slug once we select it.
-    if (!meetingSessionsRef.current?.some((s) => s.id === sessionId)) {
-      await loadMeetingSessions();
-    }
-    setActiveSessionId(sessionId);
+  // The live branch of App's content-search open: the hit's session, loading
+  // the list first if needed so the URL effect can build its slug. Null when
+  // the session no longer exists. App selects it once it has switched to Live.
+  async function resolveSearchHit(sessionId: number): Promise<MeetingSession | null> {
+    const known = meetingSessionsRef.current?.find((s) => s.id === sessionId);
+    if (known) return known;
+    const list = await loadMeetingSessions();
+    return list.find((s) => s.id === sessionId) ?? null;
   }
 
   return {
@@ -227,7 +230,7 @@ export function useLiveSessionsController(
     syncFromRoute,
     enterOverview,
     startNew,
-    openSearchHit,
+    resolveSearchHit,
   };
 }
 

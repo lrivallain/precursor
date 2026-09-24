@@ -3,10 +3,12 @@ import {
   AlertTriangle,
   Brain,
   ChevronDown,
+  ChevronRight,
   CircleDot,
   Cog,
   FileText,
   Globe,
+  RotateCw,
   ShieldQuestion,
   Sparkles,
   Terminal,
@@ -179,6 +181,87 @@ export function HookGutter({ hooks }: { hooks: AgentEvent[] }) {
       {hooks.map((ev, i) => (
         <HookBubble key={i} event={ev} />
       ))}
+    </div>
+  );
+}
+
+/** What a folded turn did, summarised on its fold. */
+export interface WorkStats {
+  /** Prompt-to-answer wall time, when both ends carry a timestamp. */
+  durationMs: number | null;
+  tools: number;
+  thoughts: number;
+  messages: number;
+  errors: number;
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+// The steps between a prompt and its answer, folded into one line on the spine
+// once the answer is in. A finished turn is read for what it concluded; how it
+// got there is one click away rather than a screenful of tool boxes and
+// lifecycle chips.
+export function WorkFold({
+  stats,
+  open,
+  onToggle,
+}: {
+  stats: WorkStats;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const parts = [
+    stats.durationMs != null ? `Worked for ${formatDuration(stats.durationMs)}` : "Worked",
+    stats.tools > 0 ? plural(stats.tools, "tool call", "tool calls") : null,
+    stats.thoughts > 0 ? plural(stats.thoughts, "thought", "thoughts") : null,
+    stats.messages > 0 ? plural(stats.messages, "update", "updates") : null,
+  ].filter(Boolean);
+  return (
+    <div className="flex w-full justify-center">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex max-w-xl items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-[11px] text-muted transition hover:border-accent hover:text-text"
+        data-tooltip={open ? "Fold these steps" : "Show every step of this turn"}
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <span className="truncate">{parts.join(" · ")}</span>
+        {stats.errors > 0 && (
+          <span className="shrink-0 rounded bg-red-500/15 px-1 text-[10px] text-red-500">
+            {plural(stats.errors, "error", "errors")}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+// The goal loop's "keep going" nudge. It's sent as a user turn, but it isn't the
+// human speaking — a quiet marker says the agent carried on by itself.
+export function ContinueMarker({ at }: { at?: string | null }) {
+  return (
+    <div className="flex w-full justify-center">
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted"
+        data-tooltip={at ? new Date(at).toLocaleString() : undefined}
+      >
+        <RotateCw size={10} className="shrink-0" />
+        Continued autonomously
+      </span>
     </div>
   );
 }

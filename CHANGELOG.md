@@ -15,6 +15,29 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **An agent's page now separates its result from its activity.** Refining a
+  deliverable over several follow-ups used to stack every draft at the foot of
+  the page, oldest last, so the current one was the hardest to find. The body
+  also showed twice: once in the answer bubble, and again as a deliverable.
+  - **Result tab.** Once an agent publishes an artifact, its page offers
+    **Result** and **Activity** tabs. Result opens on the newest version, with
+    the earlier ones on a rail (newest first). Each version shows the prompt that
+    produced it and the agent's summary of what changed. Artifact permalinks open
+    the Result tab on their version. The page shows Activity while a turn runs,
+    needs you or stopped short, and Result once the agent comes to rest on a new
+    version. Approvals, questions and **Resume** show on both tabs.
+  - **No duplicate result.** The frontend now parses multi-line `ARTIFACT:` …
+    `END_ARTIFACT` blocks, as the backend already did. The answer bubble shows
+    only the prose around the block, plus a compact card (*v2 · superseded by
+    v3*) that opens the version in the Result tab.
+  - **Finished turns fold.** A turn with an answer folds its steps into one
+    line (*Worked for 3m 13s · 19 tool calls · 7 updates*) that opens on click.
+    The turn in flight and any turn awaiting approval stay open. **Show → Fold
+    finished turns** turns this off. The goal loop's nudge between autonomous
+    steps shows as a *Continued autonomously* marker, not as your message.
+    Progress-only messages no longer leave an empty bubble above their milestone,
+    and suggested replies appear on the newest answer only.
+
 - **Topics, chats and the workspace assistant now behave the same when you
   delete, clear or stop** (#343). The #335 refactor had kept three differences
   on purpose:
@@ -521,6 +544,14 @@ are the per-version history; releasing does not rewrite this file.
   the delete already was. Log tracebacks also clamp any single line to 2,000
   characters: the failing statement was written out in full, a ~2 MB line per
   error, which rotated the whole log history away on each restart.
+- **Opening a Live session no longer lights the browser's recording
+  indicator.** Every session opened — ended ones included, or ones you never
+  record — briefly grabbed the microphone just to read the input devices' names,
+  so the tab's favicon turned into the browser's "recording" dot while nothing
+  was being captured. The device list is now read without opening the mic, so
+  the indicator shows only while a recording is actually running. Where the
+  browser still hides device names (microphone access never granted), opening
+  the input picker asks for access once to fill them in.
 - **"Restart now" works under `precursor --dev`.** After a plugin install, the
   in-app restart re-exec'd the process with its original arguments — but under
   `--dev` that process is uvicorn's reload worker, a multiprocessing child, and
@@ -589,6 +620,27 @@ are the per-version history; releasing does not rewrite this file.
     highlighted conversation clears both the banner and `?q=`. Going Back or
     Forward onto a highlighted topic or chat, from another one, shows the
     highlight again. It used to strip the entry's `?q=` and lose it for good.
+
+- **Opening a ⌘K search hit adds exactly one history entry.** Opening a chat
+  hit from another section, while a different chat was still open in Chats,
+  first added an entry for that old chat, so Back showed it instead of the page
+  you searched from. Topic hits did the same with the previously open topic.
+  With no topic open yet, or from Home, a topic hit overwrote the page you were
+  leaving with the collection's start page. A hit now adds a single entry for
+  its target, and Back returns to where you opened the palette. A hit whose
+  item was deleted since the search now leaves you where you were.
+
+- **The Home "New …" cards and fired reminders add exactly one history
+  entry.** Starting a chat, a live session or a topic from its Home card, while
+  that section still had something open, first added an entry for the old item,
+  so Back showed it instead of Home. With no topic open, the **New topic** card
+  overwrote the Home entry with the collection's start page, so Back skipped
+  Home entirely. Clicking a fired reminder from another section did the same
+  with whatever that section had open, or its start page. Each now adds a
+  single entry for the item it opens, and Back returns to where you were. If
+  you click a reminder while Live is recording and choose **Keep recording**,
+  nothing changes now. Before, the reminder's chat or topic was still selected
+  behind the scenes and opened the next time you visited that section.
 
 - **A failed MCP connect now names its cause.** When a remote server could not
   be reached, for example an Agent 365 endpoint timing out, the server card and

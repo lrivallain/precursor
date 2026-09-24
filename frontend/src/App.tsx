@@ -423,6 +423,16 @@ export default function App() {
     if (next === "agents" || next === "workflows") closeMobileNav();
   }
 
+  // Enter Topics or Chats to show a conversation the caller has already fetched
+  // and selects in the same batch, e.g. a fired reminder's. Unlike changeMode it
+  // doesn't navigate: that section's URL effect pushes the one entry.
+  function enterSection(next: "topics" | "chats"): void {
+    closeMobileNav();
+    setAtHome(false);
+    wsCtl.closeRoute();
+    setSidebarMode(next);
+  }
+
   // Navigate to the root home launcher.
   async function goHome(): Promise<void> {
     if (!(await confirmLeaveRecording())) return;
@@ -496,7 +506,8 @@ export default function App() {
     notificationsEnabledRef,
     topics: topicsCtl,
     chats: chatsCtl,
-    changeMode,
+    confirmLeaveRecording,
+    enterSection,
   });
 
   // Open a content-search hit from the command palette. Mirrors the per-section
@@ -504,25 +515,37 @@ export default function App() {
   // stable id (topic/chat/live-session row id, or agent internal id).
   async function openSearchResult(result: SearchResult, query: string): Promise<void> {
     if (!(await confirmLeaveRecording())) return;
-    setAtHome(false);
-    highlightCtl.openForSearch(`${result.section}:${result.entity_id}`, query.trim());
+    // Resolve the hit first, then leave home, switch mode and select it in one
+    // batch. A commit in between would show the section's previous selection,
+    // and a URL effect would push an entry for it (or, with nothing selected,
+    // replace the entry being left), so Back wouldn't return here.
+    const reveal = (mode: SidebarMode): void => {
+      setAtHome(false);
+      highlightCtl.openForSearch(`${result.section}:${result.entity_id}`, query.trim());
+      setSidebarMode(mode);
+    };
     try {
       if (result.section === "topics") {
-        setSidebarMode("topics");
-        await topicsCtl.handleSelect(result.entity_id);
+        const topic = await api.topics.get(result.entity_id);
+        reveal("topics");
+        closeMobileNav();
+        await topicsCtl.selectTopic(topic);
       } else if (result.section === "chats") {
-        setSidebarMode("chats");
-        await chatsCtl.selectChatById(result.entity_id);
+        const chat = await api.chats.get(result.entity_id);
+        reveal("chats");
+        await chatsCtl.handleSelectChat(chat);
       } else if (result.section === "agents") {
-        setSidebarMode("agents");
+        reveal("agents");
         agentsCtl.setActiveAgentId(result.entity_id);
       } else if (result.section === "live") {
-        setSidebarMode("live");
-        await liveCtl.openSearchHit(result.entity_id);
+        const session = await liveCtl.resolveSearchHit(result.entity_id);
+        if (!session) return;
+        reveal("live");
+        liveCtl.setActiveSessionId(session.id);
       }
     } catch {
-      // Entity may have been deleted since the search — leave the user in the
-      // section they landed on rather than surfacing an error.
+      // Entity may have been deleted since the search — stay where we are
+      // rather than surfacing an error.
     }
   }
 

@@ -74,6 +74,11 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
+  // Set while a `/chats/<slug>` entry is being resolved on Back/Forward, so the
+  // URL effect doesn't push the chat still on screen over the entry being
+  // entered (it re-runs when the mode switches to Chats). Cleared just before
+  // the resolved chat is selected.
+  const pendingChatRouteRef = useRef(false);
 
   // Total chat unread, kept current in App (not just in ChatList) so the mode
   // switcher can badge the Chats tab from any mode. ChatList also reports its
@@ -91,6 +96,7 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   useEffect(() => {
     if (atHome) return;
     if (sidebarMode !== "chats" || !activeChat) return;
+    if (pendingChatRouteRef.current) return;
     const target = chatUrl(activeChat);
     if (window.location.pathname !== target) navigate(target);
   }, [activeChat, sidebarMode, atHome]);
@@ -237,10 +243,15 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   // switch to the newly-mounted ChatSessionPanel. `autoname` marks the title as
   // a placeholder, so the backend replaces it with one derived from this prompt
   // while the answer is still streaming.
-  async function handleStartChat(prompt: string, roleId: number | null = null): Promise<void> {
+  async function handleStartChat(
+    prompt: string,
+    roleId: number | null = null,
+    reveal?: () => void,
+  ): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
     const chat = await api.chats.create({ title: "New chat", autoname: true, role_id: roleId });
+    reveal?.();
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
     void streamStore.start(convKey("chat", chat.id), text);
@@ -248,9 +259,13 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
 
   // The "New chat" card's inline composer: create + stream, then reveal the chat.
   async function startChatFromHome(prompt: string, roleId: number | null = null): Promise<void> {
-    setAtHome(false);
-    setSidebarMode("chats");
-    await handleStartChat(prompt, roleId);
+    // Leave home only once the chat exists, in the batch that selects it.
+    // Switching first would commit the chat still open in Chats, and the URL
+    // effect would push an entry for it ahead of the new one.
+    await handleStartChat(prompt, roleId, () => {
+      setAtHome(false);
+      setSidebarMode("chats");
+    });
   }
 
   // The chats branch of App's shared role persistence (`setRoleForActive`).
@@ -274,9 +289,11 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
       return;
     }
     if (activeChatRef.current?.slug === slug) return;
+    pendingChatRouteRef.current = true;
     void (async () => {
       try {
         const c = await api.chats.getBySlug(slug);
+        pendingChatRouteRef.current = false;
         setActiveChat(c);
         try {
           await api.chats.markRead(c.id);
@@ -286,6 +303,8 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
         }
       } catch {
         // unknown slug — ignore
+      } finally {
+        pendingChatRouteRef.current = false;
       }
     })();
   }
