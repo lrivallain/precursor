@@ -626,7 +626,8 @@ async def test_check_reports_rows_without_a_file(api_root: Path) -> None:
     ids, _ = await _seed()
     with TestClient(create_app()) as client:
         report = client.get("/api/definitions/check").json()
-    assert report["exists"] is False
+    # Startup made the built-in workspace's (empty) folder.
+    assert report["exists"] is True and report["files"] == []
     unlinked = {a["id"] for a in report["database"]["unlinked_agents"]}
     assert {ids["writer"], ids["adhoc"]} <= unlinked
     assert ids["vessel"] not in unlinked

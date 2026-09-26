@@ -162,6 +162,14 @@ are the per-version history; releasing does not rewrite this file.
     definitions folder in a workspace: a pull applies at once (still behind
     the permission review), and opening a definition file in Files shows the
     check's findings for it, refreshed on save.
+  - **Agents & workflows workspace.** By default the definition files live in
+    a built-in workspace that leads the Files section; it can't be removed
+    while it holds any.
+  - **Migration.** Settings → Workflows → Definition files previews the move
+    to files, then writes, verifies (nothing switches if a file doesn't match
+    the database) and switches, after taking a copy of the database; switching
+    back copies the files into the database first. The choice survives
+    restarts; `PRECURSOR_DEFINITIONS_SOURCE=files` still forces files mode.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

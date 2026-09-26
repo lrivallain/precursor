@@ -32,6 +32,9 @@ class WorkspaceRead(BaseModel):
     cloned_at: datetime | None = None
     last_synced_at: datetime | None = None
     role_id: int | None = None
+    # Holds the agent and workflow definition files (the built-in "Agents &
+    # workflows" workspace, or the one PRECURSOR_DEFINITIONS_WORKSPACE names).
+    hosts_definitions: bool = False
     created_at: datetime
     updated_at: datetime
 

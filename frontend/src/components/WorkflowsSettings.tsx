@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Loader2, Workflow as WorkflowIcon } from "lucide-react";
 import { api } from "../lib/api";
+import { DefinitionsMigrationPanel } from "./DefinitionsMigrationPanel";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 
 /**
@@ -131,6 +132,8 @@ export function WorkflowsSettings() {
           </span>
         </label>
       </section>
+
+      <DefinitionsMigrationPanel />
 
       {error && <p className="text-[12px] text-red-500">{error}</p>}
       {busy && (

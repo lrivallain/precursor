@@ -259,6 +259,35 @@ def _key_of(ref: str | None, ident: str) -> str | None:
     return parts[1] if parts and parts[0] == ident else None
 
 
+def preferred_step_keys(
+    rows: list[WorkflowStep],
+    ident: str,
+    old: WorkflowDefinition | None,
+    agent_paths: dict[int, str],
+) -> list[str | None]:
+    """The key each step row should keep when its workflow file is rewritten.
+
+    The one its row (or its private agent) is tied to; else the key the file
+    already had for that position, if it's recognisably the same step (same
+    agent, or both approvals, or both prompts). ``None`` lets the exporter
+    derive one from the step's label.
+    """
+    old_steps = old.steps if old is not None else []
+    preferred: list[str | None] = []
+    for pos, step in enumerate(rows):
+        key = _key_of(step.definition_ref, ident)
+        if key is None and step.agent is not None and step.agent.inline:
+            key = _key_of(step.agent.definition_ref, ident)
+        if key is None and pos < len(old_steps):
+            before = old_steps[pos]
+            same_agent = step.agent is not None and before.agent == agent_paths.get(step.agent.id)
+            both_approval = step.kind == "approval" and before.kind == "approval"
+            if same_agent or both_approval:
+                key = before.key
+        preferred.append(key)
+    return preferred
+
+
 async def save_workflow(
     session: AsyncSession,
     workflow: Workflow,
@@ -322,19 +351,9 @@ async def save_workflow(
         dset = overlay.current_definitions()
 
     old = linked.definition if linked is not None else None
-    old_steps = old.steps if isinstance(old, WorkflowDefinition) else []
-    preferred: list[str | None] = []
-    for pos, step in enumerate(rows):
-        key = _key_of(step.definition_ref, ident)
-        if key is None and step.agent is not None and step.agent.inline:
-            key = _key_of(step.agent.definition_ref, ident)
-        if key is None and pos < len(old_steps):
-            before = old_steps[pos]
-            same_agent = step.agent is not None and before.agent == agent_paths.get(step.agent.id)
-            both_approval = step.kind == "approval" and before.kind == "approval"
-            if same_agent or both_approval:
-                key = before.key
-        preferred.append(key)
+    preferred = preferred_step_keys(
+        rows, ident, old if isinstance(old, WorkflowDefinition) else None, agent_paths
+    )
 
     ctx = await _context(session)
     doc = _workflow_document(

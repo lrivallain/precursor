@@ -22,6 +22,7 @@ to the old database copy.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Collection
@@ -34,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from precursor.backend.config import get_settings
-from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, AppSetting, Role, Workflow, WorkflowStep
 from precursor.backend.schemas.definitions import (
     AgentDefinition,
     WorkflowDefinition,
@@ -79,8 +80,39 @@ _pins: dict[str, _Pin] = {}
 ACTIVE_WORKFLOW_STATUSES = frozenset({"running", "paused", "awaiting_approval"})
 
 
+# The source the migration chose (the ``definitions_source`` app setting),
+# cached: ``files_mode`` runs in every load listener and can't query.
+SOURCE_SETTING_KEY = "definitions_source"
+_persisted_source: str | None = None
+
+
 def files_mode() -> bool:
+    return source_forced() or _persisted_source == "files"
+
+
+def source_forced() -> bool:
+    """``PRECURSOR_DEFINITIONS_SOURCE=files``: files mode regardless of the setting."""
     return get_settings().definitions_source == "files"
+
+
+async def refresh_source(session: AsyncSession) -> None:
+    global _persisted_source
+    row = await session.get(AppSetting, SOURCE_SETTING_KEY)
+    value = json.loads(row.value) if row is not None and row.value else None
+    _persisted_source = value if value in ("database", "files") else None
+
+
+async def persist_source(session: AsyncSession, value: str) -> None:
+    """Record the source and switch to it now (commits)."""
+    global _persisted_source
+    row = await session.get(AppSetting, SOURCE_SETTING_KEY)
+    if row is None:
+        session.add(AppSetting(key=SOURCE_SETTING_KEY, value=json.dumps(value)))
+    else:
+        row.value = json.dumps(value)
+    await session.commit()
+    _persisted_source = value
+    invalidate()
 
 
 def definitions_root() -> Path:

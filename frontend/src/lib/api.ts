@@ -37,6 +37,9 @@ import type {
   DefinitionsCheckReport,
   DefinitionsExportResult,
   DefinitionSource,
+  MigrationPreview,
+  MigrationResult,
+  RevertResult,
   DrawioStatus,
   GhCloseResult,
   GhCreateDraft,
@@ -787,6 +790,14 @@ export const api = {
     // Work in progress (docs/definitions.md): the folder check and the one-shot
     // export of database agents/workflows into definition files.
     check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    // The migration from database-declared to file-declared agents and workflows.
+    migration: () => request<MigrationPreview>(`/api/definitions/migration`),
+    migrate: (acknowledge: boolean) =>
+      request<MigrationResult>(`/api/definitions/migrate`, {
+        method: "POST",
+        body: JSON.stringify({ acknowledge }),
+      }),
+    revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
     fileIssues: (workspaceId: number, path: string) =>
       request<DefinitionFileReport>(
         `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,

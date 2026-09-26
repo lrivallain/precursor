@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# App settings these tests change, restored afterwards.
+_SETTINGS = ("agents_enabled", "definitions_source")
+
 
 @dataclass
 class DatabaseMark:
-    agents_enabled: str | None
+    settings: dict[str, str | None]
     max_agent_id: int
     max_workflow_id: int
 
@@ -25,10 +28,13 @@ async def mark_database() -> DatabaseMark:
 
     await init_db()
     async with SessionLocal() as session:
-        setting = await session.get(AppSetting, "agents_enabled")
+        values: dict[str, str | None] = {}
+        for key in _SETTINGS:
+            row = await session.get(AppSetting, key)
+            values[key] = row.value if row else None
         max_agent = (await session.execute(select(func.max(AgentSession.id)))).scalar() or 0
         max_workflow = (await session.execute(select(func.max(Workflow.id)))).scalar() or 0
-        return DatabaseMark(setting.value if setting else None, max_agent, max_workflow)
+        return DatabaseMark(values, max_agent, max_workflow)
 
 
 async def restore_database(mark: DatabaseMark) -> None:
@@ -67,10 +73,45 @@ async def restore_database(mark: DatabaseMark) -> None:
         )
         await session.execute(delete(AgentRun).where(AgentRun.agent_id > mark.max_agent_id))
         await session.execute(delete(AgentSession).where(AgentSession.id > mark.max_agent_id))
-        setting = await session.get(AppSetting, "agents_enabled")
-        if mark.agents_enabled is None:
-            if setting is not None:
-                await session.delete(setting)
-        elif setting is not None:
-            setting.value = mark.agents_enabled
+        for key, value in mark.settings.items():
+            row = await session.get(AppSetting, key)
+            if value is None:
+                if row is not None:
+                    await session.delete(row)
+            elif row is None:
+                session.add(AppSetting(key=key, value=value))
+            else:
+                row.value = value
+        await session.commit()
+        from precursor.backend.services.definitions import overlay
+
+        await overlay.refresh_source(session)
+
+
+async def wipe_agents_and_workflows() -> None:
+    """Start from an install with no agents or workflows at all.
+
+    The migration looks at every row, and the shared database holds other
+    modules' leftovers (some mid-run), so its tests start from a clean slate.
+    """
+    from sqlalchemy import delete
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import (
+        AgentRun,
+        AgentSession,
+        Workflow,
+        WorkflowRun,
+        WorkflowRunStep,
+        WorkflowStep,
+    )
+
+    async with SessionLocal() as session:
+        await session.execute(delete(WorkflowRunStep))
+        await session.execute(delete(WorkflowRun))
+        await session.execute(delete(WorkflowStep))
+        await session.execute(delete(Workflow))
+        await session.execute(AgentSession.__table__.update().values(current_run_id=None))
+        await session.execute(delete(AgentRun))
+        await session.execute(delete(AgentSession))
         await session.commit()

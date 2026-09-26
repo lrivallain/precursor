@@ -138,3 +138,82 @@ class DefinitionFileReport(BaseModel):
     kind: DefinitionKind | None = None
     valid: bool | None = None
     issues: list[DefinitionIssue] = []
+
+
+# --- Migration (database → files, and back) --------------------------------
+
+
+class DefinitionsWorkspaceRef(BaseModel):
+    """The workspace holding the definitions folder, for a link to Files."""
+
+    id: int
+    slug: str
+    name: str
+
+
+class MigrationItem(BaseModel):
+    """What the migration does with one agent or workflow.
+
+    ``create``: no file yet, one is written. ``regenerate``: its file differs
+    from the database (or has errors) and is rewritten from it — the database
+    is the source until the switch. ``unchanged``: its file already says the
+    same, and is left exactly as it is (comments included). ``new_from_disk``:
+    a file no agent or workflow here carries; it's added after the switch, and
+    its permissions wait for review.
+    """
+
+    kind: DefinitionKind
+    # The database row; null for ``new_from_disk``.
+    id: int | None = None
+    name: str
+    path: str | None = None
+    action: Literal["create", "regenerate", "unchanged", "new_from_disk"]
+    reason: str | None = None
+
+
+class MigrationPreview(BaseModel):
+    source: Literal["database", "files"]
+    # PRECURSOR_DEFINITIONS_SOURCE=files: files mode is forced, so it can't be
+    # switched back from the app.
+    forced: bool = False
+    folder: str
+    workspace: DefinitionsWorkspaceRef | None = None
+    # A definition file in the folder, for an "Open in Files" link.
+    sample_path: str | None = None
+    items: list[MigrationItem] = []
+    issues: list[DefinitionIssue] = []
+    # Why it can't run now (a workflow mid-run, two files sharing an id…).
+    blockers: list[str] = []
+    ready: bool = False
+    # Files would be rewritten, or some definition has errors: the migration
+    # needs ``acknowledge`` to go ahead.
+    needs_confirmation: bool = False
+
+
+class MigrationRequest(BaseModel):
+    acknowledge: bool = False
+
+
+class MigrationResult(BaseModel):
+    ok: bool
+    source: Literal["database", "files"]
+    # A copy of the database taken first (SQLite), to go back to if needed.
+    snapshot: str | None = None
+    created: int = 0
+    regenerated: int = 0
+    unchanged: int = 0
+    added_from_disk: int = 0
+    issues: list[DefinitionIssue] = []
+    # Filled when verification failed: the switch was not made.
+    mismatches: list[str] = []
+
+
+class RevertResult(BaseModel):
+    ok: bool
+    source: Literal["database", "files"]
+    snapshot: str | None = None
+    agents: int = 0
+    workflows: int = 0
+    # Declarations that couldn't be copied back (file missing or broken); the
+    # database keeps its older values for those.
+    skipped: list[str] = []

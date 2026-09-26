@@ -9,6 +9,7 @@ import {
   Eye,
   FilePlus2,
   FileText,
+  FileCode2,
   FolderOpen,
   FolderPlus,
   GitBranch,
@@ -613,10 +614,24 @@ function LocalWorkspaceBar({
 
   return (
     <div className="flex items-center gap-3 px-4 h-10 border-b border-border bg-surface/40 text-sm">
-      <span className="inline-flex items-center gap-1.5 text-muted">
-        <FolderOpen size={14} />
-        Local folder
-      </span>
+      {area.hosts_definitions ? (
+        <span
+          className="inline-flex items-center gap-1.5 text-muted"
+          data-tooltip={
+            "Agent and workflow definition files (*.agent.yaml, *.workflow.yaml).\n" +
+            "Opening one shows its check under the editor. The assistant's file tools can only read here.\n" +
+            "Settings → Workflows migrates your agents and workflows into files."
+          }
+        >
+          <FileCode2 size={14} />
+          Agent &amp; workflow definitions
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1.5 text-muted">
+          <FolderOpen size={14} />
+          Local folder
+        </span>
+      )}
       <button
         className="p-1 rounded hover:bg-surface text-muted hover:text-text"
         aria-label="Copy local path"
@@ -630,14 +645,17 @@ function LocalWorkspaceBar({
         )}
       </button>
       <div className="flex-1" />
-      <button
-        className="p-1.5 rounded hover:bg-surface text-muted hover:text-red-500"
-        aria-label="Remove workspace"
-        data-tooltip="Remove workspace (deletes the local folder)"
-        onClick={removeArea}
-      >
-        <Trash2 size={14} />
-      </button>
+      {/* Its folder holds every agent and workflow declaration. */}
+      {!area.hosts_definitions && (
+        <button
+          className="p-1.5 rounded hover:bg-surface text-muted hover:text-red-500"
+          aria-label="Remove workspace"
+          data-tooltip="Remove workspace (deletes the local folder)"
+          onClick={removeArea}
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -814,14 +832,16 @@ function GitBar({
             </span>
           )}
         </button>
-        <button
-          className="p-1.5 rounded hover:bg-surface text-muted hover:text-red-500"
-          aria-label="Remove workspace"
-          data-tooltip="Remove workspace (keeps remote repo)"
-          onClick={removeArea}
-        >
-          <Trash2 size={14} />
-        </button>
+        {!area.hosts_definitions && (
+          <button
+            className="p-1.5 rounded hover:bg-surface text-muted hover:text-red-500"
+            aria-label="Remove workspace"
+            data-tooltip="Remove workspace (keeps remote repo)"
+            onClick={removeArea}
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
 
       {conflict && (

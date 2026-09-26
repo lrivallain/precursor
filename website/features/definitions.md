@@ -49,16 +49,21 @@ give editors completion.
 
 ## Getting there from today's data
 
-1. **Check a folder** with `precursor validate <folder>` (works in CI), or
-   `GET /api/definitions/check` for the configured folder
-   (`PRECURSOR_DEFINITIONS_DIR`, by default `<data dir>/definitions`).
-2. **Export** your existing agents and workflows with
-   `POST /api/definitions/export`. Nothing is deleted; each row is linked to its
-   file.
-3. **Switch on files mode** with `PRECURSOR_DEFINITIONS_SOURCE=files`. Linked
-   agents and workflows are then declared by their files everywhere — runs, the
-   app, search — and each run records which file version it used. Pages show
-   which file declares them.
+Open **Settings → Workflows → Definition files**:
+
+1. **Preview.** For every agent and workflow it says whether a file will be
+   written, rewritten from the database (and why), or is already up to date —
+   plus anything in the way (a workflow mid-run, two files with the same id).
+2. **Migrate to files.** A copy of the database is taken, the files are written
+   and **verified** against the database — if anything differs, nothing is
+   switched — and from then on the files declare your agents and workflows.
+   Each run records which file version it used, and pages show their file.
+3. **Switch back to the database** at any time (until the old database
+   columns are removed): the files' current contents are copied back first.
+
+The files live in the built-in **Agents & workflows** workspace, first in the
+[Files](/features/workspaces) section. `precursor validate <folder>` checks a
+folder from a terminal or CI.
 
 ## Working in files mode
 

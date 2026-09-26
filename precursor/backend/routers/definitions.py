@@ -22,12 +22,18 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionsCheckReport,
     DefinitionsExportResult,
     DefinitionSource,
+    MigrationPreview,
+    MigrationRequest,
+    MigrationResult,
+    RevertResult,
 )
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.definitions import migration
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.definitions.exporter import export_definitions
+from precursor.backend.services.definitions.home import ensure_definitions_workspace
 from precursor.backend.services.definitions.loader import kind_for
 from precursor.backend.services.definitions.service import check_folder
 
@@ -62,6 +68,7 @@ async def export_to_files(
             status.HTTP_409_CONFLICT,
             "Definitions are read from files; overwriting them from the database is disabled",
         )
+    await ensure_definitions_workspace(session)
     return await export_definitions(session, Path(settings.definitions_dir), overwrite=overwrite)
 
 
@@ -139,3 +146,36 @@ async def definition_file_issues(
         valid=summary.valid if summary is not None else None,
         issues=[i for i in report.issues if i.path == rel],
     )
+
+
+# --- Migration ------------------------------------------------------------
+
+
+@router.get("/migration", response_model=MigrationPreview)
+async def migration_preview(session: AsyncSession = Depends(get_session)) -> MigrationPreview:
+    """What migrating to definition files would do, and what stands in its way."""
+    return await migration.preview(session)
+
+
+@router.post("/migrate", response_model=MigrationResult)
+async def migrate_to_files(
+    payload: MigrationRequest, session: AsyncSession = Depends(get_session)
+) -> MigrationResult:
+    """Write, verify and switch to definition files (see ``services.definitions.migration``).
+
+    ``ok: false`` with ``mismatches`` means the files were written but didn't
+    verify, so the install stays in database mode.
+    """
+    try:
+        return await migration.migrate(session, acknowledge=payload.acknowledge)
+    except migration.MigrationRefused as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post("/revert", response_model=RevertResult)
+async def revert_to_database(session: AsyncSession = Depends(get_session)) -> RevertResult:
+    """Copy the files' declarations back into the database and use it again."""
+    try:
+        return await migration.revert(session)
+    except migration.MigrationRefused as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

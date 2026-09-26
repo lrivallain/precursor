@@ -186,10 +186,24 @@ uv run --frozen python scripts/gen_definition_schemas.py
 
 ## The definitions folder
 
-Precursor looks for definition files under **`<data dir>/definitions`**, the
-folder named by `PRECURSOR_DEFINITIONS_DIR`, or a
-[workspace](#keeping-definitions-in-git) named by
-`PRECURSOR_DEFINITIONS_WORKSPACE`. Every `*.agent.yaml` and
+By default the definitions live in a built-in workspace, **Agents &
+workflows** (slug `definitions`, a local folder at
+`<data dir>/workspaces/definitions`), so they can be browsed, edited and checked
+in the **Files** section like any other workspace:
+
+- It's created when Agents mode is on (or files mode is forced), and whenever
+  the export or the migration is about to write there. It always leads the
+  workspace list, marked with its own icon.
+- It can't be removed while it holds definition files — its folder would go
+  with it. The `definitions` slug is reserved: a workspace you create never
+  gets it.
+- The assistant's file tools can only read there (see
+  [permission changes](#permission-changes-need-a-human)).
+
+`PRECURSOR_DEFINITIONS_WORKSPACE` points at one of your own workspaces instead
+(see [keeping definitions in git](#keeping-definitions-in-git)), and
+`PRECURSOR_DEFINITIONS_DIR` at any folder (no workspace then); either replaces
+the built-in one. Every `*.agent.yaml` and
 `*.workflow.yaml` below it is read, in any sub-folder; hidden folders (such as
 `.git`) and hidden files are skipped. A symlink is followed only if it stays
 inside the folder.
@@ -271,10 +285,47 @@ curl -s -X POST localhost:8000/api/definitions/export | jq '.written | length'
 curl -s localhost:8000/api/definitions/check | jq '{ok, error_count, warning_count, database}'
 ```
 
+## Migrating an install
+
+**Settings → Workflows → Definition files** moves an install from database-
+declared to file-declared agents and workflows — and back. It's the step that
+has to happen before the database's declaration columns can be dropped
+(roadmap step 9), so it is built to change nothing about how anything runs:
+
+1. **Preview** (`GET /api/definitions/migration`). For every agent and workflow:
+   a **new file**, a file **rewritten from the database** (it differs, with the
+   fields that do, or it has errors), or **already up to date** (left exactly as
+   it is, comments included). Files that no agent or workflow here carries are
+   listed as **added from the folder**. Warnings and errors from the export
+   rules are shown, and so is anything that **blocks** the migration: a workflow
+   mid-run, two files sharing an id, Agents mode off.
+2. **Migrate** (`POST /api/definitions/migrate`, with `acknowledge: true` when
+   files will be rewritten or a definition has errors):
+   - a copy of the database is taken first (SQLite: `<data dir>/definitions-
+     migration/precursor-<time>-before-migration.db`);
+   - the missing files are written and the differing ones rewritten — the
+     database is the source until the switch, so it wins;
+   - every agent and workflow is then **verified**: one valid file, saying
+     exactly what the database says. If anything differs, the switch **isn't
+     made** and the differences are returned (`ok: false`, `mismatches`);
+   - the permissions the files grant are recorded as accepted (they are the
+     database's), the install switches to files mode, and step rows are tied to
+     their file steps. Files added from the folder become agents and workflows
+     whose permissions wait for review.
+3. **Switch back** (`POST /api/definitions/revert`), until the columns are
+   dropped: every file's declaration is copied into the database columns —
+   steps and step prompts included — and the database declares agents and
+   workflows again. A database copy is taken first; files with errors are
+   skipped and listed. The files stay where they are.
+
+The choice is saved in the database (the `definitions_source` setting) and
+survives restarts. `PRECURSOR_DEFINITIONS_SOURCE=files` forces files mode
+regardless; switching back from the app is then refused.
+
 ## Files mode
 
-Set `PRECURSOR_DEFINITIONS_SOURCE=files` (default `database`) and restart.
-Every agent and workflow **linked to a file** is then declared by that file.
+Once migrated (or with `PRECURSOR_DEFINITIONS_SOURCE=files`), every agent and
+workflow **linked to a file** is declared by that file.
 
 - **Linked means:** a listed agent or a workflow whose portable id (`export_id`)
   is a file's `id`, which is what the export sets up. A step's own prompt is
@@ -435,7 +486,9 @@ workspace, point Precursor at it, and:
   repository itself.
 
 The assistant's file tools still can't write there, even though it's a
-workspace. `PRECURSOR_DEFINITIONS_DIR`, when set, takes precedence.
+workspace. `PRECURSOR_DEFINITIONS_DIR`, when set, takes precedence. Without
+either setting, the built-in **Agents & workflows** workspace holds the files —
+a plain local folder, no git.
 
 ## Roadmap
 
@@ -457,4 +510,10 @@ Each step ships on its own and is validated before the next starts.
    autonomy, tools, budget, new steps) are held until a human accepts them; the
    assistant's file tools cannot write the definitions folder.
 8. ✅ The definitions folder can be a git workspace: pull, check, accept, push.
-9. The old declaration columns are removed from the database.
+   By default it's the built-in **Agents & workflows** workspace.
+   ✅ **Migration** from the database to files — previewed, verified,
+   reversible — in Settings → Workflows.
+9. The old declaration columns are removed from the database. Before that, the
+   upgrade must run the same migration automatically for every install still in
+   database mode — refusing to drop anything if it doesn't verify — and
+   switching back goes away with the columns.

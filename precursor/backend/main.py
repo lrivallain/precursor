@@ -81,9 +81,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Imported above for its load listeners; files mode also needs role names.
     async with SessionLocal() as session:
         await definition_overlay.refresh_role_cache(session)
-        # Files mode: runs in flight keep executing the version they started from.
+        # Which source declares agents and workflows (the migration's choice).
+        await definition_overlay.refresh_source(session)
+        from precursor.backend.services.app_settings import resolve_agents_enabled
         from precursor.backend.services.definitions.anchors import restore_pins
+        from precursor.backend.services.definitions.home import ensure_definitions_workspace
 
+        # The built-in "Agents & workflows" workspace, where Agents mode is used.
+        if definition_overlay.files_mode() or await resolve_agents_enabled(session):
+            await ensure_definitions_workspace(session)
+        # Files mode: runs in flight keep executing the version they started from.
         await restore_pins(session)
     from precursor.backend.services.blob_store import gc_orphan_blobs
 

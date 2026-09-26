@@ -11,6 +11,10 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Slug of the built-in workspace that holds agent and workflow definition files
+# by default. Reserved: user workspaces never get it.
+DEFINITIONS_WORKSPACE_SLUG = "definitions"
+
 
 def is_source_checkout() -> bool:
     """True when the package is imported from a working copy of the repo.
@@ -153,11 +157,22 @@ class Settings(BaseSettings):
         inside = Path(self.definitions_workspace.strip().strip("/"))
         if inside.parts and ".." not in inside.parts and not inside.is_absolute():
             return str(Path(self.workspaces_dir) / inside)
-        return str(Path(self.data_dir).resolve() / "definitions")
+        # The built-in "Agents & workflows" workspace, so the files can be
+        # browsed and edited in the Files section.
+        return str(Path(self.workspaces_dir) / DEFINITIONS_WORKSPACE_SLUG)
+
+    @property
+    def definitions_in_builtin_workspace(self) -> bool:
+        """Whether the definitions live in the built-in workspace (the default)."""
+        return (
+            not self.definitions_dir_override.strip()
+            and not Path(self.definitions_workspace.strip().strip("/")).parts
+        )
 
     # Where agents and workflows take their declarations from. ``database`` is
-    # today's behaviour; ``files`` reads them from ``definitions_dir`` for every
-    # row linked to a file (work in progress, see docs/definitions.md).
+    # the default: the migration in Settings → Workflows switches an install
+    # over (and back), and remembers it. ``files`` here forces files mode
+    # regardless (work in progress, see docs/definitions.md).
     definitions_source: Literal["database", "files"] = "database"
 
     # LLM — the active provider and its credentials live in the app settings

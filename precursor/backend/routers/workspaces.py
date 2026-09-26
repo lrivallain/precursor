@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from precursor.backend.config import get_settings
+from precursor.backend.config import DEFINITIONS_WORKSPACE_SLUG, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import Workspace
 from precursor.backend.schemas import (
@@ -42,6 +42,7 @@ from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services import workspace_git as git
 from precursor.backend.services.conversation_turn import resolve_turn_settings
 from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import home as definitions_home
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.definitions.loader import kind_for
 from precursor.backend.services.github_auth import resolve_github_token
@@ -108,7 +109,9 @@ async def _allocate_slug(session: AsyncSession, base: str) -> str:
         existing = (
             await session.execute(select(Workspace.id).where(Workspace.slug == candidate))
         ).first()
-        if existing is None:
+        # The built-in definitions workspace's slug is kept for it, even while
+        # it doesn't exist yet.
+        if existing is None and candidate != DEFINITIONS_WORKSPACE_SLUG:
             return candidate
         candidate = f"{base}-{n}"
         n += 1
@@ -122,9 +125,15 @@ async def _allocate_slug(session: AsyncSession, base: str) -> str:
 @router.get("", response_model=list[WorkspaceRead])
 async def list_workspaces(
     session: AsyncSession = Depends(get_session),
-) -> list[Workspace]:
+) -> list[WorkspaceRead]:
     result = await session.execute(select(Workspace).order_by(Workspace.created_at.desc()))
-    return list(result.scalars().all())
+    reads = []
+    for ws in result.scalars().all():
+        read = WorkspaceRead.model_validate(ws)
+        read.hosts_definitions = definitions_home.holds_definitions(workspace_root(ws))
+        reads.append(read)
+    # The definitions workspace leads the list: it's the one every install has.
+    return sorted(reads, key=lambda r: not r.hosts_definitions)
 
 
 @router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
@@ -200,6 +209,12 @@ async def update_workspace(
 async def delete_workspace(workspace_id: int, session: AsyncSession = Depends(get_session)) -> None:
     ws = await _get_workspace(workspace_id, session)
     dest = workspace_root(ws)
+    if definitions_home.has_definition_files(dest):
+        # Its folder would go with it — every agent and workflow declared there.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This workspace holds your agent and workflow definition files; it can't be removed.",
+        )
     await session.delete(ws)
     await session.commit()
     # Remove the working copy from disk after the row is gone.

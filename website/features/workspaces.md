@@ -21,6 +21,15 @@ sessions, and the assistant operates on them through a **sandboxed** file layer.
 - **Local folder** — creates an empty folder for authoring files, with no git
   behind it. The same file tools apply.
 
+## The Agents & workflows workspace
+
+Once Agents mode is on, the list starts with a built-in **Agents & workflows**
+workspace: the folder that holds your agent and workflow
+[definition files](/features/definitions) (work in progress). Opening a
+definition file there shows its check — errors and warnings with their
+location — under the editor, refreshed on save. It can't be removed while it
+holds definition files, and the assistant's file tools can only read it.
+
 ## The sandbox
 
 Every file operation is routed through `safe_join`, which:

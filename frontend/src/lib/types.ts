@@ -1068,6 +1068,61 @@ export interface DefinitionFileReport {
   issues: DefinitionIssue[];
 }
 
+// --- Migration (database → files, and back) ---------------------------------
+
+export interface DefinitionsWorkspaceRef {
+  id: number;
+  slug: string;
+  name: string;
+}
+
+export type MigrationAction = "create" | "regenerate" | "unchanged" | "new_from_disk";
+
+export interface MigrationItem {
+  kind: DefinitionKind;
+  id: number | null;
+  name: string;
+  path: string | null;
+  action: MigrationAction;
+  reason: string | null;
+}
+
+export interface MigrationPreview {
+  source: "database" | "files";
+  /** PRECURSOR_DEFINITIONS_SOURCE=files forces files mode. */
+  forced: boolean;
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+  /** A definition file in the folder, for an "Open in Files" link. */
+  sample_path: string | null;
+  items: MigrationItem[];
+  issues: DefinitionIssue[];
+  blockers: string[];
+  ready: boolean;
+  needs_confirmation: boolean;
+}
+
+export interface MigrationResult {
+  ok: boolean;
+  source: "database" | "files";
+  snapshot: string | null;
+  created: number;
+  regenerated: number;
+  unchanged: number;
+  added_from_disk: number;
+  issues: DefinitionIssue[];
+  mismatches: string[];
+}
+
+export interface RevertResult {
+  ok: boolean;
+  source: "database" | "files";
+  snapshot: string | null;
+  agents: number;
+  workflows: number;
+  skipped: string[];
+}
+
 export interface DefinitionsExportResult {
   root: string;
   written: ExportedDefinition[];
@@ -1872,6 +1927,8 @@ export interface Workspace {
   cloned_at: string | null;
   last_synced_at: string | null;
   role_id: number | null;
+  /** Holds the agent and workflow definition files (the built-in "Agents & workflows"). */
+  hosts_definitions?: boolean;
   created_at: string;
   updated_at: string;
 }
