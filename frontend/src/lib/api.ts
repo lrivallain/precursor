@@ -32,6 +32,8 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DefinitionsCheckReport,
+  DefinitionsExportResult,
   DrawioStatus,
   GhCloseResult,
   GhCreateDraft,
@@ -776,6 +778,17 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ content, resolutions }),
       }),
+  },
+
+  definitions: {
+    // Work in progress (docs/definitions.md): the folder check and the one-shot
+    // export of database agents/workflows into definition files.
+    check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    export: (overwrite = false) =>
+      request<DefinitionsExportResult>(
+        `/api/definitions/export${overwrite ? "?overwrite=true" : ""}`,
+        { method: "POST" },
+      ),
   },
 
   messages: {

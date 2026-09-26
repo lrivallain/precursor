@@ -39,6 +39,7 @@ CLI flags mirror several of these: `--port`, `--api-port`, `--host`,
 | --- | --- | --- |
 | `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` | Async SQLAlchemy URL. Point at Postgres for production. |
 | `PRECURSOR_DATA_DIR` | `.precursor` *(checkout)* / *user data dir* *(installed)* | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), the agents runtime's Copilot home (`agents/copilot-home/`), and the [background app](/features/background-app)'s `runtime.json` + `logs/`. Relative paths resolve against the process working directory. |
+| `PRECURSOR_DEFINITIONS_DIR` | `<data dir>/definitions` | **Work in progress.** Folder of agent and workflow [definition files](https://github.com/lrivallain/precursor/blob/main/docs/definitions.md) (`*.agent.yaml`, `*.workflow.yaml`). Read by the definitions check and written by the export; the runtime doesn't use it yet. |
 
 The two defaults above depend on **how Precursor was installed**. A source
 checkout keeps its state beside the code, so every clone and worktree is an

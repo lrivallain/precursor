@@ -1,8 +1,9 @@
 # Agent & workflow definition files
 
-> **Work in progress — format only.** This page describes the file format for
-> declaring agents and workflows. Precursor does not read these files yet: the
-> app still stores agents and workflows in the database. The
+> **Work in progress.** This page describes the file format for declaring
+> agents and workflows, the folder check, and the one-shot export of today's
+> agents and workflows into files. The **runtime does not read these files
+> yet**: the app still runs agents and workflows from the database. The
 > [roadmap](#roadmap) lists the steps that get it there, and each one ships on
 > its own.
 
@@ -27,9 +28,9 @@ free, the same definitions can be used on several machines, and any editor
 | Identity | Every file has a stable `id:`. The database row links to it through the existing `export_id` column, so renaming or moving a file keeps its run history. The path is only used to *reference* a file. |
 | Schedules | Stay in the database (cadence, enabled switch, next run). A schedule does not travel with a file. |
 | Triggers | Stay in the database — the webhook token is a secret and must never reach a git-tracked file. |
-| Ad-hoc agents (`/agent <task>` in a topic or chat) | Get a file like every other agent, under `agents/adhoc/`, so there is a single way to read a declaration. *Provisional.* |
-| Archive | A database flag; the file is left in place so paths and references stay stable. *Provisional.* |
-| Roles | Referenced by name (`role: Analyst`). Roles themselves stay in the database for now. |
+| Ad-hoc agents (`/agent <task>` in a topic or chat) | Get a file like every other agent, under `agents/adhoc/`, so there is a single way to read a declaration. |
+| Archive | A database flag only; the file is left in place so paths and references stay stable. |
+| Roles | Referenced by name (`role: Analyst`), matched case-insensitively. A name that doesn't exist on the instance is a **warning** in the check, not an error. Roles themselves stay in the database for now. |
 
 Out of scope for now: roles, blueprints and the MCP server registry stay in
 the database; skills are already files.
@@ -130,7 +131,7 @@ never re-points a reference.
 | `name` | Display label; defaults to the agent's title. |
 | `model` | Model for the step's own `prompt`. For an agent step, set it in the agent file. |
 | `instructions` | Extra mandate for this step only. Supports `{{run.input}}`, `{{state.<key>}}` and `{{step.N.output}}` (N is the 0-based position for now). |
-| `on_fail` | Gate / approval: the step to re-drive on FAIL or rework. Default: the previous step that runs an agent. |
+| `on_fail` | Gate / approval: the step to re-drive on FAIL or rework — any other step, including an approval step ("on FAIL, ask a human"). Default: the previous runnable step. |
 | `on_error` / `max_retries` | `fail` (default), `retry` (with `max_retries`), or `continue`. |
 | `on_reject` | Approval only: `rework` (default), `stop` or `skip`. |
 | `context` | `mode: auto` (previous output + artifacts, default), `selected` (only the steps listed in `from`), or `none`. |
@@ -147,16 +148,17 @@ Files are checked strictly, because they are written by hand:
   `on_error: retry`, `on_reject` outside an approval step, `mcp_servers` with
   `mcp: false`, `from` without `mode: selected`.
 - **References inside a workflow must resolve:** duplicate step keys,
-  `on_fail` pointing at a missing step, at itself or at an approval step, and
-  a `context.from` naming a missing or *later* step are all errors.
+  `on_fail` pointing at a missing step or at itself, and a `context.from`
+  naming a missing or *later* step are all errors.
+- **Duplicate YAML keys are errors.** Plain YAML keeps the last of two
+  `prompt:` keys without a word; here that's reported.
 - **Agent paths** must be clean, relative, forward-slash paths ending in
   `.agent.yaml` — no leading `/`, no `..`, no `./`.
 - A file written by a newer Precursor (`format` greater than this version
   supports) is refused with an "upgrade" message.
 
-Checks that need the whole folder — duplicate `id`s across files, an agent
-path that points at no file, unknown role, model or MCP server names — come
-with the folder checker (roadmap step 2).
+Checks that need the whole folder or the instance are described under
+[checking a folder](#checking-a-folder).
 
 ### Editor support
 
@@ -182,16 +184,101 @@ uv run --frozen python scripts/gen_definition_schemas.py
 
 `tests/test_definitions.py` fails if they drift.
 
+## The definitions folder
+
+Precursor looks for definition files under **`<data dir>/definitions`**, or the
+folder named by `PRECURSOR_DEFINITIONS_DIR`. Every `*.agent.yaml` and
+`*.workflow.yaml` below it is read, in any sub-folder; hidden folders (such as
+`.git`) and hidden files are skipped. A symlink is followed only if it stays
+inside the folder.
+
+## Checking a folder
+
+The check runs every rule above per file, then across the folder:
+
+| Finding | Severity |
+| --- | --- |
+| A file that doesn't parse or validate (with the line, or the step key, at fault) | error |
+| The same `id` in two files | error, on both files |
+| A step's `agent:` path that points at no file (with a *did you mean* when a file of that name exists elsewhere) | error |
+| A step whose agent file has errors | error |
+| A role name that doesn't exist on this instance | warning |
+| An MCP server name that isn't configured on this instance | warning |
+| Database agents or workflows with no file yet | warning |
+
+Warnings never fail the check: a definition is portable, so the same file can
+be right on another machine. Model names are not checked — the model catalogue
+depends on the provider and the network.
+
+There are two ways to run it:
+
+- **From the app:** `GET /api/definitions/check` checks the configured folder
+  against the running instance — roles, MCP servers, and which database rows
+  are linked to a file. Each file in the report carries its SHA-256, the value a
+  run will record as "the version used" from roadmap step 4.
+- **From a terminal or CI:** `precursor validate [FOLDER] [--json]` needs no
+  database, so it runs the file and cross-file rules only. It exits `0` with no
+  errors, `1` with errors, and `2` when the folder doesn't exist.
+
+```console
+$ precursor validate ~/my-definitions
+error: workflows/morning-briefing.workflow.yaml: steps[triage].agent: no agent file at agents/inbox-triage.agent.yaml; paths are relative to the definitions folder
+Checked 3 files in /Users/me/my-definitions: 1 error, 0 warnings.
+```
+
+## Exporting today's agents and workflows
+
+`POST /api/definitions/export` writes a file for every agent and workflow in
+the database that doesn't have one yet (Agents mode must be on). Nothing is
+deleted, and the database stays authoritative until the runtime switches over.
+
+- A reusable agent goes to `agents/<title>.agent.yaml`; one spawned from a topic
+  or chat to `agents/adhoc/`. Archived ones are exported too.
+- A workflow goes to `workflows/<name>.workflow.yaml`. A step's private
+  (inline) agent gets no file: its prompt and model move into the step. Step
+  keys are derived from the step's label.
+- Each row is **linked** to its file through its portable id (`export_id`),
+  which becomes the file's `id`. An agent that was already shared through a
+  transfer file keeps the id it had.
+- Running it again skips every row that already has a file, so hand edits are
+  safe. `?overwrite=true` regenerates those files from the database, in place.
+
+Values the format would reject are normalised with a warning, and settings a
+file can't hold are reported rather than dropped silently:
+
+- A step's hidden agent may have its own role, approval policy, autonomy or
+  limits, which a step prompt can't carry. That's only reported when it would
+  actually stop applying: the workflow's own role and approval policy replace
+  the agent's for every step anyway.
+- A `selected` context source that isn't an earlier step is left out; a
+  selection left with no earlier step is written as `mode: none`, which is what
+  it did.
+- A step whose agent was deleted can't be expressed at all. The workflow file
+  is still written, with that step as-is, and reported as an error to fix by
+  hand — dropping the step would shift the position-based `{{step.N.output}}`
+  placeholders after it.
+
+To try it on a copy of real data, point a dev instance at a snapshot of your
+database and a scratch folder:
+
+```bash
+PRECURSOR_DATABASE_URL="sqlite+aiosqlite:////tmp/snap.db" \
+PRECURSOR_DEFINITIONS_DIR=/tmp/defs \
+  uv run --frozen precursor --dev
+curl -s -X POST localhost:8000/api/definitions/export | jq '.written | length'
+curl -s localhost:8000/api/definitions/check | jq '{ok, error_count, warning_count, database}'
+```
+
 ## Roadmap
 
 Each step ships on its own and is validated before the next starts.
 
 0. ✅ Agree the file / database boundary.
-1. ✅ File format and JSON Schema (this page).
-2. Definitions folder, read-only loader and folder-wide integrity check
+1. ✅ File format and JSON Schema.
+2. ✅ Definitions folder, read-only loader and folder-wide integrity check
    (API + `precursor validate` CLI). Not used at runtime yet.
-3. Export existing agents and workflows to files, linking each row to its
-   file. Nothing deleted.
+3. ✅ Export existing agents and workflows to files, linking each row to its
+   file through `export_id`. Nothing deleted.
 4. Agents and workflows run from their files; each run records the file
    version it used.
 5. The Agents and Workflows lists come from the files.

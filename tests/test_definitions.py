@@ -233,13 +233,6 @@ def test_agent_paths_must_be_clean_relative_agent_files(path: str) -> None:
             "cannot point at itself",
         ),
         (
-            [
-                {"key": "h", "kind": "approval"},
-                {"key": "g", "kind": "gate", "prompt": "y", "on_fail": "h"},
-            ],
-            "not approval step 'h'",
-        ),
-        (
             [{"key": "a", "prompt": "x", "context": {"mode": "selected", "from": ["nope"]}}],
             "context source 'nope' is not a step",
         ),
@@ -254,6 +247,19 @@ def test_agent_paths_must_be_clean_relative_agent_files(path: str) -> None:
 )
 def test_workflow_reference_errors(steps: list[dict[str, Any]], message: str) -> None:
     assert message in _error(WorkflowDefinition, _workflow(*steps))
+
+
+def test_a_gate_may_loop_back_to_an_approval_step() -> None:
+    # The engine treats an approval step as runnable, so "on FAIL, ask a human"
+    # is a real routing choice, not a mistake.
+    wf = WorkflowDefinition.model_validate(
+        _workflow(
+            {"key": "a", "prompt": "draft"},
+            {"key": "h", "kind": "approval"},
+            {"key": "g", "kind": "gate", "prompt": "judge", "on_fail": "h"},
+        )
+    )
+    assert wf.steps[2].on_fail == "h"
 
 
 def test_empty_workflow_is_a_valid_draft() -> None:

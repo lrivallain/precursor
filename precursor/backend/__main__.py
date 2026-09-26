@@ -680,7 +680,7 @@ def _run_dev(
 
 
 def main() -> None:
-    # `service` / `tray` are dispatched before the main parser so the flat
+    # `service` / `tray` / `validate` are dispatched before the main parser so the flat
     # `precursor [--dev] …` interface (and every dev workflow built on it) keeps
     # parsing exactly as before.
     if sys.argv[1:2] == ["service"]:
@@ -691,6 +691,10 @@ def main() -> None:
         from precursor.backend.tray import main as tray_main
 
         raise SystemExit(tray_main(sys.argv[2:]))
+    if sys.argv[1:2] == ["validate"]:
+        from precursor.backend.services.definitions.cli import main as validate_main
+
+        raise SystemExit(validate_main(sys.argv[2:]))
 
     cfg = get_settings()
     parser = argparse.ArgumentParser(prog="precursor", description=__doc__)

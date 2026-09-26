@@ -321,11 +321,6 @@ class WorkflowDefinition(_Strict):
                     raise ValueError(f"step '{step.key}': on_fail '{step.on_fail}' is not a step")
                 if target == idx:
                     raise ValueError(f"step '{step.key}': on_fail cannot point at itself")
-                if self.steps[target].kind == "approval":
-                    raise ValueError(
-                        f"step '{step.key}': on_fail must be a step that runs an agent, "
-                        f"not approval step '{step.on_fail}'"
-                    )
             for source in step.context.sources or []:
                 at = position.get(source)
                 if at is None:

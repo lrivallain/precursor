@@ -980,6 +980,66 @@ export interface TransferImportResult {
   warnings: TransferWarning[];
 }
 
+// --- Definition files (work in progress) ------------------------------------
+// Agents and workflows declared in *.agent.yaml / *.workflow.yaml files, with
+// only execution data left in the database. Mirrors schemas/definitions_api.py;
+// see docs/definitions.md. Nothing at runtime reads the files yet.
+
+export type DefinitionKind = "agent" | "workflow";
+
+export interface DefinitionIssue {
+  severity: "error" | "warning";
+  /** Relative to the definitions folder; null for folder-wide findings. */
+  path: string | null;
+  /** Where in the file, e.g. `steps[brief].context.from`. */
+  location: string | null;
+  message: string;
+}
+
+export interface DefinitionFileSummary {
+  path: string;
+  kind: DefinitionKind;
+  id: string | null;
+  name: string | null;
+  valid: boolean;
+  content_hash: string;
+  /** Whether a database row carries this id; null when checked without a database. */
+  linked: boolean | null;
+}
+
+export interface DefinitionsDatabaseLinks {
+  linked_agents: number;
+  linked_workflows: number;
+  unlinked_agents: { id: number; public_id: string; title: string; archived: boolean }[];
+  unlinked_workflows: { id: number; name: string; archived: boolean }[];
+}
+
+export interface DefinitionsCheckReport {
+  root: string;
+  exists: boolean;
+  ok: boolean;
+  error_count: number;
+  warning_count: number;
+  files: DefinitionFileSummary[];
+  issues: DefinitionIssue[];
+  database: DefinitionsDatabaseLinks | null;
+}
+
+export interface ExportedDefinition {
+  kind: DefinitionKind;
+  path: string;
+  id: string;
+  name: string;
+  source_id: number;
+}
+
+export interface DefinitionsExportResult {
+  root: string;
+  written: ExportedDefinition[];
+  skipped: ExportedDefinition[];
+  issues: DefinitionIssue[];
+}
+
 export interface Attachment {
   id: number;
   topic_id?: number | null;

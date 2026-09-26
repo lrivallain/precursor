@@ -135,6 +135,18 @@ class Settings(BaseSettings):
             base = Path(xdg) / "copilot" if xdg else Path.home() / ".copilot"
         return str((base / "skills").expanduser())
 
+    # Agent and workflow definition files (``*.agent.yaml`` /
+    # ``*.workflow.yaml``). Work in progress: read by the integrity check and
+    # written by the one-shot export, not yet by the runtime. See
+    # docs/definitions.md.
+    definitions_dir_override: str = Field(default="", validation_alias="PRECURSOR_DEFINITIONS_DIR")
+
+    @cached_property
+    def definitions_dir(self) -> str:
+        if self.definitions_dir_override.strip():
+            return str(Path(self.definitions_dir_override).expanduser().resolve())
+        return str(Path(self.data_dir).resolve() / "definitions")
+
     # LLM — the active provider and its credentials live in the app settings
     # (Settings → Model), not in the environment, so they can be changed at
     # runtime without a restart. See services/llm/registry.py. The prompt budget

@@ -126,6 +126,22 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Agent and workflow definition files (work in progress).** A first step
+  toward declaring agents and workflows in YAML files, with only execution data
+  (runs, progress, scheduling, triggers) left in the database. The runtime
+  doesn't read the files yet. See [docs/definitions.md](docs/definitions.md).
+  - **File format.** `*.agent.yaml` and `*.workflow.yaml`, checked strictly:
+    unknown keys, duplicate YAML keys and contradictory settings are errors.
+    Workflow steps have stable keys, so `on_fail` and context sources survive
+    a reorder. JSON Schemas under `docs/schemas/` give editors completion.
+  - **Folder check.** `GET /api/definitions/check` and `precursor validate
+    [FOLDER]` report invalid files, duplicate ids and agent paths that point
+    nowhere. The app's check also warns about role and MCP server names this
+    instance doesn't have, and shows which agents and workflows have a file.
+  - **Export.** `POST /api/definitions/export` writes a file for every agent and
+    workflow, linked to its row, without deleting anything. The folder is
+    `PRECURSOR_DEFINITIONS_DIR`, by default `<data dir>/definitions`.
+
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as
   a package name, and installs the wheel attached to one of its releases. For a
