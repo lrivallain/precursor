@@ -162,6 +162,17 @@ def _template(argv: Sequence[str]) -> str:
     return " ".join(parts)
 
 
+def _environment_locked_while_running() -> bool:
+    """Whether this process's own open files block rebuilding its environment.
+
+    True on Windows, which refuses to delete a file any process has open
+    ("os error 32") — and a running Precursor holds its interpreter and every
+    extension module it imported. A ``uv tool`` reinstall rebuilds the whole
+    environment, so it can only happen while Precursor is stopped.
+    """
+    return os.name == "nt"
+
+
 def detect_environment() -> Environment:
     """Work out which installer owns the environment Precursor runs in.
 
@@ -183,6 +194,10 @@ def detect_environment() -> Environment:
     tool_roots = [Path(tool_dir)] if tool_dir else []
     if xdg:
         tool_roots.append(Path(xdg) / "uv" / "tools")
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        # uv's Windows default; a redirected profile moves it off the home dir.
+        tool_roots.append(Path(appdata) / "uv" / "tools")
     tool_roots += [
         Path.home() / ".local" / "share" / "uv" / "tools",
         Path.home() / "Library" / "Application Support" / "uv" / "tools",
@@ -191,6 +206,13 @@ def detect_environment() -> Environment:
     is_uv_tool = any(prefix.is_relative_to(root.resolve()) for root in tool_roots if root.exists())
 
     if is_uv_tool:
+        reason = None if uv else "`uv` is not on PATH."
+        if _environment_locked_while_running():
+            reason = (
+                "On Windows, Precursor can't reinstall itself while it is running. "
+                "Stop it (`precursor service stop`), run this command, then start it "
+                "again (`precursor service start`)."
+            )
         return Environment(
             installer="uv-tool",
             # A uv tool environment is rebuilt from its requested packages, so a
@@ -198,8 +220,8 @@ def detect_environment() -> Environment:
             # and so does everything already installed alongside it.
             command_template=_template(_uv_tool_argv(PACKAGE_PLACEHOLDER)),
             python=sys.executable,
-            can_install=uv is not None,
-            reason=None if uv else "`uv` is not on PATH.",
+            can_install=reason is None,
+            reason=reason,
         )
     if uv is not None:
         return Environment(
@@ -372,6 +394,16 @@ def restart_in_place() -> None:
         return
     if not restart_supported():
         raise RuntimeError("This process can't restart itself; restart Precursor by hand.")
+    if os.name == "nt":  # pragma: no cover - Windows-only path
+        from precursor.backend import supervisor
+
+        # Windows has no exec: `os.execv` starts a new process and ends this
+        # one, so the pid the supervisor recorded dies and the replacement runs
+        # unsupervised. A supervised instance asks for a proper restart instead.
+        if supervisor.restartable()[0]:
+            logger.info("Restarting Precursor through the supervisor")
+            supervisor.request_detached_restart()
+            return
     argv = restart_command()
     logger.info("Restarting Precursor: %s", " ".join(argv))
     sys.stdout.flush()

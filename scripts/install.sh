@@ -14,6 +14,10 @@
 #   PRECURSOR_EXTRAS    comma-separated extras (default: kanban,tray; empty = none)
 #   PRECURSOR_REPO      owner/repo to install from (default: lrivallain/precursor)
 #   PRECURSOR_NO_START  set to 1 to install without registering/starting it
+#   PRECURSOR_WHEEL     a wheel (path or URL) to install instead of a channel
+#
+# On Windows, use the PowerShell twin instead:
+#   irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
 
 set -eu
 
@@ -36,7 +40,10 @@ else
   REQUIREMENT="precursor-ai"
 fi
 
-if [ "$CHANNEL" = "stable" ]; then
+if [ -n "${PRECURSOR_WHEEL:-}" ]; then
+  say "Installing ${REQUIREMENT} from ${PRECURSOR_WHEEL}"
+  uv tool install --force "${REQUIREMENT} @ ${PRECURSOR_WHEEL}"
+elif [ "$CHANNEL" = "stable" ]; then
   say "Installing ${REQUIREMENT} from PyPI"
   uv tool install --force "$REQUIREMENT"
 else

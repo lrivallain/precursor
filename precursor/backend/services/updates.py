@@ -20,6 +20,8 @@ cheap request instead of parsing asset lists.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import os
 import re
@@ -37,7 +39,7 @@ from typing import Any, Literal
 import httpx
 
 from precursor import __version__
-from precursor.backend import uv_receipt
+from precursor.backend import uv_receipt, winproc
 from precursor.backend.config import get_settings, is_source_checkout
 
 logger = logging.getLogger(__name__)
@@ -337,9 +339,13 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> str:
         cmd,
         cwd=str(cwd) if cwd else None,
         capture_output=True,
-        text=True,
+        # uv writes UTF-8 (box-drawing and all) whatever the Windows code page
+        # says, and the locale default would garble it — or fail outright.
+        encoding="utf-8",
+        errors="replace",
         check=False,
         timeout=900,
+        **winproc.no_window(),
     )
     if result.returncode != 0:
         # Reason first, command last: this ends up in a tray notification, which
@@ -490,11 +496,126 @@ def _with_arguments(info: UpdateInfo) -> tuple[str, ...]:
     return tuple(arguments.values())
 
 
+def applies_out_of_process(info: UpdateInfo) -> bool:
+    """Whether :func:`apply` hands the install to a helper and returns early.
+
+    True on Windows for a ``uv tool`` install, where the environment can't be
+    replaced while anything — this process included — runs from it. The caller
+    then owns nothing further: the helper stops, installs and restarts.
+    """
+    return os.name == "nt" and info.install_mode == "uv-tool"
+
+
+#: Written by the Windows updater (see ``precursor/backend/windows_updater.py``)
+#: once the install finishes, and reported by the restarted tray.
+WINDOWS_UPDATE_RESULT = "update-result.json"
+WINDOWS_UPDATE_LOG = "update.log"
+
+
+def _base_interpreter() -> str:
+    """An interpreter outside the tool environment the update replaces.
+
+    A venv's ``python.exe`` is only a launcher for its base interpreter, which
+    ``sys._base_executable`` names. The console one, even from ``pythonw``, so
+    the helper's children inherit its hidden console instead of opening their
+    own.
+    """
+    base = Path(getattr(sys, "_base_executable", "") or sys.executable)
+    console = base.with_name("python.exe")
+    return str(console if console.is_file() else base)
+
+
+def _apply_out_of_process(
+    info: UpdateInfo, commands: list[list[str]], summaries: list[str]
+) -> str:  # pragma: no cover - Windows-only path
+    """Stop what holds the environment, and let a helper finish the update.
+
+    The app is stopped here, gracefully, while this process can still do it
+    properly; the tray (unless it is the caller) is stopped too, and both are
+    started again by the helper once the new build is in place.
+    """
+    from precursor.backend import supervisor, tray
+    from precursor.backend.autostart import TRAY, windows_command
+
+    settings = get_settings()
+    logs = Path(settings.logs_dir)
+    logs.mkdir(parents=True, exist_ok=True)
+    data = Path(settings.data_dir)
+    result = data / WINDOWS_UPDATE_RESULT
+    with contextlib.suppress(OSError):
+        result.unlink()
+
+    was_running = supervisor.status().running
+    if was_running:
+        supervisor.stop()
+    caller_is_tray = tray.is_current_process()
+    tray_was_running = caller_is_tray or tray.stop_running()
+
+    helper = logs / "windows-updater.py"
+    helper.write_text(
+        (Path(__file__).resolve().parents[1] / "windows_updater.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    job = {
+        "wait_pids": [os.getpid()],
+        "commands": commands,
+        "summaries": summaries,
+        # The console interpreter, under the helper's hidden console: its
+        # output is what the update log records about the restart.
+        "app_command": (
+            [
+                str(Path(sys.executable).with_name("python.exe")),
+                "-m",
+                "precursor.backend",
+                "service",
+                "start",
+            ]
+            if was_running
+            else None
+        ),
+        "tray_command": windows_command(TRAY) if tray_was_running else None,
+        "cwd": str(supervisor.working_dir()),
+        "log": str(logs / WINDOWS_UPDATE_LOG),
+        "result": str(result),
+        "from_version": info.current_version,
+        "to_version": info.latest_version,
+    }
+    job_file = logs / "windows-update.json"
+    job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
+    winproc.spawn_detached(
+        [_base_interpreter(), "-I", str(helper), str(job_file)],
+        cwd=str(logs),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    invalidate()
+    restarting = " and restarts it" if was_running else ""
+    return (
+        f"Installing {info.latest_version or 'the latest build'} in the background — "
+        f"Windows can't replace Precursor while it runs, so it is stopped until the "
+        f"install finishes{restarting}. Progress: {logs / WINDOWS_UPDATE_LOG}"
+    )
+
+
+def take_windows_update_result() -> dict[str, Any] | None:
+    """The outcome the Windows updater left behind, consumed on read."""
+    path = Path(get_settings().data_dir) / WINDOWS_UPDATE_RESULT
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    with contextlib.suppress(OSError):
+        path.unlink()
+    return raw if isinstance(raw, dict) else None
+
+
 def apply(info: UpdateInfo | None = None) -> str:
     """Upgrade the installation in place. Returns a human-readable summary.
 
     Does **not** restart anything — the caller owns the process lifecycle (see
-    ``precursor.backend.supervisor``).
+    ``precursor.backend.supervisor``) — except where
+    :func:`applies_out_of_process` says the update finishes in a helper.
     """
     info = info or check(force=True)
     mode = info.install_mode
@@ -525,6 +646,17 @@ def apply(info: UpdateInfo | None = None) -> str:
     extras = _extras()
     with_arguments = _with_arguments(info)
     summary = f"Installed {info.latest_version or 'the latest build'}."
+    if applies_out_of_process(info):  # pragma: no cover - Windows-only path
+        optional = plugin_extras(extras)
+        commands = [_install_cmd(uv, info, extras, with_arguments)]
+        summaries = [summary]
+        if optional or with_arguments:
+            dropped = [*optional, *(uv_receipt.canonical_name(a) for a in with_arguments)]
+            commands.append(_install_cmd(uv, info, [e for e in extras if e not in optional], ()))
+            summaries.append(
+                f"{summary} Skipped {', '.join(dropped)} — not installable from your index."
+            )
+        return _apply_out_of_process(info, commands, summaries)
     try:
         _run(_install_cmd(uv, info, extras, with_arguments))
     except UpdateError as exc:

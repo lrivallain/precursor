@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -90,17 +91,23 @@ def _cmd_install(args: argparse.Namespace) -> int:
         if autostart.tray_supported():
             tray_info = autostart.install(autostart.TRAY)
             print(f"Tray autostart installed: {tray_info.path}")
+            if not tray_info.controllable:
+                # A Windows Run entry only fires at the next login; launchd and
+                # systemd have already started the icon by now.
+                autostart.launch(autostart.TRAY)
         else:
             print("Tray autostart skipped — the `tray` extra is not installed.")
 
     # launchd (RunAtLoad) and systemd (--now) start the instance as part of
     # registering it, so give the unit a moment to come up before deciding
     # whether anything is still missing. Starting one here unconditionally
-    # would race the unit and lose to --strict-port.
-    for _ in range(20):
-        if supervisor.status().running:
-            break
-        time.sleep(0.5)
+    # would race the unit and lose to --strict-port. A Windows entry starts
+    # nothing until the next login, so there is nothing to wait for.
+    if info.controllable:
+        for _ in range(20):
+            if supervisor.status().running:
+                break
+            time.sleep(0.5)
     status = supervisor.status()
     if not status.running:
         status = supervisor.start()
@@ -111,6 +118,17 @@ def _cmd_install(args: argparse.Namespace) -> int:
 def _cmd_uninstall(_args: argparse.Namespace) -> int:
     for info in autostart.uninstall_all():
         print(f"Autostart removed ({info.kind}): {info.unit}")
+    if os.name == "nt":
+        # launchd and systemd stop a unit as they unload it. A Windows Run entry
+        # is only a command, so removing it leaves the processes running — and
+        # a running Precursor blocks the `uv tool uninstall` that usually comes
+        # next.
+        from precursor.backend import tray
+
+        if supervisor.stop():
+            print("Precursor stopped.")
+        if tray.stop_running():
+            print("Menu-bar icon stopped.")
     return 0
 
 
@@ -138,6 +156,10 @@ def _cmd_update(args: argparse.Namespace) -> int:
         print(f"Already on the latest {info.channel} build ({info.current_version}).")
         return 0
     print(f"Updating {info.current_version} → {info.latest_version or 'latest'}…")
+    if updates.applies_out_of_process(info):
+        # Finished by a helper once this process exits — including the restarts.
+        print(updates.apply(info))
+        return 0
     print(updates.apply(info))
     was_running = supervisor.status().running
     if was_running:

@@ -15,10 +15,14 @@ no use for.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import importlib
 import importlib.util
+import json
 import logging
 import os
+import signal
 import sys
 import threading
 import time
@@ -33,7 +37,7 @@ from typing import Any, Literal
 # instance against. Aliased so the staleness check reads as a deliberate
 # snapshot rather than a live lookup.
 from precursor import __version__ as _OWN_VERSION
-from precursor.backend import desktop, notifications, supervisor
+from precursor.backend import desktop, notifications, supervisor, winproc
 from precursor.backend.config import get_settings
 from precursor.backend.logging_config import TRAY_LOG_FILENAME, configure_logging, log_path
 from precursor.backend.services import updates
@@ -90,6 +94,98 @@ _UPDATING = "updating"
 # Copilot SDK is handled in services/agents/runtime.py. Everything in this
 # module stays importable (and testable) without them installed.
 _GUI_MODULES = ("pystray", "PIL")
+
+
+# The tray records its pid here, so other processes can find the icon to stop
+# it: on Windows, updating means nothing may run from the tool environment.
+_STATE_FILENAME = "tray.json"
+
+
+def _state_path() -> Path:
+    return Path(get_settings().data_dir) / _STATE_FILENAME
+
+
+def _recorded_pid() -> int | None:
+    try:
+        raw = json.loads(_state_path().read_text(encoding="utf-8"))
+        return int(raw["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _record_self() -> None:
+    path = _state_path()
+    with contextlib.suppress(OSError):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"pid": os.getpid(), "version": _OWN_VERSION}), encoding="utf-8")
+
+
+def _forget_self() -> None:
+    if _recorded_pid() == os.getpid():
+        with contextlib.suppress(OSError):
+            _state_path().unlink()
+
+
+def is_current_process() -> bool:
+    """Whether the calling process is the recorded tray."""
+    return _recorded_pid() == os.getpid()
+
+
+def running_pid() -> int | None:
+    """The pid of a live tray for this data directory, other than the caller."""
+    pid = _recorded_pid()
+    if pid is None or pid == os.getpid() or not supervisor.pid_alive(pid):
+        return None
+    return pid
+
+
+def stop_running(*, timeout: float = 10.0) -> bool:
+    """Stop the recorded tray, if one is running. Returns whether one was."""
+    pid = running_pid()
+    if pid is None:
+        return False
+    if os.name == "nt":  # pragma: no cover - Windows-only path
+        winproc.kill_tree(pid)
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while supervisor.pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    with contextlib.suppress(OSError):
+        _state_path().unlink()
+    return True
+
+
+# Held for the process lifetime once claimed (see `_claim_single_instance`).
+_instance_guard: Any | None = None
+
+
+def _claim_single_instance() -> bool:
+    """Whether this process may show an icon, claiming the right if so.
+
+    Windows only. launchd and systemd already refuse to run a unit twice, but a
+    Run entry, a reinstall and a manual ``precursor tray`` can all start one
+    there — and two icons driving one instance is confusing at best. Scoped to
+    the data directory, so a checkout's tray and an installed one can coexist.
+    """
+    global _instance_guard
+    if os.name != "nt" or _instance_guard is not None:
+        return True
+    _instance_guard = winproc.acquire_single_instance(_instance_name())
+    return _instance_guard is not None
+
+
+def _instance_name() -> str:
+    scope = hashlib.sha256(str(Path(get_settings().data_dir).resolve()).encode()).hexdigest()
+    return f"Local\\Precursor.tray.{scope[:16]}"
+
+
+def _release_single_instance() -> None:
+    global _instance_guard
+    if _instance_guard is not None:
+        winproc.release(_instance_guard)
+        _instance_guard = None
 
 
 def gui_available() -> bool:
@@ -307,6 +403,14 @@ class TrayApp:
     def _apply_update(self, *_: object) -> None:
         def _run() -> None:
             info = updates.check(force=True)
+            if updates.applies_out_of_process(info):  # pragma: no cover - Windows-only
+                # The helper stops the app, installs, and brings the app and a
+                # fresh icon back — which it can only do once this one is gone.
+                summary = updates.apply(info)
+                self._notify("Updating Precursor", summary)
+                time.sleep(1.5)
+                self._quit()
+                return
             # Read the live state rather than the polled copy: the decision to
             # bounce the instance shouldn't hinge on a snapshot up to a poll
             # interval old.
@@ -335,7 +439,16 @@ class TrayApp:
         """
         from precursor.backend import autostart
 
-        if not autostart.info(autostart.TRAY).controllable:
+        controllable = autostart.info(autostart.TRAY).controllable
+        if not controllable and os.name == "nt":
+            # No service manager to ask, so hand over directly: release the
+            # single-instance claim, start the successor, and step aside.
+            time.sleep(1.5)
+            _release_single_instance()
+            autostart.launch(autostart.TRAY)
+            self._quit()
+            return True
+        if not controllable:
             # Started by hand, so its lifecycle isn't ours to manage.
             return False
         # Give the notification a moment to reach the notification centre
@@ -560,10 +673,31 @@ class TrayApp:
 
     # --- loop ------------------------------------------------------------
 
+    def _report_finished_update(self) -> None:
+        """Say how a Windows update went — the icon that started it is gone.
+
+        On Windows the update finishes in a helper after the tray has quit, so
+        the notification a macOS/Linux tray shows right after updating has to
+        come from the icon the helper starts afterwards.
+        """
+        result = updates.take_windows_update_result()
+        if result is None:
+            return
+        if result.get("ok"):
+            self._notify("Precursor updated", str(result.get("message") or ""))
+        else:
+            log = result.get("log")
+            detail = str(result.get("message") or "")
+            self._notify("Precursor update failed", f"{detail}\n{log}" if log else detail)
+
     def _poll_loop(self) -> None:
         elapsed = 0.0
+        first = True
         while not self._stop.wait(_POLL_SECONDS):
             self._refresh()
+            if first:
+                first = False
+                self._report_finished_update()
             elapsed += _POLL_SECONDS
             if self._check_updates and elapsed >= _UPDATE_POLL_SECONDS:
                 elapsed = 0.0
@@ -584,7 +718,11 @@ class TrayApp:
         threading.Thread(target=self._poll_loop, daemon=True).start()
         if self._check_updates:
             self._in_background("checking for updates", self._refresh_update_info)
-        self._icon.run()
+        _record_self()
+        try:
+            self._icon.run()
+        finally:
+            _forget_self()
         return 0
 
     def _refresh_update_info(self) -> None:
@@ -624,6 +762,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not gui_available():
         print(_missing_deps_message(), file=sys.stderr)
         return 1
+
+    if not _claim_single_instance():
+        # Exiting cleanly: "already there" is success, not a crash to retry.
+        logger.info("A Precursor tray is already running for this data directory.")
+        return 0
 
     if args.start and not supervisor.status().running:
         try:
