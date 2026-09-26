@@ -57,6 +57,8 @@ from precursor.backend.services.agents.directives import (
     strip_control_directives,
 )
 from precursor.backend.services.agents.mcp_scope import parse_mcp_scope, scope_includes_precursor
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_workflow_changed
 from precursor.backend.services.workflow_state import (
     build_state_index_prompt,
@@ -268,13 +270,18 @@ async def _publish(workflow: Workflow) -> None:
     await publish_workflow_changed(workflow.id, status=workflow.status, name=workflow.name)
 
 
-async def _load_workflow(session: AsyncSession, workflow_id: int) -> Workflow | None:
-    result = await session.execute(
+async def _load_workflow(
+    session: AsyncSession, workflow_id: int, *, fresh: bool = False
+) -> Workflow | None:
+    stmt = (
         select(Workflow)
         .where(Workflow.id == workflow_id)
         .options(selectinload(Workflow.steps).selectinload(WorkflowStep.agent))
     )
-    return result.scalar_one_or_none()
+    if fresh:
+        # Replace identity-mapped state, e.g. after the step rows were rewritten.
+        stmt = stmt.execution_options(populate_existing=True)
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def _last_assistant_message(
@@ -811,6 +818,8 @@ async def _begin_run(
         started_at=datetime.now(UTC),
         input=(run_input.strip()[:8000] or None) if run_input else None,
     )
+    if (source := definition_overlay.provenance(workflow)) is not None:
+        run.definition_path, run.definition_hash = source
     session.add(run)
     await session.flush()
     workflow.current_run_id = run.id
@@ -1016,6 +1025,8 @@ async def _open_agent_run(
     )
     if step is not None:
         await _snapshot_step_overrides(run, workflow, step)
+    if (source := definition_overlay.provenance(agent)) is not None:
+        run.definition_path, run.definition_hash = source
     session.add(run)
     await session.flush()
     agent.current_run_id = run.id
@@ -1505,8 +1516,15 @@ async def start_workflow(
 
     Returns the updated workflow, or ``None`` if it has no runnable step. Safe to
     call on an idle/completed/draft workflow; refuses if already running.
+
+    In files mode the step rows are first brought in line with the workflow's
+    definition file; a file with errors raises :class:`DefinitionFileError`
+    instead of running the stale database copy.
     """
-    workflow = await _load_workflow(session, workflow_id)
+    synced = await definition_anchors.sync_workflow(session, workflow_id)
+    if synced.error is not None:
+        raise definition_anchors.DefinitionFileError(synced.error)
+    workflow = await _load_workflow(session, workflow_id, fresh=synced.changed)
     if workflow is None:
         return None
     if workflow.status == "running":

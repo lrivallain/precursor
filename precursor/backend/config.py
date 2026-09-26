@@ -6,6 +6,7 @@ import os
 import sys
 from functools import cached_property, lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -146,6 +147,11 @@ class Settings(BaseSettings):
         if self.definitions_dir_override.strip():
             return str(Path(self.definitions_dir_override).expanduser().resolve())
         return str(Path(self.data_dir).resolve() / "definitions")
+
+    # Where agents and workflows take their declarations from. ``database`` is
+    # today's behaviour; ``files`` reads them from ``definitions_dir`` for every
+    # row linked to a file (work in progress, see docs/definitions.md).
+    definitions_source: Literal["database", "files"] = "database"
 
     # LLM — the active provider and its credentials live in the app settings
     # (Settings → Model), not in the environment, so they can be changed at

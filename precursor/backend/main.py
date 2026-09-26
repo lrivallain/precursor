@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 from precursor import __version__
 from precursor.backend.config import get_settings
-from precursor.backend.db import init_db
+from precursor.backend.db import SessionLocal, init_db
 from precursor.backend.plugins import discover
 from precursor.backend.routers import (
     agents,
@@ -69,6 +69,7 @@ from precursor.backend.routers import (
     workflows,
     workspaces,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.llm.one_shot import LLMCallFailed
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    # Imported above for its load listeners; files mode also needs role names.
+    async with SessionLocal() as session:
+        await definition_overlay.refresh_role_cache(session)
     from precursor.backend.services.blob_store import gc_orphan_blobs
 
     try:

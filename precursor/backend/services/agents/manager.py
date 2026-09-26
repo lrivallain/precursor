@@ -112,6 +112,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_reasoning_effort,
     resolve_agents_watchdog_timeout,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import (
     publish_agent_changed,
     publish_message_changed,
@@ -541,6 +542,8 @@ class AgentManager:
                 role_id=agent.role_id,
                 started_at=datetime.now(UTC),
             )
+            if (source := definition_overlay.provenance(agent)) is not None:
+                run.definition_path, run.definition_hash = source
             session.add(run)
             await session.flush()
             agent.current_run_id = run.id
@@ -846,6 +849,10 @@ class AgentManager:
             agent = await self._load(agent_id)
             if agent is None:
                 return
+            # Files mode: a broken definition file must not quietly run the stale
+            # database copy of the agent instead.
+            if (problem := definition_overlay.definition_error(agent)) is not None:
+                raise RuntimeError(f"Can't start '{agent.title}': {problem}")
             # A fresh objective run starts from a clean blackboard: drop any
             # artifacts *this run* published so the new turn's deliverables
             # replace them rather than piling up beside stale ones. Scoped to the

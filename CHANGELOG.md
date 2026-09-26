@@ -128,8 +128,9 @@ are the per-version history; releasing does not rewrite this file.
 
 - **Agent and workflow definition files (work in progress).** A first step
   toward declaring agents and workflows in YAML files, with only execution data
-  (runs, progress, scheduling, triggers) left in the database. The runtime
-  doesn't read the files yet. See [docs/definitions.md](docs/definitions.md).
+  (runs, progress, scheduling, triggers) left in the database. Opt-in: by
+  default everything still runs from the database. See
+  [docs/definitions.md](docs/definitions.md).
   - **File format.** `*.agent.yaml` and `*.workflow.yaml`, checked strictly:
     unknown keys, duplicate YAML keys and contradictory settings are errors.
     Workflow steps have stable keys, so `on_fail` and context sources survive
@@ -141,6 +142,12 @@ are the per-version history; releasing does not rewrite this file.
   - **Export.** `POST /api/definitions/export` writes a file for every agent and
     workflow, linked to its row, without deleting anything. The folder is
     `PRECURSOR_DEFINITIONS_DIR`, by default `<data dir>/definitions`.
+  - **Files mode.** `PRECURSOR_DEFINITIONS_SOURCE=files` declares every linked
+    agent and workflow from its file, everywhere it is read. The database
+    columns are left untouched. A workflow's step rows follow the file's step
+    list between runs, and each run records the file and hash it ran from. A
+    broken file is refused rather than replaced by the old database copy.
+    In-app edits aren't written to files yet.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

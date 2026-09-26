@@ -45,4 +45,11 @@ async def export_to_files(
     """
     if not await resolve_agents_enabled(session):
         raise HTTPException(status.HTTP_409_CONFLICT, "Agents mode is disabled")
+    if overwrite and settings.definitions_source == "files":
+        # The files are the source now: regenerating them from the database
+        # would overwrite them with the stale copy.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Definitions are read from files; overwriting them from the database is disabled",
+        )
     return await export_definitions(session, Path(settings.definitions_dir), overwrite=overwrite)

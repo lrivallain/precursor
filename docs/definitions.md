@@ -1,9 +1,9 @@
 # Agent & workflow definition files
 
 > **Work in progress.** This page describes the file format for declaring
-> agents and workflows, the folder check, and the one-shot export of today's
-> agents and workflows into files. The **runtime does not read these files
-> yet**: the app still runs agents and workflows from the database. The
+> agents and workflows, the folder check, the one-shot export of today's agents
+> and workflows into files, and an opt-in **files mode** in which the runtime
+> reads them. By default Precursor still runs everything from the database. The
 > [roadmap](#roadmap) lists the steps that get it there, and each one ships on
 > its own.
 
@@ -269,6 +269,55 @@ curl -s -X POST localhost:8000/api/definitions/export | jq '.written | length'
 curl -s localhost:8000/api/definitions/check | jq '{ok, error_count, warning_count, database}'
 ```
 
+## Files mode
+
+Set `PRECURSOR_DEFINITIONS_SOURCE=files` (default `database`) and restart.
+Every agent and workflow **linked to a file** is then declared by that file.
+
+- **Linked means:** a listed agent or a workflow whose portable id (`export_id`)
+  is a file's `id`, which is what the export sets up. A step's own prompt is
+  linked through its workflow file and step key.
+- **Where it applies:** everywhere the row is read — runs, the API and the UI,
+  search, the MCP server. The database columns are left untouched; they are
+  simply no longer used for a linked row.
+- **Edits on disk** show up within a second.
+- **A row with no file** keeps running from the database, so a new agent
+  created in the app still works; the check lists it, and the export writes its
+  file.
+- **A file with errors** is never silently replaced by the old database copy:
+  starting that agent fails with the reason, and running that workflow is
+  refused with a `409`.
+
+Each run records which file it ran from and that file's SHA-256 at the time
+(`definition_path` and `definition_hash` on agent runs and workflow runs). The
+settings a run already snapshots when it opens — model, capabilities, role,
+approval policy — are taken from the file at that moment. The others (prompt,
+autonomy, limits) are read as the run goes, exactly as they are from the
+database.
+
+### Workflow steps
+
+A workflow's step rows stay in the database, but only as *anchors*: their
+position, the agent they run and the per-run counters. Each is tied to a file
+step by `<workflow id>/<step key>`, and everything the step declares comes from
+the file. When the file's step list changes, the rows follow — added, removed,
+reordered, re-pointed — the next time the workflow is read or started:
+
+- The first time an exported workflow is read from its file, its existing rows
+  are adopted by position, so each step keeps its private agent and history.
+- A prompt step keeps its private agent while its key stays the same.
+- A step whose agent file has no row yet (a file written by hand, or copied
+  from another machine) gets one, declared by the file.
+- A removed prompt step's private agent is deleted with it.
+- **Never mid-run:** a running, paused or waiting workflow keeps the steps it
+  started with; the file's new shape applies from the next run.
+
+::: warning Not yet
+Editing an agent or workflow **in the app** still writes the database, so in
+files mode those edits are overridden by the file. Edit the files instead until
+the app writes them (roadmap step 6).
+:::
+
 ## Roadmap
 
 Each step ships on its own and is validated before the next starts.
@@ -279,8 +328,8 @@ Each step ships on its own and is validated before the next starts.
    (API + `precursor validate` CLI). Not used at runtime yet.
 3. ✅ Export existing agents and workflows to files, linking each row to its
    file through `export_id`. Nothing deleted.
-4. Agents and workflows run from their files; each run records the file
-   version it used.
+4. ✅ Agents and workflows run from their files (files mode); each run
+   records the file version it used.
 5. The Agents and Workflows lists come from the files.
 6. Editing in the app writes the file (comment-preserving).
 7. Permission changes arriving from disk (approval policy, MCP scope,

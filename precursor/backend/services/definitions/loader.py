@@ -58,6 +58,20 @@ class DefinitionSet:
     exists: bool
     files: tuple[LoadedFile, ...] = ()
     by_path: dict[str, LoadedFile] = field(default_factory=dict)
+    by_id: dict[str, tuple[LoadedFile, ...]] = field(default_factory=dict)
+
+    def find(self, kind: DefinitionKind, ident: str | None) -> LoadedFile | None:
+        """The one file carrying ``ident``, if it is of ``kind``.
+
+        An id used by two files is ambiguous (the check reports it), so it
+        resolves to nothing rather than to whichever file was read first.
+        """
+        if not ident:
+            return None
+        files = self.by_id.get(ident, ())
+        if len(files) == 1 and files[0].kind == kind:
+            return files[0]
+        return None
 
     def agents(self) -> list[tuple[LoadedFile, AgentDefinition]]:
         return [(f, f.definition) for f in self.files if isinstance(f.definition, AgentDefinition)]
@@ -283,4 +297,14 @@ def load_definitions(root: Path) -> DefinitionSet:
     with _cache_lock:
         for stale in [k for k in _cache if k.startswith(prefix) and k not in seen]:
             del _cache[stale]
-    return DefinitionSet(root=root, exists=True, files=files, by_path={f.path: f for f in files})
+    by_id: dict[str, list[LoadedFile]] = {}
+    for f in files:
+        if f.raw_id:
+            by_id.setdefault(f.raw_id, []).append(f)
+    return DefinitionSet(
+        root=root,
+        exists=True,
+        files=files,
+        by_path={f.path: f for f in files},
+        by_id={k: tuple(v) for k, v in by_id.items()},
+    )

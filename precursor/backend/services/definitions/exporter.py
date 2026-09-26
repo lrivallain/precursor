@@ -46,6 +46,7 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionsExportResult,
     ExportedDefinition,
 )
+from precursor.backend.services.definitions import overlay
 from precursor.backend.services.definitions.loader import DefinitionSet, load_definitions
 from precursor.backend.services.slugs import slugify
 
@@ -559,5 +560,7 @@ async def export_definitions(
     # never leaves a row pointing at a file that doesn't exist.
     for path, text in pending:
         _write_atomic(root / path, text)
+    # Loading the rows above may have cached a scan from before these files.
+    overlay.invalidate()
     await session.commit()
     return result

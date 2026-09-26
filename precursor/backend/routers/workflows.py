@@ -62,6 +62,7 @@ from precursor.backend.services.app_settings import (
     resolve_workflows_default_capabilities,
     resolve_workflows_default_step_timeout,
 )
+from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.events import publish_workflow_changed
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -476,6 +477,8 @@ async def list_workflows(
     include_archived: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkflowRead]:
+    # Files mode: pick up step changes made in the definition files.
+    await definition_anchors.sync_all(session)
     stmt = (
         select(Workflow)
         .options(selectinload(Workflow.steps).selectinload(WorkflowStep.agent))
@@ -542,6 +545,7 @@ async def create_workflow(
 async def get_workflow(
     workflow_id: int, session: AsyncSession = Depends(get_session)
 ) -> WorkflowRead:
+    await definition_anchors.sync_workflow(session, workflow_id)
     return await _read_one(session, await _load(session, workflow_id))
 
 
@@ -665,12 +669,15 @@ async def run_workflow(
     supplied, ``input`` becomes the run's subject and is fed to every step.
     """
     await _require_enabled(session)
-    workflow = await workflow_svc.start_workflow(
-        session,
-        get_agent_manager(),
-        workflow_id,
-        run_input=body.input if body else None,
-    )
+    try:
+        workflow = await workflow_svc.start_workflow(
+            session,
+            get_agent_manager(),
+            workflow_id,
+            run_input=body.input if body else None,
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't run this workflow: {exc}") from exc
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     return await _read_one(session, await _load(session, workflow_id))
@@ -936,13 +943,16 @@ async def fire_webhook(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown webhook token")
     if not await resolve_agents_enabled(session):
         raise HTTPException(status.HTTP_409_CONFLICT, "Agents mode is disabled")
-    await workflow_svc.start_workflow(
-        session,
-        get_agent_manager(),
-        workflow.id,
-        trigger="webhook",
-        run_input=await _webhook_input(request),
-    )
+    try:
+        await workflow_svc.start_workflow(
+            session,
+            get_agent_manager(),
+            workflow.id,
+            trigger="webhook",
+            run_input=await _webhook_input(request),
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't run this workflow: {exc}") from exc
     return {"status": "started", "workflow": str(workflow.id)}
 
 
