@@ -333,6 +333,8 @@ def test_the_windows_entry_runs_pythonw(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     assert autostart.windows_command(autostart.APP) == [
         str(scripts / "pythonw.exe"),
+        # The working directory must never shadow the installed package.
+        "-P",
         "-m",
         "precursor.backend",
         # Detached rather than --foreground: the entry only launches.
@@ -348,7 +350,7 @@ def test_the_windows_entry_quotes_the_interpreter(
     scripts = _fake_venv(tmp_path, windowless=True)
     monkeypatch.setattr(autostart.sys, "executable", str(scripts / "python.exe"))
     assert autostart.windows_command_line(autostart.APP) == (
-        f'"{scripts / "pythonw.exe"}" -m precursor.backend service start'
+        f'"{scripts / "pythonw.exe"}" -P -m precursor.backend service start'
     )
 
 

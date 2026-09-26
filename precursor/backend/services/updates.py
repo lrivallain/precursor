@@ -565,6 +565,7 @@ def _apply_out_of_process(
         "app_command": (
             [
                 str(Path(sys.executable).with_name("python.exe")),
+                "-P",
                 "-m",
                 "precursor.backend",
                 "service",

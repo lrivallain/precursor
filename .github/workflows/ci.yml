@@ -219,8 +219,8 @@ jobs:
           Say 'The login items run pythonw, never a console'
           $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
           $run.Precursor
-          if ($run.Precursor -notmatch 'pythonw\.exe" -m precursor\.backend service start$') { throw 'unexpected app entry' }
-          if ($run.'Precursor Tray' -notmatch 'pythonw\.exe" -m precursor\.backend tray$') { throw 'unexpected tray entry' }
+          if ($run.Precursor -notmatch 'pythonw\.exe" -P -m precursor\.backend service start$') { throw 'unexpected app entry' }
+          if ($run.'Precursor Tray' -notmatch 'pythonw\.exe" -P -m precursor\.backend tray$') { throw 'unexpected tray entry' }
           $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\precursor.cmd'
           if (Test-Path $startup) { throw 'the legacy Startup script is still there' }
           $visible = Get-Process python*, pythonw* -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0

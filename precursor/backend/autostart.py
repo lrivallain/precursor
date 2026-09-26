@@ -159,7 +159,10 @@ def windows_command(unit: Unit) -> list[str]:
     windowless = interpreter.with_name("pythonw.exe")
     if windowless.is_file():
         interpreter = windowless
-    return [str(interpreter), "-m", "precursor.backend", *unit.windows_args]
+    # -P: `-m` would otherwise put the working directory first on sys.path, so
+    # started from inside a Precursor checkout it would import that checkout —
+    # its data directory, its database — instead of the installed app.
+    return [str(interpreter), "-P", "-m", "precursor.backend", *unit.windows_args]
 
 
 def _kind() -> str:
