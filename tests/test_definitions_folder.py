@@ -23,6 +23,7 @@ from precursor.backend.schemas.definitions import AgentDefinition, WorkflowDefin
 from precursor.backend.services.definitions import cli
 from precursor.backend.services.definitions.checker import InstanceNames, build_report
 from precursor.backend.services.definitions.loader import load_definitions
+from tests.definitions_support import mark_database, restore_database
 
 AGENT = "kind: agent\nid: {id}\ntitle: {title}\n"
 
@@ -255,23 +256,13 @@ _created_workflows: list[int] = []
 
 @pytest.fixture
 async def api_root() -> AsyncIterator[Path]:
-    from sqlalchemy import delete
-
-    from precursor.backend.db import SessionLocal
-    from precursor.backend.models import Workflow, WorkflowStep
-
+    mark = await mark_database()
     root = _root()
     shutil.rmtree(root, ignore_errors=True)
     yield root
     shutil.rmtree(root, ignore_errors=True)
-    if _created_workflows:
-        async with SessionLocal() as session:
-            await session.execute(
-                delete(WorkflowStep).where(WorkflowStep.workflow_id.in_(_created_workflows))
-            )
-            await session.execute(delete(Workflow).where(Workflow.id.in_(_created_workflows)))
-            await session.commit()
-        _created_workflows.clear()
+    await restore_database(mark)
+    _created_workflows.clear()
 
 
 async def _setup(enabled: bool = True) -> None:

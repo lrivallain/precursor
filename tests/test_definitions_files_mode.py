@@ -18,9 +18,10 @@ from typing import Any
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select, text
+from sqlalchemy import select, text
 
 from precursor.backend.main import create_app
+from tests.definitions_support import mark_database, restore_database
 
 _created_workflows: list[int] = []
 
@@ -49,11 +50,11 @@ def _uid() -> str:
 @pytest.fixture
 async def files_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     from precursor.backend.config import get_settings
-    from precursor.backend.db import SessionLocal, init_db
-    from precursor.backend.models import AppSetting, Workflow, WorkflowStep
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
     from precursor.backend.services.definitions import overlay
 
-    await init_db()
+    mark = await mark_database()
     async with SessionLocal() as session:
         row = await session.get(AppSetting, "agents_enabled")
         if row is None:
@@ -71,25 +72,8 @@ async def files_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     yield root
     overlay.invalidate()
     shutil.rmtree(root, ignore_errors=True)
-    if _created_workflows:
-        from precursor.backend.models import WorkflowRun, WorkflowRunStep
-
-        async with SessionLocal() as session:
-            # Runs too: SQLite reuses a deleted workflow's id, and a leftover run
-            # would then collide with the next workflow's first run number.
-            run_ids = select(WorkflowRun.id).where(WorkflowRun.workflow_id.in_(_created_workflows))
-            await session.execute(
-                delete(WorkflowRunStep).where(WorkflowRunStep.run_id.in_(run_ids))
-            )
-            await session.execute(
-                delete(WorkflowRun).where(WorkflowRun.workflow_id.in_(_created_workflows))
-            )
-            await session.execute(
-                delete(WorkflowStep).where(WorkflowStep.workflow_id.in_(_created_workflows))
-            )
-            await session.execute(delete(Workflow).where(Workflow.id.in_(_created_workflows)))
-            await session.commit()
-        _created_workflows.clear()
+    await restore_database(mark)
+    _created_workflows.clear()
 
 
 def _write(root: Path, rel: str, doc: dict[str, Any]) -> None:
