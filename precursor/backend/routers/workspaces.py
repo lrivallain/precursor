@@ -41,6 +41,9 @@ from precursor.backend.schemas.workspace import WorkspaceChatRequest
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services import workspace_git as git
 from precursor.backend.services.conversation_turn import resolve_turn_settings
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions.loader import kind_for
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.slugs import slugify
 from precursor.backend.services.workspace_chat import (
@@ -52,6 +55,12 @@ from precursor.backend.services.workspace_chat import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+def _holds_definitions(root: Path) -> bool:
+    defs = Path(get_settings().definitions_dir).resolve()
+    here = root.resolve()
+    return defs == here or here in defs.parents or defs in here.parents
 
 
 def workspace_root(ws: Workspace) -> Path:
@@ -250,6 +259,9 @@ async def write_file(
         fs.write_text(browse_root(ws), path, payload.content)
     except fs.UnsafePathError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if kind_for(Path(path).name) is not None:
+        # A definition file saved here should apply now, not a second later.
+        definition_overlay.invalidate()
     return FileContent(path=path, content=payload.content)
 
 
@@ -362,6 +374,11 @@ async def git_pull(
     if ok:
         ws.last_synced_at = datetime.now(UTC)
         await session.commit()
+        # Files mode: a pull into the definitions folder applies at once (new
+        # files, changed steps); anything that widens permissions waits for
+        # review as usual.
+        if _holds_definitions(root):
+            await definition_anchors.refresh(session)
     return GitActionResult(
         ok=ok,
         detail=detail,

@@ -186,8 +186,10 @@ uv run --frozen python scripts/gen_definition_schemas.py
 
 ## The definitions folder
 
-Precursor looks for definition files under **`<data dir>/definitions`**, or the
-folder named by `PRECURSOR_DEFINITIONS_DIR`. Every `*.agent.yaml` and
+Precursor looks for definition files under **`<data dir>/definitions`**, the
+folder named by `PRECURSOR_DEFINITIONS_DIR`, or a
+[workspace](#keeping-definitions-in-git) named by
+`PRECURSOR_DEFINITIONS_WORKSPACE`. Every `*.agent.yaml` and
 `*.workflow.yaml` below it is read, in any sub-folder; hidden folders (such as
 `.git`) and hidden files are skipped. A symlink is followed only if it stays
 inside the folder.
@@ -387,6 +389,27 @@ What counts:
 This gates **permissions, not content**: a prompt rewritten within the
 permissions already accepted is not held.
 
+## Keeping definitions in git
+
+Set `PRECURSOR_DEFINITIONS_WORKSPACE` to a workspace's slug — optionally
+followed by a folder inside it, `team-defs/precursor` — and that workspace's
+working copy becomes the definitions folder. Clone a definitions repository as a
+workspace, point Precursor at it, and:
+
+- **Pull** from the Files section. The pulled files apply at once: new files get
+  rows, workflows' steps follow their files, and anything that widens
+  permissions waits for review as usual.
+- **Edit** definition files in the Files section. Opening one shows the check's
+  findings for it under the editor — errors and warnings with their location —
+  refreshed on every save, and a save applies immediately.
+- **Commit and push** from the Files section; saves made elsewhere in the app
+  (agent settings, the step editor) land in the working copy the same way.
+- **Check in CI** with `precursor validate <folder>` in the definitions
+  repository itself.
+
+The assistant's file tools still can't write there, even though it's a
+workspace. `PRECURSOR_DEFINITIONS_DIR`, when set, takes precedence.
+
 ## Roadmap
 
 Each step ships on its own and is validated before the next starts.
@@ -406,5 +429,5 @@ Each step ships on its own and is validated before the next starts.
 7. ✅ Permission changes arriving from disk (approval policy, MCP scope,
    autonomy, tools, budget, new steps) are held until a human accepts them; the
    assistant's file tools cannot write the definitions folder.
-8. The definitions folder can be a git workspace: pull, check, accept, push.
+8. ✅ The definitions folder can be a git workspace: pull, check, accept, push.
 9. The old declaration columns are removed from the database.

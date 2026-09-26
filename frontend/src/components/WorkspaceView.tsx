@@ -30,6 +30,7 @@ import { WorkspaceChat } from "./WorkspaceChat";
 import { FileTree } from "./FileTree";
 import { ChangesModal } from "./GitDiffViewer";
 import { DrawioEditor } from "./DrawioEditor";
+import { DefinitionFileIssues } from "./DefinitionFileIssues";
 import type {
   GitActionResult,
   GitStatus,
@@ -101,6 +102,8 @@ export function WorkspaceView({
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
+  // Bumped on every save, so views of the file on disk (the definition check) refresh.
+  const [savedVersion, setSavedVersion] = useState(0);
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [loadingFile, setLoadingFile] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -201,6 +204,7 @@ export function WorkspaceView({
     try {
       await api.workspaces.writeFile(area.id, activePath, content);
       setSavedContent(content);
+      setSavedVersion((v) => v + 1);
       await refreshStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -536,6 +540,11 @@ export function WorkspaceView({
                   />
                 )}
               </div>
+              <DefinitionFileIssues
+                workspaceId={area.id}
+                path={activePath}
+                version={savedVersion}
+              />
             </>
           ) : (
             <div className="h-full flex items-center justify-center text-muted text-sm">

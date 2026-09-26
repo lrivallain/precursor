@@ -337,3 +337,13 @@ async def adopt_new_files(session: AsyncSession) -> bool:
     if created:
         await session.commit()
     return created
+
+
+async def refresh(session: AsyncSession) -> None:
+    """Pick up a batch of file changes now (after a ``git pull``, say) rather
+    than on the next list: new files get rows, step rows follow their files."""
+    if not overlay.files_mode():
+        return
+    overlay.invalidate()
+    await adopt_new_files(session)
+    await sync_all(session)

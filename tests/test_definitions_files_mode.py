@@ -912,3 +912,134 @@ def test_file_tools_cannot_write_the_definitions_folder(tmp_path: Path) -> None:
     with pytest.raises(fs.UnsafePathError, match="read-only for tools"):
         fs.refuse_definitions_for_tools(defs, "agents/x.agent.yaml")
     fs.refuse_definitions_for_tools(tmp_path, "agents/x.agent.yaml")  # elsewhere: fine
+
+
+# --- Definitions in a workspace (step 8) ------------------------------------
+
+
+def test_the_definitions_folder_can_live_in_a_workspace() -> None:
+    from precursor.backend.config import Settings
+
+    base = Settings()
+    inside = Settings(definitions_workspace="team-defs/precursor")
+    assert inside.definitions_dir == str(Path(base.workspaces_dir) / "team-defs" / "precursor")
+    # Nothing outside the workspaces folder, and an explicit folder still wins.
+    assert Settings(definitions_workspace="../escape").definitions_dir == base.definitions_dir
+    explicit = Settings(definitions_workspace="team-defs", PRECURSOR_DEFINITIONS_DIR="/tmp/x")
+    assert explicit.definitions_dir == str(Path("/tmp/x").resolve())
+
+
+async def _workspace_holding(files_mode: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[int, Path]:
+    """A folder workspace whose ``defs/`` sub-folder is the definitions folder."""
+    from precursor.backend.config import get_settings
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workspace
+    from precursor.backend.services.definitions import overlay
+
+    slug = f"defs-{_uid()}"
+    async with SessionLocal() as session:
+        ws = Workspace(name="Definitions", slug=slug, kind="folder")
+        session.add(ws)
+        await session.commit()
+        ws_id = ws.id
+    root = Path(get_settings().workspaces_dir) / slug
+    (root / "defs").mkdir(parents=True)
+    monkeypatch.setattr(get_settings(), "definitions_dir", str(root / "defs"))
+    overlay.invalidate()
+    return ws_id, root
+
+
+async def test_files_shows_the_check_for_a_definition_file(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws_id, root = await _workspace_holding(files_mode, monkeypatch)
+    _write(root / "defs", "agents/ok.agent.yaml", {"kind": "agent", "id": _uid(), "title": "Ok"})
+    _write(
+        root / "defs",
+        "workflows/w.workflow.yaml",
+        {
+            "kind": "workflow",
+            "id": _uid(),
+            "name": "W",
+            "steps": [{"key": "a", "agent": "agents/missing.agent.yaml"}],
+        },
+    )
+    (root / "notes.md").write_text("# not a definition", encoding="utf-8")
+    with TestClient(create_app()) as client:
+
+        def report(path: str) -> dict[str, Any]:
+            resp = client.get(
+                "/api/definitions/file-issues", params={"workspace_id": ws_id, "path": path}
+            )
+            assert resp.status_code == 200, resp.text
+            return resp.json()
+
+        ok = report("defs/agents/ok.agent.yaml")
+        broken = report("defs/workflows/w.workflow.yaml")
+        outside = report("notes.md")
+    assert (ok["in_definitions"], ok["valid"], ok["issues"]) == (True, True, [])
+    assert broken["path"] == "workflows/w.workflow.yaml" and broken["valid"] is True
+    assert [i["location"] for i in broken["issues"]] == ["steps[a].agent"]
+    assert outside == {
+        "in_definitions": False,
+        "path": None,
+        "kind": None,
+        "valid": None,
+        "issues": [],
+    }
+
+
+async def test_saving_a_definition_in_files_applies_at_once(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws_id, root = await _workspace_holding(files_mode, monkeypatch)
+    ident = _uid()
+    agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
+    _write(root / "defs", "agents/a.agent.yaml", {"kind": "agent", "id": ident, "title": "One"})
+    with TestClient(create_app()) as client:
+        assert client.get(f"/api/agents/{agent_id}").json()["title"] == "One"
+        resp = client.put(
+            f"/api/workspaces/{ws_id}/file",
+            params={"path": "defs/agents/a.agent.yaml"},
+            json={"content": f"kind: agent\nid: {ident}\ntitle: Two\n"},
+        )
+        assert resp.status_code == 200, resp.text
+        # No wait for the folder cache to expire.
+        assert client.get(f"/api/agents/{agent_id}").json()["title"] == "Two"
+
+
+async def test_a_pull_applies_new_files_at_once(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.routers.workspaces import _holds_definitions
+    from precursor.backend.services.definitions import anchors
+
+    _ws_id, root = await _workspace_holding(files_mode, monkeypatch)
+    assert _holds_definitions(root)
+    assert not _holds_definitions(root.parent / "elsewhere")
+    ident = _uid()
+    _write(root / "defs", "agents/pulled.agent.yaml", {"kind": "agent", "id": ident, "title": "P"})
+    async with SessionLocal() as session:
+        await anchors.refresh(session)  # what git_pull runs after a successful pull
+    async with SessionLocal() as session:
+        pulled = (
+            await session.execute(select(AgentSession).where(AgentSession.export_id == ident))
+        ).scalar_one()
+    assert pulled.title == "P"
+
+
+async def test_the_assistant_cannot_write_definitions_in_a_workspace(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.services.mcp import workspace_fs_server as srv
+
+    ws_id, root = await _workspace_holding(files_mode, monkeypatch)
+    written = await srv.write_file(
+        workspace_id=ws_id, path="defs/agents/evil.agent.yaml", content="kind: agent\n"
+    )
+    assert "read-only for tools" in written["error"]
+    assert not (root / "defs/agents/evil.agent.yaml").exists()
+    ok = await srv.write_file(workspace_id=ws_id, path="notes/plan.md", content="# fine")
+    assert "error" not in ok

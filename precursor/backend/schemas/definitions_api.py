@@ -121,3 +121,15 @@ class DefinitionsExportResult(BaseModel):
     # Warnings about settings that were normalised or could not be carried,
     # and errors for files written as-is that still need fixing by hand.
     issues: list[DefinitionIssue] = []
+
+
+class DefinitionFileReport(BaseModel):
+    """What the check says about one file opened in the Files section."""
+
+    # False when the file isn't a definition file inside the definitions folder.
+    in_definitions: bool
+    # Relative to the definitions folder, as the check reports it.
+    path: str | None = None
+    kind: DefinitionKind | None = None
+    valid: bool | None = None
+    issues: list[DefinitionIssue] = []

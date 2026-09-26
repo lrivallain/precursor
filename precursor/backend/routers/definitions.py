@@ -14,17 +14,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentSession, Workflow
+from precursor.backend.models import AgentSession, Workflow, Workspace
+from precursor.backend.routers.workspaces import browse_root
 from precursor.backend.schemas.definitions_api import (
     DefinitionAcceptRequest,
+    DefinitionFileReport,
     DefinitionsCheckReport,
     DefinitionsExportResult,
     DefinitionSource,
 )
+from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.definitions.exporter import export_definitions
+from precursor.backend.services.definitions.loader import kind_for
 from precursor.backend.services.definitions.service import check_folder
 
 router = APIRouter(prefix="/api/definitions", tags=["definitions"])
@@ -94,3 +98,38 @@ async def accept_permissions(
     assert source is not None
     source.review = await definition_trust.pending_changes(session, row)
     return source
+
+
+@router.get("/file-issues", response_model=DefinitionFileReport)
+async def definition_file_issues(
+    workspace_id: int,
+    path: str,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> DefinitionFileReport:
+    """The check's findings for one file opened in the Files section.
+
+    Only a definition file inside the definitions folder has any; cross-file
+    findings (a dangling agent path, a duplicate id) are included.
+    """
+    ws = await session.get(Workspace, workspace_id)
+    if ws is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    try:
+        target = fs.safe_join(browse_root(ws), path)
+    except fs.UnsafePathError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    root = Path(settings.definitions_dir).resolve()
+    kind = kind_for(target.name)
+    if kind is None or root not in target.parents:
+        return DefinitionFileReport(in_definitions=False)
+    rel = target.relative_to(root).as_posix()
+    report = await check_folder(session, root)
+    summary = next((f for f in report.files if f.path == rel), None)
+    return DefinitionFileReport(
+        in_definitions=True,
+        path=rel,
+        kind=kind,
+        valid=summary.valid if summary is not None else None,
+        issues=[i for i in report.issues if i.path == rel],
+    )

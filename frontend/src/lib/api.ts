@@ -32,6 +32,7 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DefinitionFileReport,
   DefinitionKind,
   DefinitionsCheckReport,
   DefinitionsExportResult,
@@ -786,6 +787,10 @@ export const api = {
     // Work in progress (docs/definitions.md): the folder check and the one-shot
     // export of database agents/workflows into definition files.
     check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    fileIssues: (workspaceId: number, path: string) =>
+      request<DefinitionFileReport>(
+        `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
+      ),
     // Files mode: accept the permissions an agent's or workflow's file grants now.
     accept: (kind: DefinitionKind, id: number | string) =>
       request<DefinitionSource>(`/api/definitions/accept`, {

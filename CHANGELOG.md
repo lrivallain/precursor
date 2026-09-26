@@ -158,6 +158,10 @@ are the per-version history; releasing does not rewrite this file.
     steps) can't run until someone accepts the change in the app; narrowing
     never needs review, and what the app writes itself is accepted. The
     assistant's file tools can't write the definitions folder.
+  - **Definitions in git.** `PRECURSOR_DEFINITIONS_WORKSPACE` keeps the
+    definitions folder in a workspace: a pull applies at once (still behind
+    the permission review), and opening a definition file in Files shows the
+    check's findings for it, refreshed on save.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

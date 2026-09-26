@@ -1056,6 +1056,16 @@ export interface ExportedDefinition {
   source_id: number;
 }
 
+/** What the check says about one file opened in the Files section. */
+export interface DefinitionFileReport {
+  /** False when the file isn't a definition file inside the definitions folder. */
+  in_definitions: boolean;
+  path: string | null;
+  kind: DefinitionKind | null;
+  valid: boolean | null;
+  issues: DefinitionIssue[];
+}
+
 export interface DefinitionsExportResult {
   root: string;
   written: ExportedDefinition[];

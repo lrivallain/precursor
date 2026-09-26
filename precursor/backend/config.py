@@ -141,11 +141,18 @@ class Settings(BaseSettings):
     # written by the one-shot export, not yet by the runtime. See
     # docs/definitions.md.
     definitions_dir_override: str = Field(default="", validation_alias="PRECURSOR_DEFINITIONS_DIR")
+    # Keep the definitions in a Precursor workspace (e.g. a git clone), named by
+    # its slug, optionally followed by a folder inside it: ``team-defs`` or
+    # ``team-defs/precursor``. Ignored when PRECURSOR_DEFINITIONS_DIR is set.
+    definitions_workspace: str = ""
 
     @cached_property
     def definitions_dir(self) -> str:
         if self.definitions_dir_override.strip():
             return str(Path(self.definitions_dir_override).expanduser().resolve())
+        inside = Path(self.definitions_workspace.strip().strip("/"))
+        if inside.parts and ".." not in inside.parts and not inside.is_absolute():
+            return str(Path(self.workspaces_dir) / inside)
         return str(Path(self.data_dir).resolve() / "definitions")
 
     # Where agents and workflows take their declarations from. ``database`` is
