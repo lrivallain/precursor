@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=../../../schemas/workflow.schema.json
+kind: workflow
+id: morning-briefing
+name: Morning briefing
+description: Triage the inbox, write a brief, check it, and wait for a human OK.
+icon: sunrise
+color: amber
+approval_policy: autonomous
+max_loops: 2
+step_timeout_seconds: 1800
+steps:
+  - key: triage
+    agent: agents/inbox-triager.agent.yaml
+    on_error: retry
+    max_retries: 2
+
+  - key: brief
+    agent: agents/brief-writer.agent.yaml
+    instructions: |
+      Focus on the "act now" threads. Today's brief, if any: {{run.input | none}}
+    context:
+      mode: selected
+      from: [triage]
+
+  - key: check
+    name: Fact check
+    kind: gate
+    prompt: |
+      Check the brief against the triage artifact. PASS if every headline point
+      is backed by a thread; otherwise FAIL and say which point is unsupported.
+    model: gpt-5.4-mini
+    on_fail: brief
+    capabilities:
+      mcp: false
+      memory: false
+
+  - key: review
+    kind: approval
+    instructions: Read the brief before it goes out.
+    on_fail: brief
+    on_reject: rework

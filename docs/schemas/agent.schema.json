@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AgentAutonomy": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Keep working toward the prompt on its own after each turn.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "max_steps": {
+          "default": 12,
+          "description": "Autonomous steps before handing back.",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        }
+      },
+      "title": "AgentAutonomy",
+      "type": "object"
+    },
+    "AgentCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "mcp": {
+          "default": true,
+          "title": "Mcp",
+          "type": "boolean"
+        },
+        "skills": {
+          "default": true,
+          "title": "Skills",
+          "type": "boolean"
+        },
+        "memory": {
+          "default": true,
+          "title": "Memory",
+          "type": "boolean"
+        },
+        "mcp_servers": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[^,\\s]([^,]*[^,\\s])?$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only these MCP servers. Omit for every enabled server; [] for none.",
+          "title": "Mcp Servers"
+        }
+      },
+      "title": "AgentCapabilities",
+      "type": "object"
+    },
+    "AgentLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "token_budget": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cumulative tokens before the agent is parked.",
+          "title": "Token Budget"
+        },
+        "max_retries": {
+          "default": 0,
+          "description": "Automatic re-runs on failure.",
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        }
+      },
+      "title": "AgentLimits",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``agents/<slug>.agent.yaml``.",
+  "properties": {
+    "kind": {
+      "const": "agent",
+      "title": "Kind",
+      "type": "string"
+    },
+    "format": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Format",
+      "type": "integer"
+    },
+    "id": {
+      "description": "Stable identity linking this file to its run history. Never change it; renaming or moving the file keeps the history as long as the id stays.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "prompt": {
+      "default": "",
+      "description": "The agent's objective.",
+      "title": "Prompt",
+      "type": "string"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "role": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Assistant Role, by name.",
+      "title": "Role"
+    },
+    "approval_policy": {
+      "anyOf": [
+        {
+          "enum": [
+            "manual",
+            "balanced",
+            "autonomous"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tool-approval policy. Omit to inherit the global default.",
+      "title": "Approval Policy"
+    },
+    "autonomy": {
+      "$ref": "#/$defs/AgentAutonomy"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/AgentCapabilities"
+    },
+    "limits": {
+      "$ref": "#/$defs/AgentLimits"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "title"
+  ],
+  "title": "Precursor agent definition",
+  "type": "object"
+}

@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "StepCapabilities": {
+      "additionalProperties": false,
+      "description": "Per-step overrides; an omitted toggle inherits the step's agent.",
+      "properties": {
+        "mcp": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp"
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skills"
+        },
+        "memory": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory"
+        },
+        "mcp_servers": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[^,\\s]([^,]*[^,\\s])?$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only these MCP servers. Omit for every enabled server; [] for none.",
+          "title": "Mcp Servers"
+        }
+      },
+      "title": "StepCapabilities",
+      "type": "object"
+    },
+    "StepContext": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "default": "auto",
+          "description": "auto: the previous step's output plus published artifacts; selected: only the steps listed in `from`; none: the objective alone.",
+          "enum": [
+            "auto",
+            "selected",
+            "none"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "items": {
+                "description": "Stable step identifier, unique within the workflow.",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Earlier step keys to inherit from (mode: selected only).",
+          "title": "From"
+        }
+      },
+      "title": "StepContext",
+      "type": "object"
+    },
+    "WorkflowStepDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "Stable step identifier, unique within the workflow.",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "kind": {
+          "default": "task",
+          "description": "task: runs an agent; inline: runs its own prompt; gate: votes PASS/FAIL and loops back on FAIL; approval: waits for a human.",
+          "enum": [
+            "task",
+            "inline",
+            "gate",
+            "approval"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Agent file, relative to the definitions folder.",
+          "title": "Agent"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A one-off objective owned by this step (no agent file).",
+          "title": "Prompt"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Model for `prompt`.",
+          "title": "Model"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "maxLength": 8000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Extra mandate for this step only. Supports {{run.input}}, {{step.N.output}} (N = 0-based position) and {{state.<key>}} placeholders.",
+          "title": "Instructions"
+        },
+        "on_fail": {
+          "anyOf": [
+            {
+              "description": "Stable step identifier, unique within the workflow.",
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Gate/approval: the step to re-drive on FAIL or rework (default: the previous runnable step).",
+          "title": "On Fail"
+        },
+        "on_error": {
+          "default": "fail",
+          "enum": [
+            "fail",
+            "retry",
+            "continue"
+          ],
+          "title": "On Error",
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 0,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "on_reject": {
+          "default": "rework",
+          "description": "Approval only: what a human rejection does.",
+          "enum": [
+            "rework",
+            "stop",
+            "skip"
+          ],
+          "title": "On Reject",
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/StepContext"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/StepCapabilities"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "WorkflowStepDefinition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``workflows/<slug>.workflow.yaml``.",
+  "properties": {
+    "kind": {
+      "const": "workflow",
+      "title": "Kind",
+      "type": "string"
+    },
+    "format": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Format",
+      "type": "integer"
+    },
+    "id": {
+      "description": "Stable identity linking this file to its run history. Never change it; renaming or moving the file keeps the history as long as the id stays.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "icon": {
+      "anyOf": [
+        {
+          "maxLength": 40,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "A lucide icon name.",
+      "title": "Icon"
+    },
+    "color": {
+      "anyOf": [
+        {
+          "maxLength": 24,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Color"
+    },
+    "role": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Assistant Role applied to every step, by name.",
+      "title": "Role"
+    },
+    "approval_policy": {
+      "anyOf": [
+        {
+          "enum": [
+            "manual",
+            "balanced",
+            "autonomous"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tool-approval policy for every step. Omit to keep each agent's own.",
+      "title": "Approval Policy"
+    },
+    "clear_artifacts": {
+      "default": true,
+      "description": "Wipe the agents' previous artifacts at the start of a run.",
+      "title": "Clear Artifacts",
+      "type": "boolean"
+    },
+    "max_loops": {
+      "default": 3,
+      "description": "Cap on gate loop-backs per run.",
+      "maximum": 25,
+      "minimum": 1,
+      "title": "Max Loops",
+      "type": "integer"
+    },
+    "step_timeout_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 30,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Stall watchdog. Omit for none.",
+      "title": "Step Timeout Seconds"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/WorkflowStepDefinition"
+      },
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "name"
+  ],
+  "title": "Precursor workflow definition",
+  "type": "object"
+}
