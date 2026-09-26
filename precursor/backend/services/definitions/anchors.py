@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -270,9 +271,15 @@ async def sync_workflow(session: AsyncSession, workflow_id: int) -> SyncResult:
         )
     if workflow.status in ACTIVE_STATUSES:
         return SyncResult()
-    result = await _reconcile(session, workflow, linked.definition, dset)
-    if result.changed:
-        await session.commit()
+    try:
+        result = await _reconcile(session, workflow, linked.definition, dset)
+        if result.changed:
+            await session.commit()
+    except IntegrityError:
+        # A concurrent request reconciled (or adopted) the same file first;
+        # its rows stand, and the next read sees them.
+        await session.rollback()
+        return SyncResult()
     return result
 
 
@@ -352,7 +359,12 @@ async def adopt_new_files(session: AsyncSession) -> bool:
                 )
                 created = True
     if created:
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Two lists raced to adopt the same file: the other one won.
+            await session.rollback()
+            return False
     return created
 
 

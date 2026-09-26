@@ -855,10 +855,11 @@ class AgentManager:
             if (problem := definition_overlay.definition_error(agent)) is not None:
                 raise RuntimeError(f"Can't start '{agent.title}': {problem}")
             # ...nor start with permissions its file widened and nobody accepted.
-            async with SessionLocal() as review_session:
-                changes = await definition_trust.pending_changes(review_session, agent)
-            if changes:
-                raise RuntimeError(definition_trust.review_message(agent.title, changes))
+            if definition_overlay.files_mode():
+                async with SessionLocal() as review_session:
+                    changes = await definition_trust.pending_changes(review_session, agent)
+                if changes:
+                    raise RuntimeError(definition_trust.review_message(agent.title, changes))
             # A fresh objective run starts from a clean blackboard: drop any
             # artifacts *this run* published so the new turn's deliverables
             # replace them rather than piling up beside stale ones. Scoped to the

@@ -1054,3 +1054,28 @@ async def test_the_runtime_knows_the_step_keys_of_a_file_workflow(files_mode: Pa
         client.get(f"/api/workflows/{wf['workflow']}")  # adopt the rows
     async with SessionLocal() as session:
         assert await _step_keys(session, wf["workflow"]) == {"write": 0, "check": 1}
+
+
+async def test_two_lists_racing_to_adopt_a_file_do_not_fail(files_mode: Path) -> None:
+    import asyncio
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.definitions import anchors
+
+    ident = _uid()
+    _write(files_mode, "agents/racy.agent.yaml", {"kind": "agent", "id": ident, "title": "Racy"})
+
+    async def adopt() -> bool:
+        async with SessionLocal() as session:
+            return await anchors.adopt_new_files(session)
+
+    results = await asyncio.gather(adopt(), adopt())
+    assert True in results  # one of them adopted it; neither raised
+    async with SessionLocal() as session:
+        rows = (
+            (await session.execute(select(AgentSession).where(AgentSession.export_id == ident)))
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1
