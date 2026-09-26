@@ -536,6 +536,18 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Agents recover when the Copilot CLI crashes.** All agents share a single
+  Copilot CLI process. When it died (seen as a V8 "JavaScript heap out of
+  memory" after about 35 hours), Precursor didn't notice. Every later agent run
+  and workflow step then failed at once with `[Errno 32] Broken pipe` until the
+  app was restarted. Precursor now restarts the CLI on the next agent request,
+  or within a minute through the watchdog.
+- **Finished agent runs no longer leak memory into the Copilot CLI.** A run's
+  live SDK session was never disconnected, and workflows open a new run for
+  every step. A 30-minute schedule left hundreds of idle sessions (and more
+  than 10,000 open handles) in the CLI, which is what exhausted its heap.
+  Sessions now disconnect after 15 minutes at rest. The next turn resumes them
+  from disk.
 - **Agent-timeline retention works on large archives again.** Once more than
   ~32k archived agent events were due for pruning, the sweep measured them in a
   single `IN (…)` query and SQLite rejected it with "too many SQL variables" —

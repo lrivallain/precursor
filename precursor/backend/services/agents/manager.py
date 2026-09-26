@@ -50,6 +50,7 @@ import contextvars
 import json
 import logging
 import os
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
@@ -192,6 +193,13 @@ _START_TIMEOUT_SECONDS = 30.0
 # How often the watchdog sweeps for stalled running sessions.
 _WATCHDOG_INTERVAL_SECONDS = 60.0
 
+# Every live SDK session keeps its conversation and tool-server wiring in the one
+# shared CLI process until it is disconnected. Workflows open a fresh run per step
+# and nothing else releases a finished one, so without this TTL they pile up until
+# the CLI exhausts its heap and dies. A released session resumes from its on-disk
+# state (``copilot_session_id``) on its next turn.
+_IDLE_SESSION_TTL_SECONDS = 15 * 60
+
 
 def _runtime_env() -> dict[str, str]:
     """Environment for the spawned CLI, pinned to the binary the probe resolved.
@@ -305,25 +313,61 @@ class AgentManager:
             if not ok:
                 logger.warning("Agents mode enabled but unavailable: %s", detail)
                 return
-            try:
-                sdk = runtime.load_sdk()
-                self._client = sdk.CopilotClient(
-                    base_directory=runtime.agents_home_dir(),
-                    env=_runtime_env(),
-                    log_level=get_settings().log_level,
-                )
-                await asyncio.wait_for(self._client.start(), timeout=_START_TIMEOUT_SECONDS)
-            except Exception:
-                logger.exception("Failed to start Copilot SDK client")
-                with contextlib.suppress(Exception):
-                    if self._client is not None:
-                        await self._client.stop()
-                self._client = None
+            if not await self._start_client():
                 return
             self._ready = True
             logger.info("Agents runtime started (%s).", detail)
         if self._watchdog_task is None or self._watchdog_task.done():
             self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+
+    async def _start_client(self) -> bool:
+        """Spawn the CLI server and connect to it; ``False`` if it won't come up."""
+        try:
+            sdk = runtime.load_sdk()
+            self._client = sdk.CopilotClient(
+                base_directory=runtime.agents_home_dir(),
+                env=_runtime_env(),
+                log_level=get_settings().log_level,
+            )
+            await asyncio.wait_for(self._client.start(), timeout=_START_TIMEOUT_SECONDS)
+        except Exception:
+            logger.exception("Failed to start Copilot SDK client")
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    await self._client.stop()
+            self._client = None
+            return False
+        return True
+
+    def _runtime_alive(self) -> bool:
+        """Whether the CLI server behind the client is still there.
+
+        The SDK has no public health accessor. When the CLI exits (e.g. a V8 heap
+        OOM) its reader thread flips ``_state`` to ``disconnected`` but nothing
+        else reacts: every later request writes to the dead child's stdin and
+        fails with ``[Errno 32] Broken pipe`` until the app is restarted.
+        """
+        if self._client is None:
+            return False
+        return getattr(self._client, "_state", None) not in {"disconnected", "error"}
+
+    async def _ensure_runtime(self) -> None:
+        """Restart the CLI server if it died while the app kept running."""
+        if not self._ready or self._runtime_alive():
+            return
+        async with self._lock:
+            if not self._ready or self._runtime_alive():
+                return
+            logger.warning("Copilot runtime exited unexpectedly; restarting it")
+            # Its sessions died with it. A turn that was in flight is left to the
+            # watchdog, which interrupts it so it can be resumed.
+            self._live.clear()
+            with _quiet_sdk_teardown_pipe_noise(), contextlib.suppress(Exception):
+                if self._client is not None:
+                    await self._client.force_stop()
+            self._client = None
+            if await self._start_client():
+                logger.info("Copilot runtime restarted.")
 
     async def stop(self) -> None:
         async with self._lock:
@@ -383,15 +427,60 @@ class AgentManager:
         session pinned in ``running`` forever, never notifying back. This sweep
         flips such sessions to ``interrupted`` (resumable) with a reason, so they
         surface in the UI and the user can Resume to retry the in-flight prompt.
+        The same tick restarts a CLI server that died and releases live sessions
+        that have sat idle past ``_IDLE_SESSION_TTL_SECONDS``.
         """
+        sweeps = (self._ensure_runtime, self._watchdog_sweep, self._release_idle_sessions)
         while self._ready:
             try:
                 await asyncio.sleep(_WATCHDOG_INTERVAL_SECONDS)
-                await self._watchdog_sweep()
+                for sweep in sweeps:
+                    try:
+                        await sweep()
+                    except Exception:
+                        logger.debug("agent watchdog %s failed", sweep.__name__, exc_info=True)
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.debug("agent watchdog sweep failed", exc_info=True)
+
+    async def _release_idle_sessions(self) -> None:
+        """Disconnect live sessions whose run has been at rest past the TTL.
+
+        A run with no resume handle is kept while it is still the agent's current
+        run: releasing it would start the agent's next turn on an empty
+        conversation. Once superseded, nothing will ever send to it again.
+        """
+        if not self._live:
+            return
+        cutoff = datetime.now(UTC) - timedelta(seconds=_IDLE_SESSION_TTL_SECONDS)
+        async with SessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(AgentRun, AgentSession.current_run_id)
+                    .join(AgentSession, AgentSession.id == AgentRun.agent_id)
+                    .where(AgentRun.id.in_(list(self._live)))
+                )
+            ).all()
+        for run, current_run_id in rows:
+            if run.status in {"running", "needs_approval", "pending"}:
+                continue
+            if not run.copilot_session_id and run.id == current_run_id:
+                continue
+            ref = run.last_activity_at or run.finished_at or run.updated_at or run.created_at
+            if ref is None:
+                continue
+            if ref.tzinfo is None:
+                ref = ref.replace(tzinfo=UTC)
+            live = self._live.get(run.id)
+            # No ``await`` between this check and ``_teardown_run`` popping the
+            # session, so one ``_ensure_live`` has just handed out is never torn
+            # down under its caller.
+            if (
+                ref < cutoff
+                and live is not None
+                and time.monotonic() - live.last_used > _IDLE_SESSION_TTL_SECONDS
+            ):
+                logger.debug("agent %s run %s: releasing idle live session", run.agent_id, run.id)
+                await self._teardown_run(run.id)
 
     async def _watchdog_sweep(self) -> None:
         """Interrupt every *run* that has gone silent, not every agent.
@@ -644,6 +733,7 @@ class AgentManager:
         for the same ``copilot_session_id`` — a duplicate create leaves the CLI's
         permission responder mis-wired and every tool call is then denied.
         """
+        await self._ensure_runtime()
         self._require_ready()
         lock = self._live_locks.setdefault(run.id, asyncio.Lock())
         async with lock:
@@ -652,6 +742,7 @@ class AgentManager:
     async def _ensure_live_locked(self, agent: AgentSession, run: AgentRun) -> _LiveSession:
         live = self._live.get(run.id)
         if live is not None:
+            live.last_used = time.monotonic()
             oauth_stale = self._oauth_stale(live)
             catalog_changed = (
                 live.mcp_fingerprint is not None
