@@ -210,14 +210,22 @@ def _agent_document(ctx: _Context, agent: AgentSession, ident: str, path: str) -
     return doc
 
 
-def _step_keys(steps: list[WorkflowStep]) -> list[str]:
+def _step_keys(steps: list[WorkflowStep], preferred: list[str | None] | None = None) -> list[str]:
+    """One unique key per step: the ``preferred`` one when given (an in-app
+    save keeps the keys the file already had), else derived from its label."""
     keys: list[str] = []
+    wanted = preferred or []
+    taken = {k for k in wanted if k}
     for pos, step in enumerate(steps):
+        keep = wanted[pos] if pos < len(wanted) else None
+        if keep and keep not in keys:
+            keys.append(keep)
+            continue
         label = step.name or (step.agent.title if step.agent is not None else "") or ""
         fallback = "step" if step.kind in ("task", "inline") else step.kind
         base = _short_slug(label, 32) or f"{fallback}-{pos + 1}"
         key, n = base, 2
-        while key in keys:
+        while key in keys or key in taken:
             key = f"{base}-{n}"
             n += 1
         keys.append(key)
@@ -370,6 +378,9 @@ def _workflow_document(
     ident: str,
     path: str,
     agent_paths: dict[int, str],
+    *,
+    steps: list[WorkflowStep] | None = None,
+    preferred_keys: list[str | None] | None = None,
 ) -> dict[str, Any]:
     doc: dict[str, Any] = {
         "kind": "workflow",
@@ -405,8 +416,8 @@ def _workflow_document(
             )
         doc["step_timeout_seconds"] = timeout
 
-    steps = sorted(workflow.steps, key=lambda s: s.position)
-    keys = _step_keys(steps)
+    steps = sorted(steps if steps is not None else workflow.steps, key=lambda s: s.position)
+    keys = _step_keys(steps, preferred_keys)
     doc["steps"] = [
         _step_document(ctx, path, workflow, steps, keys, pos, agent_paths)
         for pos in range(len(steps))

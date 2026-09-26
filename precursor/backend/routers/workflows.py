@@ -64,6 +64,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_workflow_changed
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -541,6 +542,8 @@ async def create_workflow(
     # A workflow with at least one step is ready to run (idle); an empty one
     # stays a draft until steps are added.
     workflow.status = "idle" if payload.steps else "draft"
+    # Files mode: a new workflow is declared by a new file from the start.
+    await definition_writer.save_workflow(session, workflow)
     await session.commit()
     await publish_workflow_changed(workflow.id)
     return await _read_one(session, await _load(session, workflow.id))
@@ -637,6 +640,8 @@ async def update_workflow(
         if workflow.status in ("completed", "failed", "cancelled", "draft"):
             workflow.status = "idle" if payload.steps else "draft"
         workflow.current_step_id = None
+    # Files mode: the edit goes to the file, which declares the workflow.
+    await definition_writer.save_workflow(session, workflow)
     await session.commit()
     await publish_workflow_changed(workflow.id)
     return await _read_one(session, await _load(session, workflow.id))
@@ -656,6 +661,7 @@ async def delete_workflow(workflow_id: int, session: AsyncSession = Depends(get_
         if agent is not None and agent.inline:
             await session.delete(agent)
     await session.commit()
+    definition_writer.remove_file(workflow)
     await publish_workflow_changed(workflow_id)
 
 

@@ -78,6 +78,7 @@ from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler
 
@@ -701,7 +702,7 @@ async def create_agent(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Agent task is required")
 
     title = (payload.title or task_prompt).strip()[:200] or "Agent task"
-    return await _spawn_agent(
+    agent = await _spawn_agent(
         session,
         title=title,
         task_prompt=task_prompt,
@@ -724,6 +725,10 @@ async def create_agent(
         blueprint_id=payload.blueprint_id,
         start=payload.start,
     )
+    # Files mode: a new agent is declared by a new file from the start.
+    if await definition_writer.save_agent(session, agent):
+        await session.commit()
+    return agent
 
 
 @router.get("/{agent_id}/workflows", response_model=list[WorkflowSummary])
@@ -1045,6 +1050,9 @@ async def update_agent(
             agent.task_prompt = new_task
             task_changed = True
 
+    # Files mode: the file is the declaration, so the edit goes there — before
+    # the commit, because the refresh below re-reads the agent from its file.
+    await definition_writer.save_agent(session, agent)
     await session.commit()
     await session.refresh(agent)
 
@@ -1123,6 +1131,7 @@ async def delete_agent(agent_id: str, session: AsyncSession = Depends(get_sessio
     await get_agent_manager().teardown_session(aid, forget=True)
     await session.delete(agent)
     await session.commit()
+    definition_writer.remove_file(agent)
     await publish_agent_changed(agent_session_id=aid, topic_id=topic_id, chat_id=chat_id)
 
 

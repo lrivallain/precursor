@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -305,12 +306,13 @@ def provenance(obj: AgentSession | Workflow) -> tuple[str, str] | None:
 # --- Projection -------------------------------------------------------------
 
 
-def _apply(target: object, values: dict[str, Any]) -> None:
+def _apply(target: object, values: dict[str, Any], only: Collection[str] | None = None) -> None:
     for key, value in values.items():
-        set_committed_value(target, key, value)
+        if only is None or key in only:
+            set_committed_value(target, key, value)
 
 
-def project_agent(agent: AgentSession) -> None:
+def project_agent(agent: AgentSession, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
     dset = current_definitions()
@@ -321,29 +323,34 @@ def project_agent(agent: AgentSession) -> None:
             assert isinstance(wf_file.definition, WorkflowDefinition)
             step = wf_file.definition.steps[index]
             if step.prompt is not None:
-                _apply(agent, vessel_columns(step))
+                _apply(agent, vessel_columns(step), only)
         return
     linked = dset.find("agent", agent.export_id)
     if linked is not None and isinstance(linked.definition, AgentDefinition):
-        _apply(agent, agent_columns(linked.definition))
+        _apply(agent, agent_columns(linked.definition), only)
 
 
-def project_workflow(workflow: Workflow) -> None:
+def project_workflow(workflow: Workflow, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
     linked = current_definitions().find("workflow", workflow.export_id)
     if linked is not None and isinstance(linked.definition, WorkflowDefinition):
-        _apply(workflow, workflow_columns(linked.definition))
+        _apply(workflow, workflow_columns(linked.definition), only)
 
 
-def project_step(step: WorkflowStep) -> None:
+def project_step(step: WorkflowStep, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
     found = _step_in(current_definitions(), step.definition_ref)
     if found is not None:
         wf_file, index = found
         assert isinstance(wf_file.definition, WorkflowDefinition)
-        _apply(step, step_columns(wf_file.definition, index))
+        _apply(step, step_columns(wf_file.definition, index), only)
+
+
+# A refresh reloads only ``attrs`` (all of them when it's ``None``). Re-project
+# just those: after a flush SQLAlchemy may reload one expired column, and
+# re-applying the whole file then would wipe edits still held in memory.
 
 
 @event.listens_for(AgentSession, "load")
@@ -352,8 +359,8 @@ def _agent_loaded(target: AgentSession, _context: object) -> None:
 
 
 @event.listens_for(AgentSession, "refresh")
-def _agent_refreshed(target: AgentSession, _context: object, _attrs: object) -> None:
-    project_agent(target)
+def _agent_refreshed(target: AgentSession, _context: object, attrs: Collection[str] | None) -> None:
+    project_agent(target, attrs)
 
 
 @event.listens_for(Workflow, "load")
@@ -362,8 +369,8 @@ def _workflow_loaded(target: Workflow, _context: object) -> None:
 
 
 @event.listens_for(Workflow, "refresh")
-def _workflow_refreshed(target: Workflow, _context: object, _attrs: object) -> None:
-    project_workflow(target)
+def _workflow_refreshed(target: Workflow, _context: object, attrs: Collection[str] | None) -> None:
+    project_workflow(target, attrs)
 
 
 @event.listens_for(WorkflowStep, "load")
@@ -372,5 +379,5 @@ def _step_loaded(target: WorkflowStep, _context: object) -> None:
 
 
 @event.listens_for(WorkflowStep, "refresh")
-def _step_refreshed(target: WorkflowStep, _context: object, _attrs: object) -> None:
-    project_step(target)
+def _step_refreshed(target: WorkflowStep, _context: object, attrs: Collection[str] | None) -> None:
+    project_step(target, attrs)

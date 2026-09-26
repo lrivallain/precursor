@@ -327,10 +327,29 @@ reordered, re-pointed — the next time the workflow is read or started:
   message}`. Agent runs and workflow runs carry `definition_path` and
   `definition_hash`. In database mode `definition` is `null`.
 
-::: warning Not yet
-Editing an agent or workflow **in the app** still writes the database, so in
-files mode those edits are overridden by the file. Edit the files instead until
-the app writes them (roadmap step 6).
+### Editing in the app
+
+In files mode, saving an agent or a workflow from the app writes its file —
+settings and steps alike — and the change shows up everywhere at once.
+
+- **The first save** of an agent or workflow that has no file yet creates one,
+  so the folder fills up as things are edited. So does creating a workflow or
+  an agent in the app.
+- **Step keys are kept** across saves from the step editor (which rebuilds every
+  step), so a prompt step keeps its private agent and history. A step the save
+  can't recognise gets a new key derived from its label.
+- **Deleting** an agent or workflow in the app deletes its file; left behind,
+  the next list would bring it straight back. Archiving leaves the file alone.
+- **A transfer import** writes the files of the agents and workflow it created
+  or replaced.
+- **A file with errors is never overwritten** from the app: the save is refused
+  with a `409`, so a half-finished hand edit isn't lost. Fix the file first.
+
+::: warning Comments are not kept
+The app regenerates the whole file in the export's layout when it saves, so
+comments and custom ordering in that file are lost (the header comment is
+written back). Keeping them needs a comment-preserving YAML library
+(`ruamel.yaml`), a new dependency that has to go through the lockfile workflow.
 :::
 
 ## Roadmap
@@ -347,7 +366,8 @@ Each step ships on its own and is validated before the next starts.
    records the file version it used.
 5. ✅ The Agents and Workflows lists come from the files: new files appear,
    moved files keep their history, and each page shows its file.
-6. Editing in the app writes the file (comment-preserving).
+6. ✅ Editing in the app writes the file (comments are not kept yet — see
+   above).
 7. Permission changes arriving from disk (approval policy, MCP scope,
    autonomy) are held until a human accepts them; the assistant's file tools
    cannot write the definitions folder.

@@ -607,3 +607,157 @@ async def test_a_hand_written_workflow_file_becomes_a_runnable_workflow(files_mo
     ]
     assert body["steps"][0]["agent"]["title"] == "Helper"
     assert body["steps"][1]["agent"]["task_prompt"] == "PASS if ok"
+
+
+# --- In-app edits write the files (step 6) ----------------------------------
+
+
+def _load_file(root: Path, rel: str) -> dict[str, Any]:
+    return yaml.safe_load((root / rel).read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def runtime_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend.services.agents import runtime
+
+    monkeypatch.setattr(runtime, "agents_available", lambda: (True, "test"))
+
+
+async def test_editing_a_linked_agent_writes_its_file(files_mode: Path, runtime_up: None) -> None:
+    ident = _uid()
+    agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
+    _write(
+        files_mode,
+        "agents/editor.agent.yaml",
+        {"kind": "agent", "id": ident, "title": "Before", "prompt": "old prompt"},
+    )
+    with TestClient(create_app()) as client:
+        resp = client.patch(
+            f"/api/agents/{agent_id}",
+            json={
+                "title": "After",
+                "task": "new prompt",
+                "approval_policy": "autonomous",
+                "use_skills": False,
+                "mcp_servers": "fetch",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert (resp.json()["title"], resp.json()["task_prompt"]) == ("After", "new prompt")
+        again = client.get(f"/api/agents/{agent_id}").json()
+    assert again["title"] == "After"
+    doc = _load_file(files_mode, "agents/editor.agent.yaml")
+    assert doc == {
+        "kind": "agent",
+        "id": ident,
+        "title": "After",
+        "prompt": "new prompt",
+        "approval_policy": "autonomous",
+        "capabilities": {"skills": False, "mcp_servers": ["fetch"]},
+    }
+
+
+async def test_editing_an_agent_without_a_file_creates_it(files_mode: Path) -> None:
+    agent_id = await _agent_row(title=f"Fresh {_uid()}", task_prompt="p", chat_id=None)
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent_id}", json={"max_steps": 7})
+        assert resp.status_code == 200, resp.text
+        body = client.get(f"/api/agents/{agent_id}").json()
+    assert body["definition"]["state"] == "file"
+    doc = _load_file(files_mode, body["definition"]["path"])
+    assert doc["autonomy"] == {"max_steps": 7}
+    assert body["definition"]["path"].startswith("agents/fresh-")
+
+
+async def test_a_broken_file_is_never_overwritten_from_the_app(files_mode: Path) -> None:
+    ident = _uid()
+    agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
+    broken = f"kind: agent\nid: {ident}\ntitel: half-typed\n"
+    (files_mode / "agents").mkdir(parents=True, exist_ok=True)
+    (files_mode / "agents/wip.agent.yaml").write_text(broken, encoding="utf-8")
+    from precursor.backend.services.definitions import overlay
+
+    overlay.invalidate()
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent_id}", json={"title": "From the app"})
+    assert resp.status_code == 409
+    assert "has errors" in resp.json()["detail"]
+    assert (files_mode / "agents/wip.agent.yaml").read_text(encoding="utf-8") == broken
+
+
+async def test_workflow_settings_and_steps_saved_in_the_app_reach_the_file(
+    files_mode: Path,
+) -> None:
+    wf = await _exported_workflow()
+    with TestClient(create_app()) as client:
+        before = client.get(f"/api/workflows/{wf['workflow']}").json()
+        resp = client.patch(
+            f"/api/workflows/{wf['workflow']}", json={"name": "Renamed in app", "max_loops": 5}
+        )
+        assert resp.status_code == 200, resp.text
+        doc = _load_file(files_mode, wf["path"])
+        assert (doc["name"], doc["max_loops"]) == ("Renamed in app", 5)
+        assert [s["key"] for s in doc["steps"]] == ["write", "check"]
+
+        # What the step editor sends: the steps swapped, the inline one edited.
+        write_step, check_step = before["steps"]
+        payload = [
+            {
+                "agent_id": check_step["agent"]["id"],
+                "task": "judge it strictly",
+                "kind": "gate",
+                "name": "Check",
+            },
+            {"agent_id": write_step["agent"]["id"], "kind": "task", "name": "Write"},
+        ]
+        resp = client.patch(f"/api/workflows/{wf['workflow']}", json={"steps": payload})
+        assert resp.status_code == 200, resp.text
+        after = resp.json()
+
+    doc = _load_file(files_mode, wf["path"])
+    # Keys survive the save (the editor recreates every row), so the inline step
+    # keeps its private agent and the history that goes with it.
+    assert [s["key"] for s in doc["steps"]] == ["check", "write"]
+    assert doc["steps"][0]["prompt"] == "judge it strictly"
+    assert doc["steps"][1]["agent"] == wf["writer_path"]
+    assert after["steps"][0]["agent"]["id"] == wf["vessel"]
+    assert after["steps"][0]["agent"]["task_prompt"] == "judge it strictly"
+    refs = [ref for _, ref, *_ in await _steps(wf["workflow"])]
+    assert refs == [f"{wf['id']}/check", f"{wf['id']}/write"]
+
+
+async def test_deleting_in_the_app_removes_the_file(files_mode: Path) -> None:
+    wf = await _exported_workflow()
+    agent_ident = _uid()
+    agent_id = await _agent_row(title="Doomed", task_prompt="p", export_id=agent_ident)
+    _write(
+        files_mode, "agents/doomed.agent.yaml", {"kind": "agent", "id": agent_ident, "title": "D"}
+    )
+    with TestClient(create_app()) as client:
+        assert client.delete(f"/api/workflows/{wf['workflow']}").status_code == 204
+        assert client.delete(f"/api/agents/{agent_id}").status_code == 204
+        # Not re-adopted as a new row by the next list.
+        titles = [a["title"] for a in client.get("/api/agents").json()]
+    _created_workflows.remove(wf["workflow"])
+    assert not (files_mode / wf["path"]).exists()
+    assert not (files_mode / "agents/doomed.agent.yaml").exists()
+    assert "D" not in titles
+
+
+async def test_creating_a_workflow_in_the_app_writes_a_file(files_mode: Path) -> None:
+    name = f"Made in app {_uid()}"
+    with TestClient(create_app()) as client:
+        resp = client.post(
+            "/api/workflows",
+            json={"name": name, "steps": [{"task": "do one thing", "name": "Only step"}]},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+    _created_workflows.append(body["id"])
+    assert body["definition"]["state"] == "file"
+    doc = _load_file(files_mode, body["definition"]["path"])
+    assert doc["name"] == name
+    # (Capabilities are left out: they follow Settings → Workflows defaults,
+    # which other tests change in the shared database.)
+    [step] = doc["steps"]
+    assert (step["key"], step["name"], step["prompt"]) == ("only-step", "Only step", "do one thing")

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentSession
+from precursor.backend.models import AgentSession, Workflow
 from precursor.backend.schemas.transfer import (
     TransferDocument,
     TransferImportRequest,
@@ -25,6 +25,7 @@ from precursor.backend.schemas.transfer import (
 )
 from precursor.backend.services.agents import transfer as transfer_svc
 from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_agent_changed, publish_workflow_changed
 
 router = APIRouter(prefix="/api/transfer", tags=["transfer"])
@@ -98,6 +99,22 @@ async def apply_import(
     await _require_enabled(session)
     doc = transfer_svc.parse_document(payload.content)
     result = await transfer_svc.import_document(session, doc, payload.resolutions)
+    # Files mode: what was imported must reach the files, which declare it — a
+    # replaced agent would otherwise keep its old file and look unchanged.
+    touched = [*result.created_agent_ids, *result.replaced_agent_ids]
+    if result.agent_id is not None:
+        touched.append(result.agent_id)
+    wrote = False
+    for agent_id in dict.fromkeys(touched):
+        agent = await session.get(AgentSession, agent_id)
+        if agent is not None:
+            wrote = bool(await definition_writer.save_agent(session, agent)) or wrote
+    if result.workflow_id is not None:
+        workflow = await session.get(Workflow, result.workflow_id)
+        if workflow is not None:
+            wrote = bool(await definition_writer.save_workflow(session, workflow)) or wrote
+    if wrote:
+        await session.commit()
     if result.workflow_id is not None:
         await publish_workflow_changed(result.workflow_id)
     for agent_id in (

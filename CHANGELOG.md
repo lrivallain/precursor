@@ -149,7 +149,10 @@ are the per-version history; releasing does not rewrite this file.
     broken file is refused rather than replaced by the old database copy.
     New files join the Agents list and Workflows gallery, a moved file keeps
     its history, and each agent and workflow page shows which file declares
-    it. In-app edits aren't written to files yet.
+    it. Saving, creating or deleting an agent or workflow in the app writes
+    (or removes) its file, keeping step keys across saves; a file with errors
+    is never overwritten from the app. Comments in a file aren't kept when the
+    app rewrites it.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as
