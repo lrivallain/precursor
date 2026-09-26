@@ -320,9 +320,11 @@ reordered, re-pointed — the next time the workflow is read or started:
   skipped, which for a gate would be a silent pass.
 - **Never mid-run:** a running, paused or waiting workflow runs the file
   *version it started from* — its steps, settings and step prompts — whatever
-  happens to the file meanwhile; the new version applies from the next run.
-  After a restart, a stopped run can continue only if its file has no pending
-  review and still has the same steps (else: cancel and start again).
+  happens to the file meanwhile; the new version applies from the next run. The
+  version is stored with the run (`definition_snapshot`), so a restart, a
+  resume or a retry carries on with it too. Two exceptions, both made in the
+  app: a **settings** edit saved during a run applies to that run (the run moves
+  to the saved version), and a **step** edit is refused until the run stops.
 
 ### Lists and detail views
 
@@ -390,8 +392,9 @@ What counts:
 - **Narrowing never needs review.**
 - **What Precursor writes is accepted**: the export and every save from the app
   record the file's permissions, since those values came from you. That's also
-  why a save is **refused while a review is pending** — it would accept the
-  unreviewed changes along with yours.
+  why a save that would **carry an unreviewed widening** along with your edit is
+  refused — while one that undoes it (the way to reject a change from the app)
+  goes through.
 - **Accept applies to the version you reviewed**: the app sends that version's
   hash, and if the file changed since, the accept is refused.
 - **A running agent** keeps the approval policy its run started with, and its

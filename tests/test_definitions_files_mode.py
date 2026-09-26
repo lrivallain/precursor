@@ -1111,7 +1111,7 @@ async def test_a_running_workflow_keeps_the_file_version_it_started_from(
 ) -> None:
     from precursor.backend.db import SessionLocal
     from precursor.backend.services.agents import workflow as wf_mod
-    from precursor.backend.services.definitions import overlay
+    from precursor.backend.services.definitions import anchors, overlay
 
     wf = await _exported_workflow()
     mgr = _FakeManager()
@@ -1130,23 +1130,32 @@ async def test_a_running_workflow_keeps_the_file_version_it_started_from(
         assert running.approval_policy is None
         assert running.steps[1].use_mcp is None
 
-    # After a restart the pin is gone: continuing needs the review first.
+    # A restart loses the in-memory pin; the run's stored snapshot restores it.
     overlay._pins.clear()
-    with TestClient(create_app()) as client:
-        resp = client.post(f"/api/workflows/{wf['workflow']}/approve", json={})
-    assert resp.status_code == 409
-    assert "waiting for review" in resp.json()["detail"]
+    async with SessionLocal() as session:
+        assert await anchors.restore_pins(session) >= 1
+    async with SessionLocal() as session:
+        running = await wf_mod._load_workflow(session, wf["workflow"])
+        assert running is not None and running.approval_policy is None
 
 
-async def test_a_run_cannot_continue_on_reshaped_steps_after_a_restart(files_mode: Path) -> None:
+async def test_a_legacy_run_cannot_continue_on_reshaped_steps(files_mode: Path) -> None:
     from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow, WorkflowRun
     from precursor.backend.services.agents import workflow as wf_mod
     from precursor.backend.services.definitions import overlay
 
     wf = await _exported_workflow()
     async with SessionLocal() as session:
         await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
-    await _set_status(wf["workflow"], "paused")
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, wf["workflow"])
+        assert row is not None and row.current_run_id is not None
+        run = await session.get(WorkflowRun, row.current_run_id)
+        assert run is not None
+        run.definition_snapshot = None  # a run from before snapshots existed
+        row.status = "paused"
+        await session.commit()
     doc = _load_file(files_mode, wf["path"])
     doc["steps"].reverse()  # a reorder, no permission change
     _write(files_mode, wf["path"], doc)
@@ -1155,6 +1164,111 @@ async def test_a_run_cannot_continue_on_reshaped_steps_after_a_restart(files_mod
         resp = client.post(f"/api/workflows/{wf['workflow']}/resume", json={})
     assert resp.status_code == 409
     assert "changed since this run started" in resp.json()["detail"]
+
+
+def test_only_the_pinned_run_itself_releases_its_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend.config import get_settings
+    from precursor.backend.models import Workflow
+    from precursor.backend.schemas.definitions import WorkflowDefinition
+    from precursor.backend.services.definitions import overlay
+
+    monkeypatch.setattr(get_settings(), "definitions_source", "files")
+    defn = WorkflowDefinition.model_validate({"kind": "workflow", "id": "p", "name": "Pinned"})
+    overlay.pin_run("pin-id", 42, defn, "workflows/p.workflow.yaml", "h" * 64)
+    try:
+        # A reader that loaded the row before run 42 was committed.
+        stale = Workflow(export_id="pin-id", status="idle", current_run_id=41, name="x")
+        overlay.project_workflow(stale)
+        assert overlay._pin_for("pin-id") is not None
+        running = Workflow(export_id="pin-id", status="running", current_run_id=42, name="x")
+        overlay.project_workflow(running)
+        assert running.name == "Pinned"
+        ended = Workflow(export_id="pin-id", status="completed", current_run_id=42, name="x")
+        overlay.project_workflow(ended)
+        assert overlay._pin_for("pin-id") is None
+    finally:
+        overlay.release_pin("pin-id")
+
+
+async def test_a_settings_edit_during_a_run_applies_to_the_run(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow, WorkflowRun
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    await _set_status(wf["workflow"], "awaiting_approval")
+    with TestClient(create_app()) as client:
+        resp = client.patch(
+            f"/api/workflows/{wf['workflow']}", json={"approval_policy": "manual", "name": "Tight"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert (resp.json()["approval_policy"], resp.json()["name"]) == ("manual", "Tight")
+        steps = client.patch(f"/api/workflows/{wf['workflow']}", json={"steps": []})
+        assert steps.status_code == 409
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, wf["workflow"])
+        assert row is not None and row.current_run_id is not None
+        run = await session.get(WorkflowRun, row.current_run_id)
+        assert run is not None and "approval_policy: manual" in (run.definition_snapshot or "")
+
+
+async def test_a_pinned_step_reports_the_version_it_runs(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Workflow, WorkflowRun
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    doc = _load_file(files_mode, wf["path"])
+    doc["description"] = "edited mid-run"
+    _write(files_mode, wf["path"], doc)
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, wf["workflow"])
+        assert row is not None
+        run = await session.get(WorkflowRun, row.current_run_id)
+        vessel = await session.get(AgentSession, wf["vessel"])
+        assert run is not None and vessel is not None
+        assert overlay.provenance(vessel) == (wf["path"], run.definition_hash)
+
+
+async def test_a_workflow_with_a_shared_id_refuses_to_start(files_mode: Path) -> None:
+    wf = await _exported_workflow()
+    shutil.copy(files_mode / wf["path"], files_mode / "workflows/copy.workflow.yaml")
+    from precursor.backend.services.definitions import overlay
+
+    overlay.invalidate()
+    with TestClient(create_app()) as client:
+        resp = client.post(f"/api/workflows/{wf['workflow']}/run")
+    assert resp.status_code == 409
+    assert "used by several files" in resp.json()["detail"]
+
+
+async def test_undoing_a_pending_widening_in_the_app_is_allowed(files_mode: Path) -> None:
+    agent = await _exported_agent(approval_policy="manual")
+    doc = _load_file(files_mode, agent["path"])
+    doc["approval_policy"] = "autonomous"
+    _write(files_mode, agent["path"], doc)
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent['id']}", json={"approval_policy": "manual"})
+        assert resp.status_code == 200, resp.text
+        assert client.get(f"/api/agents/{agent['id']}").json()["definition"]["review"] == []
+    assert _load_file(files_mode, agent["path"])["approval_policy"] == "manual"
+
+
+async def test_a_settings_save_refuses_a_file_that_changed_under_it(files_mode: Path) -> None:
+    wf = await _exported_workflow()
+    with TestClient(create_app()) as client:
+        client.get(f"/api/workflows/{wf['workflow']}")  # scan cached now
+        path = files_mode / wf["path"]
+        # An edit from another editor, inside the scan's one-second window.
+        path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        resp = client.patch(f"/api/workflows/{wf['workflow']}", json={"name": "Renamed"})
+    assert resp.status_code == 409
+    assert "changed on disk" in resp.json()["detail"]
 
 
 async def test_a_run_uses_its_own_approval_policy_not_the_file_s_live_one(

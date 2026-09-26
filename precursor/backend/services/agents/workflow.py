@@ -68,6 +68,7 @@ from precursor.backend.services.workflow_state import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from precursor.backend.schemas.definitions import WorkflowDefinition
     from precursor.backend.services.agents.manager import AgentManager
 
 logger = logging.getLogger(__name__)
@@ -808,8 +809,15 @@ async def _begin_run(
     workflow: Workflow,
     trigger: str,
     run_input: str | None = None,
+    *,
+    snapshot: tuple[str, str, str, WorkflowDefinition] | None = None,
 ) -> None:
-    """Open a fresh run-trace and point the workflow at it."""
+    """Open a fresh run-trace and point the workflow at it.
+
+    ``snapshot`` (files mode) is the workflow file the run executes: stored with
+    the run and pinned to it, so neither a later edit nor a restart changes what
+    this run runs.
+    """
     run = WorkflowRun(
         workflow_id=workflow.id,
         run_number=workflow.run_count or 1,
@@ -818,11 +826,14 @@ async def _begin_run(
         started_at=datetime.now(UTC),
         input=(run_input.strip()[:8000] or None) if run_input else None,
     )
-    if (source := definition_overlay.provenance(workflow)) is not None:
-        run.definition_path, run.definition_hash = source
+    if snapshot is not None:
+        run.definition_path, run.definition_hash, run.definition_snapshot, _ = snapshot
     session.add(run)
     await session.flush()
     workflow.current_run_id = run.id
+    if snapshot is not None and workflow.export_id:
+        path, digest, _text, defn = snapshot
+        definition_overlay.pin_run(workflow.export_id, run.id, defn, path, digest)
 
 
 async def _step_output(
@@ -1529,10 +1540,18 @@ async def start_workflow(
         return None
     if workflow.status == "running":
         return workflow
-    if (held := await definition_anchors.review_blockers(session, workflow)) is not None:
+    # Files mode: the run will execute exactly these bytes of its file, so they
+    # are what gets reviewed — not a scan that may be a moment older.
+    snapshot = definition_overlay.read_workflow_file(workflow)
+    if snapshot is not None and not definition_anchors.same_steps(workflow, snapshot[3]):
+        raise definition_anchors.DefinitionFileError(
+            f"{snapshot[0]} changed while the run was starting; start it again"
+        )
+    held = await definition_anchors.review_blockers(
+        session, workflow, snapshot[3] if snapshot is not None else None
+    )
+    if held is not None:
         raise definition_anchors.DefinitionFileError(held)
-    # The run executes the file as reviewed now, whatever happens to it later.
-    definition_overlay.pin_workflow(workflow)
 
     steps = _ordered_steps(workflow)
     first = _first_runnable(steps)
@@ -1565,7 +1584,7 @@ async def start_workflow(
     # its meaning at the *read* side instead (see ``_build_context``): set, a
     # step sees only this run's board; unset, it sees every run's.
 
-    await _begin_run(session, workflow, trigger, run_input)
+    await _begin_run(session, workflow, trigger, run_input, snapshot=snapshot)
     await session.commit()
     await _publish(workflow)
 

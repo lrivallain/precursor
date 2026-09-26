@@ -244,23 +244,46 @@ async def _database_baseline(session: AsyncSession, row: AgentSession | Workflow
     }
 
 
-async def pending_changes(session: AsyncSession, row: AgentSession | Workflow) -> list[str]:
-    """What the row's file grants beyond what was accepted; empty when nothing."""
-    if not overlay.files_mode() or (isinstance(row, AgentSession) and row.inline):
-        return []
-    current = _current(row)
-    if current is None:
-        return []
+def permissions_of(defn: AgentDefinition | WorkflowDefinition) -> dict[str, Any]:
+    if isinstance(defn, WorkflowDefinition):
+        return workflow_permissions(defn)
+    return agent_permissions(defn)
+
+
+async def accepted_for(session: AsyncSession, row: AgentSession | Workflow) -> dict[str, Any]:
+    """The permissions last accepted for ``row``."""
     if row.accepted_permissions is None:
-        accepted = await _database_baseline(session, row)
-    else:
-        try:
-            accepted = json.loads(row.accepted_permissions) or {}
-        except ValueError:
-            accepted = {}
+        return await _database_baseline(session, row)
+    try:
+        return json.loads(row.accepted_permissions) or {}
+    except ValueError:
+        return {}
+
+
+def changes_between(
+    row: AgentSession | Workflow, accepted: dict[str, Any], current: dict[str, Any]
+) -> list[str]:
     if isinstance(row, Workflow):
         return _workflow_changes(accepted, current)
     return _agent_changes(accepted, current)
+
+
+async def pending_changes(
+    session: AsyncSession,
+    row: AgentSession | Workflow,
+    definition: AgentDefinition | WorkflowDefinition | None = None,
+) -> list[str]:
+    """What the row's file grants beyond what was accepted; empty when nothing.
+
+    ``definition`` checks that version instead of the file as currently
+    scanned — e.g. the exact bytes a run is about to pin.
+    """
+    if not overlay.files_mode() or (isinstance(row, AgentSession) and row.inline):
+        return []
+    current = permissions_of(definition) if definition is not None else _current(row)
+    if current is None:
+        return []
+    return changes_between(row, await accepted_for(session, row), current)
 
 
 def record(row: AgentSession | Workflow, defn: AgentDefinition | WorkflowDefinition) -> None:

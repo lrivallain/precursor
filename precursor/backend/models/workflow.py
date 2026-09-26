@@ -416,6 +416,9 @@ class WorkflowRun(Base, TimestampMixin):
     # the run started.
     definition_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     definition_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ...and its text: the run executes this version throughout (and after a
+    # restart), whatever happens to the file meanwhile.
+    definition_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Cumulative token spend across every step attempt in this run, rolled up as
     # each step finalizes. Turns "did it work?" into "was it worth it?" — and

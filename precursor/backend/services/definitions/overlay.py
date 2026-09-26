@@ -25,6 +25,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Collection
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ from precursor.backend.services.definitions.loader import (
     DefinitionSet,
     LoadedFile,
     load_definitions,
+    parse_definition,
 )
 
 # How long a scan of the folder is reused. Loads happen per row (a list of 200
@@ -54,11 +56,25 @@ SNAPSHOT_MAX_AGE = 1.0
 _lock = threading.Lock()
 _snapshot: tuple[float, Path, DefinitionSet] | None = None
 _role_ids: dict[str, int] = {}
-# Workflow file id → the definition its current run started from. While a run
-# is active its steps (and their private agents) are projected from this, not
-# from the file as it is now: a mid-run edit neither changes a run in flight
-# nor lets an unreviewed permission change slip into it.
-_pins: dict[str, WorkflowDefinition] = {}
+
+
+@dataclass(frozen=True)
+class _Pin:
+    """The file version a workflow run started from (see :func:`pin_run`)."""
+
+    run_id: int
+    definition: WorkflowDefinition
+    path: str
+    content_hash: str
+
+
+# Workflow file id → the version its current run executes. While that run is
+# active, the workflow, its steps and their private agents are projected from
+# this rather than from the file as it is now: a mid-run edit neither changes a
+# run in flight nor lets an unreviewed permission change slip into it. Kept per
+# *run*: only the engine releases a pin (the run ended, or a new one started),
+# and the run's own snapshot restores it after a restart.
+_pins: dict[str, _Pin] = {}
 
 ACTIVE_WORKFLOW_STATUSES = frozenset({"running", "paused", "awaiting_approval"})
 
@@ -242,32 +258,75 @@ def make_ref(workflow_file_id: str, step_key: str) -> str:
     return f"{workflow_file_id}/{step_key}"
 
 
-def pin_workflow(workflow: Workflow) -> None:
-    """Freeze ``workflow``'s current file for the run that is starting."""
+def read_workflow_file(workflow: Workflow) -> tuple[str, str, str, WorkflowDefinition] | None:
+    """``(path, sha256, text, definition)`` of ``workflow``'s file, read now.
+
+    Read from disk rather than the cached scan, so the text stored with a run
+    and the definition it runs are the same bytes.
+    """
     linked = linked_file(workflow)
-    if (
-        workflow.export_id
-        and linked is not None
-        and isinstance(linked.definition, WorkflowDefinition)
-    ):
-        with _lock:
-            _pins[workflow.export_id] = linked.definition
+    if linked is None:
+        return None
+    try:
+        data = (definitions_root() / linked.path).read_bytes()
+    except OSError:
+        return None
+    fresh = parse_definition(linked.path, "workflow", data)
+    if not isinstance(fresh.definition, WorkflowDefinition):
+        return None
+    return linked.path, fresh.content_hash, data.decode("utf-8"), fresh.definition
+
+
+def pin_run(
+    workflow_file_id: str, run_id: int, definition: WorkflowDefinition, path: str, digest: str
+) -> None:
+    with _lock:
+        _pins[workflow_file_id] = _Pin(run_id, definition, path, digest)
+
+
+def pin_from_snapshot(
+    workflow_file_id: str, run_id: int, path: str | None, text: str | None
+) -> bool:
+    """Restore a run's pin from the file text stored with it."""
+    if not text:
+        return False
+    loaded = parse_definition(path or "workflow", "workflow", text.encode("utf-8"))
+    if not isinstance(loaded.definition, WorkflowDefinition):
+        return False
+    pin_run(workflow_file_id, run_id, loaded.definition, path or "", loaded.content_hash)
+    return True
+
+
+def release_pin(workflow_file_id: str | None, run_id: int | None = None) -> None:
+    """Forget a run's pin (``run_id=None``: whatever run is pinned)."""
+    if not workflow_file_id:
+        return
+    with _lock:
+        pin = _pins.get(workflow_file_id)
+        if pin is not None and (run_id is None or pin.run_id == run_id):
+            del _pins[workflow_file_id]
 
 
 def pinned(workflow: Workflow) -> bool:
-    with _lock:
-        return bool(workflow.export_id) and workflow.export_id in _pins
+    return _current_pin(workflow) is not None
 
 
-def _pinned_definition(workflow_file_id: str) -> WorkflowDefinition | None:
+def _pin_for(workflow_file_id: str) -> _Pin | None:
     with _lock:
         return _pins.get(workflow_file_id)
 
 
-def _unpin(workflow_file_id: str | None) -> None:
-    if workflow_file_id:
-        with _lock:
-            _pins.pop(workflow_file_id, None)
+def _current_pin(workflow: Workflow) -> _Pin | None:
+    """The pin of ``workflow``'s *current* run, if that run holds one."""
+    pin = _pin_for(workflow.export_id or "")
+    if pin is None or workflow.current_run_id != pin.run_id:
+        return None
+    return pin
+
+
+def _pinned_definition(workflow_file_id: str) -> WorkflowDefinition | None:
+    pin = _pin_for(workflow_file_id)
+    return pin.definition if pin is not None else None
 
 
 def _step_def(dset: DefinitionSet, ref: str | None) -> tuple[WorkflowDefinition, int] | None:
@@ -352,9 +411,18 @@ def source_of(obj: AgentSession | Workflow) -> DefinitionSource | None:
 
 
 def provenance(obj: AgentSession | Workflow) -> tuple[str, str] | None:
-    """``(path, sha256)`` of the file ``obj`` runs from, in files mode."""
+    """``(path, sha256)`` of the file ``obj`` runs from, in files mode.
+
+    A step's private agent inside a pinned run reports the pinned version: the
+    one it actually executes.
+    """
     if not files_mode():
         return None
+    if isinstance(obj, AgentSession) and obj.inline:
+        parts = split_ref(obj.definition_ref)
+        pin = _pin_for(parts[0]) if parts else None
+        if pin is not None:
+            return pin.path, pin.content_hash
     linked = linked_file(obj)
     if linked is None or linked.definition is None:
         return None
@@ -390,15 +458,16 @@ def project_agent(agent: AgentSession, only: Collection[str] | None = None) -> N
 def project_workflow(workflow: Workflow, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
-    # ``status`` is a plain column, loaded before this runs. A run that ended
-    # releases its pin; the next one pins the file as it is then.
-    if workflow.status in ACTIVE_WORKFLOW_STATUSES:
-        frozen = _pinned_definition(workflow.export_id or "")
-        if frozen is not None:
-            _apply(workflow, workflow_columns(frozen), only)
+    # ``status`` and ``current_run_id`` are plain columns, loaded before this
+    # runs. Only the pinned run itself, seen ended, releases its pin: a reader
+    # that loaded the row before a new run was committed sees another run id
+    # and leaves the new pin alone.
+    pin = _current_pin(workflow)
+    if pin is not None:
+        if workflow.status in ACTIVE_WORKFLOW_STATUSES:
+            _apply(workflow, workflow_columns(pin.definition), only)
             return
-    else:
-        _unpin(workflow.export_id)
+        release_pin(workflow.export_id, pin.run_id)
     linked = current_definitions().find("workflow", workflow.export_id)
     if linked is not None and isinstance(linked.definition, WorkflowDefinition):
         _apply(workflow, workflow_columns(linked.definition), only)

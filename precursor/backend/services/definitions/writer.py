@@ -15,6 +15,7 @@ edited row in the same layout the export uses.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Any
 
@@ -25,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, Role, Workflow, WorkflowRun, WorkflowStep
 from precursor.backend.schemas.definitions import (
     AGENT_FILE_SUFFIX,
     WORKFLOW_FILE_SUFFIX,
@@ -107,7 +108,6 @@ async def save_agent(session: AsyncSession, agent: AgentSession) -> str | None:
     dset = overlay.current_definitions()
     ident, linked = _identity(agent, "agent", dset)
     _refuse_broken(linked)
-    await _refuse_pending_review(session, agent)
     if linked is not None:
         path = linked.path
     else:
@@ -120,35 +120,82 @@ async def save_agent(session: AsyncSession, agent: AgentSession) -> str | None:
             AGENT_FILE_SUFFIX,
         )
     doc = _agent_document(await _context(session), agent, ident, path)
+    defn = _validate(AgentDefinition, doc)
+    await _refuse_carried_widening(session, agent, defn)
     # Saved from the app, so these are the permissions the user chose.
-    trust.record(agent, _validate(AgentDefinition, doc))
+    trust.record(agent, defn)
     _write_atomic(overlay.definitions_root() / path, render_document(doc))
     overlay.invalidate()
     return path
 
 
-async def _refuse_pending_review(session: AsyncSession, row: AgentSession | Workflow) -> None:
-    """A save writes the whole file and records it as accepted, so it would
-    silently accept permission changes still waiting for review."""
-    changes = await trust.pending_changes(session, row)
-    if changes:
+async def _refuse_carried_widening(
+    session: AsyncSession, row: AgentSession | Workflow, defn: AgentDefinition | WorkflowDefinition
+) -> None:
+    """Refuse a save that would accept a widening still waiting for review.
+
+    A save writes the whole file and records it as accepted. Rebuilt from the
+    row, it carries whatever the file grants now, reviewed or not — so if the
+    version about to be written still includes a widening the file introduced
+    on its own, saving would accept it unseen. A save that undoes it (the very
+    edit someone makes to reject a change) goes through.
+    """
+    pending = await trust.pending_changes(session, row)
+    if not pending:
+        return
+    accepted = await trust.accepted_for(session, row)
+    carried = [
+        c for c in trust.changes_between(row, accepted, trust.permissions_of(defn)) if c in pending
+    ]
+    if carried:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Its file has permission changes waiting for review "
-            f"({'; '.join(changes)}). Review and accept them first.",
+            f"({'; '.join(carried)}). Review and accept them, or undo them, first.",
         )
+
+
+async def _repin_if_running(
+    session: AsyncSession, workflow: Workflow, path: str, text: str, defn: WorkflowDefinition
+) -> None:
+    """A save during a run applies to that run: move its pin (and the snapshot
+    it would be restored from) to the version just written."""
+    if not overlay.pinned(workflow) or workflow.current_run_id is None:
+        return
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    overlay.pin_run(workflow.export_id or "", workflow.current_run_id, defn, path, digest)
+    run = await session.get(WorkflowRun, workflow.current_run_id)
+    if run is not None:
+        run.definition_path, run.definition_hash, run.definition_snapshot = path, digest, text
 
 
 async def _save_workflow_settings(
     session: AsyncSession, workflow: Workflow, ident: str, linked: LoadedFile
 ) -> str:
     path = overlay.definitions_root() / linked.path
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        data = path.read_bytes()
+        raw = yaml.safe_load(data.decode("utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Couldn't read {linked.path}: {exc}"
+        ) from exc
+    # The steps are kept as read here, so they must be the ones just checked.
+    if hashlib.sha256(data).hexdigest() != linked.content_hash or not isinstance(raw, dict):
+        overlay.invalidate()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"{linked.path} changed on disk just now; save again"
+        )
     doc = _workflow_document(await _context(session), workflow, ident, linked.path, {}, steps=[])
     doc["steps"] = raw.get("steps", [])
-    trust.record(workflow, _validate(WorkflowDefinition, doc))
-    _write_atomic(path, render_document(doc))
+    defn = _validate(WorkflowDefinition, doc)
+    assert isinstance(defn, WorkflowDefinition)
+    await _refuse_carried_widening(session, workflow, defn)
+    trust.record(workflow, defn)
+    text = render_document(doc)
+    _write_atomic(path, text)
     overlay.invalidate()
+    await _repin_if_running(session, workflow, linked.path, text, defn)
     return linked.path
 
 
@@ -175,9 +222,14 @@ async def save_workflow(
     dset = overlay.current_definitions()
     ident, linked = _identity(workflow, "workflow", dset)
     _refuse_broken(linked)
-    await _refuse_pending_review(session, workflow)
     if not steps and linked is not None:
         return await _save_workflow_settings(session, workflow, ident, linked)
+    if workflow.status in overlay.ACTIVE_WORKFLOW_STATUSES:
+        # The run is pinned to the step list it started with; new rows would be
+        # projected from the wrong version.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Stop or finish the run before editing its steps"
+        )
     path = (
         linked.path
         if linked is not None
@@ -228,7 +280,9 @@ async def save_workflow(
     doc = _workflow_document(
         ctx, workflow, ident, path, agent_paths, steps=rows, preferred_keys=preferred
     )
-    trust.record(workflow, _validate(WorkflowDefinition, doc))
+    defn = _validate(WorkflowDefinition, doc)
+    await _refuse_carried_widening(session, workflow, defn)
+    trust.record(workflow, defn)
     _write_atomic(overlay.definitions_root() / path, render_document(doc))
     overlay.invalidate()
 

@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
-from precursor.backend.models import AgentSession, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, Workflow, WorkflowRun, WorkflowStep
 from precursor.backend.schemas.definitions import (
     AgentDefinition,
     WorkflowDefinition,
@@ -68,33 +68,77 @@ class DefinitionFileError(ValueError):
 async def guard_continuation(session: AsyncSession, workflow: Workflow) -> None:
     """Before a run that stopped (paused, awaiting approval, failed) goes on.
 
-    A run still pinned to the file version it started from simply continues on
-    it. Without a pin (the app restarted, or the run had ended), the file as it
-    is now must have no permission change waiting for review, and must still
-    have the steps the run was built on — the rows can't be reshaped mid-run.
-    Raises :class:`DefinitionFileError` otherwise.
+    It goes on with the file version it started from: the pin it holds, or the
+    snapshot stored with the run (after a restart, or a failure released the
+    pin). Only a run from before snapshots existed falls back to the file as it
+    is now, which must then have no permission change waiting for review and
+    the same steps the run was built on. Raises :class:`DefinitionFileError`.
     """
-    if not overlay.files_mode() or overlay.pinned(workflow):
+    if not overlay.files_mode():
         return
-    linked = overlay.linked_file(workflow)
-    if linked is None:
+    if (problem := overlay.definition_error(workflow)) is not None:
+        raise DefinitionFileError(problem)
+    if overlay.pinned(workflow):
         return
-    if not isinstance(linked.definition, WorkflowDefinition):
-        raise DefinitionFileError(f"its definition file {linked.path} has errors")
-    if (held := await review_blockers(session, workflow)) is not None:
+    run = (
+        await session.get(WorkflowRun, workflow.current_run_id)
+        if workflow.current_run_id is not None
+        else None
+    )
+    if run is None:
+        return
+    if overlay.pin_from_snapshot(
+        workflow.export_id or "", run.id, run.definition_path, run.definition_snapshot
+    ):
+        return
+    snap = overlay.read_workflow_file(workflow)
+    if snap is None:
+        return  # not declared by a file
+    path, digest, _text, defn = snap
+    if (held := await review_blockers(session, workflow, defn)) is not None:
         raise DefinitionFileError(held)
-    ident = workflow.export_id or ""
-    wanted = [overlay.make_ref(ident, step.key) for step in linked.definition.steps]
-    rows = [s.definition_ref for s in sorted(workflow.steps, key=lambda s: s.position)]
-    if wanted != rows:
+    if not same_steps(workflow, defn):
         raise DefinitionFileError(
-            f"the steps in {linked.path} changed since this run started; cancel it and "
-            "start a new run"
+            f"the steps in {path} changed since this run started; cancel it and start a new run"
         )
-    overlay.pin_workflow(workflow)
+    overlay.pin_run(workflow.export_id or "", run.id, defn, path, digest)
 
 
-async def review_blockers(session: AsyncSession, workflow: Workflow) -> str | None:
+def same_steps(workflow: Workflow, defn: WorkflowDefinition) -> bool:
+    """Whether ``workflow``'s step rows are exactly ``defn``'s steps, in order."""
+    ident = workflow.export_id or ""
+    wanted = [overlay.make_ref(ident, step.key) for step in defn.steps]
+    rows = [s.definition_ref for s in sorted(workflow.steps, key=lambda s: s.position)]
+    return wanted == rows
+
+
+async def restore_pins(session: AsyncSession) -> int:
+    """At startup: re-pin every run in flight to the version it started from."""
+    if not overlay.files_mode():
+        return 0
+    rows = await session.execute(
+        select(
+            Workflow.export_id,
+            WorkflowRun.id,
+            WorkflowRun.definition_path,
+            WorkflowRun.definition_snapshot,
+        )
+        .join(WorkflowRun, WorkflowRun.id == Workflow.current_run_id)
+        .where(
+            Workflow.status.in_(ACTIVE_STATUSES),
+            Workflow.export_id.is_not(None),
+            WorkflowRun.definition_snapshot.is_not(None),
+        )
+    )
+    restored = 0
+    for export_id, run_id, path, text in rows.all():
+        restored += overlay.pin_from_snapshot(export_id, run_id, path, text)
+    return restored
+
+
+async def review_blockers(
+    session: AsyncSession, workflow: Workflow, definition: WorkflowDefinition | None = None
+) -> str | None:
     """Why ``workflow`` can't start until someone reviews its files; ``None`` if it can.
 
     Covers the workflow's own file and those of the listed agents its steps run:
@@ -103,7 +147,7 @@ async def review_blockers(session: AsyncSession, workflow: Workflow) -> str | No
     if not overlay.files_mode():
         return None
     held: list[str] = []
-    if changes := await trust.pending_changes(session, workflow):
+    if changes := await trust.pending_changes(session, workflow, definition):
         held.append(trust.review_message(workflow.name, changes))
     agent_ids = {s.agent_id for s in workflow.steps if s.agent_id is not None}
     for agent_id in sorted(agent_ids):
@@ -302,6 +346,10 @@ async def sync_workflow(session: AsyncSession, workflow_id: int) -> SyncResult:
     workflow = await session.get(Workflow, workflow_id)
     if workflow is None:
         return SyncResult()
+    # An id shared by two files resolves to no file, which would otherwise
+    # read as "not linked" and run the database copy.
+    if (problem := overlay.definition_error(workflow)) is not None:
+        return SyncResult(error=problem)
     dset = overlay.current_definitions()
     linked = dset.find("workflow", workflow.export_id)
     if linked is None:

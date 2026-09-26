@@ -81,6 +81,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Imported above for its load listeners; files mode also needs role names.
     async with SessionLocal() as session:
         await definition_overlay.refresh_role_cache(session)
+        # Files mode: runs in flight keep executing the version they started from.
+        from precursor.backend.services.definitions.anchors import restore_pins
+
+        await restore_pins(session)
     from precursor.backend.services.blob_store import gc_orphan_blobs
 
     try:
