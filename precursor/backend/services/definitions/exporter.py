@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -110,6 +110,7 @@ class _Plan:
 
     taken_paths: set[str] = field(default_factory=set)
     ids_by_kind: dict[str, set[str]] = field(default_factory=dict)
+    minted: list[tuple[type[AgentSession] | type[Workflow], int, str]] = field(default_factory=list)
 
     def claim_path(self, root: Path, folder: str, slug: str, suffix: str) -> str:
         n = 1
@@ -465,7 +466,7 @@ def _resolve_identity(
         ident = None
     if not ident:
         ident = str(uuid.uuid4())
-        row.export_id = ident
+        plan.minted.append((type(row), row.id, ident))
     plan.ids_by_kind.setdefault(kind, set()).add(ident)
     return ident, existing[kind].get(ident)
 
@@ -545,9 +546,17 @@ async def export_definitions(
         pending.append((path, render_document(doc)))
         result.written.append(entry)
 
+    # Linking a row is bookkeeping, not an edit: keep ``updated_at`` as it was,
+    # or the Workflows gallery (sorted by it) would reshuffle after an export.
+    for model, row_id, ident in plan.minted:
+        await session.execute(
+            update(model)
+            .where(model.id == row_id)
+            .values(export_id=ident, updated_at=model.updated_at)
+            .execution_options(synchronize_session=False)
+        )
     # Ids are committed only once every file is on disk, so a failed write
     # never leaves a row pointing at a file that doesn't exist.
-    await session.flush()
     for path, text in pending:
         _write_atomic(root / path, text)
     await session.commit()

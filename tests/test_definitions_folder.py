@@ -603,6 +603,31 @@ async def test_hidden_agent_settings_are_only_flagged_when_they_would_stop_apply
     assert "capabilities" not in step
 
 
+async def test_linking_a_row_does_not_touch_its_updated_at(api_root: Path) -> None:
+    # The Workflows gallery sorts by updated_at: an export must not reshuffle it.
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Workflow
+
+    await _setup()
+    ids, _ = await _seed()
+    async with SessionLocal() as session:
+        before = {
+            "agent": (await session.get(AgentSession, ids["writer"])).updated_at,  # type: ignore[union-attr]
+            "workflow": (await session.get(Workflow, ids["workflow"])).updated_at,  # type: ignore[union-attr]
+        }
+
+    with TestClient(create_app()) as client:
+        assert client.post("/api/definitions/export").status_code == 200
+
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, ids["writer"])
+        workflow = await session.get(Workflow, ids["workflow"])
+        assert agent is not None and workflow is not None
+        assert agent.export_id and workflow.export_id
+        assert agent.updated_at == before["agent"]
+        assert workflow.updated_at == before["workflow"]
+
+
 async def test_check_reports_rows_without_a_file(api_root: Path) -> None:
     await _setup()
     ids, _ = await _seed()
