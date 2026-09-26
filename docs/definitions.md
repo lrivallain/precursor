@@ -130,7 +130,7 @@ never re-points a reference.
 | --- | --- |
 | `name` | Display label; defaults to the agent's title. |
 | `model` | Model for the step's own `prompt`. For an agent step, set it in the agent file. |
-| `instructions` | Extra mandate for this step only. Supports `{{run.input}}`, `{{state.<key>}}` and `{{step.N.output}}` (N is the 0-based position for now). |
+| `instructions` | Extra mandate for this step only. Supports `{{run.input}}`, `{{state.<key>}}` and `{{step.<key>.output}}` — another step's output, by key, so the reference survives a reorder. `{{step.N.output}}` (0-based position) still works; the export rewrites it by key, and the check warns about a key the workflow doesn't have. |
 | `on_fail` | Gate / approval: the step to re-drive on FAIL or rework — any other step, including an approval step ("on FAIL, ask a human"). Default: the previous runnable step. |
 | `on_error` / `max_retries` | `fail` (default), `retry` (with `max_retries`), or `continue`. |
 | `on_reject` | Approval only: `rework` (default), `stop` or `skip`. |

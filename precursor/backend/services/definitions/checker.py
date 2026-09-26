@@ -23,6 +23,7 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionsDatabaseLinks,
 )
 from precursor.backend.services.definitions.loader import DefinitionSet
+from precursor.backend.services.workflow_state import step_output_references
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,26 @@ def _agent_references(dset: DefinitionSet) -> list[DefinitionIssue]:
     return issues
 
 
+def _step_references(dset: DefinitionSet) -> list[DefinitionIssue]:
+    """``{{step.<key>.output}}`` naming a step the workflow doesn't have."""
+    issues: list[DefinitionIssue] = []
+    for wf_file, workflow in dset.workflows():
+        keys = {step.key for step in workflow.steps}
+        for step in workflow.steps:
+            for key in step_output_references(step.instructions):
+                if key not in keys:
+                    issues.append(
+                        DefinitionIssue(
+                            severity="warning",
+                            path=wf_file.path,
+                            location=f"steps[{step.key}].instructions",
+                            message=f"{{{{step.{key}.output}}}} names no step of this workflow; "
+                            "it will read as (unset)",
+                        )
+                    )
+    return issues
+
+
 def _role_names(dset: DefinitionSet, known: frozenset[str]) -> list[DefinitionIssue]:
     lowered = {name.lower() for name in known}
     issues: list[DefinitionIssue] = []
@@ -141,6 +162,7 @@ def check_definitions(
     issues = [issue for f in dset.files for issue in f.issues]
     issues += _duplicate_ids(dset)
     issues += _agent_references(dset)
+    issues += _step_references(dset)
     if names.roles is not None:
         issues += _role_names(dset, names.roles)
     if names.mcp_servers is not None:

@@ -223,7 +223,8 @@ class WorkflowStepDefinition(_Strict):
         default=None,
         max_length=8000,
         description="Extra mandate for this step only. Supports {{run.input}}, "
-        "{{step.N.output}} (N = 0-based position) and {{state.<key>}} placeholders.",
+        "{{step.<key>.output}} (or {{step.N.output}}, N = 0-based position) and "
+        "{{state.<key>}} placeholders.",
     )
     on_fail: StepKey | None = Field(
         default=None,

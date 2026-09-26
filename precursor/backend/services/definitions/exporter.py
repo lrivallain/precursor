@@ -50,6 +50,7 @@ from precursor.backend.schemas.definitions_api import (
 from precursor.backend.services.definitions import overlay, trust
 from precursor.backend.services.definitions.loader import DefinitionSet, load_definitions
 from precursor.backend.services.slugs import slugify
+from precursor.backend.services.workflow_state import keyed_step_references
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
@@ -313,7 +314,8 @@ def _step_document(
 
     instructions = (step.instructions or "").strip()
     if instructions:
-        doc["instructions"] = instructions
+        # By key in the file, so the reference survives a reorder there.
+        doc["instructions"] = keyed_step_references(instructions, keys)
 
     if kind == "approval":
         if step.on_reject in ("stop", "skip"):

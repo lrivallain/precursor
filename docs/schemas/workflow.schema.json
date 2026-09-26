@@ -185,7 +185,7 @@
             }
           ],
           "default": null,
-          "description": "Extra mandate for this step only. Supports {{run.input}}, {{step.N.output}} (N = 0-based position) and {{state.<key>}} placeholders.",
+          "description": "Extra mandate for this step only. Supports {{run.input}}, {{step.<key>.output}} (or {{step.N.output}}, N = 0-based position) and {{state.<key>}} placeholders.",
           "title": "Instructions"
         },
         "on_fail": {

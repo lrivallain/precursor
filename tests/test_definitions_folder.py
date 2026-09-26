@@ -659,3 +659,86 @@ async def test_export_needs_agents_mode(api_root: Path) -> None:
             assert client.get("/api/definitions/check").status_code == 200
     finally:
         await _setup(enabled=True)
+
+
+# --- Step references by key -------------------------------------------------
+
+
+def test_step_outputs_resolve_by_key_only_when_keys_are_known() -> None:
+    from precursor.backend.services.workflow_state import (
+        UNSET_PLACEHOLDER,
+        has_placeholders,
+        render_placeholders,
+    )
+
+    text = "Use {{step.draft.output}} and {{step.1.output}}; {{step.gone.output | none}}"
+    outputs = {0: "the draft", 1: "the review"}
+    keyed = render_placeholders(text, step_outputs=outputs, step_keys={"draft": 0, "check": 1})
+    assert keyed == "Use the draft and the review; none"
+    # Without keys (database mode) the key form is left exactly as written.
+    plain = render_placeholders(text, step_outputs=outputs)
+    assert plain == "Use {{step.draft.output}} and the review; {{step.gone.output | none}}"
+    assert render_placeholders("{{step.x.output}}", step_keys={"y": 0}) == UNSET_PLACEHOLDER
+    assert has_placeholders("see {{step.draft.output}}")
+
+
+def test_numeric_step_references_are_rewritten_by_key() -> None:
+    from precursor.backend.services.workflow_state import keyed_step_references
+
+    keys = ["draft", "check"]
+    assert keyed_step_references("{{step.0.output}} / {{ step.1.output | n/a }}", keys) == (
+        "{{step.draft.output}} / {{step.check.output | n/a }}"
+    )
+    # Out of range, or not a step reference: left alone.
+    assert keyed_step_references("{{step.7.output}} {{run.input}}", keys) == (
+        "{{step.7.output}} {{run.input}}"
+    )
+
+
+def test_check_warns_about_a_reference_to_a_missing_step(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "w.workflow.yaml",
+        "kind: workflow\nid: w\nname: W\nsteps:\n"
+        "  - key: a\n    prompt: go\n"
+        "  - key: b\n    prompt: go\n    instructions: 'Use {{step.a.output}} and {{step.zz.output}}'\n",
+    )
+    report = build_report(load_definitions(tmp_path))
+    assert report.ok
+    [issue] = report.issues
+    assert (issue.severity, issue.location) == ("warning", "steps[b].instructions")
+    assert "{{step.zz.output}}" in issue.message
+
+
+async def test_export_writes_step_references_by_key(api_root: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Workflow, WorkflowStep
+
+    await _setup()
+    async with SessionLocal() as session:
+        vessel_a = AgentSession(title="A", task_prompt="draft it", status="waiting", inline=True)
+        vessel_b = AgentSession(title="B", task_prompt="check it", status="waiting", inline=True)
+        session.add_all([vessel_a, vessel_b])
+        await session.flush()
+        wf = Workflow(name=f"Refs {_uid()}", status="idle")
+        session.add(wf)
+        await session.flush()
+        session.add_all(
+            [
+                WorkflowStep(workflow_id=wf.id, position=0, agent_id=vessel_a.id, name="Draft"),
+                WorkflowStep(
+                    workflow_id=wf.id,
+                    position=1,
+                    agent_id=vessel_b.id,
+                    name="Check",
+                    instructions="Review {{step.0.output}}",
+                ),
+            ]
+        )
+        await session.commit()
+        _created_workflows.append(wf.id)
+        wf_id = wf.id
+    with TestClient(create_app()) as client:
+        result = client.post("/api/definitions/export").json()
+    path = _written(result, "workflow", wf_id)["path"]
+    assert _load(api_root, path)["steps"][1]["instructions"] == "Review {{step.draft.output}}"

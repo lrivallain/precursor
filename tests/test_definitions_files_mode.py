@@ -1043,3 +1043,14 @@ async def test_the_assistant_cannot_write_definitions_in_a_workspace(
     assert not (root / "defs/agents/evil.agent.yaml").exists()
     ok = await srv.write_file(workspace_id=ws_id, path="notes/plan.md", content="# fine")
     assert "error" not in ok
+
+
+async def test_the_runtime_knows_the_step_keys_of_a_file_workflow(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.workflow_state import _step_keys
+
+    wf = await _exported_workflow()
+    with TestClient(create_app()) as client:
+        client.get(f"/api/workflows/{wf['workflow']}")  # adopt the rows
+    async with SessionLocal() as session:
+        assert await _step_keys(session, wf["workflow"]) == {"write": 0, "check": 1}
