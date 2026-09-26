@@ -7,6 +7,7 @@ without importing ``manager``, which must never be imported from here.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -90,3 +91,6 @@ class _LiveSession:
     # crosses ``_STALL_LIMIT`` the loop parks the agent as ``blocked`` rather
     # than churning silently.
     stall_count: int = 0
+    # Monotonic time ``_ensure_live`` last handed this session out, so the idle
+    # reaper never disconnects one a caller is about to send on.
+    last_used: float = field(default_factory=time.monotonic)
