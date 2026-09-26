@@ -322,9 +322,12 @@ reordered, re-pointed — the next time the workflow is read or started:
   *version it started from* — its steps, settings and step prompts — whatever
   happens to the file meanwhile; the new version applies from the next run. The
   version is stored with the run (`definition_snapshot`), so a restart, a
-  resume or a retry carries on with it too. Two exceptions, both made in the
-  app: a **settings** edit saved during a run applies to that run (the run moves
-  to the saved version), and a **step** edit is refused until the run stops.
+  resume or a retry carries on with it too — and a typo made in the file
+  meanwhile doesn't fail it. If the step rows were reshaped to a newer file
+  after the run stopped, continuing it is refused: start a new run. Two
+  exceptions, both made in the app: a **settings** edit saved during a run
+  applies to that run (only the settings you changed; the run keeps its own
+  steps), and a **step** edit is refused until the run stops.
 
 ### Lists and detail views
 

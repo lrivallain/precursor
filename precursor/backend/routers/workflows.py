@@ -649,7 +649,12 @@ async def update_workflow(
         workflow.current_step_id = None
     # Files mode: the edit goes to the file, which declares the workflow. A
     # settings-only edit leaves the file's steps exactly as they are.
-    await definition_writer.save_workflow(session, workflow, steps=payload.steps is not None)
+    await definition_writer.save_workflow(
+        session,
+        workflow,
+        steps=payload.steps is not None,
+        changed=set(payload.model_fields_set) - {"steps"},
+    )
     await session.commit()
     await publish_workflow_changed(workflow.id)
     return await _read_one(session, await _load(session, workflow.id))

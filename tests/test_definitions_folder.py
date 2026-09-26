@@ -280,7 +280,9 @@ async def _setup(enabled: bool = True) -> None:
 
 
 def _uid() -> str:
-    return uuid.uuid4().hex[:8]
+    # Starts with a letter: an all-digit id written unquoted into YAML (as some
+    # tests do) would parse as a number and fail validation.
+    return "t" + uuid.uuid4().hex[:8]
 
 
 async def _seed() -> tuple[dict[str, int], str]:

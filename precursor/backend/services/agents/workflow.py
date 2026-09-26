@@ -834,6 +834,9 @@ async def _begin_run(
     if snapshot is not None and workflow.export_id:
         path, digest, _text, defn = snapshot
         definition_overlay.pin_run(workflow.export_id, run.id, defn, path, digest)
+    else:
+        # No version to pin: don't let a previous run's pin serve this one.
+        definition_overlay.release_pin(workflow.export_id)
 
 
 async def _step_output(
@@ -1230,6 +1233,9 @@ async def _finalize_run(
     run.status = status
     if status in ("completed", "failed", "cancelled"):
         run.finished_at = datetime.now(UTC)
+        # The run is over: its pinned file version goes (a retry restores it
+        # from the run's snapshot), and steps read the file as it is again.
+        definition_overlay.release_pin(workflow.export_id, run_id)
     else:
         # Re-opened (resumed or retried): a run that is going again hasn't
         # finished, and must not keep a stale outcome from the attempt that
@@ -1543,6 +1549,16 @@ async def start_workflow(
     # Files mode: the run will execute exactly these bytes of its file, so they
     # are what gets reviewed — not a scan that may be a moment older.
     snapshot = definition_overlay.read_workflow_file(workflow)
+    if (
+        snapshot is None
+        and definition_overlay.files_mode()
+        and definition_overlay.linked_file(workflow) is not None
+    ):
+        # Deleted, moved or broken since the last scan: nothing to pin, and the
+        # database copy is no substitute.
+        raise definition_anchors.DefinitionFileError(
+            "its definition file couldn't be read just now; check it and start again"
+        )
     if snapshot is not None and not definition_anchors.same_steps(workflow, snapshot[3]):
         raise definition_anchors.DefinitionFileError(
             f"{snapshot[0]} changed while the run was starting; start it again"
@@ -1946,7 +1962,10 @@ async def resume_workflow(
         return None
     if workflow.status != "paused":
         return workflow
-    await definition_anchors.guard_continuation(session, workflow)
+    if await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     current = next((s for s in steps if s.id == workflow.current_step_id), None)
@@ -2090,7 +2109,10 @@ async def retry_step(
     # live run would race the coordinator that is still driving it.
     if workflow.status not in ("failed", "cancelled"):
         return workflow
-    await definition_anchors.guard_continuation(session, workflow)
+    if await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     if not steps:
@@ -2453,7 +2475,10 @@ async def approve_step(
         return None
     if workflow.status != "awaiting_approval":
         return workflow
-    await definition_anchors.guard_continuation(session, workflow)
+    if await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
@@ -2505,6 +2530,12 @@ async def reject_step(
         return None
     if workflow.status != "awaiting_approval":
         return workflow
+    # Anything but stopping runs more steps. (A step that *declares* stop still
+    # goes through the guard, which only refuses a reshaped run.)
+    if action != "stop" and await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
@@ -2527,9 +2558,6 @@ async def reject_step(
         await session.commit()
         await _publish(workflow)
         return workflow
-
-    # Anything but stopping runs more steps.
-    await definition_anchors.guard_continuation(session, workflow)
 
     if policy == "skip":
         workflow.status = "running"

@@ -86,7 +86,9 @@ def _write_atomic(target: Path, text: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=target.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # ``newline=""``: the bytes on disk are exactly ``text``, so a hash of it
+        # is the file's hash on every platform.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
         os.replace(tmp, target)
     except BaseException:

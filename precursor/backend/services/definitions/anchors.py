@@ -65,35 +65,54 @@ class DefinitionFileError(ValueError):
     or grants permissions nobody has accepted yet."""
 
 
-async def guard_continuation(session: AsyncSession, workflow: Workflow) -> None:
+async def guard_continuation(session: AsyncSession, workflow: Workflow) -> bool:
     """Before a run that stopped (paused, awaiting approval, failed) goes on.
 
     It goes on with the file version it started from: the pin it holds, or the
     snapshot stored with the run (after a restart, or a failure released the
-    pin). Only a run from before snapshots existed falls back to the file as it
-    is now, which must then have no permission change waiting for review and
-    the same steps the run was built on. Raises :class:`DefinitionFileError`.
+    pin). Checks on the file as it is now don't apply then — that version is for
+    the next run — except that the step rows must still be the run's own (a
+    list after a failure may have reshaped them to the current file). Only a run
+    from before snapshots existed falls back to the current file, which must
+    then be valid, have no permission change waiting for review, and have the
+    same steps. Raises :class:`DefinitionFileError`.
+
+    Returns ``True`` when it (re)pinned the run: the caller's loaded rows were
+    projected before that, and must be reloaded.
     """
     if not overlay.files_mode():
-        return
-    if (problem := overlay.definition_error(workflow)) is not None:
-        raise DefinitionFileError(problem)
+        return False
+    ident = workflow.export_id or ""
     if overlay.pinned(workflow):
-        return
+        held_defn = overlay._pinned_definition(ident)
+        if held_defn is not None and not same_steps(workflow, held_defn):
+            overlay.release_pin(ident, workflow.current_run_id)
+            raise DefinitionFileError(
+                "this workflow's steps were reshaped to its file since the run started; "
+                "start a new run"
+            )
+        return False
     run = (
         await session.get(WorkflowRun, workflow.current_run_id)
         if workflow.current_run_id is not None
         else None
     )
     if run is None:
-        return
-    if overlay.pin_from_snapshot(
-        workflow.export_id or "", run.id, run.definition_path, run.definition_snapshot
-    ):
-        return
+        return False
+    if overlay.pin_from_snapshot(ident, run.id, run.definition_path, run.definition_snapshot):
+        pinned_defn = overlay._pinned_definition(ident)
+        if pinned_defn is None or not same_steps(workflow, pinned_defn):
+            overlay.release_pin(ident, run.id)
+            raise DefinitionFileError(
+                "this workflow's steps were reshaped to its file since the run started; "
+                "start a new run"
+            )
+        return True
+    if (problem := overlay.definition_error(workflow)) is not None:
+        raise DefinitionFileError(problem)
     snap = overlay.read_workflow_file(workflow)
     if snap is None:
-        return  # not declared by a file
+        return False  # not declared by a file
     path, digest, _text, defn = snap
     if (held := await review_blockers(session, workflow, defn)) is not None:
         raise DefinitionFileError(held)
@@ -101,7 +120,8 @@ async def guard_continuation(session: AsyncSession, workflow: Workflow) -> None:
         raise DefinitionFileError(
             f"the steps in {path} changed since this run started; cancel it and start a new run"
         )
-    overlay.pin_run(workflow.export_id or "", run.id, defn, path, digest)
+    overlay.pin_run(ident, run.id, defn, path, digest)
+    return True
 
 
 def same_steps(workflow: Workflow, defn: WorkflowDefinition) -> bool:

@@ -262,8 +262,10 @@ def read_workflow_file(workflow: Workflow) -> tuple[str, str, str, WorkflowDefin
     """``(path, sha256, text, definition)`` of ``workflow``'s file, read now.
 
     Read from disk rather than the cached scan, so the text stored with a run
-    and the definition it runs are the same bytes.
+    and the definition it runs are the same bytes. ``None`` outside files mode.
     """
+    if not files_mode():
+        return None
     linked = linked_file(workflow)
     if linked is None:
         return None
@@ -379,6 +381,15 @@ def definition_error(obj: AgentSession | Workflow) -> str | None:
     """
     if not files_mode():
         return None
+    if isinstance(obj, AgentSession) and obj.inline:
+        parts = split_ref(obj.definition_ref)
+        pinned_defn = _pinned_definition(parts[0]) if parts else None
+        if pinned_defn is not None:
+            # Inside a pinned run the step runs the pinned version; whatever
+            # happened to the file since (a typo, a copy) is for the next run.
+            if parts is not None and any(step.key == parts[1] for step in pinned_defn.steps):
+                return None
+            return "its step is not in the version this run started from"
     if shared := _ambiguous(obj):
         return f"its id is used by several files ({', '.join(shared)}); give each its own id"
     linked = linked_file(obj)
@@ -458,16 +469,15 @@ def project_agent(agent: AgentSession, only: Collection[str] | None = None) -> N
 def project_workflow(workflow: Workflow, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
-    # ``status`` and ``current_run_id`` are plain columns, loaded before this
-    # runs. Only the pinned run itself, seen ended, releases its pin: a reader
-    # that loaded the row before a new run was committed sees another run id
-    # and leaves the new pin alone.
+    # ``current_run_id`` is a plain column, loaded before this runs. A pin is
+    # the version of *that* run, whatever its status right now (a failed run
+    # being retried is re-pinned before it runs again). Readers never release
+    # pins — the engine does, when it finalizes the run or starts the next one —
+    # so a reader that loaded a row mid-transition can't strip a live run.
     pin = _current_pin(workflow)
     if pin is not None:
-        if workflow.status in ACTIVE_WORKFLOW_STATUSES:
-            _apply(workflow, workflow_columns(pin.definition), only)
-            return
-        release_pin(workflow.export_id, pin.run_id)
+        _apply(workflow, workflow_columns(pin.definition), only)
+        return
     linked = current_definitions().find("workflow", workflow.export_id)
     if linked is not None and isinstance(linked.definition, WorkflowDefinition):
         _apply(workflow, workflow_columns(linked.definition), only)

@@ -155,23 +155,67 @@ async def _refuse_carried_widening(
         )
 
 
+# Workflow setting (row column / API field) → key in the file.
+_SETTING_KEYS = {
+    "name": "name",
+    "description": "description",
+    "icon": "icon",
+    "color": "color",
+    "role_id": "role",
+    "approval_policy": "approval_policy",
+    "clear_artifacts": "clear_artifacts",
+    "max_loops": "max_loops",
+    "step_timeout_seconds": "step_timeout_seconds",
+}
+_SETTING_FIELDS = (
+    "name",
+    "description",
+    "icon",
+    "color",
+    "role",
+    "approval_policy",
+    "clear_artifacts",
+    "max_loops",
+    "step_timeout_seconds",
+)
+
+
 async def _repin_if_running(
-    session: AsyncSession, workflow: Workflow, path: str, text: str, defn: WorkflowDefinition
+    session: AsyncSession, workflow: Workflow, saved: WorkflowDefinition
 ) -> None:
-    """A save during a run applies to that run: move its pin (and the snapshot
-    it would be restored from) to the version just written."""
-    if not overlay.pinned(workflow) or workflow.current_run_id is None:
+    """A settings save during a run applies to that run.
+
+    Only the settings move: the run keeps the steps it started with (its rows
+    are built on them), even if the file's steps changed since.
+    """
+    pin = overlay._current_pin(workflow)
+    if pin is None or workflow.current_run_id is None:
         return
+    updated = pin.definition.model_copy(
+        update={name: getattr(saved, name) for name in _SETTING_FIELDS}
+    )
+    text = render_document(updated.model_dump(mode="json", by_alias=True, exclude_defaults=True))
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    overlay.pin_run(workflow.export_id or "", workflow.current_run_id, defn, path, digest)
+    overlay.pin_run(workflow.export_id or "", workflow.current_run_id, updated, pin.path, digest)
     run = await session.get(WorkflowRun, workflow.current_run_id)
     if run is not None:
-        run.definition_path, run.definition_hash, run.definition_snapshot = path, digest, text
+        run.definition_hash, run.definition_snapshot = digest, text
 
 
 async def _save_workflow_settings(
-    session: AsyncSession, workflow: Workflow, ident: str, linked: LoadedFile
+    session: AsyncSession,
+    workflow: Workflow,
+    ident: str,
+    linked: LoadedFile,
+    changed: set[str] | None,
 ) -> str:
+    """Rewrite the settings the request changed; keep the rest of the file.
+
+    The row may be projected from a pinned run version, so its untouched
+    settings aren't necessarily the file's: only what was edited is taken
+    from it, and everything else — other settings, the steps — stays as the
+    file has it.
+    """
     path = overlay.definitions_root() / linked.path
     try:
         data = path.read_bytes()
@@ -180,22 +224,33 @@ async def _save_workflow_settings(
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Couldn't read {linked.path}: {exc}"
         ) from exc
-    # The steps are kept as read here, so they must be the ones just checked.
+    # What is kept is what was just checked, byte for byte.
     if hashlib.sha256(data).hexdigest() != linked.content_hash or not isinstance(raw, dict):
         overlay.invalidate()
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"{linked.path} changed on disk just now; save again"
         )
-    doc = _workflow_document(await _context(session), workflow, ident, linked.path, {}, steps=[])
-    doc["steps"] = raw.get("steps", [])
+    generated = _workflow_document(
+        await _context(session), workflow, ident, linked.path, {}, steps=[]
+    )
+    fields = (
+        _SETTING_KEYS
+        if changed is None
+        else {f: _SETTING_KEYS[f] for f in changed if f in _SETTING_KEYS}
+    )
+    doc = dict(raw)
+    for key in fields.values():
+        if key in generated:
+            doc[key] = generated[key]
+        else:
+            doc.pop(key, None)
     defn = _validate(WorkflowDefinition, doc)
     assert isinstance(defn, WorkflowDefinition)
     await _refuse_carried_widening(session, workflow, defn)
     trust.record(workflow, defn)
-    text = render_document(doc)
-    _write_atomic(path, text)
+    _write_atomic(path, render_document(doc))
     overlay.invalidate()
-    await _repin_if_running(session, workflow, linked.path, text, defn)
+    await _repin_if_running(session, workflow, defn)
     return linked.path
 
 
@@ -205,13 +260,18 @@ def _key_of(ref: str | None, ident: str) -> str | None:
 
 
 async def save_workflow(
-    session: AsyncSession, workflow: Workflow, *, steps: bool = True
+    session: AsyncSession,
+    workflow: Workflow,
+    *,
+    steps: bool = True,
+    changed: set[str] | None = None,
 ) -> str | None:
     """Write a workflow to its file; returns the path.
 
-    ``steps=False`` (a settings-only edit) rewrites the settings and keeps the
-    file's step list exactly as it is on disk: the rows may lag behind it
-    (mid-run, or not yet read), and must not overwrite steps edited there.
+    ``steps=False`` (a settings-only edit) rewrites the settings named in
+    ``changed`` (all of them when ``None``) and keeps the rest of the file —
+    other settings and the step list — exactly as it is on disk: the rows may
+    lag behind it (mid-run, or not yet read), and must not overwrite it.
 
     Otherwise step keys are kept wherever the step can still be recognised (its
     row or its private agent carries the key, or the file had the same agent at
@@ -223,7 +283,7 @@ async def save_workflow(
     ident, linked = _identity(workflow, "workflow", dset)
     _refuse_broken(linked)
     if not steps and linked is not None:
-        return await _save_workflow_settings(session, workflow, ident, linked)
+        return await _save_workflow_settings(session, workflow, ident, linked, changed)
     if workflow.status in overlay.ACTIVE_WORKFLOW_STATUSES:
         # The run is pinned to the step list it started with; new rows would be
         # projected from the wrong version.

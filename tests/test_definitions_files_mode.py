@@ -44,7 +44,9 @@ class _FakeManager:
 
 
 def _uid() -> str:
-    return uuid.uuid4().hex[:8]
+    # Starts with a letter: an all-digit id written unquoted into YAML (as some
+    # tests do) would parse as a number and fail validation.
+    return "t" + uuid.uuid4().hex[:8]
 
 
 @pytest.fixture
@@ -1183,8 +1185,12 @@ def test_only_the_pinned_run_itself_releases_its_pin(monkeypatch: pytest.MonkeyP
         running = Workflow(export_id="pin-id", status="running", current_run_id=42, name="x")
         overlay.project_workflow(running)
         assert running.name == "Pinned"
-        ended = Workflow(export_id="pin-id", status="completed", current_run_id=42, name="x")
+        # Readers never release a pin, even seeing the run ended (a failed run
+        # is re-pinned for a retry); the engine does, when it finalizes it.
+        ended = Workflow(export_id="pin-id", status="failed", current_run_id=42, name="x")
         overlay.project_workflow(ended)
+        assert overlay._pin_for("pin-id") is not None
+        overlay.release_pin("pin-id", 42)
         assert overlay._pin_for("pin-id") is None
     finally:
         overlay.release_pin("pin-id")
@@ -1412,3 +1418,160 @@ async def test_a_workflow_linked_before_the_review_existed_is_reviewed_once(
             "adds step 'write'",
             "adds step 'check'",
         ]
+
+
+# --- Final review pass ------------------------------------------------------
+
+
+async def test_database_mode_starts_an_exported_workflow_as_before(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.config import get_settings
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow, WorkflowRun
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    wf = await _exported_workflow()  # has a file, rows not adopted
+    monkeypatch.setattr(get_settings(), "definitions_source", "database")
+    mgr = _FakeManager()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf["workflow"])  # type: ignore[arg-type]
+    assert mgr.started == [wf["writer"]]
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, wf["workflow"])
+        assert row is not None
+        run = await session.get(WorkflowRun, row.current_run_id)
+        assert run is not None and run.definition_snapshot is None
+
+
+async def test_a_retry_refuses_steps_reshaped_after_the_failure(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    await _set_status(wf["workflow"], "failed")
+    doc = _load_file(files_mode, wf["path"])
+    doc["steps"].append({"key": "leak", "prompt": "send it all"})
+    _write(files_mode, wf["path"], doc)
+    with TestClient(create_app()) as client:
+        client.get(f"/api/workflows/{wf['workflow']}")  # reshapes the rows to the file
+        resp = client.post(f"/api/workflows/{wf['workflow']}/retry", json={"position": 1})
+    assert resp.status_code == 409
+    assert "start a new run" in resp.json()["detail"]
+
+
+async def test_a_retry_runs_the_version_its_run_started_from(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentRun
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    await _set_status(wf["workflow"], "failed")
+    doc = _load_file(files_mode, wf["path"])
+    doc["approval_policy"] = "autonomous"
+    doc["steps"][1]["capabilities"] = {"mcp": True}
+    _write(files_mode, wf["path"], doc)
+    mgr = _FakeManager()
+    async with SessionLocal() as session:
+        await wf_mod.retry_step(session, mgr, wf["workflow"], position=1)  # type: ignore[arg-type]
+    async with SessionLocal() as session:
+        run = (
+            (
+                await session.execute(
+                    select(AgentRun)
+                    .where(AgentRun.agent_id == wf["vessel"])
+                    .order_by(AgentRun.id.desc())
+                )
+            )
+            .scalars()
+            .first()
+        )
+    assert run is not None
+    assert run.approval_policy is None and run.use_mcp is True  # snapshot: inherit, not the edit
+    assert run.definition_path == wf["path"]
+
+
+async def test_a_settings_save_during_a_run_keeps_hand_edits_and_run_steps(
+    files_mode: Path,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    await _set_status(wf["workflow"], "awaiting_approval")
+    doc = _load_file(files_mode, wf["path"])
+    doc["description"] = "edited by hand"
+    doc["max_loops"] = 9
+    doc["steps"].reverse()
+    _write(files_mode, wf["path"], doc)
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/workflows/{wf['workflow']}", json={"name": "Renamed mid-run"})
+        assert resp.status_code == 200, resp.text
+    saved = _load_file(files_mode, wf["path"])
+    assert (saved["name"], saved["description"], saved["max_loops"]) == (
+        "Renamed mid-run",
+        "edited by hand",
+        9,
+    )
+    assert [s["key"] for s in saved["steps"]] == ["check", "write"]
+    pin = overlay._pin_for(wf["id"])
+    assert pin is not None
+    assert [s.key for s in pin.definition.steps] == ["write", "check"]  # the run's own
+    assert pin.definition.name == "Renamed mid-run"
+
+
+async def test_a_typo_in_the_file_does_not_fail_the_pinned_run(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    path = files_mode / wf["path"]
+    path.write_text(path.read_text(encoding="utf-8") + "descripton: typo\n", encoding="utf-8")
+    overlay.invalidate()
+    async with SessionLocal() as session:
+        vessel = await session.get(AgentSession, wf["vessel"])
+        assert vessel is not None
+        assert overlay.definition_error(vessel) is None
+        assert vessel.task_prompt == "judge it"
+
+
+async def test_a_start_refuses_a_file_it_cannot_read(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import anchors, overlay
+
+    wf = await _exported_workflow()
+    monkeypatch.setattr(overlay, "read_workflow_file", lambda workflow: None)
+    async with SessionLocal() as session:
+        with pytest.raises(anchors.DefinitionFileError, match="couldn't be read"):
+            await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+
+
+async def test_finalizing_a_run_releases_its_pin(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    assert overlay._pin_for(wf["id"]) is not None
+    async with SessionLocal() as session:
+        row = await wf_mod._load_workflow(session, wf["workflow"])
+        assert row is not None
+        await wf_mod._finalize_run(session, row, status="failed")
+        await session.commit()
+    assert overlay._pin_for(wf["id"]) is None
