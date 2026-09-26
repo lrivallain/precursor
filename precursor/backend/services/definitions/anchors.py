@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from precursor.backend.models import AgentSession, Workflow, WorkflowStep
 from precursor.backend.schemas.definitions import (
@@ -36,6 +37,22 @@ class SyncResult:
     # Why the workflow can't be run from its file; ``None`` when it can (or
     # when it has no file and keeps running from the database).
     error: str | None = None
+
+
+async def _link(session: AsyncSession, row: AgentSession | WorkflowStep, ref: str) -> None:
+    """Tie ``row`` to its file step without touching ``updated_at``.
+
+    Linking is bookkeeping, not an edit. The in-memory object is updated too,
+    as if it had been loaded that way.
+    """
+    model = type(row)
+    await session.execute(
+        update(model)
+        .where(model.id == row.id)
+        .values(definition_ref=ref, updated_at=model.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+    set_committed_value(row, "definition_ref", ref)
 
 
 class DefinitionFileError(ValueError):
@@ -111,7 +128,7 @@ async def _vessel_for(
     )
     if current is not None and current.inline and current.definition_ref in (None, ref):
         if current.definition_ref != ref:
-            current.definition_ref = ref
+            await _link(session, current, ref)
             result.changed = True
         overlay.project_agent(current)
         return current.id
@@ -162,7 +179,7 @@ async def _reconcile(
     # which keeps each step's private agent, and with it the run history.
     if rows and all(r.definition_ref is None for r in rows):
         for row, ref in zip(rows, refs, strict=False):
-            row.definition_ref = ref
+            await _link(session, row, ref)
         result.changed = True
 
     by_ref: dict[str, WorkflowStep] = {}
