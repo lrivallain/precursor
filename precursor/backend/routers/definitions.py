@@ -1,7 +1,7 @@
-"""Definitions folder API — the integrity check and the one-shot export.
+"""Definitions folder API: the check, the export, and files-mode helpers.
 
-Work in progress (see docs/definitions.md): nothing at runtime reads the files
-yet, so both routes only report on, or write, the folder.
+Work in progress (see docs/definitions.md). The check and the export work in
+either mode; accepting permission changes applies to files mode only.
 """
 
 from __future__ import annotations

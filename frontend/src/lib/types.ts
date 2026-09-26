@@ -993,7 +993,7 @@ export interface TransferImportResult {
 // --- Definition files (work in progress) ------------------------------------
 // Agents and workflows declared in *.agent.yaml / *.workflow.yaml files, with
 // only execution data left in the database. Mirrors schemas/definitions_api.py;
-// see docs/definitions.md. Nothing at runtime reads the files yet.
+// see docs/definitions.md. They declare agents and workflows only in files mode.
 
 export type DefinitionKind = "agent" | "workflow";
 
