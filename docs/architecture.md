@@ -82,16 +82,26 @@ detached background process, so Precursor can run without a terminal:
   `bootout` / `kickstart -k`) instead of signalling the process. Doing it
   directly means the manager starts a replacement while the supervisor starts
   its own, and the two race for the port — one wins, the loser retries on a
-  throttle forever. A Windows Startup entry is only a shortcut, so it is not
-  treated as a manager and the direct path still applies.
+  throttle forever. A Windows `Run` entry is only a command run at login, so it
+  is not treated as a manager and the direct path still applies — with Windows
+  equivalents for the POSIX primitives in `backend/winproc.py`: a hidden console
+  and its own process group for the detached child (so its `git`/`gh` children
+  never flash a window), Ctrl+Break for a graceful stop, and a Win32 liveness
+  probe instead of spawning `tasklist` on every tray poll.
 - **`working_dir()`** decides where the instance runs, which matters because a
   checkout's default database URL is *relative*: a source tree anchors at the
   repo root (same database as `uv run precursor`), an installed wheel at its
   data dir. `instance_settings()` resolves `.env` from there rather than from
   wherever the CLI was invoked, so the port doesn't depend on the caller's cwd.
 - **`backend/autostart.py`** writes the login items — a launchd agent, a systemd
-  *user* unit, or a Startup entry. Two units: the app and the tray, separately,
-  because quitting the icon must not stop the app.
+  *user* unit, or an `HKCU\…\Run` entry running `pythonw` (never the console
+  script, whose window would stay on screen). Two units: the app and the tray,
+  separately, because quitting the icon must not stop the app.
+- **`backend/windows_updater.py`** finishes a self-update on Windows, where a
+  running Precursor holds its own `uv tool` environment open and so can't be
+  reinstalled in place. The caller stops the app and the tray, then hands the
+  install to this stdlib-only script run by the *base* interpreter; it waits for
+  the caller to exit, installs, and starts both again.
 - **`backend/tray.py`** is a `pystray` menu-bar control behind the `tray` extra.
   It holds no state of its own and every action it offers has a
   `precursor service …` equivalent.

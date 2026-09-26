@@ -15,9 +15,17 @@ icon that tells you whether it's up — plus a self-update that replaces the
 
 ## One command to install
 
-```bash
+::: code-group
+
+```bash [macOS / Linux]
 curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
+
+```powershell [Windows]
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
+:::
 
 That installs the latest build, registers it to start when you log in, and
 starts it now. There is no clone, no `npm`, and no build step — the published
@@ -31,9 +39,18 @@ the script only saves you looking up the current wheel URL.
 
 Prefer stable, tagged releases over the rolling build from `main`?
 
-```bash
+::: code-group
+
+```bash [macOS / Linux]
 PRECURSOR_CHANNEL=stable sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
 ```
+
+```powershell [Windows]
+$env:PRECURSOR_CHANNEL = 'stable'
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
+:::
 
 ## Managing the instance
 
@@ -48,11 +65,30 @@ precursor service restart     # bounce it (keeps the port it was on)
 precursor service logs -n 100 # tail the instance log (see Reading the log)
 precursor service data-dir    # print the data directory (--reveal opens it)
 precursor service install     # run at login (app + tray) and start now
-precursor service uninstall   # remove the login items
+precursor service uninstall   # remove the login items and stop it
 ```
 
 `status` exits non-zero when nothing is running, so it drops straight into a
 shell prompt or a monitoring check. Add `--json` for a machine-readable form.
+
+### The login items
+
+`precursor service install` registers two login items — the app and the icon —
+with whatever the platform provides:
+
+| Platform | Login item | If the app crashes |
+| --- | --- | --- |
+| macOS | a launchd agent in `~/Library/LaunchAgents` | launchd restarts it |
+| Linux | a systemd *user* unit in `~/.config/systemd/user` | systemd restarts it |
+| Windows | a `Run` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | it stays stopped until **Start** (tray or CLI) |
+
+On Windows there is no per-user service manager to hand the process to, so the
+entry is a launcher: at login it runs `precursor service start` — exactly what
+typing it would do — through `pythonw`, the windowless Python, so no console
+window is left on screen. That is also how it shows in Task Manager's
+*Startup apps*, where it can be switched off. The icon is started at install
+time too, rather than only at the next login, and stopping sends the app a
+Ctrl+Break so it shuts down as cleanly as it does on the other platforms.
 
 ### Picking a port
 
@@ -68,8 +104,8 @@ Port 8000 is in use — Precursor will run on 8001 instead.
 Port 8001 saved to /home/you/.local/share/precursor/.env
 ```
 
-Recording it is what makes the choice stick. launchd and systemd start the login
-item with no arguments, so the port has to live in a file the instance re-reads
+Recording it is what makes the choice stick. launchd, systemd and the Windows
+`Run` entry start the login item with no arguments, so the port has to live in a file the instance re-reads
 on its own — otherwise every boot would read the busy default straight back, and
 the URL would drift with whatever else happened to be listening that day.
 
@@ -98,6 +134,9 @@ instances fighting over one database.
 ```bash
 precursor tray
 ```
+
+On Windows it lives in the notification area, by the clock — pin it from the
+overflow (**^**) if you want it always visible.
 
 The icon is Precursor's own mark, and it says what the instance is doing:
 
@@ -152,7 +191,8 @@ with against the published build — and keep offering an update that is already
 installed. The instance is a fresh process, and its runtime record carries the
 version it actually launched with, so a disagreement means the icon is behind.
 When that happens the update entry becomes **"Restart the icon (running an older
-build)"**, which bounces the tray's login item and drops the cached check.
+build)"**, which bounces the tray's login item (on Windows, starts a fresh icon
+and steps aside) and drops the cached check.
 
 This is what catches an update that never went through `precursor service
 update` — a manual `uv tool install --force`, say — where nothing would
@@ -209,7 +249,9 @@ The tray is a separate, disposable process — quitting it does **not** stop
 Precursor. `precursor service install` registers it as its own login item
 alongside the app, so the icon comes back after a reboot; pass `--no-tray` to
 register only the app. On a machine without the `tray` extra it is skipped
-automatically, rather than leaving a login item that fails every boot.
+automatically, rather than leaving a login item that fails every boot. Only one
+icon runs per data directory: on Windows, a second `precursor tray` exits
+straight away.
 :::
 
 ## Updating in place
@@ -230,6 +272,30 @@ command detects which one you have rather than asking:
 The app also exposes the read-only check at `GET /api/version/check`. Applying an
 update is deliberately *not* an API call: it replaces the very process serving
 the request, so it belongs to the supervisor.
+
+### On Windows
+
+Windows won't delete or overwrite a file that a running program has open, and a
+running Precursor holds its whole environment open — as does the icon, and even
+the `precursor service update` command asking for the update. Reinstalling in
+place would fail, or leave a half-replaced install.
+
+So on Windows the update finishes **out of process**. The command (or the icon)
+stops the app gracefully, stops the icon, and hands the install to a small helper
+run by the base Python interpreter — which lives outside the environment being
+replaced — then exits. The helper waits for it to go, installs the new build
+(retrying while Windows or an antivirus scanner still holds a file), and starts
+the app and the icon again. The same plugin retry described below applies.
+
+```
+Installing 2026.9.2 in the background — Windows can't replace Precursor while it
+runs, so it is stopped until the install finishes and restarts it.
+Progress: C:\Users\you\AppData\Roaming\Precursor\logs\update.log
+```
+
+Expect about a minute without the app. The returning icon reports how the update
+went — *Precursor updated*, or the reason it failed — and a failed install still
+restarts the previous build.
 
 ### Channels
 
@@ -299,6 +365,8 @@ configured, a native crash:
 | `tray.log` | the menu-bar icon, which is a separate process with its own failures |
 | `precursor.out.log` | the raw pipe of a supervisor-started child, capped at each start |
 | `launchd.app.err.log`, `launchd.tray.err.log` | launchd, for the login items (macOS) |
+| `windows.app.out.log`, `windows.tray.out.log` | the windowless login items and icon (Windows) |
+| `update.log` | the out-of-process updater (Windows) |
 
 On Linux the launchd files have no equivalent: systemd captures stderr to the
 journal (`journalctl --user -u precursor`).

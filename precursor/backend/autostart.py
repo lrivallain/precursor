@@ -265,9 +265,13 @@ def launch(unit: Unit) -> None:
     entry fires at the next login, whereas launchd (RunAtLoad) and systemd
     (``--now``) start the unit as part of registering it.
     """
+    cwd = working_dir()
+    # A fresh install has written nothing yet, and a missing working directory
+    # fails the spawn outright ("The directory name is invalid").
+    cwd.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(
         windows_command(unit) if os.name == "nt" else _launch_command(unit),
-        cwd=str(working_dir()),
+        cwd=str(cwd),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

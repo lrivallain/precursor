@@ -12,7 +12,7 @@
 #
 # Environment overrides (the same as install.sh):
 #   PRECURSOR_CHANNEL   nightly (default) | stable
-#   PRECURSOR_EXTRAS    comma-separated extras (default: kanban,tray; empty = none)
+#   PRECURSOR_EXTRAS    comma-separated extras (default: kanban,tray; `none` = none)
 #   PRECURSOR_REPO      owner/repo to install from (default: lrivallain/precursor)
 #   PRECURSOR_NO_START  set to 1 to install without registering/starting it
 #   PRECURSOR_WHEEL     a wheel (path or URL) to install instead of a channel
@@ -32,9 +32,10 @@
 
     $repo = if ($env:PRECURSOR_REPO) { $env:PRECURSOR_REPO } else { 'lrivallain/precursor' }
     $channel = if ($env:PRECURSOR_CHANNEL) { $env:PRECURSOR_CHANNEL } else { 'nightly' }
-    # Unset means the default; set-but-empty means "install the lean core",
-    # which is a different intent - as with `${PRECURSOR_EXTRAS-...}` in sh.
-    $extras = if (Test-Path Env:PRECURSOR_EXTRAS) { $env:PRECURSOR_EXTRAS } else { 'kanban,tray' }
+    # `none` asks for the lean core. PowerShell can't express install.sh's
+    # "set but empty": assigning '' to an environment variable deletes it.
+    $extras = if ($env:PRECURSOR_EXTRAS) { $env:PRECURSOR_EXTRAS } else { 'kanban,tray' }
+    if ($extras -eq 'none') { $extras = '' }
 
     # uv's installer puts uv.exe here but only fixes PATH for *new* terminals,
     # so a user who just installed it would otherwise be told it is missing.

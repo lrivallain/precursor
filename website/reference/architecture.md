@@ -75,7 +75,9 @@ supervisor so it can run without a terminal — see
 | Module | Role |
 | --- | --- |
 | `backend/supervisor.py` | spawns and stops the worker; records `pid`/`port`/`url`/`version` in `runtime.json` under the data dir, and derives `status` from it plus a liveness probe |
-| `backend/autostart.py` | writes the login items — launchd agent, systemd *user* unit, or Startup entry; one unit for the app, one for the tray |
+| `backend/autostart.py` | writes the login items — launchd agent, systemd *user* unit, or a Windows `Run` entry (via `pythonw`, no console); one unit for the app, one for the tray |
+| `backend/winproc.py` | Windows process plumbing: hidden-console detached spawns, Ctrl+Break graceful stop, Win32 liveness probe, single-instance tray |
+| `backend/windows_updater.py` | finishes a Windows self-update from the base interpreter, after the app and tray have released the tool environment |
 | `backend/tray.py` | `pystray` menu-bar control behind the `tray` extra; holds no state, every action mirrors a `service` command |
 | `services/updates.py` | detects `source` vs `uv-tool` installs and updates each in place |
 
