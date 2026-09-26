@@ -1008,6 +1008,8 @@ export interface DefinitionSource {
   message: string | null;
   /** Permissions the file grants beyond what was accepted; blocks runs until accepted. */
   review?: string[];
+  /** SHA-256 of the file as reported, so Accept applies to exactly this version. */
+  content_hash?: string | null;
 }
 
 export interface DefinitionIssue {

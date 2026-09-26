@@ -91,6 +91,12 @@ async def accept_permissions(
         ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{payload.kind.capitalize()} not found")
+    current = definition_overlay.linked_file(row)
+    if payload.content_hash and (current is None or current.content_hash != payload.content_hash):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The file changed since it was reviewed; review the new version first",
+        )
     if not definition_trust.accept_current(row):
         raise HTTPException(status.HTTP_409_CONFLICT, "It has no valid definition file to accept")
     await session.commit()

@@ -1531,6 +1531,8 @@ async def start_workflow(
         return workflow
     if (held := await definition_anchors.review_blockers(session, workflow)) is not None:
         raise definition_anchors.DefinitionFileError(held)
+    # The run executes the file as reviewed now, whatever happens to it later.
+    definition_overlay.pin_workflow(workflow)
 
     steps = _ordered_steps(workflow)
     first = _first_runnable(steps)
@@ -1925,6 +1927,7 @@ async def resume_workflow(
         return None
     if workflow.status != "paused":
         return workflow
+    await definition_anchors.guard_continuation(session, workflow)
 
     steps = _ordered_steps(workflow)
     current = next((s for s in steps if s.id == workflow.current_step_id), None)
@@ -2068,6 +2071,7 @@ async def retry_step(
     # live run would race the coordinator that is still driving it.
     if workflow.status not in ("failed", "cancelled"):
         return workflow
+    await definition_anchors.guard_continuation(session, workflow)
 
     steps = _ordered_steps(workflow)
     if not steps:
@@ -2430,6 +2434,7 @@ async def approve_step(
         return None
     if workflow.status != "awaiting_approval":
         return workflow
+    await definition_anchors.guard_continuation(session, workflow)
 
     steps = _ordered_steps(workflow)
     idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
@@ -2503,6 +2508,9 @@ async def reject_step(
         await session.commit()
         await _publish(workflow)
         return workflow
+
+    # Anything but stopping runs more steps.
+    await definition_anchors.guard_continuation(session, workflow)
 
     if policy == "skip":
         workflow.status = "running"

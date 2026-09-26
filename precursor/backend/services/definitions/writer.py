@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import yaml
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -106,6 +107,7 @@ async def save_agent(session: AsyncSession, agent: AgentSession) -> str | None:
     dset = overlay.current_definitions()
     ident, linked = _identity(agent, "agent", dset)
     _refuse_broken(linked)
+    await _refuse_pending_review(session, agent)
     if linked is not None:
         path = linked.path
     else:
@@ -125,23 +127,57 @@ async def save_agent(session: AsyncSession, agent: AgentSession) -> str | None:
     return path
 
 
+async def _refuse_pending_review(session: AsyncSession, row: AgentSession | Workflow) -> None:
+    """A save writes the whole file and records it as accepted, so it would
+    silently accept permission changes still waiting for review."""
+    changes = await trust.pending_changes(session, row)
+    if changes:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Its file has permission changes waiting for review "
+            f"({'; '.join(changes)}). Review and accept them first.",
+        )
+
+
+async def _save_workflow_settings(
+    session: AsyncSession, workflow: Workflow, ident: str, linked: LoadedFile
+) -> str:
+    path = overlay.definitions_root() / linked.path
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    doc = _workflow_document(await _context(session), workflow, ident, linked.path, {}, steps=[])
+    doc["steps"] = raw.get("steps", [])
+    trust.record(workflow, _validate(WorkflowDefinition, doc))
+    _write_atomic(path, render_document(doc))
+    overlay.invalidate()
+    return linked.path
+
+
 def _key_of(ref: str | None, ident: str) -> str | None:
     parts = overlay.split_ref(ref)
     return parts[1] if parts and parts[0] == ident else None
 
 
-async def save_workflow(session: AsyncSession, workflow: Workflow) -> str | None:
-    """Write a workflow — settings and steps — to its file; returns the path.
+async def save_workflow(
+    session: AsyncSession, workflow: Workflow, *, steps: bool = True
+) -> str | None:
+    """Write a workflow to its file; returns the path.
 
-    Step keys are kept wherever the step can still be recognised (its row or its
-    private agent carries the key, or the file had the same agent at that
-    position), so a save doesn't cut a step off from its history.
+    ``steps=False`` (a settings-only edit) rewrites the settings and keeps the
+    file's step list exactly as it is on disk: the rows may lag behind it
+    (mid-run, or not yet read), and must not overwrite steps edited there.
+
+    Otherwise step keys are kept wherever the step can still be recognised (its
+    row or its private agent carries the key, or the file had the same agent at
+    that position), so a save doesn't cut a step off from its history.
     """
     if not overlay.files_mode():
         return None
     dset = overlay.current_definitions()
     ident, linked = _identity(workflow, "workflow", dset)
     _refuse_broken(linked)
+    await _refuse_pending_review(session, workflow)
+    if not steps and linked is not None:
+        return await _save_workflow_settings(session, workflow, ident, linked)
     path = (
         linked.path
         if linked is not None
@@ -149,7 +185,7 @@ async def save_workflow(session: AsyncSession, workflow: Workflow) -> str | None
     )
 
     await session.flush()
-    steps = list(
+    rows = list(
         (
             await session.execute(
                 select(WorkflowStep)
@@ -163,7 +199,7 @@ async def save_workflow(session: AsyncSession, workflow: Workflow) -> str | None
     )
 
     agent_paths: dict[int, str] = {}
-    for step in steps:
+    for step in rows:
         agent = step.agent
         if agent is None or agent.inline or agent.id in agent_paths:
             continue
@@ -176,7 +212,7 @@ async def save_workflow(session: AsyncSession, workflow: Workflow) -> str | None
     old = linked.definition if linked is not None else None
     old_steps = old.steps if isinstance(old, WorkflowDefinition) else []
     preferred: list[str | None] = []
-    for pos, step in enumerate(steps):
+    for pos, step in enumerate(rows):
         key = _key_of(step.definition_ref, ident)
         if key is None and step.agent is not None and step.agent.inline:
             key = _key_of(step.agent.definition_ref, ident)
@@ -190,13 +226,13 @@ async def save_workflow(session: AsyncSession, workflow: Workflow) -> str | None
 
     ctx = await _context(session)
     doc = _workflow_document(
-        ctx, workflow, ident, path, agent_paths, steps=steps, preferred_keys=preferred
+        ctx, workflow, ident, path, agent_paths, steps=rows, preferred_keys=preferred
     )
     trust.record(workflow, _validate(WorkflowDefinition, doc))
     _write_atomic(overlay.definitions_root() / path, render_document(doc))
     overlay.invalidate()
 
-    for step, step_doc in zip(steps, doc["steps"], strict=True):
+    for step, step_doc in zip(rows, doc["steps"], strict=True):
         ref = overlay.make_ref(ident, step_doc["key"])
         step.definition_ref = ref
         if step.agent is not None and step.agent.inline:

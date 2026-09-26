@@ -792,10 +792,10 @@ export const api = {
         `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
       ),
     // Files mode: accept the permissions an agent's or workflow's file grants now.
-    accept: (kind: DefinitionKind, id: number | string) =>
+    accept: (kind: DefinitionKind, id: number | string, contentHash?: string | null) =>
       request<DefinitionSource>(`/api/definitions/accept`, {
         method: "POST",
-        body: JSON.stringify({ kind, id }),
+        body: JSON.stringify({ kind, id, content_hash: contentHash ?? null }),
       }),
     export: (overwrite = false) =>
       request<DefinitionsExportResult>(

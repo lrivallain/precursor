@@ -13,7 +13,7 @@ list it started with, and the file's new shape applies from the next run.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +38,10 @@ class SyncResult:
     # Why the workflow can't be run from its file; ``None`` when it can (or
     # when it has no file and keeps running from the database).
     error: str | None = None
+    # Steps whose agent file can't be used (missing, moved, broken). The
+    # engine skips a step with no agent, which for a gate means a silent pass,
+    # so these block the run instead.
+    unresolved: list[str] = field(default_factory=list)
 
 
 async def _link(session: AsyncSession, row: AgentSession | WorkflowStep, ref: str) -> None:
@@ -59,6 +63,35 @@ async def _link(session: AsyncSession, row: AgentSession | WorkflowStep, ref: st
 class DefinitionFileError(ValueError):
     """A workflow or agent can't run because its definition file is unusable,
     or grants permissions nobody has accepted yet."""
+
+
+async def guard_continuation(session: AsyncSession, workflow: Workflow) -> None:
+    """Before a run that stopped (paused, awaiting approval, failed) goes on.
+
+    A run still pinned to the file version it started from simply continues on
+    it. Without a pin (the app restarted, or the run had ended), the file as it
+    is now must have no permission change waiting for review, and must still
+    have the steps the run was built on — the rows can't be reshaped mid-run.
+    Raises :class:`DefinitionFileError` otherwise.
+    """
+    if not overlay.files_mode() or overlay.pinned(workflow):
+        return
+    linked = overlay.linked_file(workflow)
+    if linked is None:
+        return
+    if not isinstance(linked.definition, WorkflowDefinition):
+        raise DefinitionFileError(f"its definition file {linked.path} has errors")
+    if (held := await review_blockers(session, workflow)) is not None:
+        raise DefinitionFileError(held)
+    ident = workflow.export_id or ""
+    wanted = [overlay.make_ref(ident, step.key) for step in linked.definition.steps]
+    rows = [s.definition_ref for s in sorted(workflow.steps, key=lambda s: s.position)]
+    if wanted != rows:
+        raise DefinitionFileError(
+            f"the steps in {linked.path} changed since this run started; cancel it and "
+            "start a new run"
+        )
+    overlay.pin_workflow(workflow)
 
 
 async def review_blockers(session: AsyncSession, workflow: Workflow) -> str | None:
@@ -88,6 +121,7 @@ async def _listed_agent_for(
     """The agent row behind ``path``, creating it for a file new to this instance."""
     target = dset.by_path.get(path)
     if target is None or target.raw_id is None or dset.find("agent", target.raw_id) is None:
+        result.unresolved.append(path)
         return None
     agent = (
         await session.execute(
@@ -97,8 +131,11 @@ async def _listed_agent_for(
         )
     ).scalar_one_or_none()
     if agent is not None:
+        if not isinstance(target.definition, AgentDefinition):
+            result.unresolved.append(path)
         return agent.id
     if not isinstance(target.definition, AgentDefinition):
+        result.unresolved.append(path)
         return None
     # A file nobody exported from this database: the row is only its execution
     # anchor, declared by the file from the first load on.
@@ -133,6 +170,20 @@ async def _vessel_for(
             result.changed = True
         overlay.project_agent(current)
         return current.id
+    # A step that left the file and came back (a cut and paste, a pull then a
+    # revert) finds the private agent it had, with its history.
+    kept = (
+        await session.execute(
+            select(AgentSession)
+            .where(AgentSession.inline.is_(True), AgentSession.definition_ref == ref)
+            .order_by(AgentSession.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if kept is not None:
+        overlay.project_agent(kept)
+        result.changed = True
+        return kept.id
     vessel = AgentSession(
         inline=True, definition_ref=ref, status="waiting", **overlay.vessel_columns(step)
     )
@@ -198,7 +249,6 @@ async def _reconcile(
         desired.append((match, ref, agent_id, index))
     removed.extend(by_ref.values())
 
-    orphan_vessels = {r.agent_id for r in removed if r.agent_id is not None}
     for row in removed:
         await session.delete(row)
         result.changed = True
@@ -234,18 +284,9 @@ async def _reconcile(
             overlay.project_step(anchor)
     await session.flush()
 
-    in_use = {agent_id for _, _, agent_id, _ in desired if agent_id is not None}
-    for vessel_id in orphan_vessels - in_use:
-        vessel = await session.get(AgentSession, vessel_id)
-        if vessel is None or not vessel.inline:
-            continue
-        # SQLite runs with foreign keys off, so detach anything still pointing
-        # at it ourselves, as the step editor does.
-        await session.execute(
-            update(WorkflowStep).where(WorkflowStep.agent_id == vessel_id).values(agent_id=None)
-        )
-        await session.delete(vessel)
-        result.changed = True
+    # A removed step's private agent is kept, keyed by its step: the step may
+    # come back (a cut and paste, a pull then a revert) and take its history
+    # with it. Deleting the workflow in the app removes them for good.
 
     status = "idle" if defn.steps else "draft"
     if workflow.status in ("idle", "draft") and workflow.status != status:
@@ -280,6 +321,11 @@ async def sync_workflow(session: AsyncSession, workflow_id: int) -> SyncResult:
         # its rows stand, and the next read sees them.
         await session.rollback()
         return SyncResult()
+    if result.unresolved:
+        result.error = (
+            f"{linked.path} runs agent files that can't be used "
+            f"({', '.join(dict.fromkeys(result.unresolved))}): missing, moved or broken"
+        )
     return result
 
 

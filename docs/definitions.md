@@ -288,7 +288,8 @@ Every agent and workflow **linked to a file** is then declared by that file.
   file.
 - **A file with errors** is never silently replaced by the old database copy:
   starting that agent fails with the reason, and running that workflow is
-  refused with a `409`.
+  refused with a `409`. So is an id carried by two files (a copy made without
+  changing it).
 
 Each run records which file it ran from and that file's SHA-256 at the time
 (`definition_path` and `definition_hash` on agent runs and workflow runs). The
@@ -310,9 +311,18 @@ reordered, re-pointed — the next time the workflow is read or started:
 - A prompt step keeps its private agent while its key stays the same.
 - A step whose agent file has no row yet (a file written by hand, or copied
   from another machine) gets one, declared by the file.
-- A removed prompt step's private agent is deleted with it.
-- **Never mid-run:** a running, paused or waiting workflow keeps the steps it
-  started with; the file's new shape applies from the next run.
+- A removed prompt step's private agent is **kept**, with its history, in case
+  the step comes back (a cut and paste, a pull then a revert); it takes the
+  agent back by its key. Deleting the workflow in the app removes those for
+  good.
+- A step whose agent file can't be used — missing, moved, broken, or an id
+  shared with another file — **blocks the run** (`409`) rather than being
+  skipped, which for a gate would be a silent pass.
+- **Never mid-run:** a running, paused or waiting workflow runs the file
+  *version it started from* — its steps, settings and step prompts — whatever
+  happens to the file meanwhile; the new version applies from the next run.
+  After a restart, a stopped run can continue only if its file has no pending
+  review and still has the same steps (else: cancel and start again).
 
 ### Lists and detail views
 
@@ -342,6 +352,9 @@ settings and steps alike — and the change shows up everywhere at once.
   can't recognise gets a new key derived from its label.
 - **Deleting** an agent or workflow in the app deletes its file; left behind,
   the next list would bring it straight back. Archiving leaves the file alone.
+- **A settings-only save** (name, policy, limits…) rewrites those settings and
+  keeps the file's steps exactly as they are, including steps edited there
+  that the app hasn't picked up yet.
 - **A transfer import** writes the files of the agents and workflow it created
   or replaced.
 - **A file with errors is never overwritten** from the app: the save is refused
@@ -372,19 +385,27 @@ What counts:
 | autonomy switched on, or more autonomous steps | a step added, or a step now running a different agent or its own prompt |
 | MCP tools, skills or memory switched on | a step's MCP tools, skills or memory switched on |
 | more MCP servers, or every server instead of a list | a step reaching more MCP servers |
-| a higher token budget, or none | |
+| a higher token budget, or none | an approval step removed, or steps moved out from behind it |
 
 - **Narrowing never needs review.**
 - **What Precursor writes is accepted**: the export and every save from the app
-  record the file's permissions, since those values came from you.
+  record the file's permissions, since those values came from you. That's also
+  why a save is **refused while a review is pending** — it would accept the
+  unreviewed changes along with yours.
+- **Accept applies to the version you reviewed**: the app sends that version's
+  hash, and if the file changed since, the accept is refused.
+- **A running agent** keeps the approval policy its run started with, and its
+  autonomous loop stops for review when the file widens autonomy, its steps or
+  its budget mid-run.
 - **A file new to this instance** (adopted from disk) starts with nothing
   accepted, so everything it grants is listed once.
 - **A row linked before this existed** is compared with its database columns —
-  the values last set in the app. (A workflow's steps are then taken as they
-  are.)
+  the values last set in the app. A workflow's steps can't be vouched for that
+  way, so such a workflow is reviewed once.
 - **The assistant's file tools** (`workspace-fs`, `drawio`) can't write
   anywhere under the definitions folder. The command runner can still write in
-  a workspace it's given; a change it makes is caught by the review above.
+  a workspace it's given: a permission change it makes is caught by the review,
+  but a rewritten prompt is not — don't give it the definitions workspace.
 
 This gates **permissions, not content**: a prompt rewritten within the
 permissions already accepted is not held.

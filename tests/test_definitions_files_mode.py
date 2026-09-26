@@ -71,6 +71,7 @@ async def files_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     overlay.invalidate()
     yield root
     overlay.invalidate()
+    overlay._pins.clear()
     shutil.rmtree(root, ignore_errors=True)
     await restore_database(mark)
     _created_workflows.clear()
@@ -370,18 +371,44 @@ async def test_step_rows_follow_the_file(files_mode: Path) -> None:
     assert steps[2][2] is None
 
 
-async def test_removing_a_prompt_step_deletes_its_private_agent(files_mode: Path) -> None:
+async def test_a_step_that_comes_back_keeps_its_private_agent(files_mode: Path) -> None:
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession
+    from precursor.backend.models import AgentRun, AgentSession
 
     wf = await _exported_workflow()
-    doc = yaml.safe_load((files_mode / wf["path"]).read_text(encoding="utf-8"))
-    doc["steps"] = doc["steps"][:1]
-    _write(files_mode, wf["path"], doc)
-    with TestClient(create_app()) as client:
-        client.get(f"/api/workflows/{wf['workflow']}")
-    assert [ref.split("/")[1] for _, ref, *_ in await _steps(wf["workflow"])] == ["write"]
     async with SessionLocal() as session:
+        session.add(AgentRun(agent_id=wf["vessel"], trigger="manual", status="completed"))
+        await session.commit()
+    doc = _load_file(files_mode, wf["path"])
+    with TestClient(create_app()) as client:
+        client.get(f"/api/workflows/{wf['workflow']}")  # read from its file once
+        cut = {**doc, "steps": doc["steps"][:1]}
+        _write(files_mode, wf["path"], cut)
+        listed = client.get("/api/workflows")
+        assert listed.status_code in (200, 500)  # other tests' rows may break the list
+        client.get(f"/api/workflows/{wf['workflow']}")
+        assert [ref.split("/")[1] for _, ref, *_ in await _steps(wf["workflow"])] == ["write"]
+        async with SessionLocal() as session:
+            # Kept, detached, with its history: the step may come back.
+            assert await session.get(AgentSession, wf["vessel"]) is not None
+
+        _write(files_mode, wf["path"], doc)  # pasted back
+        client.get(f"/api/workflows/{wf['workflow']}")
+        steps = await _steps(wf["workflow"])
+        assert steps[1][2] == wf["vessel"]
+        async with SessionLocal() as session:
+            runs = (
+                (await session.execute(select(AgentRun).where(AgentRun.agent_id == wf["vessel"])))
+                .scalars()
+                .all()
+            )
+            assert len(runs) == 1
+
+        _write(files_mode, wf["path"], cut)
+        client.get(f"/api/workflows/{wf['workflow']}")
+        assert client.delete(f"/api/workflows/{wf['workflow']}").status_code == 204
+    async with SessionLocal() as session:
+        # With the workflow deleted in the app, its kept agents go too.
         assert await session.get(AgentSession, wf["vessel"]) is None
 
 
@@ -1063,3 +1090,211 @@ async def test_two_lists_racing_to_adopt_a_file_do_not_fail(files_mode: Path) ->
             .all()
         )
     assert len(rows) == 1
+
+
+# --- Review findings --------------------------------------------------------
+
+
+async def _set_status(workflow_id: int, status: str) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow
+
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, workflow_id)
+        assert row is not None
+        row.status = status
+        await session.commit()
+
+
+async def test_a_running_workflow_keeps_the_file_version_it_started_from(
+    files_mode: Path,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    wf = await _exported_workflow()
+    mgr = _FakeManager()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf["workflow"])  # type: ignore[arg-type]
+    await _set_status(wf["workflow"], "awaiting_approval")
+
+    doc = _load_file(files_mode, wf["path"])
+    doc["approval_policy"] = "autonomous"
+    doc["steps"][1]["capabilities"] = {"mcp": True}
+    _write(files_mode, wf["path"], doc)
+    async with SessionLocal() as session:
+        running = await wf_mod._load_workflow(session, wf["workflow"])
+        assert running is not None
+        # Neither the widened policy nor the step's new tools reach the run.
+        assert running.approval_policy is None
+        assert running.steps[1].use_mcp is None
+
+    # After a restart the pin is gone: continuing needs the review first.
+    overlay._pins.clear()
+    with TestClient(create_app()) as client:
+        resp = client.post(f"/api/workflows/{wf['workflow']}/approve", json={})
+    assert resp.status_code == 409
+    assert "waiting for review" in resp.json()["detail"]
+
+
+async def test_a_run_cannot_continue_on_reshaped_steps_after_a_restart(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _FakeManager(), wf["workflow"])  # type: ignore[arg-type]
+    await _set_status(wf["workflow"], "paused")
+    doc = _load_file(files_mode, wf["path"])
+    doc["steps"].reverse()  # a reorder, no permission change
+    _write(files_mode, wf["path"], doc)
+    overlay._pins.clear()
+    with TestClient(create_app()) as client:
+        resp = client.post(f"/api/workflows/{wf['workflow']}/resume", json={})
+    assert resp.status_code == 409
+    assert "changed since this run started" in resp.json()["detail"]
+
+
+async def test_a_run_uses_its_own_approval_policy_not_the_file_s_live_one(
+    files_mode: Path,
+) -> None:
+    from precursor.backend.models import AgentRun, AgentSession
+    from precursor.backend.services.agents import permissions
+
+    agent = AgentSession(title="t", task_prompt="p", approval_policy="autonomous")
+    run = AgentRun(agent_id=1, trigger="manual", status="running", approval_policy=None)
+    live = await permissions.approval_policy(agent, run)
+    assert live != "autonomous"  # the global default, frozen for the run
+
+
+async def test_saving_in_the_app_is_refused_while_a_review_is_pending(files_mode: Path) -> None:
+    agent = await _exported_agent()
+    doc = _load_file(files_mode, agent["path"])
+    doc["autonomy"] = {"enabled": True, "max_steps": 50}
+    _write(files_mode, agent["path"], doc)
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent['id']}", json={"title": "Renamed"})
+        assert resp.status_code == 409
+        assert "waiting for review" in resp.json()["detail"]
+        assert client.get(f"/api/agents/{agent['id']}").json()["definition"]["review"]
+
+
+async def test_a_settings_save_keeps_steps_edited_in_the_file(files_mode: Path) -> None:
+    wf = await _exported_workflow()
+    with TestClient(create_app()) as client:
+        client.get(f"/api/workflows/{wf['workflow']}")
+        await _set_status(wf["workflow"], "paused")  # rows won't follow the file now
+        doc = _load_file(files_mode, wf["path"])
+        doc["steps"].append({"key": "extra", "kind": "approval"})
+        _write(files_mode, wf["path"], doc)
+        client.post("/api/definitions/accept", json={"kind": "workflow", "id": wf["workflow"]})
+        resp = client.patch(f"/api/workflows/{wf['workflow']}", json={"name": "Renamed flow"})
+        assert resp.status_code == 200, resp.text
+    saved = _load_file(files_mode, wf["path"])
+    assert saved["name"] == "Renamed flow"
+    assert [s["key"] for s in saved["steps"]] == ["write", "check", "extra"]
+
+
+async def test_a_step_whose_agent_file_is_gone_blocks_the_run(files_mode: Path) -> None:
+    wf = await _exported_workflow()
+    (files_mode / wf["writer_path"]).rename(files_mode / "moved.agent.yaml")
+    from precursor.backend.services.definitions import overlay
+
+    overlay.invalidate()
+    with TestClient(create_app()) as client:
+        resp = client.post(f"/api/workflows/{wf['workflow']}/run")
+    assert resp.status_code == 409
+    assert wf["writer_path"] in resp.json()["detail"]
+
+
+def test_removing_or_bypassing_an_approval_needs_review() -> None:
+    from precursor.backend.services.definitions.trust import _workflow_changes
+
+    def snap(*steps: tuple[str, str]) -> dict[str, Any]:
+        return {
+            "approval_policy": None,
+            "order": [k for k, _ in steps],
+            "steps": {
+                k: {
+                    "kind": kind,
+                    "agent": None,
+                    "prompt": kind != "approval",
+                    "mcp": None,
+                    "skills": None,
+                    "memory": None,
+                    "mcp_servers": None,
+                }
+                for k, kind in steps
+            },
+        }
+
+    before = snap(("draft", "task"), ("ok", "approval"), ("publish", "task"))
+    assert _workflow_changes(before, snap(("draft", "task"), ("publish", "task"))) == [
+        "removes approval step 'ok'"
+    ]
+    moved = snap(("draft", "task"), ("publish", "task"), ("ok", "approval"))
+    assert _workflow_changes(before, moved) == ["step 'publish' no longer waits for approval 'ok'"]
+    assert _workflow_changes(before, before) == []
+
+
+async def test_a_copied_file_with_the_same_id_refuses_to_run(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.definitions import overlay
+
+    agent = await _exported_agent()
+    shutil.copy(files_mode / agent["path"], files_mode / "agents/copy.agent.yaml")
+    overlay.invalidate()
+    async with SessionLocal() as session:
+        row = await session.get(AgentSession, agent["id"])
+        assert row is not None
+        problem = overlay.definition_error(row)
+        source = overlay.source_of(row)
+    assert problem is not None and "used by several files" in problem
+    assert source is not None and source.state == "invalid"
+
+
+async def test_accept_refuses_a_file_that_changed_since_it_was_reviewed(files_mode: Path) -> None:
+    agent = await _exported_agent()
+    doc = _load_file(files_mode, agent["path"])
+    doc["approval_policy"] = "autonomous"
+    _write(files_mode, agent["path"], doc)
+    with TestClient(create_app()) as client:
+        reviewed = client.get(f"/api/agents/{agent['id']}").json()["definition"]
+        doc["capabilities"] = {"mcp_servers": ["everything"]}
+        _write(files_mode, agent["path"], doc)  # lands after the review was shown
+        stale = client.post(
+            "/api/definitions/accept",
+            json={"kind": "agent", "id": agent["id"], "content_hash": reviewed["content_hash"]},
+        )
+        assert stale.status_code == 409
+        fresh = client.get(f"/api/agents/{agent['id']}").json()["definition"]
+        ok = client.post(
+            "/api/definitions/accept",
+            json={"kind": "agent", "id": agent["id"], "content_hash": fresh["content_hash"]},
+        )
+        assert ok.status_code == 200 and ok.json()["review"] == []
+
+
+async def test_a_workflow_linked_before_the_review_existed_is_reviewed_once(
+    files_mode: Path,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow
+    from precursor.backend.services.definitions import trust
+
+    wf = await _exported_workflow()
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, wf["workflow"])
+        assert row is not None
+        row.accepted_permissions = None  # as if linked some other way
+        await session.commit()
+    async with SessionLocal() as session:
+        row = await session.get(Workflow, wf["workflow"])
+        assert row is not None
+        assert await trust.pending_changes(session, row) == [
+            "adds step 'write'",
+            "adds step 'check'",
+        ]

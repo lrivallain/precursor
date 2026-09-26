@@ -54,6 +54,13 @@ SNAPSHOT_MAX_AGE = 1.0
 _lock = threading.Lock()
 _snapshot: tuple[float, Path, DefinitionSet] | None = None
 _role_ids: dict[str, int] = {}
+# Workflow file id → the definition its current run started from. While a run
+# is active its steps (and their private agents) are projected from this, not
+# from the file as it is now: a mid-run edit neither changes a run in flight
+# nor lets an unreviewed permission change slip into it.
+_pins: dict[str, WorkflowDefinition] = {}
+
+ACTIVE_WORKFLOW_STATUSES = frozenset({"running", "paused", "awaiting_approval"})
 
 
 def files_mode() -> bool:
@@ -235,16 +242,49 @@ def make_ref(workflow_file_id: str, step_key: str) -> str:
     return f"{workflow_file_id}/{step_key}"
 
 
-def _step_in(dset: DefinitionSet, ref: str | None) -> tuple[LoadedFile, int] | None:
+def pin_workflow(workflow: Workflow) -> None:
+    """Freeze ``workflow``'s current file for the run that is starting."""
+    linked = linked_file(workflow)
+    if (
+        workflow.export_id
+        and linked is not None
+        and isinstance(linked.definition, WorkflowDefinition)
+    ):
+        with _lock:
+            _pins[workflow.export_id] = linked.definition
+
+
+def pinned(workflow: Workflow) -> bool:
+    with _lock:
+        return bool(workflow.export_id) and workflow.export_id in _pins
+
+
+def _pinned_definition(workflow_file_id: str) -> WorkflowDefinition | None:
+    with _lock:
+        return _pins.get(workflow_file_id)
+
+
+def _unpin(workflow_file_id: str | None) -> None:
+    if workflow_file_id:
+        with _lock:
+            _pins.pop(workflow_file_id, None)
+
+
+def _step_def(dset: DefinitionSet, ref: str | None) -> tuple[WorkflowDefinition, int] | None:
+    """The workflow definition and index a step ref points into — the pinned
+    one while its workflow is mid-run, else the file as it is."""
     parts = split_ref(ref)
     if parts is None:
         return None
-    wf_file = dset.find("workflow", parts[0])
-    if wf_file is None or not isinstance(wf_file.definition, WorkflowDefinition):
-        return None
-    for index, step in enumerate(wf_file.definition.steps):
+    defn = _pinned_definition(parts[0])
+    if defn is None:
+        wf_file = dset.find("workflow", parts[0])
+        if wf_file is None or not isinstance(wf_file.definition, WorkflowDefinition):
+            return None
+        defn = wf_file.definition
+    for index, step in enumerate(defn.steps):
         if step.key == parts[1]:
-            return wf_file, index
+            return defn, index
     return None
 
 
@@ -259,21 +299,36 @@ def linked_file(obj: AgentSession | Workflow | WorkflowStep) -> LoadedFile | Non
     return dset.find("agent", obj.export_id)
 
 
+def _ambiguous(obj: AgentSession | Workflow) -> list[str]:
+    """The files sharing ``obj``'s id, when more than one does."""
+    if isinstance(obj, AgentSession) and obj.inline:
+        parts = split_ref(obj.definition_ref)
+        ident = parts[0] if parts else None
+    else:
+        ident = obj.export_id
+    files = current_definitions().by_id.get(ident or "", ())
+    return [f.path for f in files] if len(files) > 1 else []
+
+
 def definition_error(obj: AgentSession | Workflow) -> str | None:
     """Why ``obj`` can't run from its file, in files mode; ``None`` when it can.
 
     Only a row that *has* a file can fail this way: one with no file yet keeps
-    running from the database.
+    running from the database. An id carried by several files (a copy made
+    without changing it) counts as a file with errors — which one declares the
+    row is anyone's guess, and the database copy is no answer either.
     """
     if not files_mode():
         return None
+    if shared := _ambiguous(obj):
+        return f"its id is used by several files ({', '.join(shared)}); give each its own id"
     linked = linked_file(obj)
     if linked is None:
         return None
     if linked.definition is None:
         return f"its definition file {linked.path} has errors; fix it, then run again"
     ref = obj.definition_ref if isinstance(obj, AgentSession) and obj.inline else None
-    if ref is not None and _step_in(current_definitions(), ref) is None:
+    if ref is not None and _step_def(current_definitions(), ref) is None:
         return f"its step is no longer in {linked.path}"
     return None
 
@@ -282,6 +337,9 @@ def source_of(obj: AgentSession | Workflow) -> DefinitionSource | None:
     """What the API reports as ``definition``; ``None`` outside files mode."""
     if not files_mode():
         return None
+    shared = _ambiguous(obj)
+    if shared:
+        return DefinitionSource(state="invalid", path=shared[0], message=definition_error(obj))
     linked = linked_file(obj)
     if linked is None:
         return DefinitionSource(
@@ -290,7 +348,7 @@ def source_of(obj: AgentSession | Workflow) -> DefinitionSource | None:
     problem = definition_error(obj)
     if problem is not None:
         return DefinitionSource(state="invalid", path=linked.path, message=problem)
-    return DefinitionSource(state="file", path=linked.path)
+    return DefinitionSource(state="file", path=linked.path, content_hash=linked.content_hash)
 
 
 def provenance(obj: AgentSession | Workflow) -> tuple[str, str] | None:
@@ -317,11 +375,10 @@ def project_agent(agent: AgentSession, only: Collection[str] | None = None) -> N
         return
     dset = current_definitions()
     if agent.inline:
-        found = _step_in(dset, agent.definition_ref)
+        found = _step_def(dset, agent.definition_ref)
         if found is not None:
-            wf_file, index = found
-            assert isinstance(wf_file.definition, WorkflowDefinition)
-            step = wf_file.definition.steps[index]
+            defn, index = found
+            step = defn.steps[index]
             if step.prompt is not None:
                 _apply(agent, vessel_columns(step), only)
         return
@@ -333,6 +390,15 @@ def project_agent(agent: AgentSession, only: Collection[str] | None = None) -> N
 def project_workflow(workflow: Workflow, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
+    # ``status`` is a plain column, loaded before this runs. A run that ended
+    # releases its pin; the next one pins the file as it is then.
+    if workflow.status in ACTIVE_WORKFLOW_STATUSES:
+        frozen = _pinned_definition(workflow.export_id or "")
+        if frozen is not None:
+            _apply(workflow, workflow_columns(frozen), only)
+            return
+    else:
+        _unpin(workflow.export_id)
     linked = current_definitions().find("workflow", workflow.export_id)
     if linked is not None and isinstance(linked.definition, WorkflowDefinition):
         _apply(workflow, workflow_columns(linked.definition), only)
@@ -341,11 +407,10 @@ def project_workflow(workflow: Workflow, only: Collection[str] | None = None) ->
 def project_step(step: WorkflowStep, only: Collection[str] | None = None) -> None:
     if not files_mode():
         return
-    found = _step_in(current_definitions(), step.definition_ref)
+    found = _step_def(current_definitions(), step.definition_ref)
     if found is not None:
-        wf_file, index = found
-        assert isinstance(wf_file.definition, WorkflowDefinition)
-        _apply(step, step_columns(wf_file.definition, index), only)
+        defn, index = found
+        _apply(step, step_columns(defn, index), only)
 
 
 # A refresh reloads only ``attrs`` (all of them when it's ``None``). Re-project

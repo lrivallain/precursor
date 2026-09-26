@@ -534,7 +534,7 @@ export function AgentSettingsPanel({
                   <DefinitionBadge
                     source={agent.definition}
                     onAccept={async () => {
-                      await api.definitions.accept("agent", agent.id);
+                      await api.definitions.accept("agent", agent.id, agent.definition?.content_hash);
                       onSaved(await api.agents.get(agent.id));
                     }}
                   />

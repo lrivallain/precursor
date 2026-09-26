@@ -22,6 +22,7 @@ from precursor.backend.schemas.transfer import (
     TransferImportResult,
     TransferParseRequest,
     TransferPreview,
+    TransferWarning,
 )
 from precursor.backend.services.agents import transfer as transfer_svc
 from precursor.backend.services.app_settings import resolve_agents_enabled
@@ -105,14 +106,33 @@ async def apply_import(
     if result.agent_id is not None:
         touched.append(result.agent_id)
     wrote = False
+    rows: list[AgentSession | Workflow] = []
     for agent_id in dict.fromkeys(touched):
-        agent = await session.get(AgentSession, agent_id)
-        if agent is not None:
-            wrote = bool(await definition_writer.save_agent(session, agent)) or wrote
-    if result.workflow_id is not None:
-        workflow = await session.get(Workflow, result.workflow_id)
-        if workflow is not None:
-            wrote = bool(await definition_writer.save_workflow(session, workflow)) or wrote
+        if (agent := await session.get(AgentSession, agent_id)) is not None:
+            rows.append(agent)
+    if (
+        result.workflow_id is not None
+        and (workflow := await session.get(Workflow, result.workflow_id)) is not None
+    ):
+        rows.append(workflow)
+    for row in rows:
+        try:
+            if isinstance(row, Workflow):
+                path = await definition_writer.save_workflow(session, row)
+            else:
+                path = await definition_writer.save_agent(session, row)
+            wrote = bool(path) or wrote
+        except HTTPException as exc:
+            # The import itself went through; say which file it couldn't touch
+            # (one with errors, or with changes waiting for review).
+            name = row.name if isinstance(row, Workflow) else row.title
+            result.warnings.append(
+                TransferWarning(
+                    code="definition_not_written",
+                    message=f"'{name}' was imported but its definition file wasn't updated: "
+                    f"{exc.detail}",
+                )
+            )
     if wrote:
         await session.commit()
     if result.workflow_id is not None:

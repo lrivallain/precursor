@@ -59,8 +59,11 @@ def agent_permissions(defn: AgentDefinition) -> dict[str, Any]:
 def workflow_permissions(defn: WorkflowDefinition) -> dict[str, Any]:
     return {
         "approval_policy": defn.approval_policy,
+        # Order and kinds: a human approval only guards the steps after it.
+        "order": [step.key for step in defn.steps],
         "steps": {
             step.key: {
+                "kind": step.kind,
                 "agent": step.agent,
                 "prompt": step.prompt is not None,
                 "mcp": step.capabilities.mcp,
@@ -137,6 +140,7 @@ def _workflow_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             f"approval policy for every step → {new['approval_policy'] or "each agent's own"}"
         )
     old_steps: dict[str, Any] = old.get("steps", {})
+    changes += _approvals_weakened(old, new)
     for key, step in new["steps"].items():
         before = old_steps.get(key)
         if before is None:
@@ -156,6 +160,28 @@ def _workflow_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
                     if not added
                     else f"step '{key}' can reach MCP server {', '.join(added)}"
                 )
+    return changes
+
+
+def _approvals_weakened(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """A human checkpoint removed, or steps moved out from behind one."""
+    old_order: list[str] | None = old.get("order")
+    if not old_order:
+        return []
+    old_steps: dict[str, Any] = old.get("steps", {})
+    new_order: list[str] = new["order"]
+    changes: list[str] = []
+    for index, key in enumerate(old_order):
+        if old_steps.get(key, {}).get("kind") != "approval":
+            continue
+        if key not in new["steps"] or new["steps"][key]["kind"] != "approval":
+            changes.append(f"removes approval step '{key}'")
+            continue
+        at = new_order.index(key)
+        slipped = [k for k in old_order[index + 1 :] if k in new_order and new_order.index(k) < at]
+        if slipped:
+            names = ", ".join(f"'{k}'" for k in slipped)
+            changes.append(f"step {names} no longer waits for approval '{key}'")
     return changes
 
 
@@ -184,9 +210,11 @@ async def _database_baseline(session: AsyncSession, row: AgentSession | Workflow
                 )
             )
         ).scalar_one_or_none()
-        # Steps predating files mode are adopted as they were exported.
-        current = _current(row) or {"steps": {}}
-        return {"approval_policy": policy, "steps": current["steps"]}
+        # The database's step rows can't vouch for the file's steps (rows the
+        # file added were filled from it), so none count as accepted: such a
+        # workflow is reviewed once. The export records a snapshot, so this
+        # only concerns rows linked some other way.
+        return {"approval_policy": policy, "steps": {}}
     table = AgentSession.__table__
     raw = (
         await session.execute(

@@ -28,12 +28,17 @@ class DefinitionSource(BaseModel):
     # Permissions the file grants beyond what was accepted; while non-empty it
     # can't start a run (``POST /api/definitions/accept`` clears it).
     review: list[str] = []
+    # SHA-256 of the file as reported, to accept exactly the reviewed version.
+    content_hash: str | None = None
 
 
 class DefinitionAcceptRequest(BaseModel):
     kind: DefinitionKind
     # The agent's or workflow's database id (an agent's public id works too).
     id: int | str
+    # The ``content_hash`` of the version that was reviewed. When given and the
+    # file changed since, the accept is refused rather than accepting it unseen.
+    content_hash: str | None = None
 
 
 class DefinitionIssue(BaseModel):

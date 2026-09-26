@@ -672,7 +672,11 @@ export function WorkflowView({
               <DefinitionBadge
                 source={workflow.definition}
                 onAccept={async () => {
-                  await api.definitions.accept("workflow", workflow.id);
+                  await api.definitions.accept(
+                    "workflow",
+                    workflow.id,
+                    workflow.definition?.content_hash,
+                  );
                   onChanged(await api.workflows.get(workflow.id));
                 }}
               />

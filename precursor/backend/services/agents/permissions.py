@@ -26,6 +26,7 @@ from precursor.backend.services.app_settings import (
     DEFAULT_AGENTS_APPROVAL_POLICY,
     resolve_agents_approval_policy,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_agent_changed
 
 if TYPE_CHECKING:
@@ -310,7 +311,12 @@ async def approval_policy(agent: AgentSession | None = None, run: AgentRun | Non
     # The executing run's snapshot wins (it froze the policy a workflow step
     # asked for), then a per-agent override, then the DB-backed global
     # setting. ``None``/unset at each level falls through.
-    for source in (run, agent):
+    #
+    # Files mode skips the agent's live value while a run exists: it comes
+    # straight from the file, and a loosened policy must not reach a run in
+    # flight before someone reviews it. It applies from the next run.
+    sources = (run,) if run is not None and definition_overlay.files_mode() else (run, agent)
+    for source in sources:
         override = getattr(source, "approval_policy", None)
         if override in AGENTS_APPROVAL_POLICIES:
             return str(override)
