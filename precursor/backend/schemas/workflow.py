@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from precursor.backend.schemas.agent import AgentApprovalPolicy, AgentPendingPermission
+from precursor.backend.schemas.definitions_api import DefinitionSource
 from precursor.backend.schemas.schedule import (
     RuleListRead,
     RuleListWrite,
@@ -185,6 +186,9 @@ class WorkflowRunRead(BaseModel):
     # Cumulative token spend across every attempt in this run.
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    # Files mode: the workflow file this run executed, and its SHA-256 then.
+    definition_path: str | None = None
+    definition_hash: str | None = None
     step_runs: list[WorkflowRunStepRead] = []
 
 
@@ -272,6 +276,8 @@ class WorkflowRead(BaseModel):
     steps: list[WorkflowStepRead] = []
     # Advancement of the newest run; null until the workflow has ever run.
     run_progress: WorkflowRunProgress | None = None
+    # Files mode only: which file declares this workflow (null in database mode).
+    definition: DefinitionSource | None = None
 
 
 # --- Requests --------------------------------------------------------------

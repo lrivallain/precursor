@@ -76,6 +76,8 @@ from precursor.backend.services.agents.directives import parse_agent_command
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler
 
@@ -190,6 +192,8 @@ def _to_read(
     read = AgentSessionRead.model_validate(agent)
     read.unread_count = unread
     read.workflow_count = workflow_count
+    if not agent.inline:
+        read.definition = definition_overlay.source_of(agent)
     if current_run is not None:
         read.current_run = AgentRunRead.model_validate(current_run)
     if activity:
@@ -576,6 +580,8 @@ async def list_agents(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentSessionRead]:
+    # Files mode: an agent file new to this instance joins the roster.
+    await definition_anchors.adopt_new_files(session)
     # Inline agents are execution vessels owned by a workflow step, not units the
     # user manages, so they stay out of the roster. They are deliberately still
     # listed by ``/attention`` below: a blocked inline step must remain

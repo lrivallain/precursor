@@ -63,6 +63,7 @@ from precursor.backend.services.app_settings import (
     resolve_workflows_default_step_timeout,
 )
 from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_workflow_changed
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -275,6 +276,8 @@ async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[Workfl
     too, so the gallery can draw a progress bar without loading run traces.
     """
     reads = [WorkflowRead.model_validate(w) for w in workflows]
+    for workflow, read in zip(workflows, reads, strict=True):
+        read.definition = definition_overlay.source_of(workflow)
     # Run advancement is independent of the agents: a pipeline made only of
     # approval checkpoints still has progress to report, so resolve it before the
     # agent-only shortcut below.
@@ -477,7 +480,9 @@ async def list_workflows(
     include_archived: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkflowRead]:
-    # Files mode: pick up step changes made in the definition files.
+    # Files mode: new workflow files join the gallery, and step changes made in
+    # the files reach the rows.
+    await definition_anchors.adopt_new_files(session)
     await definition_anchors.sync_all(session)
     stmt = (
         select(Workflow)

@@ -147,7 +147,9 @@ are the per-version history; releasing does not rewrite this file.
     columns are left untouched. A workflow's step rows follow the file's step
     list between runs, and each run records the file and hash it ran from. A
     broken file is refused rather than replaced by the old database copy.
-    In-app edits aren't written to files yet.
+    New files join the Agents list and Workflows gallery, a moved file keeps
+    its history, and each agent and workflow page shows which file declares
+    it. In-app edits aren't written to files yet.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

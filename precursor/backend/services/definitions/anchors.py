@@ -251,3 +251,59 @@ async def sync_all(session: AsyncSession) -> bool:
     for workflow_id in ids:
         changed = (await sync_workflow(session, workflow_id)).changed or changed
     return changed
+
+
+async def adopt_new_files(session: AsyncSession) -> bool:
+    """Give every valid file new to this instance a row, so it shows up and runs.
+
+    A file written by hand, or brought from another machine, has an ``id`` no
+    row carries yet. The row created here is only its anchor: from the first
+    load on, the file declares it. ``True`` if any row was created.
+    """
+    if not overlay.files_mode():
+        return False
+    dset = overlay.current_definitions()
+    agent_files = [(f, d) for f, d in dset.agents() if dset.find("agent", f.raw_id) is f]
+    workflow_files = [(f, d) for f, d in dset.workflows() if dset.find("workflow", f.raw_id) is f]
+    created = False
+    if agent_files:
+        known = set(
+            (
+                await session.execute(
+                    select(AgentSession.export_id).where(
+                        AgentSession.export_id.in_([f.raw_id for f, _ in agent_files])
+                    )
+                )
+            ).scalars()
+        )
+        for f, defn in agent_files:
+            if f.raw_id not in known:
+                session.add(
+                    AgentSession(
+                        export_id=f.raw_id, status="waiting", **overlay.agent_columns(defn)
+                    )
+                )
+                created = True
+    if workflow_files:
+        known = set(
+            (
+                await session.execute(
+                    select(Workflow.export_id).where(
+                        Workflow.export_id.in_([f.raw_id for f, _ in workflow_files])
+                    )
+                )
+            ).scalars()
+        )
+        for f, wf_defn in workflow_files:
+            if f.raw_id not in known:
+                session.add(
+                    Workflow(
+                        export_id=f.raw_id,
+                        status="draft",
+                        **overlay.workflow_columns(wf_defn),
+                    )
+                )
+                created = True
+    if created:
+        await session.commit()
+    return created

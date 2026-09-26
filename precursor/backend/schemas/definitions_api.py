@@ -14,6 +14,19 @@ from pydantic import BaseModel
 DefinitionKind = Literal["agent", "workflow"]
 
 
+class DefinitionSource(BaseModel):
+    """Where an agent's or workflow's declaration comes from, in files mode.
+
+    ``file``: declared by ``path``. ``invalid``: ``path`` is its file but has
+    errors, so it can't run. ``none``: no file carries its id, so it still runs
+    from the database.
+    """
+
+    state: Literal["file", "invalid", "none"]
+    path: str | None = None
+    message: str | None = None
+
+
 class DefinitionIssue(BaseModel):
     """One problem found in the folder.
 

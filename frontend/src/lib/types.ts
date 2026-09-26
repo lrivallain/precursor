@@ -225,6 +225,9 @@ export interface AgentRun {
   mcp_servers: string | null;
   approval_policy: AgentApprovalPolicy | null;
   role_id: number | null;
+  /** Files mode: the definition file this run was declared by, and its SHA-256. */
+  definition_path?: string | null;
+  definition_hash?: string | null;
   started_at: string | null;
   finished_at: string | null;
   last_activity_at: string | null;
@@ -317,6 +320,8 @@ export interface AgentSession {
   // above mirror it so existing surfaces keep working; this is the authoritative
   // record and the handle for per-run artifacts, events and spend.
   current_run: AgentRun | null;
+  /** Files mode only: which file declares this agent (null in database mode). */
+  definition?: DefinitionSource | null;
   // External webhook triggers registered on this agent.
   triggers: AgentTrigger[];
   // Published blackboard outputs, newest first.
@@ -784,6 +789,9 @@ export interface WorkflowRun {
   /** Cumulative token spend across every attempt in this run. */
   total_input_tokens: number;
   total_output_tokens: number;
+  /** Files mode: the workflow file this run executed, and its SHA-256 then. */
+  definition_path?: string | null;
+  definition_hash?: string | null;
   step_runs: WorkflowRunStep[];
 }
 
@@ -855,6 +863,8 @@ export interface Workflow {
   steps: WorkflowStep[];
   /** Advancement of the newest run; null until the workflow has ever run. */
   run_progress: WorkflowRunProgress | null;
+  /** Files mode only: which file declares this workflow (null in database mode). */
+  definition?: DefinitionSource | null;
 }
 
 // One step in a create/replace payload. Either reference an existing agent by
@@ -986,6 +996,17 @@ export interface TransferImportResult {
 // see docs/definitions.md. Nothing at runtime reads the files yet.
 
 export type DefinitionKind = "agent" | "workflow";
+
+/**
+ * Where an agent's or workflow's declaration comes from, in files mode:
+ * `file` = declared by `path`; `invalid` = `path` has errors, so it can't run;
+ * `none` = no file carries its id, so it still runs from the database.
+ */
+export interface DefinitionSource {
+  state: "file" | "invalid" | "none";
+  path: string | null;
+  message: string | null;
+}
 
 export interface DefinitionIssue {
   severity: "error" | "warning";

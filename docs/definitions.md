@@ -312,6 +312,21 @@ reordered, re-pointed — the next time the workflow is read or started:
 - **Never mid-run:** a running, paused or waiting workflow keeps the steps it
   started with; the file's new shape applies from the next run.
 
+### Lists and detail views
+
+- **A file new to this instance** — written by hand, or brought from another
+  machine — gets a row the next time the Agents list or the Workflows gallery
+  is loaded, and from then on behaves like any other agent or workflow. A new
+  agent file referenced by a workflow step gets its row as soon as that
+  workflow is read.
+- **Moving or renaming a file** keeps the same agent or workflow, with its run
+  history: identity is the `id` inside the file, not the path.
+- **Which file** declares an agent or a workflow is shown on its page (a badge
+  with the path; red when the file has errors, amber when there is none), and
+  in the API as `definition`: `{state: "file" | "invalid" | "none", path,
+  message}`. Agent runs and workflow runs carry `definition_path` and
+  `definition_hash`. In database mode `definition` is `null`.
+
 ::: warning Not yet
 Editing an agent or workflow **in the app** still writes the database, so in
 files mode those edits are overridden by the file. Edit the files instead until
@@ -330,7 +345,8 @@ Each step ships on its own and is validated before the next starts.
    file through `export_id`. Nothing deleted.
 4. ✅ Agents and workflows run from their files (files mode); each run
    records the file version it used.
-5. The Agents and Workflows lists come from the files.
+5. ✅ The Agents and Workflows lists come from the files: new files appear,
+   moved files keep their history, and each page shows its file.
 6. Editing in the app writes the file (comment-preserving).
 7. Permission changes arriving from disk (approval policy, MCP scope,
    autonomy) are held until a human accepts them; the assistant's file tools

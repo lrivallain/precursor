@@ -38,6 +38,7 @@ from precursor.backend.schemas.definitions import (
     WorkflowDefinition,
     WorkflowStepDefinition,
 )
+from precursor.backend.schemas.definitions_api import DefinitionSource
 from precursor.backend.services.definitions.loader import (
     DefinitionSet,
     LoadedFile,
@@ -274,6 +275,21 @@ def definition_error(obj: AgentSession | Workflow) -> str | None:
     if ref is not None and _step_in(current_definitions(), ref) is None:
         return f"its step is no longer in {linked.path}"
     return None
+
+
+def source_of(obj: AgentSession | Workflow) -> DefinitionSource | None:
+    """What the API reports as ``definition``; ``None`` outside files mode."""
+    if not files_mode():
+        return None
+    linked = linked_file(obj)
+    if linked is None:
+        return DefinitionSource(
+            state="none", message="No definition file yet; still declared by the database"
+        )
+    problem = definition_error(obj)
+    if problem is not None:
+        return DefinitionSource(state="invalid", path=linked.path, message=problem)
+    return DefinitionSource(state="file", path=linked.path)
 
 
 def provenance(obj: AgentSession | Workflow) -> tuple[str, str] | None:

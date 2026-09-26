@@ -496,3 +496,114 @@ async def test_export_cannot_overwrite_files_in_files_mode(files_mode: Path) -> 
         resp = client.post("/api/definitions/export", params={"overwrite": True})
         assert resp.status_code == 409
         assert client.post("/api/definitions/export").status_code == 200
+
+
+# --- Lists & detail views (step 5) ------------------------------------------
+
+
+async def test_a_hand_written_agent_file_joins_the_roster(files_mode: Path) -> None:
+    ident = _uid()
+    _write(
+        files_mode,
+        "agents/team/scout.agent.yaml",
+        {"kind": "agent", "id": ident, "title": f"Scout {ident}", "prompt": "look around"},
+    )
+    with TestClient(create_app()) as client:
+        listed = [a for a in client.get("/api/agents").json() if a["title"] == f"Scout {ident}"]
+        assert len(listed) == 1
+        again = [a for a in client.get("/api/agents").json() if a["title"] == f"Scout {ident}"]
+    assert len(again) == 1  # adopted once, not on every list
+    assert listed[0]["task_prompt"] == "look around"
+    assert listed[0]["definition"] == {
+        "state": "file",
+        "path": "agents/team/scout.agent.yaml",
+        "message": None,
+    }
+
+
+async def test_moving_a_file_keeps_the_same_agent(files_mode: Path) -> None:
+    ident = _uid()
+    agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
+    doc = {"kind": "agent", "id": ident, "title": "Mover"}
+    _write(files_mode, "agents/mover.agent.yaml", doc)
+    with TestClient(create_app()) as client:
+        assert client.get(f"/api/agents/{agent_id}").json()["definition"]["path"] == (
+            "agents/mover.agent.yaml"
+        )
+        (files_mode / "agents/mover.agent.yaml").unlink()
+        _write(files_mode, "archive/2026/mover.agent.yaml", doc)
+        body = client.get(f"/api/agents/{agent_id}").json()
+    # Identity is the id inside the file, so the row — and its history — follow.
+    assert body["definition"]["path"] == "archive/2026/mover.agent.yaml"
+    assert body["title"] == "Mover"
+
+
+async def test_the_api_says_when_there_is_no_file_or_a_broken_one(files_mode: Path) -> None:
+    orphan = await _agent_row(title="No file", task_prompt="p", export_id=_uid())
+    ident = _uid()
+    broken = await _agent_row(title="Broken", task_prompt="p", export_id=ident)
+    _write(files_mode, "agents/broken.agent.yaml", {"kind": "agent", "id": ident})
+    with TestClient(create_app()) as client:
+        none = client.get(f"/api/agents/{orphan}").json()["definition"]
+        bad = client.get(f"/api/agents/{broken}").json()["definition"]
+    assert none["state"] == "none" and none["path"] is None
+    assert bad["state"] == "invalid" and bad["path"] == "agents/broken.agent.yaml"
+    assert "has errors" in bad["message"]
+
+
+async def test_database_mode_reports_no_definition(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.config import get_settings
+
+    agent_id = await _agent_row(title="t", task_prompt="p")
+    monkeypatch.setattr(get_settings(), "definitions_source", "database")
+    with TestClient(create_app()) as client:
+        assert client.get(f"/api/agents/{agent_id}").json()["definition"] is None
+
+
+async def test_a_hand_written_workflow_file_becomes_a_runnable_workflow(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow
+    from precursor.backend.services.definitions import anchors
+
+    ident, agent_ident = _uid(), _uid()
+    _write(
+        files_mode,
+        "agents/helper.agent.yaml",
+        {"kind": "agent", "id": agent_ident, "title": "Helper", "prompt": "help"},
+    )
+    _write(
+        files_mode,
+        "workflows/new.workflow.yaml",
+        {
+            "kind": "workflow",
+            "id": ident,
+            "name": f"Hand made {ident}",
+            "steps": [
+                {"key": "help", "agent": "agents/helper.agent.yaml"},
+                {"key": "judge", "kind": "gate", "prompt": "PASS if ok", "on_fail": "help"},
+            ],
+        },
+    )
+    # What the gallery does on every list.
+    async with SessionLocal() as session:
+        assert await anchors.adopt_new_files(session)
+        await anchors.sync_all(session)
+    async with SessionLocal() as session:
+        wf = (
+            await session.execute(select(Workflow).where(Workflow.export_id == ident))
+        ).scalar_one()
+        _created_workflows.append(wf.id)
+        wf_id = wf.id
+    with TestClient(create_app()) as client:
+        body = client.get(f"/api/workflows/{wf_id}").json()
+    assert body["name"] == f"Hand made {ident}"
+    assert body["status"] == "idle"
+    assert body["definition"]["path"] == "workflows/new.workflow.yaml"
+    assert [(s["kind"], s["on_fail_position"]) for s in body["steps"]] == [
+        ("task", None),
+        ("gate", 0),
+    ]
+    assert body["steps"][0]["agent"]["title"] == "Helper"
+    assert body["steps"][1]["agent"]["task_prompt"] == "PASS if ok"
