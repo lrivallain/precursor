@@ -8,6 +8,7 @@ manager to hand off to.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -71,7 +72,7 @@ def test_no_file_manager_says_so_and_names_the_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(desktop, "_opener", lambda: None)
-    with pytest.raises(desktop.RevealError, match=str(tmp_path)):
+    with pytest.raises(desktop.RevealError, match=re.escape(str(tmp_path))):
         desktop.reveal(tmp_path)
 
 
@@ -132,7 +133,7 @@ def test_open_file_refuses_to_invent_a_missing_file(
     monkeypatch.setattr(desktop, "_opener", lambda: ["open"])
     _record(monkeypatch)
     missing = tmp_path / "nope.log"
-    with pytest.raises(desktop.RevealError, match=str(missing)):
+    with pytest.raises(desktop.RevealError, match=re.escape(str(missing))):
         desktop.open_file(missing)
     assert not missing.exists()
 

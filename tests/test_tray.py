@@ -231,6 +231,7 @@ def test_the_tray_restarts_itself_after_an_update(monkeypatch: pytest.MonkeyPatc
     assert calls == ["tray"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows hands over instead (tested below)")
 def test_a_hand_started_tray_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
     """If no unit manages it, its lifecycle isn't ours to interfere with."""
     from precursor.backend import autostart
@@ -725,3 +726,114 @@ def test_starting_and_stopping_leave_the_update_status_alone(
     app._update = _update_info(update_available=False)
     app._busy = "restarting"
     assert app._update_status().startswith(tray._MARK_OK)
+
+
+# --- finding the icon from another process ------------------------------------
+#
+# On Windows nothing may run from the tool environment while it is replaced, so
+# an update (or `service uninstall`) has to find and stop a tray it didn't start.
+
+
+@pytest.fixture
+def _isolated_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from precursor.backend import config
+
+    monkeypatch.setenv("PRECURSOR_DATA_DIR", str(tmp_path / "data"))
+    config.get_settings.cache_clear()
+    yield tmp_path / "data"
+    config.get_settings.cache_clear()
+
+
+def test_the_tray_records_and_forgets_itself(_isolated_data: Path) -> None:
+    tray._record_self()
+    assert tray.is_current_process() is True
+    # The caller itself is never "another" running tray.
+    assert tray.running_pid() is None
+    tray._forget_self()
+    assert not (_isolated_data / "tray.json").exists()
+
+
+def test_forgetting_leaves_a_successors_record_alone(_isolated_data: Path) -> None:
+    """A restarted icon records itself before the old one finishes exiting."""
+    _isolated_data.mkdir(parents=True)
+    (_isolated_data / "tray.json").write_text('{"pid": 999999}', encoding="utf-8")
+    tray._forget_self()
+    assert (_isolated_data / "tray.json").exists()
+
+
+def test_a_dead_trays_record_is_not_running(
+    _isolated_data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolated_data.mkdir(parents=True)
+    (_isolated_data / "tray.json").write_text('{"pid": 424242}', encoding="utf-8")
+    monkeypatch.setattr(supervisor, "_pid_alive", lambda _pid: False)
+    assert tray.running_pid() is None
+    assert tray.stop_running() is False
+
+
+def test_stopping_the_tray_ends_the_recorded_process(_isolated_data: Path) -> None:
+    import subprocess
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        _isolated_data.mkdir(parents=True)
+        (_isolated_data / "tray.json").write_text(f'{{"pid": {child.pid}}}', encoding="utf-8")
+        assert tray.running_pid() == child.pid
+        # Short: the child turns zombie (still "alive") until this test reaps it.
+        assert tray.stop_running(timeout=1) is True
+        assert child.wait(timeout=15) is not None
+        assert not (_isolated_data / "tray.json").exists()
+    finally:
+        if child.poll() is None:
+            child.kill()
+
+
+def test_single_instance_is_only_enforced_on_windows(_isolated_data: Path) -> None:
+    if os.name == "nt":  # pragma: no cover - Windows-only path
+        assert tray._claim_single_instance() is True
+        try:
+            # Anyone else asking for the same data directory is refused.
+            assert tray.winproc.acquire_single_instance(tray._instance_name()) is None
+        finally:
+            tray._release_single_instance()
+        # …and released means claimable again.
+        assert tray._claim_single_instance() is True
+        tray._release_single_instance()
+    else:
+        assert tray._claim_single_instance() is True
+        assert tray._claim_single_instance() is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows has no service manager to ask")
+def test_a_windows_tray_hands_over_to_a_fresh_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # pragma: no cover - Windows-only path
+    from precursor.backend import autostart
+
+    launched: list[str] = []
+    monkeypatch.setattr(autostart, "launch", lambda unit: launched.append(unit.key))
+    monkeypatch.setattr(tray.time, "sleep", lambda _s: None)
+    app = tray.TrayApp(check_updates=False)
+    assert app._restart_self() is True
+    assert launched == ["tray"]
+    assert app._stop.is_set()
+
+
+def test_a_finished_windows_update_is_reported_once(
+    _isolated_data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    _isolated_data.mkdir(parents=True)
+    (_isolated_data / updates.WINDOWS_UPDATE_RESULT).write_text(
+        json.dumps({"ok": False, "message": "No solution found", "log": "C:/logs/update.log"}),
+        encoding="utf-8",
+    )
+    app = tray.TrayApp(check_updates=False)
+    notes: list[tuple[str, str]] = []
+    monkeypatch.setattr(app, "_notify", lambda title, message: notes.append((title, message)))
+
+    app._report_finished_update()
+    app._report_finished_update()
+
+    assert notes == [("Precursor update failed", "No solution found\nC:/logs/update.log")]

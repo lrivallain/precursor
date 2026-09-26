@@ -82,7 +82,8 @@ def docker_available() -> tuple[bool, str]:
         proc = subprocess.run(
             ["docker", "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_DOCKER_PROBE_TIMEOUT,
             check=False,
         )

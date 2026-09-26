@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from precursor.backend import winproc
 from precursor.backend.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -367,13 +368,9 @@ def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":  # pragma: no cover - Windows-only path
-        out = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return str(pid) in out.stdout
+        # Not `tasklist`: the tray polls this every few seconds from a process
+        # with no console, and each spawn would flash one on screen.
+        return winproc.pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -382,6 +379,11 @@ def _pid_alive(pid: int) -> bool:
         # Exists but belongs to someone else.
         return True
     return True
+
+
+def pid_alive(pid: int) -> bool:
+    """Public face of :func:`_pid_alive`, for the tray's own bookkeeping."""
+    return _pid_alive(pid)
 
 
 def _port_responds(host: str, port: int, *, timeout: float = 0.5) -> bool:
@@ -423,12 +425,14 @@ def _child_command(port: int, host: str, *, log_level: str) -> list[str]:
     ]
 
 
-def _spawn_kwargs() -> dict[str, Any]:
-    """Detach the child so it outlives the CLI/tray process that started it."""
-    if os.name == "nt":  # pragma: no cover - Windows-only path
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        return {"creationflags": 0x00000008 | 0x00000200}
-    return {"start_new_session": True}
+def _child_env() -> dict[str, str]:
+    """The environment a detached instance runs with.
+
+    Its stdout is a file, and on Windows Python encodes a redirected stream in
+    the ANSI code page — so the first non-Latin-1 character anything prints
+    (the startup banner has one) would raise. UTF-8 matches every other log.
+    """
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
 def start(
@@ -500,13 +504,13 @@ def start(
             f"\n--- precursor service start {datetime.now(UTC).isoformat()} ---\n".encode()
         )
         handle.flush()
-        proc = subprocess.Popen(
+        proc = winproc.spawn_detached(
             _child_command(port, host, log_level=log_level),
             stdout=handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             cwd=str(working_dir()),
-            **_spawn_kwargs(),
+            env=_child_env(),
         )
     finally:
         handle.close()
@@ -594,7 +598,11 @@ def stop(*, timeout: float = _STOP_TIMEOUT_SECONDS) -> bool:
     pid = current.state.pid
     try:
         if os.name == "nt":  # pragma: no cover - Windows-only path
-            subprocess.run(["taskkill", "/PID", str(pid), "/T"], check=False, capture_output=True)
+            # Ctrl+Break is the graceful path: uvicorn shuts down on SIGBREAK.
+            # `taskkill` without /F can't be it — a windowless process has no
+            # window to receive WM_CLOSE, so it refuses and we'd only ever get
+            # here the hard way, after the full timeout.
+            winproc.interrupt(pid)
         else:
             os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -611,9 +619,7 @@ def stop(*, timeout: float = _STOP_TIMEOUT_SECONDS) -> bool:
     # Graceful shutdown overran (a wedged SSE stream, say) — insist.
     with contextlib.suppress(ProcessLookupError, OSError):
         if os.name == "nt":  # pragma: no cover - Windows-only path
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True
-            )
+            winproc.kill_tree(pid)
         else:
             os.kill(pid, signal.SIGKILL)
     _clear_state()
@@ -683,21 +689,20 @@ def request_detached_restart() -> None:
     """Restart this instance from a **detached** child process.
 
     The child is about to stop the very process spawning it, so it must not be
-    in our process group or die with us — hence :func:`_spawn_kwargs` and fully
-    redirected stdio. ``-m precursor.backend`` rather than the console script,
-    for the same reason :func:`_child_command` uses it: the running interpreter
-    is guaranteed to have the package importable.
+    in our process group or die with us — hence :func:`winproc.spawn_detached`
+    and fully redirected stdio. ``-m precursor.backend`` rather than the console
+    script, for the same reason :func:`_child_command` uses it: the running
+    interpreter is guaranteed to have the package importable.
     """
     ok, detail = restartable()
     if not ok:
         raise SupervisorError(detail)
-    subprocess.Popen(
+    winproc.spawn_detached(
         [sys.executable, "-m", "precursor.backend", "service", "restart"],
         cwd=str(working_dir()),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **_spawn_kwargs(),
     )
 
 

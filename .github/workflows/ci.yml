@@ -83,8 +83,9 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # With the tray extra, so the icon's Windows paths import for real.
       - name: Sync dependencies
-        run: uv sync --locked
+        run: uv sync --locked --extra tray
 
       - name: Pytest
         run: uv run pytest -q -p no:cacheprovider
@@ -126,6 +127,16 @@ jobs:
       - name: Build the wheel
         run: uv build --no-create-gitignore
 
+      # The Windows install job installs this very wheel rather than rebuilding
+      # the SPA and docs on a slower runner.
+      - name: Share the wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 3
+
       # With the kanban extra: the plugin's MCP server runs in this same
       # environment, so a plugin on another SDK major is exactly the failure a
       # fresh install has to catch.
@@ -147,6 +158,133 @@ jobs:
 
       - name: MCP smoke (stdio servers, streamable HTTP, plugin servers)
         run: '"$RUNNER_TEMP/wheel-venv/bin/python" -I scripts/smoke_mcp.py kanban'
+
+  # The whole Windows user journey, end to end, on the wheel built above: the
+  # PowerShell installer as a user runs it, the login item it registers, the
+  # service lifecycle (including a *graceful* stop), and a self-update — which
+  # on Windows has to finish in a helper, because nothing may run from the tool
+  # environment while uv replaces it.
+  install-windows:
+    name: Install on Windows (install.ps1 · service · update)
+    needs: wheel
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel
+          path: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # Windows PowerShell 5.1 and `irm | iex`: the least capable shell a user
+      # may paste the one-liner into, run exactly the way the docs say.
+      - name: Install with install.ps1
+        shell: powershell
+        run: |
+          $env:PRECURSOR_WHEEL = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          Get-Content -Raw scripts\install.ps1 | Invoke-Expression
+
+      - name: Drive the installed app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          function Say([string]$m) { Write-Host "::group::$m" }
+          function Done { Write-Host '::endgroup::' }
+          $bin = (uv tool dir --bin).Trim()
+          $precursor = Join-Path $bin 'precursor.exe'
+          $data = Join-Path $env:APPDATA 'Precursor'
+          function Status { (& $precursor service status --json 2>$null | Out-String | ConvertFrom-Json) }
+          function Wait-Running([int]$seconds = 90) {
+            $deadline = (Get-Date).AddSeconds($seconds)
+            while ((Get-Date) -lt $deadline) {
+              $PSNativeCommandUseErrorActionPreference = $false
+              $s = Status
+              if ($s.running) { return $s }
+              Start-Sleep -Milliseconds 500
+            }
+            throw "Precursor did not come up within $seconds s"
+          }
+
+          Say 'The installer left it running'
+          $status = Wait-Running
+          $health = Invoke-RestMethod "$($status.instance.url)api/health"
+          $health | ConvertTo-Json -Compress
+          Done
+
+          Say 'The login items run pythonw, never a console'
+          $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $run.Precursor
+          if ($run.Precursor -notmatch 'pythonw\.exe" -m precursor\.backend service start$') { throw 'unexpected app entry' }
+          if ($run.'Precursor Tray' -notmatch 'pythonw\.exe" -m precursor\.backend tray$') { throw 'unexpected tray entry' }
+          $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\precursor.cmd'
+          if (Test-Path $startup) { throw 'the legacy Startup script is still there' }
+          $visible = Get-Process python*, pythonw* -ErrorAction SilentlyContinue | Where-Object MainWindowHandle -ne 0
+          if ($visible) { $visible | Format-Table Id, ProcessName, MainWindowTitle; throw 'a Precursor process owns a visible window' }
+          Done
+
+          Say 'Stopping is graceful (Ctrl+Break), not a 20 s wait for taskkill /F'
+          $watch = [Diagnostics.Stopwatch]::StartNew()
+          & $precursor service stop
+          $watch.Stop()
+          "stopped in $($watch.Elapsed.TotalSeconds) s"
+          if ($watch.Elapsed.TotalSeconds -ge 15) { throw 'stop fell through to the hard kill' }
+          $log = Get-Content (Join-Path $data 'logs\precursor.log') -Raw
+          if ($log -notmatch 'Application shutdown complete') { throw 'uvicorn never ran its shutdown' }
+          Done
+
+          Say 'What the Run entry does at login brings it back'
+          if ($run.Precursor -notmatch '^"(?<exe>[^"]+)" (?<rest>.+)$') { throw 'unparseable entry' }
+          Start-Process -FilePath $Matches.exe -ArgumentList $Matches.rest
+          $status = Wait-Running
+          Invoke-RestMethod "$($status.instance.url)api/health" | Out-Null
+          Done
+
+          Say 'restart, logs and data-dir'
+          & $precursor service restart
+          Wait-Running | Out-Null
+          & $precursor service logs -n 5
+          & $precursor service data-dir
+          Done
+
+          Say 'A self-update finishes in a helper and brings the app back'
+          $python = Join-Path (uv tool dir).Trim() 'precursor-ai\Scripts\python.exe'
+          $wheel = ([System.Uri](Get-ChildItem dist\*.whl | Select-Object -First 1).FullName).AbsoluteUri
+          $before = (Status).instance.pid
+          & $python -c "from dataclasses import replace; from precursor.backend.services import updates; info = replace(updates.check(force=True), channel='nightly', wheel_url='$wheel', extra_wheel_urls=(), latest_version='ci', update_available=True, error=None); assert updates.applies_out_of_process(info); print(updates.apply(info))"
+          $updateLog = Join-Path $data 'logs\update.log'
+          $deadline = (Get-Date).AddMinutes(8)
+          while ((Get-Date) -lt $deadline) {
+            if ((Test-Path $updateLog) -and ((Get-Content $updateLog -Raw) -match 'Starting Precursor')) { break }
+            Start-Sleep -Seconds 2
+          }
+          Get-Content $updateLog
+          if ((Get-Content $updateLog -Raw) -notmatch 'Update installed\.') { throw 'the update did not install' }
+          $status = Wait-Running 120
+          if ($status.instance.pid -eq $before) { throw 'the instance was never restarted' }
+          Invoke-RestMethod "$($status.instance.url)api/health" | Out-Null
+          Done
+
+          Say 'Uninstall stops it and removes the entries'
+          & $precursor service uninstall
+          $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          if ($run.PSObject.Properties['Precursor']) { throw 'the app entry survived uninstall' }
+          $PSNativeCommandUseErrorActionPreference = $false
+          if ((Status).running) { throw 'still running after uninstall' }
+          uv tool uninstall precursor-ai
+          if ($LASTEXITCODE -ne 0) { throw 'uv tool uninstall failed - something still holds the environment' }
+          Done
+
+      - name: Logs
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem "$env:APPDATA\Precursor\logs" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "::group::$($_.Name)"; Get-Content $_.FullName -Tail 80; Write-Host '::endgroup::' }
 
   frontend:
     name: Frontend (typecheck · build)

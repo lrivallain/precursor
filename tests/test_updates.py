@@ -8,6 +8,7 @@ can share a base version), so they compare by commit.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -19,11 +20,17 @@ import pytest
 from precursor.backend import config
 from precursor.backend.services import updates
 
+_applies_out_of_process = updates.applies_out_of_process
+
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch: pytest.MonkeyPatch):
     updates.invalidate()
     config.get_settings.cache_clear()
+    # On Windows a uv-tool update hands off to a detached helper that runs the
+    # real `uv tool install`. The tests below exercise the in-process install;
+    # the hand-off has its own tests at the end of this file.
+    monkeypatch.setattr(updates, "applies_out_of_process", lambda _info: False)
     yield
     updates.invalidate()
     config.get_settings.cache_clear()
@@ -384,10 +391,12 @@ def test_nothing_is_retried_when_nothing_is_droppable(
 def test_a_failed_command_leads_with_the_reason_not_the_command() -> None:
     """A tray notification truncates, so the command must not come first — that
     is what left "updating failed" as the only visible signal."""
+    # Raw UTF-8 bytes, as uv writes them whatever the console code page is —
+    # which is also what the decoding has to survive on Windows.
     script = (
-        "import sys; sys.stderr.write("
+        "import sys; sys.stderr.buffer.write("
         "'\\u00d7 No solution found:\\n\\u2570\\u2500\\u25b6 Because precursor-kanban\\n"
-        "    was not found in the registry.\\n'); sys.exit(1)"
+        "    was not found in the registry.\\n'.encode('utf-8')); sys.exit(1)"
     )
     url = "https://github.com/o/r/releases/download/nightly/precursor_ai-1-py3-none-any.whl"
 
@@ -465,3 +474,55 @@ def test_a_plugin_the_index_cannot_serve_does_not_strand_the_host(
     assert "--with" not in calls[1]
     assert "precursor-ai[tray]" in calls[1]
     assert "precursor-notes" in summary
+
+
+# --- Windows: the update finishes outside the environment it replaces ---------
+
+
+def test_only_a_windows_tool_install_updates_out_of_process() -> None:
+    assert _applies_out_of_process(_uv_tool_info()) is (os.name == "nt")
+    source = replace(_uv_tool_info(), install_mode="source")
+    assert _applies_out_of_process(source) is False
+
+
+def test_the_updaters_result_is_read_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PRECURSOR_DATA_DIR", str(tmp_path))
+    config.get_settings.cache_clear()
+    assert updates.take_windows_update_result() is None
+    (tmp_path / updates.WINDOWS_UPDATE_RESULT).write_text('{"ok": true}', encoding="utf-8")
+    assert updates.take_windows_update_result() == {"ok": True}
+    assert updates.take_windows_update_result() is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows update hand-off")
+def test_a_windows_update_stops_everything_and_hands_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:  # pragma: no cover - Windows-only path
+    from precursor.backend import supervisor, tray, winproc
+
+    monkeypatch.setattr(updates, "applies_out_of_process", _applies_out_of_process)
+    monkeypatch.setenv("PRECURSOR_DATA_DIR", str(tmp_path / "data"))
+    _install_extras(monkeypatch, tmp_path, ["tray", "kanban"])
+    monkeypatch.setattr(updates.shutil, "which", lambda _name: "C:/uv/uv.exe")
+    stopped: list[str] = []
+    monkeypatch.setattr(supervisor, "status", lambda: supervisor.Status(running=True, state=None))
+    monkeypatch.setattr(supervisor, "stop", lambda: stopped.append("app") or True)
+    monkeypatch.setattr(tray, "stop_running", lambda: stopped.append("tray") or True)
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(winproc, "spawn_detached", lambda argv, **_kw: spawned.append(argv))
+
+    message = updates.apply(_uv_tool_info())
+
+    assert stopped == ["app", "tray"]
+    assert "background" in message
+    [argv] = spawned
+    assert argv[1] == "-I"
+    helper, job_file = Path(argv[2]), Path(argv[3])
+    assert "import precursor" not in helper.read_text(encoding="utf-8")
+    job = json.loads(job_file.read_text(encoding="utf-8"))
+    assert job["wait_pids"] == [os.getpid()]
+    # The plugin-less retry rides along, as it does in-process.
+    assert len(job["commands"]) == 2
+    assert "kanban" in job["summaries"][1]
+    assert job["app_command"][-2:] == ["service", "start"]
+    assert job["tray_command"][-1] == "tray"

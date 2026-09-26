@@ -209,13 +209,11 @@ def test_an_explicit_port_override_bypasses_the_unit(monkeypatch: pytest.MonkeyP
     assert seen["port"] == 9999
 
 
-def test_a_windows_startup_entry_is_not_treated_as_a_service_manager() -> None:
-    """It is a shortcut run at login, not something that can be asked to stop."""
+def test_a_windows_run_entry_is_not_treated_as_a_service_manager() -> None:
+    """It is a command run at login, not something that can be asked to stop."""
     from precursor.backend import autostart
 
-    entry = autostart.AutostartInfo(
-        unit="app", supported=True, installed=True, kind="startup-folder"
-    )
+    entry = autostart.AutostartInfo(unit="app", supported=True, installed=True, kind="registry")
     assert entry.controllable is False
     for kind in ("launchd", "systemd"):
         managed = autostart.AutostartInfo(unit="app", supported=True, installed=True, kind=kind)

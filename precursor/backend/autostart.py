@@ -2,7 +2,8 @@
 
 ``precursor service install`` registers Precursor to start when the user logs
 in, using whatever the platform's native mechanism is — a launchd LaunchAgent on
-macOS, a systemd *user* unit on Linux, a Startup-folder shortcut on Windows.
+macOS, a systemd *user* unit on Linux, a per-user ``Run`` registry entry on
+Windows.
 
 There are two things worth starting at login, and they are genuinely separate
 processes: the **app** (``service start --foreground``), which serves the UI and
@@ -14,6 +15,13 @@ extra) simply has no tray unit rather than a login item that fails every boot.
 The units deliberately run as the *user*, not as a system daemon: Precursor is a
 single-user local app that reads the user's ``gh`` credentials and home
 directory, and has no authentication of its own.
+
+Windows has no user-level service manager to hand the process to, so its entry
+is a launcher rather than a supervisor: at login it runs ``service start`` —
+which starts the instance detached, exactly as typing it would — and exits.
+Both entries run ``pythonw``, because anything console-based leaves a terminal
+window on screen for as long as it runs (the old Startup-folder ``.cmd`` did
+precisely that), and closing that window killed Precursor.
 """
 
 from __future__ import annotations
@@ -26,11 +34,16 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from precursor.backend import winproc
 from precursor.backend.supervisor import working_dir
 
 LAUNCHD_LABEL = "io.github.lrivallain.precursor"
 SYSTEMD_UNIT = "precursor.service"
+# The per-user key Explorer runs at login — the same list Task Manager's
+# "Startup apps" shows and lets the user switch off.
+WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 # `launchctl bootout` signals the job and returns; it does not wait for the
 # process to die. Precursor's own shutdown is a graceful uvicorn one and takes a
@@ -68,7 +81,18 @@ class Unit:
 
     @property
     def windows_name(self) -> str:
+        """The Startup-folder script earlier releases wrote; now only cleaned up."""
         return "precursor.cmd" if self.key == "app" else f"precursor-{self.key}.cmd"
+
+    @property
+    def windows_value(self) -> str:
+        """Name of the value under :data:`WINDOWS_RUN_KEY`."""
+        return "Precursor" if self.key == "app" else f"Precursor {self.key.capitalize()}"
+
+    @property
+    def windows_args(self) -> tuple[str, ...]:
+        # Detached, not --foreground: see the module docstring.
+        return ("service", "start") if self.key == "app" else self.args
 
 
 APP = Unit(key="app", title="Precursor", args=("service", "start", "--foreground"))
@@ -90,8 +114,8 @@ class AutostartInfo:
     def controllable(self) -> bool:
         """Whether the platform can start/stop this unit on demand.
 
-        launchd and systemd are real service managers. A Windows Startup entry
-        is just a shortcut executed at login — there is nothing to ask, so the
+        launchd and systemd are real service managers. A Windows Run entry is
+        just a command executed at login — there is nothing to ask, so the
         supervisor keeps managing that process directly.
         """
         return self.installed and self.kind in ("launchd", "systemd")
@@ -122,11 +146,27 @@ def _launch_command(unit: Unit) -> list[str]:
     return [sys.executable, "-m", "precursor.backend", *unit.args]
 
 
+def windows_command(unit: Unit) -> list[str]:
+    """The argv a Windows Run entry executes: this environment's ``pythonw``.
+
+    Not the ``precursor.exe`` console script: a console program started at login
+    gets a console *window*, which stays open for as long as it runs. Looked up
+    beside the running interpreter, because a ``uv tool`` venv keeps both — and
+    ``uv tool install --force`` recreates it at the same path, so the entry
+    survives updates.
+    """
+    interpreter = Path(sys.executable)
+    windowless = interpreter.with_name("pythonw.exe")
+    if windowless.is_file():
+        interpreter = windowless
+    return [str(interpreter), "-m", "precursor.backend", *unit.windows_args]
+
+
 def _kind() -> str:
     if sys.platform == "darwin":
         return "launchd"
-    if os.name == "nt":  # pragma: no cover - Windows-only path
-        return "startup-folder"
+    if os.name == "nt":
+        return "registry"
     return "systemd"
 
 
@@ -140,7 +180,8 @@ def _systemd_unit_path(unit: Unit) -> Path:
     return root / "systemd" / "user" / unit.systemd_name
 
 
-def _windows_startup_path(unit: Unit) -> Path:  # pragma: no cover - Windows-only path
+def _windows_startup_path(unit: Unit) -> Path:
+    """Where releases before the Run entry put a ``.cmd`` — removed on sight."""
     appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
     return (
         Path(appdata)
@@ -154,16 +195,89 @@ def _windows_startup_path(unit: Unit) -> Path:  # pragma: no cover - Windows-onl
 
 
 def _target_path(unit: Unit) -> Path | None:
+    """The file behind a login item (on Windows, the legacy Startup script).
+
+    Every file-backed lookup goes through here, which is what lets the test
+    suite redirect them all at once; the Windows registry equivalent is
+    :func:`_run_key`.
+    """
     if sys.platform == "darwin":
         return _macos_plist_path(unit)
-    if os.name == "nt":  # pragma: no cover - Windows-only path
+    if os.name == "nt":
         return _windows_startup_path(unit)
     if sys.platform.startswith("linux"):
         return _systemd_unit_path(unit)
     return None
 
 
+def _run_key() -> str:
+    """The registry key holding Windows Run entries (redirected by the tests)."""
+    return WINDOWS_RUN_KEY
+
+
+def _winreg() -> Any:  # pragma: no cover - Windows-only path
+    import winreg
+
+    return winreg
+
+
+def _run_value(unit: Unit) -> str | None:  # pragma: no cover - Windows-only path
+    reg = _winreg()
+    try:
+        with reg.OpenKey(reg.HKEY_CURRENT_USER, _run_key()) as key:
+            value, _type = reg.QueryValueEx(key, unit.windows_value)
+    except OSError:
+        return None
+    return str(value)
+
+
+def _set_run_value(unit: Unit, command: str) -> None:  # pragma: no cover - Windows-only path
+    reg = _winreg()
+    with reg.CreateKeyEx(reg.HKEY_CURRENT_USER, _run_key(), 0, reg.KEY_SET_VALUE) as key:
+        reg.SetValueEx(key, unit.windows_value, 0, reg.REG_SZ, command)
+
+
+def _delete_run_value(unit: Unit) -> None:  # pragma: no cover - Windows-only path
+    reg = _winreg()
+    try:
+        with reg.OpenKey(reg.HKEY_CURRENT_USER, _run_key(), 0, reg.KEY_SET_VALUE) as key:
+            reg.DeleteValue(key, unit.windows_value)
+    except FileNotFoundError:
+        pass
+
+
+def _windows_info(unit: Unit) -> AutostartInfo:  # pragma: no cover - Windows-only path
+    legacy = _target_path(unit)
+    installed = _run_value(unit) is not None or (legacy is not None and legacy.is_file())
+    return AutostartInfo(
+        unit=unit.key,
+        supported=True,
+        installed=installed,
+        kind="registry",
+        path=f"HKCU\\{_run_key()}\\{unit.windows_value}",
+    )
+
+
+def launch(unit: Unit) -> None:
+    """Start a registered unit now, the way the login item will at next login.
+
+    Only meaningful where registering does not already start it — a Windows Run
+    entry fires at the next login, whereas launchd (RunAtLoad) and systemd
+    (``--now``) start the unit as part of registering it.
+    """
+    subprocess.Popen(
+        windows_command(unit) if os.name == "nt" else _launch_command(unit),
+        cwd=str(working_dir()),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **winproc.detached(),
+    )
+
+
 def info(unit: Unit = APP) -> AutostartInfo:
+    if _kind() == "registry":  # pragma: no cover - Windows-only path
+        return _windows_info(unit)
     path = _target_path(unit)
     if path is None:
         return AutostartInfo(unit=unit.key, supported=False, installed=False, kind="unsupported")
@@ -233,10 +347,23 @@ def _write_systemd(unit: Unit, path: Path) -> None:
     )
 
 
-def _write_windows(unit: Unit, path: Path) -> None:  # pragma: no cover - Windows-only path
-    argv = " ".join(f'"{part}"' for part in _launch_command(unit))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'@echo off\r\nstart "" /b {argv}\r\n', encoding="utf-8")
+def windows_command_line(unit: Unit) -> str:
+    """:func:`windows_command` as the single string a Run entry holds.
+
+    The executable is quoted even without a space in it, as installers write
+    them: an unquoted path is re-split by Explorer at every space.
+    """
+    executable, *arguments = windows_command(unit)
+    return f'"{executable}" {subprocess.list2cmdline(arguments)}'
+
+
+def _install_windows(unit: Unit) -> None:  # pragma: no cover - Windows-only path
+    _set_run_value(unit, windows_command_line(unit))
+    # Supersedes the Startup-folder script, which would otherwise start a second
+    # copy — in a console window — at the next login.
+    legacy = _target_path(unit)
+    if legacy is not None and legacy.is_file():
+        legacy.unlink()
 
 
 def _macos_loaded(label: str) -> bool:
@@ -297,7 +424,7 @@ def install(unit: Unit = APP) -> AutostartInfo:
                 f"{result.stderr.strip() or result.returncode}"
             )
     elif os.name == "nt":  # pragma: no cover - Windows-only path
-        _write_windows(unit, path)
+        _install_windows(unit)
     else:
         _write_systemd(unit, path)
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, capture_output=True)
@@ -325,7 +452,9 @@ def uninstall(unit: Unit = APP) -> AutostartInfo:
         # really gone — otherwise an uninstall-then-install leaves the same race
         # as a bare re-install.
         _macos_bootout(unit)
-    elif os.name != "nt" and path.is_file():
+    elif os.name == "nt":  # pragma: no cover - Windows-only path
+        _delete_run_value(unit)
+    elif path.is_file():
         subprocess.run(
             ["systemctl", "--user", "disable", "--now", unit.systemd_name],
             check=False,

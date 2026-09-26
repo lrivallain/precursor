@@ -234,6 +234,8 @@ class _FakeLaunchctl:
 @pytest.fixture
 def _darwin(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(autostart.sys, "platform", "darwin")
+    # Absent on Windows, where the suite also runs these launchd simulations.
+    monkeypatch.setattr(autostart.os, "getuid", lambda: 501, raising=False)
     monkeypatch.setattr(autostart.time, "sleep", lambda _s: None)
     monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
 
@@ -308,3 +310,175 @@ def test_uninstall_removes_the_plist_only_once_the_job_is_gone(
 
     assert fake.loaded is False
     assert not path.exists()
+
+
+# --- Windows: a Run entry that starts pythonw ---------------------------------
+#
+# The old Startup-folder `.cmd` ran the console script, so a terminal window sat
+# on screen for as long as Precursor ran — and closing it killed the app.
+
+
+def _fake_venv(tmp_path: Path, *, windowless: bool) -> Path:
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    (scripts / "python.exe").write_bytes(b"")
+    if windowless:
+        (scripts / "pythonw.exe").write_bytes(b"")
+    return scripts
+
+
+def test_the_windows_entry_runs_pythonw(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scripts = _fake_venv(tmp_path, windowless=True)
+    monkeypatch.setattr(autostart.sys, "executable", str(scripts / "python.exe"))
+
+    assert autostart.windows_command(autostart.APP) == [
+        str(scripts / "pythonw.exe"),
+        "-m",
+        "precursor.backend",
+        # Detached rather than --foreground: the entry only launches.
+        "service",
+        "start",
+    ]
+    assert autostart.windows_command(autostart.TRAY)[-1:] == ["tray"]
+
+
+def test_the_windows_entry_quotes_the_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scripts = _fake_venv(tmp_path, windowless=True)
+    monkeypatch.setattr(autostart.sys, "executable", str(scripts / "python.exe"))
+    assert autostart.windows_command_line(autostart.APP) == (
+        f'"{scripts / "pythonw.exe"}" -m precursor.backend service start'
+    )
+
+
+def test_the_windows_entry_falls_back_to_the_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scripts = _fake_venv(tmp_path, windowless=False)
+    monkeypatch.setattr(autostart.sys, "executable", str(scripts / "python.exe"))
+    assert autostart.windows_command(autostart.APP)[0] == str(scripts / "python.exe")
+
+
+def test_the_windows_entries_never_collide() -> None:
+    values = {unit.windows_value for unit in autostart.UNITS}
+    assert len(values) == len(autostart.UNITS)
+    # Renaming the app's entry on upgrade would orphan the one already there.
+    assert autostart.APP.windows_value == "Precursor"
+
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
+
+
+@windows_only
+def test_the_suite_never_writes_the_real_run_key() -> None:  # pragma: no cover
+    assert autostart._run_key() != autostart.WINDOWS_RUN_KEY
+
+
+@windows_only
+def test_a_windows_install_writes_the_run_entry_and_drops_the_old_script() -> (
+    None
+):  # pragma: no cover
+    legacy = autostart._target_path(autostart.APP)
+    assert legacy is not None
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("@echo off\r\n", encoding="utf-8")
+
+    installed = autostart.install(autostart.APP)
+
+    assert autostart._run_value(autostart.APP) == autostart.windows_command_line(autostart.APP)
+    assert not legacy.exists()
+    assert installed.installed is True
+    assert installed.kind == "registry"
+    # A Run entry can't be asked to stop, so the supervisor keeps the process.
+    assert installed.controllable is False
+    assert supervisor.managed_unit() is None
+
+    removed = autostart.uninstall(autostart.APP)
+    assert autostart._run_value(autostart.APP) is None
+    assert removed.installed is False
+
+
+@windows_only
+def test_a_leftover_startup_script_still_counts_until_removed() -> None:  # pragma: no cover
+    legacy = autostart._target_path(autostart.TRAY)
+    assert legacy is not None
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("@echo off\r\n", encoding="utf-8")
+    assert autostart.info(autostart.TRAY).installed is True
+    autostart.uninstall(autostart.TRAY)
+    assert not legacy.exists()
+    assert autostart.info(autostart.TRAY).installed is False
+
+
+def test_launching_a_unit_uses_the_login_item_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawned: list[list[str]] = []
+
+    class _Proc:
+        pass
+
+    def _fake_popen(argv: list[str], **_kwargs: object) -> _Proc:
+        spawned.append(argv)
+        return _Proc()
+
+    monkeypatch.setattr(autostart.subprocess, "Popen", _fake_popen)
+    autostart.launch(autostart.TRAY)
+    expected = (
+        autostart.windows_command(autostart.TRAY)
+        if sys.platform == "win32"
+        else autostart._launch_command(autostart.TRAY)
+    )
+    assert spawned == [expected]
+
+
+def _registry_entry(unit: autostart.Unit) -> autostart.AutostartInfo:
+    return autostart.AutostartInfo(
+        unit=unit.key, supported=True, installed=True, kind="registry", path="HKCU\\Run"
+    )
+
+
+def test_install_starts_what_a_run_entry_only_starts_at_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """launchd and systemd start units as they register them; a Run entry
+    doesn't, so the CLI starts both itself — without waiting for a unit that
+    was never going to start anything."""
+    from precursor.backend import service_cli
+
+    monkeypatch.setattr(autostart, "install", _registry_entry)
+    monkeypatch.setattr(autostart, "tray_supported", lambda: True)
+    launched: list[str] = []
+    monkeypatch.setattr(autostart, "launch", lambda unit: launched.append(unit.key))
+    monkeypatch.setattr(
+        supervisor, "reserve_port", lambda **_kw: supervisor.PortReservation(port=8000)
+    )
+    monkeypatch.setattr(supervisor, "status", lambda: supervisor.Status(running=False, state=None))
+    started: list[bool] = []
+    monkeypatch.setattr(
+        supervisor,
+        "start",
+        lambda **_kw: started.append(True) or supervisor.Status(running=False, state=None),
+    )
+    monkeypatch.setattr(
+        service_cli.time, "sleep", lambda _s: pytest.fail("waited on a unit that starts nothing")
+    )
+
+    assert service_cli.main(["install"]) == 0
+    assert launched == ["tray"]
+    assert started == [True]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Run entries")
+def test_uninstall_on_windows_stops_what_the_entries_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # pragma: no cover - Windows-only path
+    """Nothing else will — and a running Precursor blocks `uv tool uninstall`."""
+    from precursor.backend import service_cli, tray
+
+    stopped: list[str] = []
+    monkeypatch.setattr(supervisor, "stop", lambda: stopped.append("app") or True)
+    monkeypatch.setattr(tray, "stop_running", lambda: stopped.append("tray") or True)
+    assert service_cli.main(["uninstall"]) == 0
+    assert stopped == ["app", "tray"]

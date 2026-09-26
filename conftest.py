@@ -15,6 +15,7 @@ import contextlib
 import os
 import shutil
 import tempfile
+import uuid
 
 import pytest
 
@@ -54,6 +55,11 @@ os.environ["PRECURSOR_MCP_WARMUP_ENABLED"] = "false"
 # KeepAlive can only restart a job that is still loaded. Running the test suite
 # killed the machine's real instance.
 _units_dir = tempfile.mkdtemp(prefix="precursor-test-units-")
+# Windows keeps its login items in the registry rather than in files, so the
+# same isolation needs a throwaway key in place of the real `Run` key.
+_units_run_root = r"Software\Precursor-tests"
+_units_run_parent = rf"{_units_run_root}\{uuid.uuid4().hex}"
+_units_run_key = rf"{_units_run_parent}\Run"
 
 
 @atexit.register
@@ -63,17 +69,26 @@ def _cleanup_tmp_db() -> None:
     shutil.rmtree(_skills_dir, ignore_errors=True)
     shutil.rmtree(_data_dir, ignore_errors=True)
     shutil.rmtree(_units_dir, ignore_errors=True)
+    if os.name == "nt":
+        import winreg
+
+        # Innermost first: DeleteKey refuses a key that still has subkeys, which
+        # also leaves the shared root alone while another session uses it.
+        for key in (_units_run_key, _units_run_parent, _units_run_root):
+            with contextlib.suppress(OSError):
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
 
 
 @pytest.fixture(autouse=True)
 def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point every login-item lookup at a throwaway directory.
 
-    ``_target_path`` is the one chokepoint all three platforms go through, so
-    patching it covers ``info``/``install``/``uninstall`` and — the dangerous
-    ones — ``managed_unit`` and the ``launchctl``/``systemctl`` calls behind
-    ``stop_unit`` and ``restart_unit``. Distinct paths per unit are preserved so
-    tests can still tell the app and tray units apart.
+    ``_target_path`` is the one chokepoint every file-backed login item goes
+    through, so patching it covers ``info``/``install``/``uninstall`` and — the
+    dangerous ones — ``managed_unit`` and the ``launchctl``/``systemctl`` calls
+    behind ``stop_unit`` and ``restart_unit``. ``_run_key`` is its Windows
+    registry counterpart. Distinct paths per unit are preserved so tests can
+    still tell the app and tray units apart.
     """
     from pathlib import Path
 
@@ -84,6 +99,7 @@ def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
         "_target_path",
         lambda unit: Path(_units_dir) / f"{unit.label}.plist",
     )
+    monkeypatch.setattr(autostart, "_run_key", lambda: _units_run_key)
 
 
 @pytest.fixture(autouse=True)
