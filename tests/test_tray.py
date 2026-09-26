@@ -422,6 +422,7 @@ def test_clicking_the_entry_bounces_the_icon_and_drops_the_stale_check(
     assert app._update is None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows hands over instead of asking")
 def test_a_hand_started_stale_tray_is_told_what_to_do(monkeypatch: pytest.MonkeyPatch) -> None:
     """`_restart_self` is a no-op for an icon no login item owns, so silently
     doing nothing would leave the click looking broken."""

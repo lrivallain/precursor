@@ -54,7 +54,9 @@ def test_pid_alive_tracks_a_real_process() -> None:  # pragma: no cover - Window
 
 
 # Waits for Ctrl+Break and records that it got to shut down on its own terms —
-# the whole point of preferring it to `taskkill /F`.
+# the whole point of preferring it to `taskkill /F`. Short sleeps, because on
+# Windows only Ctrl+C cuts a `time.sleep` short: a SIGBREAK handler runs once
+# the sleep returns (uvicorn's loop wakes every tick, so it is never stuck).
 _GRACEFUL_CHILD = """
 import signal, sys, time
 from pathlib import Path
@@ -64,7 +66,8 @@ def stop(*_):
     sys.exit(0)
 signal.signal(signal.SIGBREAK, stop)
 marker.write_text("ready")
-time.sleep(60)
+for _ in range(600):
+    time.sleep(0.1)
 """
 
 
