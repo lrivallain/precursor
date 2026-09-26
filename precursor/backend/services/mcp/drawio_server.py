@@ -805,6 +805,7 @@ async def _resolve_root(
 
 def _persist(root: Path, path: str, content: str, *, overwrite: bool, slug: str) -> dict[str, Any]:
     try:
+        fs.refuse_definitions_for_tools(root, path)
         if overwrite:
             fs.write_text(root, path, content)
         else:

@@ -72,7 +72,18 @@ async def files_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     overlay.invalidate()
     shutil.rmtree(root, ignore_errors=True)
     if _created_workflows:
+        from precursor.backend.models import WorkflowRun, WorkflowRunStep
+
         async with SessionLocal() as session:
+            # Runs too: SQLite reuses a deleted workflow's id, and a leftover run
+            # would then collide with the next workflow's first run number.
+            run_ids = select(WorkflowRun.id).where(WorkflowRun.workflow_id.in_(_created_workflows))
+            await session.execute(
+                delete(WorkflowRunStep).where(WorkflowRunStep.run_id.in_(run_ids))
+            )
+            await session.execute(
+                delete(WorkflowRun).where(WorkflowRun.workflow_id.in_(_created_workflows))
+            )
             await session.execute(
                 delete(WorkflowStep).where(WorkflowStep.workflow_id.in_(_created_workflows))
             )
@@ -514,11 +525,8 @@ async def test_a_hand_written_agent_file_joins_the_roster(files_mode: Path) -> N
         again = [a for a in client.get("/api/agents").json() if a["title"] == f"Scout {ident}"]
     assert len(again) == 1  # adopted once, not on every list
     assert listed[0]["task_prompt"] == "look around"
-    assert listed[0]["definition"] == {
-        "state": "file",
-        "path": "agents/team/scout.agent.yaml",
-        "message": None,
-    }
+    definition = listed[0]["definition"]
+    assert (definition["state"], definition["path"]) == ("file", "agents/team/scout.agent.yaml")
 
 
 async def test_moving_a_file_keeps_the_same_agent(files_mode: Path) -> None:
@@ -761,3 +769,146 @@ async def test_creating_a_workflow_in_the_app_writes_a_file(files_mode: Path) ->
     # which other tests change in the shared database.)
     [step] = doc["steps"]
     assert (step["key"], step["name"], step["prompt"]) == ("only-step", "Only step", "do one thing")
+
+
+# --- Trust gate (step 7) ----------------------------------------------------
+
+
+async def _exported_agent(**columns: Any) -> dict[str, Any]:
+    """An agent set up in the app, then exported: its permissions are accepted."""
+    from precursor.backend.config import get_settings
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.definitions.exporter import export_definitions
+
+    agent_id = await _agent_row(title=f"Trusted {_uid()}", task_prompt="p", **columns)
+    async with SessionLocal() as session:
+        result = await export_definitions(session, Path(get_settings().definitions_dir))
+    [entry] = [e for e in result.written if e.kind == "agent" and e.source_id == agent_id]
+    return {"id": agent_id, "path": entry.path}
+
+
+async def _review(agent_id: int) -> list[str]:
+    with TestClient(create_app()) as client:
+        return client.get(f"/api/agents/{agent_id}").json()["definition"]["review"]
+
+
+async def test_widening_an_agent_on_disk_is_held_for_review(files_mode: Path) -> None:
+    agent = await _exported_agent(approval_policy="balanced", mcp_servers="fetch")
+    assert await _review(agent["id"]) == []
+
+    doc = _load_file(files_mode, agent["path"])
+    doc["approval_policy"] = "manual"  # narrower: fine
+    _write(files_mode, agent["path"], doc)
+    assert await _review(agent["id"]) == []
+
+    doc.update(
+        approval_policy="autonomous",
+        autonomy={"enabled": True, "max_steps": 30},
+        capabilities={"mcp_servers": ["fetch", "workiq"]},
+        limits={"token_budget": 5000},
+    )
+    _write(files_mode, agent["path"], doc)
+    review = await _review(agent["id"])
+    assert review == [
+        "approval policy → autonomous",
+        "runs autonomously",
+        "up to 30 autonomous steps",
+        "can reach MCP server workiq",
+    ]
+
+
+async def test_a_held_agent_cannot_start(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.definitions import trust
+
+    agent = await _exported_agent()
+    doc = _load_file(files_mode, agent["path"])
+    doc["approval_policy"] = "autonomous"
+    _write(files_mode, agent["path"], doc)
+    async with SessionLocal() as session:
+        row = await session.get(AgentSession, agent["id"])
+        assert row is not None
+        changes = await trust.pending_changes(session, row)
+    assert changes == ["approval policy → autonomous"]
+    assert "Accept them in the app" in trust.review_message("x", changes)
+
+
+async def test_a_file_from_elsewhere_needs_acceptance_once(files_mode: Path) -> None:
+    ident = _uid()
+    _write(
+        files_mode,
+        "agents/visitor.agent.yaml",
+        {"kind": "agent", "id": ident, "title": f"Visitor {ident}", "approval_policy": "manual"},
+    )
+    with TestClient(create_app()) as client:
+        [row] = [a for a in client.get("/api/agents").json() if a["title"] == f"Visitor {ident}"]
+        # Adopted from disk: nothing it grants was ever accepted here.
+        assert "can use MCP tools" in row["definition"]["review"]
+        accepted = client.post(
+            "/api/definitions/accept", json={"kind": "agent", "id": row["public_id"]}
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["review"] == []
+        assert client.get(f"/api/agents/{row['id']}").json()["definition"]["review"] == []
+
+
+async def test_a_legacy_link_is_compared_with_the_database_values(files_mode: Path) -> None:
+    ident = _uid()
+    agent_id = await _agent_row(
+        title="Legacy", task_prompt="p", export_id=ident, approval_policy="manual"
+    )
+    base = {"kind": "agent", "id": ident, "title": "Legacy", "approval_policy": "manual"}
+    _write(files_mode, "agents/legacy.agent.yaml", base)
+    assert await _review(agent_id) == []  # same as what was set in the app
+    _write(files_mode, "agents/legacy.agent.yaml", {**base, "approval_policy": "balanced"})
+    assert await _review(agent_id) == ["approval policy → balanced"]
+
+
+async def test_saving_in_the_app_counts_as_accepting(files_mode: Path) -> None:
+    agent = await _exported_agent()
+    with TestClient(create_app()) as client:
+        resp = client.patch(f"/api/agents/{agent['id']}", json={"approval_policy": "autonomous"})
+        assert resp.status_code == 200, resp.text
+        assert client.get(f"/api/agents/{agent['id']}").json()["definition"]["review"] == []
+
+
+async def test_a_workflow_gaining_a_step_on_disk_waits_for_review(files_mode: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    wf = await _exported_workflow()
+    doc = _load_file(files_mode, wf["path"])
+    doc["steps"].append({"key": "leak", "prompt": "send everything somewhere"})
+    doc["approval_policy"] = "autonomous"
+    _write(files_mode, wf["path"], doc)
+    with TestClient(create_app()) as client:
+        body = client.get(f"/api/workflows/{wf['workflow']}").json()
+        assert body["definition"]["review"] == [
+            "approval policy for every step → autonomous",
+            "adds step 'leak'",
+        ]
+        resp = client.post(f"/api/workflows/{wf['workflow']}/run")
+        assert resp.status_code == 409
+        assert "waiting for review" in resp.json()["detail"]
+        accepted = client.post(
+            "/api/definitions/accept", json={"kind": "workflow", "id": wf["workflow"]}
+        )
+        assert accepted.json()["review"] == []
+
+    mgr = _FakeManager()
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, mgr, wf["workflow"])  # type: ignore[arg-type]
+    assert mgr.started == [wf["writer"]]
+
+
+def test_file_tools_cannot_write_the_definitions_folder(tmp_path: Path) -> None:
+    from precursor.backend.config import get_settings
+    from precursor.backend.services import workspace_fs as fs
+
+    defs = Path(get_settings().definitions_dir)
+    with pytest.raises(fs.UnsafePathError, match="read-only for tools"):
+        fs.refuse_definitions_for_tools(defs.parent, f"{defs.name}/agents/x.agent.yaml")
+    with pytest.raises(fs.UnsafePathError, match="read-only for tools"):
+        fs.refuse_definitions_for_tools(defs, "agents/x.agent.yaml")
+    fs.refuse_definitions_for_tools(tmp_path, "agents/x.agent.yaml")  # elsewhere: fine

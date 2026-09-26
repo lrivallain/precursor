@@ -203,6 +203,11 @@ class Workflow(Base, TimestampMixin, RecurrenceMixin):
     # Non-null once archived (hidden from the active gallery, kept for history).
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Files mode only: the permissions (approval policy, steps and their tools)
+    # a human last accepted for this workflow's file, as JSON. A file that
+    # widens them is held for review. Null = never recorded.
+    accepted_permissions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Ordered steps. Eager (selectin) so the API serialises the pipeline in one
     # go; ordered by position so the sequence renders left-to-right.
     steps: Mapped[list[WorkflowStep]] = relationship(

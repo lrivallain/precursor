@@ -151,6 +151,7 @@ async def create_file(workspace_id: int, path: str, content: str = "") -> dict[s
     if not _browse_root(ws).exists():
         return {"error": "Workspace is not ready yet"}
     try:
+        fs.refuse_definitions_for_tools(_browse_root(ws), path)
         fs.create_file(_browse_root(ws), path, content)
     except fs.UnsafePathError as exc:
         return {"error": str(exc)}
@@ -172,6 +173,7 @@ async def write_file(workspace_id: int, path: str, content: str) -> dict[str, An
     if not _browse_root(ws).exists():
         return {"error": "Workspace is not ready yet"}
     try:
+        fs.refuse_definitions_for_tools(_browse_root(ws), path)
         fs.write_text(_browse_root(ws), path, content)
     except fs.UnsafePathError as exc:
         return {"error": str(exc)}
@@ -191,6 +193,7 @@ async def create_folder(workspace_id: int, path: str) -> dict[str, Any]:
     if not _browse_root(ws).exists():
         return {"error": "Workspace is not ready yet"}
     try:
+        fs.refuse_definitions_for_tools(_browse_root(ws), path)
         fs.create_dir(_browse_root(ws), path)
     except fs.UnsafePathError as exc:
         return {"error": str(exc)}

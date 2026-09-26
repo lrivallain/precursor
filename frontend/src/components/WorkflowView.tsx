@@ -669,7 +669,13 @@ export function WorkflowView({
                 {workflow.status === "running" && <Loader2 size={10} className="animate-spin" />}
                 {WORKFLOW_STATUS_LABEL[workflow.status]}
               </span>
-              <DefinitionBadge source={workflow.definition} />
+              <DefinitionBadge
+                source={workflow.definition}
+                onAccept={async () => {
+                  await api.definitions.accept("workflow", workflow.id);
+                  onChanged(await api.workflows.get(workflow.id));
+                }}
+              />
             </div>
             {workflow.description && (
               <p className="truncate text-xs text-muted">{workflow.description}</p>

@@ -25,6 +25,15 @@ class DefinitionSource(BaseModel):
     state: Literal["file", "invalid", "none"]
     path: str | None = None
     message: str | None = None
+    # Permissions the file grants beyond what was accepted; while non-empty it
+    # can't start a run (``POST /api/definitions/accept`` clears it).
+    review: list[str] = []
+
+
+class DefinitionAcceptRequest(BaseModel):
+    kind: DefinitionKind
+    # The agent's or workflow's database id (an agent's public id works too).
+    id: int | str
 
 
 class DefinitionIssue(BaseModel):

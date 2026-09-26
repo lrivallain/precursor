@@ -352,6 +352,41 @@ written back). Keeping them needs a comment-preserving YAML library
 (`ruamel.yaml`), a new dependency that has to go through the lockfile workflow.
 :::
 
+### Permission changes need a human
+
+A definition file decides what an agent may do. Once files can arrive from a
+`git pull`, a teammate or a tool writing to disk, a change that **widens** that
+must not take effect silently, so each agent and workflow keeps the permissions
+a person last accepted. A file that goes beyond them can't start a run —
+starting the agent fails with the list of changes, and running the workflow is
+refused with a `409` — until someone accepts them in the app (**Review &
+accept** on the badge, or `POST /api/definitions/accept`).
+
+What counts:
+
+| Agent | Workflow |
+| --- | --- |
+| a looser approval policy (anything but a move to `manual`, or down between two explicit policies) | a looser approval policy for every step |
+| autonomy switched on, or more autonomous steps | a step added, or a step now running a different agent or its own prompt |
+| MCP tools, skills or memory switched on | a step's MCP tools, skills or memory switched on |
+| more MCP servers, or every server instead of a list | a step reaching more MCP servers |
+| a higher token budget, or none | |
+
+- **Narrowing never needs review.**
+- **What Precursor writes is accepted**: the export and every save from the app
+  record the file's permissions, since those values came from you.
+- **A file new to this instance** (adopted from disk) starts with nothing
+  accepted, so everything it grants is listed once.
+- **A row linked before this existed** is compared with its database columns —
+  the values last set in the app. (A workflow's steps are then taken as they
+  are.)
+- **The assistant's file tools** (`workspace-fs`, `drawio`) can't write
+  anywhere under the definitions folder. The command runner can still write in
+  a workspace it's given; a change it makes is caught by the review above.
+
+This gates **permissions, not content**: a prompt rewritten within the
+permissions already accepted is not held.
+
 ## Roadmap
 
 Each step ships on its own and is validated before the next starts.
@@ -368,8 +403,8 @@ Each step ships on its own and is validated before the next starts.
    moved files keep their history, and each page shows its file.
 6. ✅ Editing in the app writes the file (comments are not kept yet — see
    above).
-7. Permission changes arriving from disk (approval policy, MCP scope,
-   autonomy) are held until a human accepts them; the assistant's file tools
-   cannot write the definitions folder.
+7. ✅ Permission changes arriving from disk (approval policy, MCP scope,
+   autonomy, tools, budget, new steps) are held until a human accepts them; the
+   assistant's file tools cannot write the definitions folder.
 8. The definitions folder can be a git workspace: pull, check, accept, push.
 9. The old declaration columns are removed from the database.

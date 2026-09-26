@@ -1006,6 +1006,8 @@ export interface DefinitionSource {
   state: "file" | "invalid" | "none";
   path: string | null;
   message: string | null;
+  /** Permissions the file grants beyond what was accepted; blocks runs until accepted. */
+  review?: string[];
 }
 
 export interface DefinitionIssue {

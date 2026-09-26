@@ -19,6 +19,7 @@ dropping the step would shift every position-based reference after it.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -46,7 +47,7 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionsExportResult,
     ExportedDefinition,
 )
-from precursor.backend.services.definitions import overlay
+from precursor.backend.services.definitions import overlay, trust
 from precursor.backend.services.definitions.loader import DefinitionSet, load_definitions
 from precursor.backend.services.slugs import slugify
 
@@ -111,7 +112,16 @@ class _Plan:
 
     taken_paths: set[str] = field(default_factory=set)
     ids_by_kind: dict[str, set[str]] = field(default_factory=dict)
-    minted: list[tuple[type[AgentSession] | type[Workflow], int, str]] = field(default_factory=list)
+    # Column values to set on each exported row: its minted id, the accepted
+    # permissions. Keyed by (table, id) so both land in one update.
+    links: dict[
+        tuple[str, int], tuple[type[AgentSession] | type[Workflow], int, dict[str, Any]]
+    ] = field(default_factory=dict)
+
+    def link(self, row: AgentSession | Workflow, values: dict[str, Any]) -> None:
+        key = (type(row).__name__, row.id)
+        _, _, current = self.links.setdefault(key, (type(row), row.id, {}))
+        current.update(values)
 
     def claim_path(self, root: Path, folder: str, slug: str, suffix: str) -> str:
         n = 1
@@ -425,12 +435,15 @@ def _workflow_document(
     return doc
 
 
-def _report_invalid(ctx: _Context, kind: DefinitionKind, path: str, doc: dict[str, Any]) -> None:
+def _report_invalid(
+    ctx: _Context, kind: DefinitionKind, path: str, doc: dict[str, Any]
+) -> AgentDefinition | WorkflowDefinition | None:
+    """The validated document, or ``None`` after reporting why it isn't valid."""
     model: type[AgentDefinition] | type[WorkflowDefinition] = (
         AgentDefinition if kind == "agent" else WorkflowDefinition
     )
     try:
-        model.model_validate(doc)
+        return model.model_validate(doc)
     except ValidationError as exc:
         for err in exc.errors():
             loc = ".".join(str(p) for p in err["loc"]) or None
@@ -443,6 +456,22 @@ def _report_invalid(ctx: _Context, kind: DefinitionKind, path: str, doc: dict[st
                     + " — written as-is; fix it by hand",
                 )
             )
+        return None
+
+
+def _accepted(defn: AgentDefinition | WorkflowDefinition | None) -> dict[str, str]:
+    """The permission snapshot to record for a file Precursor wrote itself.
+
+    What it writes comes from the database, i.e. from what was set in the app,
+    so those permissions are the accepted ones.
+    """
+    if isinstance(defn, WorkflowDefinition):
+        snapshot = trust.workflow_permissions(defn)
+    elif isinstance(defn, AgentDefinition):
+        snapshot = trust.agent_permissions(defn)
+    else:
+        return {}
+    return {"accepted_permissions": json.dumps(snapshot, sort_keys=True)}
 
 
 # --- Export -----------------------------------------------------------------
@@ -478,7 +507,7 @@ def _resolve_identity(
         ident = None
     if not ident:
         ident = str(uuid.uuid4())
-        plan.minted.append((type(row), row.id, ident))
+        plan.link(row, {"export_id": ident})
     plan.ids_by_kind.setdefault(kind, set()).add(ident)
     return ident, existing[kind].get(ident)
 
@@ -523,7 +552,7 @@ async def export_definitions(
             result.skipped.append(entry)
             continue
         doc = _agent_document(ctx, agent, ident, path)
-        _report_invalid(ctx, "agent", path, doc)
+        plan.link(agent, _accepted(_report_invalid(ctx, "agent", path, doc)))
         pending.append((path, render_document(doc)))
         result.written.append(entry)
 
@@ -554,17 +583,17 @@ async def export_definitions(
             result.skipped.append(entry)
             continue
         doc = _workflow_document(ctx, workflow, ident, path, agent_paths)
-        _report_invalid(ctx, "workflow", path, doc)
+        plan.link(workflow, _accepted(_report_invalid(ctx, "workflow", path, doc)))
         pending.append((path, render_document(doc)))
         result.written.append(entry)
 
     # Linking a row is bookkeeping, not an edit: keep ``updated_at`` as it was,
     # or the Workflows gallery (sorted by it) would reshuffle after an export.
-    for model, row_id, ident in plan.minted:
+    for model, row_id, values in plan.links.values():
         await session.execute(
             update(model)
             .where(model.id == row_id)
-            .values(export_id=ident, updated_at=model.updated_at)
+            .values(**values, updated_at=model.updated_at)
             .execution_options(synchronize_session=False)
         )
     # Ids are committed only once every file is on disk, so a failed write

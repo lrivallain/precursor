@@ -530,7 +530,14 @@ export function AgentSettingsPanel({
             <section className="pt-2 border-t border-border space-y-3">
               {agent.definition && (
                 <div className="flex items-center gap-2 text-xs text-muted">
-                  Definition <DefinitionBadge source={agent.definition} />
+                  Definition{" "}
+                  <DefinitionBadge
+                    source={agent.definition}
+                    onAccept={async () => {
+                      await api.definitions.accept("agent", agent.id);
+                      onSaved(await api.agents.get(agent.id));
+                    }}
+                  />
                 </div>
               )}
               <div>

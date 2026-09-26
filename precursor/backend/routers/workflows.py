@@ -64,6 +64,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_workflow_changed
 
@@ -279,6 +280,8 @@ async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[Workfl
     reads = [WorkflowRead.model_validate(w) for w in workflows]
     for workflow, read in zip(workflows, reads, strict=True):
         read.definition = definition_overlay.source_of(workflow)
+        if read.definition is not None:
+            read.definition.review = await definition_trust.pending_changes(session, workflow)
     # Run advancement is independent of the agents: a pipeline made only of
     # approval checkpoints still has progress to report, so resolve it before the
     # agent-only shortcut below.

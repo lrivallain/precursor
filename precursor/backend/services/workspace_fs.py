@@ -57,6 +57,24 @@ def safe_join(root: Path, rel: str) -> Path:
     return target
 
 
+def refuse_definitions_for_tools(root: Path, rel: str) -> None:
+    """Raise ``UnsafePathError`` when a *tool* would write the definitions folder.
+
+    Agent and workflow definition files declare what an agent may do, so an
+    assistant writing them could grant itself more. The MCP file tools call this
+    before any write; people editing in the Files section don't, and a change
+    that widens permissions is still held for review before it can run.
+    """
+    from precursor.backend.config import get_settings
+
+    target = safe_join(root, rel)
+    protected = Path(get_settings().definitions_dir).resolve()
+    if target == protected or protected in target.parents:
+        raise UnsafePathError(
+            "Agent and workflow definition files are read-only for tools; edit them in the app"
+        )
+
+
 def is_text_file(path: Path) -> bool:
     return path.suffix.lower() in TEXT_SUFFIXES or path.name in TEXT_SUFFIXES
 

@@ -113,6 +113,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_watchdog_timeout,
 )
 from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.events import (
     publish_agent_changed,
     publish_message_changed,
@@ -853,6 +854,11 @@ class AgentManager:
             # database copy of the agent instead.
             if (problem := definition_overlay.definition_error(agent)) is not None:
                 raise RuntimeError(f"Can't start '{agent.title}': {problem}")
+            # ...nor start with permissions its file widened and nobody accepted.
+            async with SessionLocal() as review_session:
+                changes = await definition_trust.pending_changes(review_session, agent)
+            if changes:
+                raise RuntimeError(definition_trust.review_message(agent.title, changes))
             # A fresh objective run starts from a clean blackboard: drop any
             # artifacts *this run* published so the new turn's deliverables
             # replace them rather than piling up beside stale ones. Scoped to the

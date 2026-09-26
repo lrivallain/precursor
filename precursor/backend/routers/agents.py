@@ -78,6 +78,7 @@ from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler
@@ -181,6 +182,14 @@ async def _current_runs(session: AsyncSession, agents: list[AgentSession]) -> di
         return {}
     result = await session.execute(select(AgentRun).where(AgentRun.id.in_(run_ids)))
     return {run.agent_id: run for run in result.scalars().all()}
+
+
+async def _attach_review(
+    session: AsyncSession, agent: AgentSession, read: AgentSessionRead
+) -> None:
+    """Files mode: list the permission changes its file makes that await review."""
+    if read.definition is not None:
+        read.definition.review = await definition_trust.pending_changes(session, agent)
 
 
 def _to_read(
@@ -604,7 +613,7 @@ async def list_agents(
     workflows = await _workflow_counts(session, ids)
     activity = get_agent_manager().live_activity(ids)
     runs = await _current_runs(session, agents)
-    return [
+    reads = [
         _to_read(
             a,
             unread.get(a.id, 0),
@@ -614,6 +623,9 @@ async def list_agents(
         )
         for a in agents
     ]
+    for agent, read in zip(agents, reads, strict=True):
+        await _attach_review(session, agent, read)
+    return reads
 
 
 @router.get("/archived", response_model=list[AgentSessionRead])
@@ -762,13 +774,15 @@ async def get_agent(
     workflows = await _workflow_counts(session, [agent.id])
     activity = get_agent_manager().live_activity([agent.id])
     runs = await _current_runs(session, [agent])
-    return _to_read(
+    read = _to_read(
         agent,
         unread.get(agent.id, 0),
         activity.get(agent.id),
         workflows.get(agent.id, 0),
         runs.get(agent.id),
     )
+    await _attach_review(session, agent, read)
+    return read
 
 
 @router.get("/{agent_id}/events", response_model=AgentEventPage)

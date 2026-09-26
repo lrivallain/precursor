@@ -32,7 +32,7 @@ from precursor.backend.schemas.definitions import (
     WorkflowDefinition,
 )
 from precursor.backend.schemas.definitions_api import DefinitionsExportResult
-from precursor.backend.services.definitions import overlay
+from precursor.backend.services.definitions import overlay, trust
 from precursor.backend.services.definitions.exporter import (
     _ID_RE,
     _agent_document,
@@ -61,9 +61,11 @@ def _refuse_broken(linked: LoadedFile | None) -> None:
         )
 
 
-def _validate(model: type[AgentDefinition] | type[WorkflowDefinition], doc: dict[str, Any]) -> None:
+def _validate(
+    model: type[AgentDefinition] | type[WorkflowDefinition], doc: dict[str, Any]
+) -> AgentDefinition | WorkflowDefinition:
     try:
-        model.model_validate(doc)
+        return model.model_validate(doc)
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc']) or 'file'}: "
@@ -116,7 +118,8 @@ async def save_agent(session: AsyncSession, agent: AgentSession) -> str | None:
             AGENT_FILE_SUFFIX,
         )
     doc = _agent_document(await _context(session), agent, ident, path)
-    _validate(AgentDefinition, doc)
+    # Saved from the app, so these are the permissions the user chose.
+    trust.record(agent, _validate(AgentDefinition, doc))
     _write_atomic(overlay.definitions_root() / path, render_document(doc))
     overlay.invalidate()
     return path
@@ -189,7 +192,7 @@ async def save_workflow(session: AsyncSession, workflow: Workflow) -> str | None
     doc = _workflow_document(
         ctx, workflow, ident, path, agent_paths, steps=steps, preferred_keys=preferred
     )
-    _validate(WorkflowDefinition, doc)
+    trust.record(workflow, _validate(WorkflowDefinition, doc))
     _write_atomic(overlay.definitions_root() / path, render_document(doc))
     overlay.invalidate()
 

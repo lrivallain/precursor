@@ -153,6 +153,11 @@ are the per-version history; releasing does not rewrite this file.
     (or removes) its file, keeping step keys across saves; a file with errors
     is never overwritten from the app. Comments in a file aren't kept when the
     app rewrites it.
+  - **Permission review.** In files mode, a file that widens what an agent or
+    workflow may do (approval policy, autonomy, tools, MCP servers, budget, new
+    steps) can't run until someone accepts the change in the app; narrowing
+    never needs review, and what the app writes itself is accepted. The
+    assistant's file tools can't write the definitions folder.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

@@ -32,8 +32,10 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DefinitionKind,
   DefinitionsCheckReport,
   DefinitionsExportResult,
+  DefinitionSource,
   DrawioStatus,
   GhCloseResult,
   GhCreateDraft,
@@ -784,6 +786,12 @@ export const api = {
     // Work in progress (docs/definitions.md): the folder check and the one-shot
     // export of database agents/workflows into definition files.
     check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    // Files mode: accept the permissions an agent's or workflow's file grants now.
+    accept: (kind: DefinitionKind, id: number | string) =>
+      request<DefinitionSource>(`/api/definitions/accept`, {
+        method: "POST",
+        body: JSON.stringify({ kind, id }),
+      }),
     export: (overwrite = false) =>
       request<DefinitionsExportResult>(
         `/api/definitions/export${overwrite ? "?overwrite=true" : ""}`,

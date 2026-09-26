@@ -24,7 +24,7 @@ from precursor.backend.schemas.definitions import (
     WorkflowDefinition,
     WorkflowStepDefinition,
 )
-from precursor.backend.services.definitions import overlay
+from precursor.backend.services.definitions import overlay, trust
 from precursor.backend.services.definitions.loader import DefinitionSet
 
 ACTIVE_STATUSES = frozenset({"running", "paused", "awaiting_approval"})
@@ -39,7 +39,29 @@ class SyncResult:
 
 
 class DefinitionFileError(ValueError):
-    """A workflow or agent can't run because its definition file is unusable."""
+    """A workflow or agent can't run because its definition file is unusable,
+    or grants permissions nobody has accepted yet."""
+
+
+async def review_blockers(session: AsyncSession, workflow: Workflow) -> str | None:
+    """Why ``workflow`` can't start until someone reviews its files; ``None`` if it can.
+
+    Covers the workflow's own file and those of the listed agents its steps run:
+    each would otherwise be refused one step at a time, mid-run.
+    """
+    if not overlay.files_mode():
+        return None
+    held: list[str] = []
+    if changes := await trust.pending_changes(session, workflow):
+        held.append(trust.review_message(workflow.name, changes))
+    agent_ids = {s.agent_id for s in workflow.steps if s.agent_id is not None}
+    for agent_id in sorted(agent_ids):
+        agent = await session.get(AgentSession, agent_id)
+        if agent is None or agent.inline:
+            continue
+        if changes := await trust.pending_changes(session, agent):
+            held.append(trust.review_message(agent.title, changes))
+    return " ".join(held) or None
 
 
 async def _listed_agent_for(
@@ -63,7 +85,10 @@ async def _listed_agent_for(
     # A file nobody exported from this database: the row is only its execution
     # anchor, declared by the file from the first load on.
     agent = AgentSession(
-        export_id=target.raw_id, status="waiting", **overlay.agent_columns(target.definition)
+        export_id=target.raw_id,
+        status="waiting",
+        accepted_permissions=trust.NOTHING_ACCEPTED,
+        **overlay.agent_columns(target.definition),
     )
     session.add(agent)
     await session.flush()
@@ -280,7 +305,11 @@ async def adopt_new_files(session: AsyncSession) -> bool:
             if f.raw_id not in known:
                 session.add(
                     AgentSession(
-                        export_id=f.raw_id, status="waiting", **overlay.agent_columns(defn)
+                        export_id=f.raw_id,
+                        status="waiting",
+                        # Nobody here accepted what this file grants yet.
+                        accepted_permissions=trust.NOTHING_ACCEPTED,
+                        **overlay.agent_columns(defn),
                     )
                 )
                 created = True
@@ -300,6 +329,7 @@ async def adopt_new_files(session: AsyncSession) -> bool:
                     Workflow(
                         export_id=f.raw_id,
                         status="draft",
+                        accepted_permissions=trust.NOTHING_ACCEPTED,
                         **overlay.workflow_columns(wf_defn),
                     )
                 )

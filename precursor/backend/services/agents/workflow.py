@@ -1529,6 +1529,8 @@ async def start_workflow(
         return None
     if workflow.status == "running":
         return workflow
+    if (held := await definition_anchors.review_blockers(session, workflow)) is not None:
+        raise definition_anchors.DefinitionFileError(held)
 
     steps = _ordered_steps(workflow)
     first = _first_runnable(steps)
