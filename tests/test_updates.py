@@ -166,6 +166,20 @@ def test_source_checkout_is_the_install_mode_here() -> None:
     assert updates.install_mode() == "source"
 
 
+def test_a_relocated_tool_dir_is_still_a_tool_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`UV_TOOL_DIR` moves the environment off the `…/uv/tools/…` path; the
+    receipt uv writes into it is what still says how to update it."""
+    env = tmp_path / "custom-tools" / "precursor-ai"
+    env.mkdir(parents=True)
+    monkeypatch.setattr(updates, "is_source_checkout", lambda: False)
+    monkeypatch.setattr(updates.sys, "prefix", str(env))
+    assert updates.install_mode() == "wheel"
+    (env / "uv-receipt.toml").write_text("[tool]\nrequirements = []\n", encoding="utf-8")
+    assert updates.install_mode() == "uv-tool"
+
+
 def test_only_the_rolling_nightly_release_is_a_nightly_asset() -> None:
     repo = config.get_settings().update_repo
     assert updates.is_nightly_asset(

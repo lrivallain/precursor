@@ -97,7 +97,12 @@ def install_mode() -> InstallMode:
     if is_source_checkout():
         return "source"
     # `uv tool install` puts each tool in its own venv under the uv tool dir;
-    # that is the only shape we can reliably re-install in place.
+    # that is the only shape we can reliably re-install in place. The receipt
+    # uv writes into it is the signal that survives a relocated tool dir
+    # (`UV_TOOL_DIR`), which the path check alone read as a plain wheel install
+    # that could never update itself.
+    if uv_receipt.exists():
+        return "uv-tool"
     prefix = Path(sys.prefix).resolve().as_posix()
     if "/uv/tools/" in prefix or prefix.endswith("/uv/tools"):
         return "uv-tool"

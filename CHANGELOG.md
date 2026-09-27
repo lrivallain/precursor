@@ -60,6 +60,10 @@ are the per-version history; releasing does not rewrite this file.
 - **Windows: text encodings.** Output from `uv`, `gh` and `npm` is decoded as
   UTF-8 rather than the ANSI code page, which garbled `uv`'s error trees or
   raised on them. `precursor --dev` now finds `npm.cmd`.
+- **Self-update with a relocated `UV_TOOL_DIR`.** A `uv tool` install was only
+  recognised by a `…/uv/tools/…` path, so one moved with `UV_TOOL_DIR` was
+  treated as a plain wheel install that couldn't update itself. uv's install
+  receipt is now the signal, on every platform.
 
 ### Changed
 
