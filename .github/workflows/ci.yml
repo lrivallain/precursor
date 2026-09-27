@@ -268,7 +268,8 @@ jobs:
           $python = Join-Path (uv tool dir).Trim() 'precursor-ai\Scripts\python.exe'
           $wheel = ([System.Uri](Get-ChildItem dist\*.whl | Select-Object -First 1).FullName).AbsoluteUri
           $before = (Status).instance.pid
-          & $python -c "from dataclasses import replace; from precursor.backend.services import updates; info = replace(updates.check(force=True), channel='nightly', wheel_url='$wheel', extra_wheel_urls=(), latest_version='ci', update_available=True, error=None); assert updates.applies_out_of_process(info); print(updates.apply(info))"
+          # -P: run from the checkout, `-c` would import *its* precursor package.
+          & $python -P -c "from dataclasses import replace; from precursor.backend.services import updates; info = replace(updates.check(force=True), channel='nightly', wheel_url='$wheel', extra_wheel_urls=(), latest_version='ci', update_available=True, error=None); assert updates.applies_out_of_process(info), info.install_mode; print(updates.apply(info))"
           $updateLog = Join-Path $data 'logs\update.log'
           $deadline = (Get-Date).AddMinutes(8)
           while ((Get-Date) -lt $deadline) {
