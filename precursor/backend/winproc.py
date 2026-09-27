@@ -24,6 +24,7 @@ import os
 import subprocess
 import sys
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, TypedDict
 
 CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -84,6 +85,22 @@ def detached() -> DetachedKwargs:
     return {"creationflags": CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW}
 
 
+def console_interpreter() -> str:
+    """This environment's console Python, even when running under ``pythonw``.
+
+    The login item and the tray run ``pythonw``, and a GUI-subsystem program
+    gets no console from ``CREATE_NO_WINDOW`` — so an instance spawned with it
+    would have none to hide its children's windows in, and none for
+    :func:`interrupt` to attach to. ``python.exe`` sits right beside it.
+    """
+    executable = Path(sys.executable)
+    if os.name == "nt" and executable.name.lower() == "pythonw.exe":
+        console = executable.with_name("python.exe")
+        if console.is_file():
+            return str(console)
+    return sys.executable
+
+
 def spawn_detached(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
     """``Popen`` a background child with :func:`detached`, escaping job objects.
 
@@ -120,6 +137,8 @@ def _kernel32() -> Any:  # pragma: no cover - Windows-only path
     k.CloseHandle.argtypes = (wintypes.HANDLE,)
     k.CreateMutexW.restype = wintypes.HANDLE
     k.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+    k.OpenMutexW.restype = wintypes.HANDLE
+    k.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
     return k
 
 
@@ -148,7 +167,7 @@ def interrupt(pid: int, *, timeout: float = 15.0) -> bool:  # pragma: no cover -
     """
     try:
         result = subprocess.run(
-            [sys.executable, "-I", "-S", "-c", _INTERRUPT_SCRIPT, str(pid)],
+            [console_interpreter(), "-I", "-S", "-c", _INTERRUPT_SCRIPT, str(pid)],
             capture_output=True,
             check=False,
             timeout=timeout,
@@ -182,6 +201,16 @@ def acquire_single_instance(name: str) -> Any | None:  # pragma: no cover - Wind
         k.CloseHandle(handle)
         return None
     return handle
+
+
+def single_instance_held(name: str) -> bool:  # pragma: no cover - Windows-only path
+    """Whether some live process holds :func:`acquire_single_instance` ``name``."""
+    k = _kernel32()
+    handle = k.OpenMutexW(_SYNCHRONIZE, False, name)
+    if not handle:
+        return False
+    k.CloseHandle(handle)
+    return True
 
 
 def release(handle: Any) -> None:  # pragma: no cover - Windows-only path

@@ -103,6 +103,25 @@ def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _sse_shutdown_flag_is_per_test():
+    """Don't let one test's server shutdown end every later SSE stream.
+
+    ``sse_starlette`` keeps a *process-wide* ``AppStatus.should_exit``, and its
+    shutdown watcher sets it when it sees the uvicorn server it found (through
+    the SIGTERM handler) asked to exit — which is exactly what a test does to
+    stop an in-process server. Once set, every later ``EventSourceResponse``
+    returns before sending anything ("No response returned"). Whether the
+    watcher gets to look before its loop goes away is timing: on Windows it
+    does, and the MCP HTTP and workspace-chat streams after it all failed.
+    """
+    from sse_starlette.sse import AppStatus
+
+    AppStatus.should_exit = False
+    yield
+    AppStatus.should_exit = False
+
+
+@pytest.fixture(autouse=True)
 def _clean_skills_dir() -> None:
     """Empty the throwaway skills dir before each test for isolation."""
     shutil.rmtree(_skills_dir, ignore_errors=True)

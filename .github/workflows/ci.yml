@@ -244,6 +244,19 @@ jobs:
           Invoke-RestMethod "$($status.instance.url)api/health" | Out-Null
           Done
 
+          # The instance the Run entry started came from pythonw, which has no
+          # console of its own; it must still get a hidden one to be stopped
+          # gracefully (and to keep its git/gh children windowless).
+          Say 'An instance started at login stops gracefully too'
+          $watch = [Diagnostics.Stopwatch]::StartNew()
+          & $precursor service stop
+          $watch.Stop()
+          "stopped in $($watch.Elapsed.TotalSeconds) s"
+          if ($watch.Elapsed.TotalSeconds -ge 15) { throw 'stop fell through to the hard kill' }
+          & $precursor service start
+          Wait-Running | Out-Null
+          Done
+
           Say 'restart, logs and data-dir'
           & $precursor service restart
           Wait-Running | Out-Null

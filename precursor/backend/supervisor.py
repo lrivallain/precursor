@@ -24,7 +24,6 @@ import os
 import signal
 import socket
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -410,9 +409,10 @@ def status() -> Status:
 def _child_command(port: int, host: str, *, log_level: str) -> list[str]:
     # `-m precursor.backend` rather than the `precursor` console script: the
     # running interpreter is guaranteed to have the package importable, while a
-    # console script may not be on a launchd/systemd PATH.
+    # console script may not be on a launchd/systemd PATH. The *console* one:
+    # started from the tray or a login item, this process is `pythonw`.
     return [
-        sys.executable,
+        winproc.console_interpreter(),
         "-m",
         "precursor.backend",
         "--host",
@@ -698,7 +698,7 @@ def request_detached_restart() -> None:
     if not ok:
         raise SupervisorError(detail)
     winproc.spawn_detached(
-        [sys.executable, "-m", "precursor.backend", "service", "restart"],
+        [winproc.console_interpreter(), "-m", "precursor.backend", "service", "restart"],
         cwd=str(working_dir()),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

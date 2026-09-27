@@ -564,7 +564,7 @@ def _apply_out_of_process(
         # output is what the update log records about the restart.
         "app_command": (
             [
-                str(Path(sys.executable).with_name("python.exe")),
+                winproc.console_interpreter(),
                 "-P",
                 "-m",
                 "precursor.backend",

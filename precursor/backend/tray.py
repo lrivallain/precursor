@@ -132,9 +132,17 @@ def is_current_process() -> bool:
 
 
 def running_pid() -> int | None:
-    """The pid of a live tray for this data directory, other than the caller."""
+    """The pid of a live tray for this data directory, other than the caller.
+
+    On Windows the record alone is not trusted: it outlives a tray that was
+    killed or ended with the session, and pids are reused quickly — so a stale
+    one could name any process, which `stop_running` would then kill. The
+    single-instance mutex exists exactly as long as a tray does.
+    """
     pid = _recorded_pid()
     if pid is None or pid == os.getpid() or not supervisor.pid_alive(pid):
+        return None
+    if os.name == "nt" and not winproc.single_instance_held(_instance_name()):
         return None
     return pid
 

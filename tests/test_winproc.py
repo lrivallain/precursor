@@ -119,3 +119,26 @@ def test_a_named_claim_is_exclusive_until_released() -> None:  # pragma: no cove
     again = winproc.acquire_single_instance(name)
     assert again is not None
     winproc.release(again)
+
+
+def test_the_console_interpreter_replaces_pythonw(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An instance spawned from the tray must still get a (hidden) console."""
+    (tmp_path / "python.exe").write_bytes(b"")
+    (tmp_path / "pythonw.exe").write_bytes(b"")
+    monkeypatch.setattr(winproc.sys, "executable", str(tmp_path / "pythonw.exe"))
+    expected = tmp_path / ("python.exe" if os.name == "nt" else "pythonw.exe")
+    assert winproc.console_interpreter() == str(expected)
+
+
+@windows_only
+def test_a_held_claim_is_visible_to_others() -> None:  # pragma: no cover - Windows-only
+    name = f"Local\\Precursor.test.held.{os.getpid()}.{time.monotonic_ns()}"
+    assert winproc.single_instance_held(name) is False
+    handle = winproc.acquire_single_instance(name)
+    try:
+        assert winproc.single_instance_held(name) is True
+    finally:
+        winproc.release(handle)
+    assert winproc.single_instance_held(name) is False

@@ -776,6 +776,8 @@ def test_stopping_the_tray_ends_the_recorded_process(_isolated_data: Path) -> No
     import subprocess
 
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    # On Windows a record only counts while a tray holds the instance mutex.
+    assert tray._claim_single_instance() is True
     try:
         _isolated_data.mkdir(parents=True)
         (_isolated_data / "tray.json").write_text(f'{{"pid": {child.pid}}}', encoding="utf-8")
@@ -785,8 +787,22 @@ def test_stopping_the_tray_ends_the_recorded_process(_isolated_data: Path) -> No
         assert child.wait(timeout=15) is not None
         assert not (_isolated_data / "tray.json").exists()
     finally:
+        tray._release_single_instance()
         if child.poll() is None:
             child.kill()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pid records need the mutex")
+def test_a_record_without_a_live_tray_is_never_trusted_on_windows(
+    _isolated_data: Path,
+) -> None:  # pragma: no cover - Windows-only path
+    """A tray killed at logoff leaves its record behind, and pids are reused:
+    killing whatever now owns that pid could take down anything."""
+    _isolated_data.mkdir(parents=True)
+    # A live pid that is certainly not a tray: the test runner's parent.
+    (_isolated_data / "tray.json").write_text(f'{{"pid": {os.getppid()}}}', encoding="utf-8")
+    assert tray.running_pid() is None
+    assert tray.stop_running() is False
 
 
 def test_single_instance_is_only_enforced_on_windows(_isolated_data: Path) -> None:
