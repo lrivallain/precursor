@@ -31,6 +31,7 @@ import contextlib
 import errno
 import logging
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -89,9 +90,16 @@ def _probe_socket(family: int) -> socket.socket:
     must use the same option, otherwise they report a freshly stopped port as
     "in use" — refusing to restart under ``--strict-port`` or needlessly bumping
     to another port — even though uvicorn would happily bind it.
+
+    Windows is the exception. There ``SO_REUSEADDR`` lets a bind succeed on a
+    port another socket is actively *listening* on, so the probe would call
+    every busy port free — and asyncio (hence uvicorn's serve path) leaves it
+    unset on Windows for that very reason. A plain bind is what uvicorn does
+    there, so it is what the probe does too.
     """
     sock = socket.socket(family, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if os.name != "nt":
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     return sock
 
 
@@ -100,9 +108,9 @@ def _port_free(host: str, port: int) -> bool:
 
     Checks both IPv4 (127.0.0.1) and IPv6 (::1) loopback because uvicorn binds
     the former and Vite the latter — a port "free" on one family may still be
-    taken by a sibling instance on the other. Only ``EADDRINUSE`` counts as
-    busy; unsupported/unavailable families are ignored so this still works on
-    hosts without IPv6.
+    taken by a sibling instance on the other. Only ``EADDRINUSE`` (and Windows'
+    excluded-port refusal) counts as busy; unsupported/unavailable families are
+    ignored so this still works on hosts without IPv6.
     """
     probes = [(socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")]
     if host not in ("", "0.0.0.0", "::", "127.0.0.1", "::1", "localhost"):
@@ -116,10 +124,17 @@ def _port_free(host: str, port: int) -> bool:
             try:
                 sock.bind((addr, port))
             except OSError as exc:
-                if exc.errno == errno.EADDRINUSE:
+                if exc.errno in _BUSY_BIND_ERRNOS:
                     return False
                 # Address not available / family quirk — ignore this probe.
     return True
+
+
+# Windows refuses ports inside a Hyper-V/WSL excluded range with WSAEACCES —
+# not `errno.EACCES` there, and just as impossible for uvicorn to bind.
+_BUSY_BIND_ERRNOS = frozenset(
+    code for code in (errno.EADDRINUSE, getattr(errno, "WSAEACCES", None)) if code is not None
+)
 
 
 def _frontend_is_stale(frontend_dir: Path, dist_dir: Path) -> bool:
@@ -150,6 +165,16 @@ def _frontend_is_stale(frontend_dir: Path, dist_dir: Path) -> bool:
     newest_source = _newest_mtime(frontend_dir, skip=frozenset({"node_modules", "dist"}))
     newest_dist = _newest_mtime(dist_dir)
     return newest_source > newest_dist
+
+
+def _npm() -> str:
+    """The npm executable, resolved the way a shell would.
+
+    On Windows npm is an ``npm.cmd`` shim, and ``CreateProcess`` only appends
+    ``.exe`` to a bare name — so ``["npm", …]`` is "not found" there even with
+    Node.js installed. ``shutil.which`` honours ``PATHEXT``.
+    """
+    return shutil.which("npm") or "npm"
 
 
 def _ensure_frontend_built(*, rebuild_if_stale: bool = False) -> bool:
@@ -192,9 +217,10 @@ def _ensure_frontend_built(*, rebuild_if_stale: bool = False) -> bool:
         logger.info("Building frontend...")
     try:
         result = subprocess.run(
-            ["npm", "--prefix", str(frontend_dir), "run", "build"],
+            [_npm(), "--prefix", str(frontend_dir), "run", "build"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,  # 5 minute timeout
         )
         if result.returncode != 0:
@@ -233,9 +259,10 @@ def _ensure_website_deps() -> bool:
     logger.info("website/node_modules missing — installing docs dependencies...")
     try:
         result = subprocess.run(
-            ["npm", "--prefix", str(website_dir), "install"],
+            [_npm(), "--prefix", str(website_dir), "install"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,  # 5 minute timeout
         )
     except FileNotFoundError:
@@ -560,7 +587,7 @@ def _run_dev(
                     logger.info("Starting VitePress docs (HMR) on :%s", resolved_docs_port)
                     docs_proc = subprocess.Popen(
                         [
-                            "npm",
+                            _npm(),
                             "--prefix",
                             str(website_dir),
                             "run",
@@ -605,7 +632,7 @@ def _run_dev(
                     return
                 vite = subprocess.Popen(
                     [
-                        "npm",
+                        _npm(),
                         "--prefix",
                         str(frontend_dir),
                         "run",
@@ -679,7 +706,41 @@ def _run_dev(
             thread.join(timeout=5)
 
 
+# A windowless process's capture only ever holds startup noise and crashes, and
+# nothing else prunes it — so it is dropped rather than grown past this.
+_STDIO_CAPTURE_MAX_BYTES = 1024 * 1024
+
+
+def _ensure_stdio() -> None:
+    """Give a windowless process somewhere to write.
+
+    ``pythonw`` — what the Windows login items and the tray run under — starts
+    with ``sys.stdout`` and ``sys.stderr`` set to ``None``, so the first
+    ``isatty()`` or ``print(file=sys.stderr)`` raises and the process dies
+    before it can log why. They are pointed at a capture file instead: the
+    counterpart of launchd's ``launchd.<unit>.err.log``.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    kind = "tray" if sys.argv[1:2] == ["tray"] else "app"
+    try:
+        logs = Path(get_settings().logs_dir)
+        logs.mkdir(parents=True, exist_ok=True)
+        capture = logs / f"windows.{kind}.out.log"
+        with contextlib.suppress(OSError):
+            if capture.stat().st_size > _STDIO_CAPTURE_MAX_BYTES:
+                capture.unlink()
+        stream = capture.open("a", encoding="utf-8", buffering=1)
+    except OSError:
+        stream = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - process-lifetime stream
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
 def main() -> None:
+    _ensure_stdio()
     # `service` / `tray` are dispatched before the main parser so the flat
     # `precursor [--dev] …` interface (and every dev workflow built on it) keeps
     # parsing exactly as before.

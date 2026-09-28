@@ -19,6 +19,12 @@ own Python, so it's the only thing to install first
 curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
 That installs Precursor, registers it to **start when you log in**, and starts it
 now. No clone, no Node.js, no build step, no database to create — the published
 package already carries the interface, and the schema is created on first start.
@@ -33,7 +39,8 @@ precursor tray              # menu-bar control
 ```
 
 See [Installation](https://precursor.vuptime.io/guide/installation) for the other
-ways to install (try it with `uvx`, no login item, Windows, stable channel) and
+ways to install (try it with `uvx`, no login item, stable channel), what differs
+on Windows, and
 [Background app](https://precursor.vuptime.io/features/background-app) for the
 whole service surface.
 

@@ -12,18 +12,34 @@ every reboot, and updates itself — nothing to clone, build or configure.
 [uv](https://docs.astral.sh/uv/) is the **only** prerequisite. It brings its own
 Python, so there is nothing else to line up first.
 
-```bash
+::: code-group
+
+```bash [macOS / Linux]
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+```powershell [Windows]
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+:::
 
 Already have it? Skip ahead. Other ways to get uv — Homebrew, winget, pipx — are
 in the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ## 2. Install Precursor
 
-```bash
+::: code-group
+
+```bash [macOS / Linux]
 curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
+
+```powershell [Windows]
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
+:::
 
 That is the whole installation. **No clone, no Node.js, no build step, no
 database to create** — the published package already carries the interface, and
@@ -61,8 +77,8 @@ precursor service update    # newest build + restart
 precursor service logs      # tail the instance log
 ```
 
-The menu-bar icon (`precursor tray`) does the same things with the mouse and
-shows at a glance whether the app is up. See
+The menu-bar icon (`precursor tray`; the notification area on Windows) does the
+same things with the mouse and shows at a glance whether the app is up. See
 [Background app](/features/background-app) for the whole surface — the login
 item, update channels, and where your data lives.
 
@@ -72,6 +88,31 @@ To remove it:
 precursor service uninstall   # drop the login items and stop it
 uv tool uninstall precursor-ai
 ```
+
+## On Windows
+
+The PowerShell installer gives Windows the same result as the shell one — the
+same build, the same extras, a login item and the notification-area icon — and
+every `precursor service …` command works the same way. What differs is what
+Windows itself does differently:
+
+- **The login item is a `Run` entry**, not a service. It shows in Task Manager's
+  *Startup apps* (as *pythonw*, the windowless Python that runs it), where you
+  can switch it off like any other. It starts Precursor at login and steps
+  aside — no console window stays open.
+- **Nothing restarts a crashed instance.** macOS and Linux hand the process to a
+  service manager that brings it back; Windows has none for a per-user app. The
+  tray shows the instance as stopped, and **Start** brings it back.
+- **Updating stops Precursor for a minute.** Windows can't replace files that a
+  running program holds open, so `precursor service update` (or the tray's
+  update entry) stops the app and the icon, installs the new build, and starts
+  both again. Progress goes to `logs\update.log` in the
+  [data directory](/features/background-app#where-the-data-lives), and the icon
+  says how it went when it comes back.
+- **Plugins install from a terminal.** For the same reason, *Settings → Plugins*
+  can't reinstall a running Precursor. It shows the command to run while
+  Precursor is stopped: `precursor service stop`, that command, then
+  `precursor service start`.
 
 ## Other ways to install
 
@@ -96,24 +137,23 @@ uv tool install precursor-ai
 precursor                     # run it in the foreground
 ```
 
-### On Windows
-
-`install.sh` is a POSIX shell script, so run the two steps it performs directly —
-autostart works the same way:
-
-```powershell
-uv tool install precursor-ai
-precursor service install
-```
-
 ### Tagged releases instead of nightly
 
 The script installs the **nightly** build — a rolling prerelease of `main`. For
 tagged releases only:
 
-```bash
+::: code-group
+
+```bash [macOS / Linux]
 PRECURSOR_CHANNEL=stable sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
 ```
+
+```powershell [Windows]
+$env:PRECURSOR_CHANNEL = 'stable'
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
+:::
 
 The same choice is available afterwards from the tray and from
 `precursor service update`.
@@ -145,9 +185,28 @@ The one-command install already includes the
 [menu-bar icon](/features/background-app#the-menu-bar-icon), so there is nothing
 to add for a normal setup. For a lean core without them:
 
-```bash
-PRECURSOR_EXTRAS= sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
+::: code-group
+
+```bash [macOS / Linux]
+PRECURSOR_EXTRAS=none sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
 ```
+
+```powershell [Windows]
+$env:PRECURSOR_EXTRAS = 'none'
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
+:::
+
+Both installers read the same variables:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PRECURSOR_CHANNEL` | `nightly` | `stable` installs the latest tagged release from PyPI |
+| `PRECURSOR_EXTRAS` | `kanban,tray` | the extras to install; `none` for the lean core |
+| `PRECURSOR_NO_START` | — | `1` installs the command without registering or starting anything |
+| `PRECURSOR_WHEEL` | — | install this wheel (a path or URL) instead of a channel's build |
+| `PRECURSOR_REPO` | `lrivallain/precursor` | the repository whose nightly builds to install |
 
 Other [plugins](/features/plugins) release on their own cadence and can be added
 at any time, the way any Python package is.

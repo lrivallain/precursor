@@ -5,10 +5,15 @@ uvicorn binds its listen socket with ``SO_REUSEADDR``, so a port left in
 Ctrl-C) is still bindable. The launcher's pre-flight checks must use the same
 option, otherwise a freshly stopped server reports its port as "in use" and
 refuses to restart under ``--strict-port``.
+
+Windows inverts the concern: there ``SO_REUSEADDR`` lets a bind succeed over a
+live listener, and uvicorn (through asyncio) doesn't set it — so neither does
+the probe, and the TIME_WAIT premise below doesn't apply.
 """
 
 from __future__ import annotations
 
+import os
 import socket
 
 import pytest
@@ -49,6 +54,7 @@ def _plain_bind_ok(host: str, port: int) -> bool:
         return False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uvicorn binds without SO_REUSEADDR on Windows")
 def test_time_wait_port_reproduces_old_failure() -> None:
     port = _port_in_time_wait()
     # Sanity-check the reproduction: a plain bind (the old probe) rejects the
@@ -59,6 +65,7 @@ def test_time_wait_port_reproduces_old_failure() -> None:
     assert _port_free("127.0.0.1", port) is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uvicorn binds without SO_REUSEADDR on Windows")
 def test_resolve_port_strict_accepts_time_wait_port() -> None:
     port = _port_in_time_wait()
     if _plain_bind_ok("127.0.0.1", port):
@@ -77,5 +84,25 @@ def test_port_free_reports_busy_for_active_listener() -> None:
         # A live listener genuinely holds the port; SO_REUSEADDR does not let a
         # second bind succeed here, so this must still read as busy.
         assert _port_free("127.0.0.1", port) is False
+    finally:
+        listener.close()
+
+
+def test_port_free_reports_busy_for_a_plain_listener() -> None:
+    """What uvicorn's serve path actually binds on Windows: no socket options.
+
+    Windows lets an ``SO_REUSEADDR`` probe bind *over* such a listener, which is
+    how every busy port used to read as free there — `service install` then
+    registered a login item on a port it could never bind.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        assert _port_free("127.0.0.1", port) is False
+        with pytest.raises(SystemExit):
+            _resolve_port("127.0.0.1", port, strict=True)
+        assert _resolve_port("127.0.0.1", port, strict=False) != port
     finally:
         listener.close()

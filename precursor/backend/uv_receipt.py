@@ -69,6 +69,11 @@ def _path(prefix: str | None = None) -> Path:
     return Path(prefix or sys.prefix) / "uv-receipt.toml"
 
 
+def exists(prefix: str | None = None) -> bool:
+    """Whether this environment was made by ``uv tool install``."""
+    return _path(prefix).is_file()
+
+
 def requirements(prefix: str | None = None) -> tuple[Requirement, ...]:
     """Every requirement in the receipt, or ``()`` when there isn't a usable one.
 

@@ -610,6 +610,11 @@ async def uninstall_plugin(
         )
     await asyncio.to_thread(refresh_nightly)
     env = detect_environment()
+    if not env.can_install:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            env.reason or "This environment can't be modified from inside the app.",
+        )
     argv = uninstall_command(plugin.distribution, env)
     if argv is None:
         raise HTTPException(

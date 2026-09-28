@@ -274,6 +274,18 @@ LOCAL = {"Host": "localhost:8000"}
 
 
 @pytest.fixture(autouse=True)
+def _environment_never_locked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the in-app installer on every platform, Windows included.
+
+    On a real Windows install it is withheld (see the dedicated test), but the
+    installer tests below are about the commands, not the platform.
+    """
+    from precursor.backend.plugins import install as install_mod
+
+    monkeypatch.setattr(install_mod, "_environment_locked_while_running", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_indexes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep release lookups off the network: every index answers 404.
 
@@ -383,6 +395,22 @@ def test_installer_accepts_this_instances_own_address(
         assert r.status_code == 200, r.text
         assert r.json()["restart_required"] is True
     assert _no_real_installer and _no_real_installer[-1][-1] == "safe"
+
+
+def test_a_windows_tool_install_is_not_rebuilt_from_inside_the_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows won't delete files the running app holds open, so the command is
+    shown for the user to run once Precursor is stopped instead."""
+    _uv_tool_env(monkeypatch, tmp_path)
+    from precursor.backend.plugins import install as install_mod
+
+    monkeypatch.setattr(install_mod, "_environment_locked_while_running", lambda: True)
+    env = install_mod.detect_environment()
+    assert env.installer == "uv-tool"
+    assert env.can_install is False
+    assert env.reason is not None and "precursor service stop" in env.reason
+    assert "uv tool install" in env.command_template
 
 
 def test_uv_tool_environments_are_detected_via_xdg_data_home(

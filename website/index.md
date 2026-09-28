@@ -141,9 +141,17 @@ belong to.
 Installing it is one command — it sets Precursor up, starts it, and brings it
 back after every reboot:
 
-```bash
+::: code-group
+
+```bash [macOS / Linux]
 curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
+
+```powershell [Windows]
+irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
+```
+
+:::
 
 Then open the URL it prints. That's the whole setup: no clone, no build step, no
 database to create.

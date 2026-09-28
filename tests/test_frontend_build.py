@@ -90,7 +90,7 @@ def test_ensure_built_rebuilds_when_stale(tmp_path: Path, monkeypatch) -> None:
 
     assert _ensure_frontend_built(rebuild_if_stale=True) is True
     assert calls, "expected a rebuild to be invoked for a stale bundle"
-    assert calls[0][:1] == ["npm"]
+    assert Path(calls[0][0]).stem == "npm"
     assert "build" in calls[0]
 
 

@@ -27,6 +27,7 @@ import contextlib
 import errno
 import json
 import logging
+import os
 import socket
 import time
 import uuid
@@ -376,26 +377,49 @@ def _assert_loopback_port_available(profile: WorkIQOAuthProfile = PREVIEW_PROFIL
     common failure when several Precursor instances run side by side, or when
     two WorkIQ credentials try to sign in at once.
     """
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe = _loopback_probe()
     try:
-        # Mirror ``asyncio.start_server``'s default SO_REUSEADDR so the probe
-        # matches the real bind: it still raises EADDRINUSE against a live
-        # listener, but not against a socket merely lingering in TIME_WAIT.
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", profile.redirect_port))
     except OSError as exc:
-        if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.EACCES):
+        if exc.errno in _PORT_UNAVAILABLE_ERRNOS:
             raise WorkIQAuthPortBusyError(_port_busy_message(profile)) from exc
         raise
     finally:
         probe.close()
 
 
+# Windows reports a port it won't hand out (a Hyper-V/WSL excluded range) as
+# WSAEACCES, which is not `errno.EACCES` there — and is just as unbindable.
+_PORT_UNAVAILABLE_ERRNOS = frozenset(
+    code
+    for code in (
+        errno.EADDRINUSE,
+        errno.EADDRNOTAVAIL,
+        errno.EACCES,
+        getattr(errno, "WSAEACCES", None),
+    )
+    if code is not None
+)
+
+
+def _loopback_probe() -> socket.socket:
+    """A socket that binds the way the real callback server will.
+
+    That mirrors ``asyncio.start_server``: ``SO_REUSEADDR`` on POSIX, so a live
+    listener still reads as busy but a socket lingering in TIME_WAIT doesn't.
+    Never on Windows, where the option lets a bind *succeed* over a live
+    listener — which would make every busy port look free.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name != "nt":
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    return probe
+
+
 def _reserve_ephemeral_port() -> int | None:
     """Ask the OS for a free loopback port, or ``None`` if it can't spare one."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe = _loopback_probe()
     try:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
     except OSError:
