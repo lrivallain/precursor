@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FolderGit2, HardDrive, Search } from "lucide-react";
+import { FileCode2, FolderGit2, HardDrive, Search } from "lucide-react";
 import type { Workspace } from "../lib/types";
 import { useScrollActiveIntoView } from "../lib/useScrollActiveIntoView";
 
@@ -54,12 +54,23 @@ export function WorkspaceList({ workspaces, activeId, onSelect }: WorkspaceListP
                       isActive ? "section-selected" : "hover:bg-surface"
                     }`}
                   >
-                    {w.kind === "git" ? (
+                    {w.hosts_definitions ? (
+                      <FileCode2 size={14} className="shrink-0 text-accent opacity-90" />
+                    ) : w.kind === "git" ? (
                       <FolderGit2 size={14} className="shrink-0 opacity-70" />
                     ) : (
                       <HardDrive size={14} className="shrink-0 opacity-70" />
                     )}
-                    <span className="flex-1 truncate">{w.name}</span>
+                    <span
+                      className="flex-1 truncate"
+                      data-tooltip={
+                        w.hosts_definitions
+                          ? "Holds your agent and workflow definition files"
+                          : undefined
+                      }
+                    >
+                      {w.name}
+                    </span>
                   </button>
                 </li>
               );

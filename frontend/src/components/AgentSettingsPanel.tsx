@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { DefinitionBadge } from "./DefinitionBadge";
 import { agentCanStart } from "../lib/agents";
 import type {
   AgentApprovalPolicy,
@@ -527,6 +528,18 @@ export function AgentSettingsPanel({
             {error && <p className="text-xs text-red-500">{error}</p>}
 
             <section className="pt-2 border-t border-border space-y-3">
+              {agent.definition && (
+                <div className="flex items-center gap-2 text-xs text-muted">
+                  Definition{" "}
+                  <DefinitionBadge
+                    source={agent.definition}
+                    onAccept={async () => {
+                      await api.definitions.accept("agent", agent.id, agent.definition?.content_hash);
+                      onSaved(await api.agents.get(agent.id));
+                    }}
+                  />
+                </div>
+              )}
               <div>
                 <a
                   href={api.transfer.exportAgentUrl(agent.id)}

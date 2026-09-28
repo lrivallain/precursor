@@ -15,10 +15,12 @@ export function WorkflowsHeader() {
 export function WorkflowsMain({
   controller,
   onOpenSettings,
+  onOpenMigration,
   onOpenAgent,
 }: {
   controller: WorkflowsController;
   onOpenSettings: () => void;
+  onOpenMigration?: () => void;
   onOpenAgent: (id: number) => void;
 }) {
   const {
@@ -51,6 +53,7 @@ export function WorkflowsMain({
       onNavigate={(id) => void openWorkflow(id)}
       onRunSegChange={setActiveWorkflowRunSeg}
       onOpenSettings={onOpenSettings}
+      onOpenMigration={onOpenMigration}
       onOpenAgent={(id) => onOpenAgent(id)}
     />
   );

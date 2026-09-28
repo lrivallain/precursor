@@ -62,6 +62,10 @@ from precursor.backend.services.app_settings import (
     resolve_workflows_default_capabilities,
     resolve_workflows_default_step_timeout,
 )
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_workflow_changed
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -274,6 +278,10 @@ async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[Workfl
     too, so the gallery can draw a progress bar without loading run traces.
     """
     reads = [WorkflowRead.model_validate(w) for w in workflows]
+    for workflow, read in zip(workflows, reads, strict=True):
+        read.definition = definition_overlay.source_of(workflow)
+        if read.definition is not None:
+            read.definition.review = await definition_trust.pending_changes(session, workflow)
     # Run advancement is independent of the agents: a pipeline made only of
     # approval checkpoints still has progress to report, so resolve it before the
     # agent-only shortcut below.
@@ -476,11 +484,20 @@ async def list_workflows(
     include_archived: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkflowRead]:
+    # Files mode: new workflow files join the gallery, and step changes made in
+    # the files reach the rows.
+    await definition_anchors.adopt_new_files(session)
+    await definition_anchors.sync_names(session)
+    changed = await definition_anchors.sync_all(session)
     stmt = (
         select(Workflow)
         .options(selectinload(Workflow.steps).selectinload(WorkflowStep.agent))
         .order_by(Workflow.updated_at.desc())
     )
+    if changed:
+        # The sync rewrote step rows in this session: reload them, or stale
+        # step collections (and agents deleted with removed steps) get served.
+        stmt = stmt.execution_options(populate_existing=True)
     if not include_archived:
         stmt = stmt.where(Workflow.archived_at.is_(None))
     result = await session.execute(stmt)
@@ -533,6 +550,8 @@ async def create_workflow(
     # A workflow with at least one step is ready to run (idle); an empty one
     # stays a draft until steps are added.
     workflow.status = "idle" if payload.steps else "draft"
+    # Files mode: a new workflow is declared by a new file from the start.
+    await definition_writer.save_workflow(session, workflow)
     await session.commit()
     await publish_workflow_changed(workflow.id)
     return await _read_one(session, await _load(session, workflow.id))
@@ -542,6 +561,7 @@ async def create_workflow(
 async def get_workflow(
     workflow_id: int, session: AsyncSession = Depends(get_session)
 ) -> WorkflowRead:
+    await definition_anchors.sync_workflow(session, workflow_id)
     return await _read_one(session, await _load(session, workflow_id))
 
 
@@ -628,6 +648,14 @@ async def update_workflow(
         if workflow.status in ("completed", "failed", "cancelled", "draft"):
             workflow.status = "idle" if payload.steps else "draft"
         workflow.current_step_id = None
+    # Files mode: the edit goes to the file, which declares the workflow. A
+    # settings-only edit leaves the file's steps exactly as they are.
+    await definition_writer.save_workflow(
+        session,
+        workflow,
+        steps=payload.steps is not None,
+        changed=set(payload.model_fields_set) - {"steps"},
+    )
     await session.commit()
     await publish_workflow_changed(workflow.id)
     return await _read_one(session, await _load(session, workflow.id))
@@ -640,6 +668,16 @@ async def delete_workflow(workflow_id: int, session: AsyncSession = Depends(get_
     # steps, but the vessels themselves would survive as invisible orphans
     # (the step→agent FK is SET NULL), so collect and remove them here.
     vessels = [s.agent_id for s in workflow.steps if s.agent_id is not None]
+    if workflow.export_id:
+        # Files mode keeps a removed step's private agent in case the step
+        # comes back; with the workflow gone, it never will.
+        kept = await session.execute(
+            select(AgentSession.id).where(
+                AgentSession.inline.is_(True),
+                AgentSession.definition_ref.startswith(f"{workflow.export_id}/", autoescape=True),
+            )
+        )
+        vessels.extend(kept.scalars().all())
     await session.delete(workflow)
     await session.flush()
     for agent_id in vessels:
@@ -647,6 +685,7 @@ async def delete_workflow(workflow_id: int, session: AsyncSession = Depends(get_
         if agent is not None and agent.inline:
             await session.delete(agent)
     await session.commit()
+    definition_writer.remove_file(workflow)
     await publish_workflow_changed(workflow_id)
 
 
@@ -665,12 +704,15 @@ async def run_workflow(
     supplied, ``input`` becomes the run's subject and is fed to every step.
     """
     await _require_enabled(session)
-    workflow = await workflow_svc.start_workflow(
-        session,
-        get_agent_manager(),
-        workflow_id,
-        run_input=body.input if body else None,
-    )
+    try:
+        workflow = await workflow_svc.start_workflow(
+            session,
+            get_agent_manager(),
+            workflow_id,
+            run_input=body.input if body else None,
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't run this workflow: {exc}") from exc
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     return await _read_one(session, await _load(session, workflow_id))
@@ -699,12 +741,15 @@ async def resume_workflow(
     answer, injected into the resumed step so it isn't re-driven blind.
     """
     await _require_enabled(session)
-    workflow = await workflow_svc.resume_workflow(
-        session,
-        get_agent_manager(),
-        workflow_id,
-        guidance=body.input if body else None,
-    )
+    try:
+        workflow = await workflow_svc.resume_workflow(
+            session,
+            get_agent_manager(),
+            workflow_id,
+            guidance=body.input if body else None,
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't continue this run: {exc}") from exc
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     return await _read_one(session, await _load(session, workflow_id))
@@ -755,13 +800,16 @@ async def retry_workflow_step(
     thrown away nor paid for twice.
     """
     await _require_enabled(session)
-    workflow = await workflow_svc.retry_step(
-        session,
-        get_agent_manager(),
-        workflow_id,
-        position=body.position if body else None,
-        guidance=body.input if body else None,
-    )
+    try:
+        workflow = await workflow_svc.retry_step(
+            session,
+            get_agent_manager(),
+            workflow_id,
+            position=body.position if body else None,
+            guidance=body.input if body else None,
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't continue this run: {exc}") from exc
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     return await _read_one(session, await _load(session, workflow_id))
@@ -812,9 +860,12 @@ async def approve_workflow_step(
 ) -> WorkflowRead:
     """Clear a human approval checkpoint so the pipeline carries on."""
     await _require_enabled(session)
-    workflow = await workflow_svc.approve_step(
-        session, get_agent_manager(), workflow_id, note=body.note if body else None
-    )
+    try:
+        workflow = await workflow_svc.approve_step(
+            session, get_agent_manager(), workflow_id, note=body.note if body else None
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't continue this run: {exc}") from exc
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     return await _read_one(session, await _load(session, workflow_id))
@@ -832,13 +883,16 @@ async def reject_workflow_step(
     skip); pass ``action`` to override it for this decision.
     """
     await _require_enabled(session)
-    workflow = await workflow_svc.reject_step(
-        session,
-        get_agent_manager(),
-        workflow_id,
-        feedback=body.note if body else None,
-        action=body.action if body else None,
-    )
+    try:
+        workflow = await workflow_svc.reject_step(
+            session,
+            get_agent_manager(),
+            workflow_id,
+            feedback=body.note if body else None,
+            action=body.action if body else None,
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't continue this run: {exc}") from exc
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     return await _read_one(session, await _load(session, workflow_id))
@@ -936,13 +990,16 @@ async def fire_webhook(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown webhook token")
     if not await resolve_agents_enabled(session):
         raise HTTPException(status.HTTP_409_CONFLICT, "Agents mode is disabled")
-    await workflow_svc.start_workflow(
-        session,
-        get_agent_manager(),
-        workflow.id,
-        trigger="webhook",
-        run_input=await _webhook_input(request),
-    )
+    try:
+        await workflow_svc.start_workflow(
+            session,
+            get_agent_manager(),
+            workflow.id,
+            trigger="webhook",
+            run_input=await _webhook_input(request),
+        )
+    except definition_anchors.DefinitionFileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Can't run this workflow: {exc}") from exc
     return {"status": "started", "workflow": str(workflow.id)}
 
 

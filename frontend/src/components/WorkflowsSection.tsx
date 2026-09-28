@@ -31,6 +31,8 @@ interface Props {
   onRunSegChange: (seg: string | null) => void;
   /** Opens Settings on Agents — the toggle this section is gated behind. */
   onOpenSettings: () => void;
+  /** Opens Settings → Definition files (the migration wizard). */
+  onOpenMigration?: () => void;
   onOpenAgent: (agentId: number) => void;
 }
 
@@ -55,6 +57,7 @@ export function WorkflowsSection({
   onNavigate,
   onRunSegChange,
   onOpenSettings,
+  onOpenMigration,
   onOpenAgent,
 }: Props) {
   // Feature state unknown: say nothing rather than advertising the section as
@@ -158,6 +161,7 @@ export function WorkflowsSection({
         }
       }}
       onChanged={onChanged}
+      onOpenMigration={onOpenMigration}
     />
   );
 }

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 from precursor import __version__
 from precursor.backend.config import get_settings
-from precursor.backend.db import init_db
+from precursor.backend.db import SessionLocal, init_db
 from precursor.backend.plugins import discover
 from precursor.backend.routers import (
     agents,
@@ -41,6 +41,7 @@ from precursor.backend.routers import (
     chats,
     collections,
     commands,
+    definitions,
     drawio,
     events,
     github,
@@ -68,6 +69,7 @@ from precursor.backend.routers import (
     workflows,
     workspaces,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.llm.one_shot import LLMCallFailed
 
 logger = logging.getLogger(__name__)
@@ -76,6 +78,20 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    # Imported above for its load listeners; files mode also needs role names.
+    async with SessionLocal() as session:
+        await definition_overlay.refresh_role_cache(session)
+        # Which source declares agents and workflows (the migration's choice).
+        await definition_overlay.refresh_source(session)
+        from precursor.backend.services.app_settings import resolve_agents_enabled
+        from precursor.backend.services.definitions.anchors import restore_pins
+        from precursor.backend.services.definitions.home import ensure_definitions_workspace
+
+        # The built-in "Agents & workflows" workspace, where Agents mode is used.
+        if definition_overlay.files_mode() or await resolve_agents_enabled(session):
+            await ensure_definitions_workspace(session)
+        # Files mode: runs in flight keep executing the version they started from.
+        await restore_pins(session)
     from precursor.backend.services.blob_store import gc_orphan_blobs
 
     try:
@@ -390,6 +406,7 @@ def create_app() -> FastAPI:
         agents.router,
         workflows.router,
         transfer.router,
+        definitions.router,
         stt.router,
         live.router,
         raw.router,

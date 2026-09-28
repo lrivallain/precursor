@@ -16,6 +16,8 @@
     "lucide-react": "^1.21.0",
     "mermaid": "^11.16.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
+    "monaco-editor": "~0.57.0",
+    "monaco-yaml": "^5.5.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

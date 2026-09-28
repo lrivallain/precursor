@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from precursor.backend.schemas.agent_schedule import AgentScheduleSummary
+from precursor.backend.schemas.definitions_api import DefinitionSource
 from precursor.backend.schemas.schedule import UtcDateTime
 
 ContainerKind = Literal["topic", "chat"]
@@ -91,6 +92,10 @@ class AgentRunRead(BaseModel):
     mcp_servers: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     role_id: int | None = None
+    # Files mode: the definition file this run was declared by, and its SHA-256
+    # when the run opened.
+    definition_path: str | None = None
+    definition_hash: str | None = None
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
     last_activity_at: UtcDateTime | None = None
@@ -174,6 +179,8 @@ class AgentSessionRead(BaseModel):
     # above mirror it so existing surfaces keep working; this is the authoritative
     # record and the handle for per-run artifacts, events and spend.
     current_run: AgentRunRead | None = None
+    # Files mode only: which file declares this agent (null in database mode).
+    definition: DefinitionSource | None = None
     # External webhook triggers registered on this agent.
     triggers: list[AgentTriggerRead] = []
     # Published blackboard outputs, newest first.

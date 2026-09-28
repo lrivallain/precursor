@@ -10,10 +10,15 @@ export interface GlobalShortcutsDeps {
   setPaletteOpen: Dispatch<SetStateAction<boolean>>;
 }
 
+// Surfaces that take text without being a form control or contenteditable.
+// Monaco on Chromium types through the EditContext API into a plain
+// `<div role="textbox">`, which none of the checks below would catch.
+const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox"]);
+
 // Bare-key shortcuts (like "/") must never steal a keystroke the user meant to
 // type, so they're ignored while focus sits in any editable control — including
-// contenteditable surfaces (the composer's rich editors) and shadow-DOM inputs
-// reported via composedPath().
+// contenteditable surfaces (the composer's rich editors), ARIA text boxes, code
+// editors, and shadow-DOM inputs reported via composedPath().
 function isTypingTarget(e: KeyboardEvent): boolean {
   const path = typeof e.composedPath === "function" ? e.composedPath() : [e.target];
   for (const node of path) {
@@ -21,6 +26,9 @@ function isTypingTarget(e: KeyboardEvent): boolean {
     const tag = node.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
     if (node.isContentEditable) return true;
+    if (TEXT_ROLES.has(node.getAttribute("role") ?? "")) return true;
+    // Anywhere in a Monaco editor (a read-only diff included), keys are its own.
+    if (node.classList.contains("monaco-editor")) return true;
   }
   return false;
 }

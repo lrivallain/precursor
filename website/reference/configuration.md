@@ -39,6 +39,9 @@ CLI flags mirror several of these: `--port`, `--api-port`, `--host`,
 | --- | --- | --- |
 | `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` | Async SQLAlchemy URL. Point at Postgres for production. |
 | `PRECURSOR_DATA_DIR` | `.precursor` *(checkout)* / *user data dir* *(installed)* | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), the agents runtime's Copilot home (`agents/copilot-home/`), and the [background app](/features/background-app)'s `runtime.json` + `logs/`. Relative paths resolve against the process working directory. |
+| `PRECURSOR_DEFINITIONS_DIR` | the **Agents & workflows** workspace (`<data dir>/workspaces/definitions`) | **Work in progress.** Folder of agent and workflow [definition files](/features/definitions) (`*.agent.yaml`, `*.workflow.yaml`). Read by the definitions check, written by the export and the migration; the runtime reads it only in files mode (below). Set, it replaces the built-in workspace. |
+| `PRECURSOR_DEFINITIONS_SOURCE` | `database` | **Work in progress.** Normally left alone: the [migration wizard](/features/definitions#getting-there-from-today-s-data) in Settings → Definition files switches an install to files mode (and back) and remembers it. `files` here forces files mode regardless. |
+| `PRECURSOR_DEFINITIONS_WORKSPACE` | *(empty)* | **Work in progress.** Keep the definitions folder in a [workspace](/features/workspaces) — its slug, optionally followed by a folder inside it (`team-defs/precursor`) — so it can be pulled, edited and pushed from the Files section. Ignored when `PRECURSOR_DEFINITIONS_DIR` is set. |
 
 The two defaults above depend on **how Precursor was installed**. A source
 checkout keeps its state beside the code, so every clone and worktree is an

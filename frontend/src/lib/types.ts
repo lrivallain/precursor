@@ -225,6 +225,9 @@ export interface AgentRun {
   mcp_servers: string | null;
   approval_policy: AgentApprovalPolicy | null;
   role_id: number | null;
+  /** Files mode: the definition file this run was declared by, and its SHA-256. */
+  definition_path?: string | null;
+  definition_hash?: string | null;
   started_at: string | null;
   finished_at: string | null;
   last_activity_at: string | null;
@@ -317,6 +320,8 @@ export interface AgentSession {
   // above mirror it so existing surfaces keep working; this is the authoritative
   // record and the handle for per-run artifacts, events and spend.
   current_run: AgentRun | null;
+  /** Files mode only: which file declares this agent (null in database mode). */
+  definition?: DefinitionSource | null;
   // External webhook triggers registered on this agent.
   triggers: AgentTrigger[];
   // Published blackboard outputs, newest first.
@@ -784,6 +789,9 @@ export interface WorkflowRun {
   /** Cumulative token spend across every attempt in this run. */
   total_input_tokens: number;
   total_output_tokens: number;
+  /** Files mode: the workflow file this run executed, and its SHA-256 then. */
+  definition_path?: string | null;
+  definition_hash?: string | null;
   step_runs: WorkflowRunStep[];
 }
 
@@ -855,6 +863,8 @@ export interface Workflow {
   steps: WorkflowStep[];
   /** Advancement of the newest run; null until the workflow has ever run. */
   run_progress: WorkflowRunProgress | null;
+  /** Files mode only: which file declares this workflow (null in database mode). */
+  definition?: DefinitionSource | null;
 }
 
 // One step in a create/replace payload. Either reference an existing agent by
@@ -978,6 +988,218 @@ export interface TransferImportResult {
   replaced_agent_ids: number[];
   linked_agent_ids: number[];
   warnings: TransferWarning[];
+}
+
+// --- Definition files (work in progress) ------------------------------------
+// Agents and workflows declared in *.agent.yaml / *.workflow.yaml files, with
+// only execution data left in the database. Mirrors schemas/definitions_api.py;
+// see docs/definitions.md. They declare agents and workflows only in files mode.
+
+export type DefinitionKind = "agent" | "workflow";
+
+/**
+ * Where an agent's or workflow's declaration comes from, in files mode:
+ * `file` = declared by `path`; `invalid` = `path` has errors, so it can't run;
+ * `none` = no file carries its id, so it still runs from the database.
+ */
+export interface DefinitionSource {
+  state: "file" | "invalid" | "none";
+  path: string | null;
+  message: string | null;
+  /** Permissions the file grants beyond what was accepted; blocks runs until accepted. */
+  review?: string[];
+  /** SHA-256 of the file as reported, so Accept applies to exactly this version. */
+  content_hash?: string | null;
+}
+
+export interface DefinitionIssue {
+  severity: "error" | "warning";
+  /** Relative to the definitions folder; null for folder-wide findings. */
+  path: string | null;
+  /** Where in the file, e.g. `steps[brief].context.from`. */
+  location: string | null;
+  message: string;
+  /**
+   * Where that is in the text: 1-based, end exclusive, UTF-16 columns (as in
+   * Monaco). Only set by `/file-issues`; null when unknown.
+   */
+  line?: number | null;
+  column?: number | null;
+  end_line?: number | null;
+  end_column?: number | null;
+}
+
+export interface DefinitionFileSummary {
+  path: string;
+  kind: DefinitionKind;
+  id: string | null;
+  name: string | null;
+  valid: boolean;
+  content_hash: string;
+  /** Whether a database row carries this id; null when checked without a database. */
+  linked: boolean | null;
+}
+
+export interface DefinitionsDatabaseLinks {
+  linked_agents: number;
+  linked_workflows: number;
+  unlinked_agents: { id: number; public_id: string; title: string; archived: boolean }[];
+  unlinked_workflows: { id: number; name: string; archived: boolean }[];
+}
+
+export interface DefinitionsCheckReport {
+  root: string;
+  exists: boolean;
+  ok: boolean;
+  error_count: number;
+  warning_count: number;
+  files: DefinitionFileSummary[];
+  issues: DefinitionIssue[];
+  database: DefinitionsDatabaseLinks | null;
+}
+
+export interface ExportedDefinition {
+  kind: DefinitionKind;
+  path: string;
+  id: string;
+  name: string;
+  source_id: number;
+}
+
+/** What the check says about one file opened in the Files section. */
+export interface DefinitionFileReport {
+  /** False when the file isn't a definition file inside the definitions folder. */
+  in_definitions: boolean;
+  path: string | null;
+  kind: DefinitionKind | null;
+  valid: boolean | null;
+  issues: DefinitionIssue[];
+}
+
+// --- Migration (database → files, and back) ---------------------------------
+
+/** Cheap summary for the Agents and Workflows homes: anything left to migrate? */
+export interface DefinitionsStatus {
+  stage: "database" | "files" | "finalized";
+  forced: boolean;
+  /** Active agents / workflows still declared by the database. */
+  agents: number;
+  workflows: number;
+}
+
+export interface DefinitionsWorkspaceRef {
+  id: number;
+  slug: string;
+  name: string;
+}
+
+export type MigrationAction = "create" | "regenerate" | "unchanged" | "new_from_disk";
+
+export interface MigrationItem {
+  kind: DefinitionKind;
+  id: number | null;
+  name: string;
+  path: string | null;
+  action: MigrationAction;
+  reason: string | null;
+}
+
+export interface MigrationRecord {
+  at: string;
+  snapshot: string | null;
+  created: number;
+  regenerated: number;
+  unchanged: number;
+  added_from_disk: number;
+}
+
+export interface FinalizedRecord {
+  at: string;
+  snapshot: string | null;
+  agents: number;
+  step_prompts: number;
+  workflows: number;
+  steps: number;
+}
+
+export interface CleanupPreview {
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  agents: number;
+  step_prompts: number;
+  workflows: number;
+  steps: number;
+  /** Agents and workflows without a file yet; the cleanup writes them first. */
+  missing_files: string[];
+}
+
+export interface MigrationPreview {
+  /** database: not migrated · files: migrated, can switch back · finalized: done, no way back. */
+  stage: "database" | "files" | "finalized";
+  migrated: MigrationRecord | null;
+  finalized: FinalizedRecord | null;
+  cleanup: CleanupPreview | null;
+  source: "database" | "files";
+  /** PRECURSOR_DEFINITIONS_SOURCE=files forces files mode. */
+  forced: boolean;
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+  /** A definition file in the folder, for an "Open in Files" link. */
+  sample_path: string | null;
+  items: MigrationItem[];
+  issues: DefinitionIssue[];
+  blockers: string[];
+  ready: boolean;
+  needs_confirmation: boolean;
+}
+
+export interface MigrationResult {
+  ok: boolean;
+  source: "database" | "files";
+  snapshot: string | null;
+  created: number;
+  regenerated: number;
+  unchanged: number;
+  added_from_disk: number;
+  issues: DefinitionIssue[];
+  mismatches: string[];
+}
+
+/** The actual content behind one migration preview line. */
+export interface MigrationItemDetail {
+  kind: DefinitionKind;
+  id: number;
+  name: string;
+  action: "create" | "regenerate" | "unchanged";
+  path: string | null;
+  /** The file as the migration would write it. */
+  proposed: string;
+  /** The file on disk now; null when there is none yet. */
+  current: string | null;
+}
+
+export interface FinalizeResult {
+  ok: boolean;
+  finalized: FinalizedRecord | null;
+  written: number;
+  issues: DefinitionIssue[];
+}
+
+export interface RevertResult {
+  ok: boolean;
+  source: "database" | "files";
+  snapshot: string | null;
+  agents: number;
+  workflows: number;
+  skipped: string[];
+}
+
+export interface DefinitionsExportResult {
+  root: string;
+  written: ExportedDefinition[];
+  skipped: ExportedDefinition[];
+  issues: DefinitionIssue[];
 }
 
 export interface Attachment {
@@ -1777,6 +1999,8 @@ export interface Workspace {
   cloned_at: string | null;
   last_synced_at: string | null;
   role_id: number | null;
+  /** Holds the agent and workflow definition files (the built-in "Agents & workflows"). */
+  hosts_definitions?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1806,15 +2030,31 @@ export interface WorkspaceFileContent {
 }
 
 export interface GitFileStatus {
+  /** Relative to the repository root. */
   path: string;
+  /** Two-letter porcelain code, e.g. " M", "??", "A ", "UU". */
   code: string;
+  /** A rename's previous path. */
+  orig_path?: string | null;
+  /** Unmerged: git stopped on a conflict in this file. */
+  conflicted?: boolean;
+  /** Relative to the workspace's subdir, as the file tree lists it; null outside it. */
+  browse_path?: string | null;
 }
 
 export interface GitStatus {
+  /** The checked-out branch; "HEAD" when detached. */
   branch: string;
+  /** The commit checked out; null before the first commit. */
+  head?: string | null;
+  detached?: boolean;
+  /** e.g. "origin/main"; null while the branch isn't published. */
+  upstream?: string | null;
   ahead: number | null;
   behind: number | null;
   dirty: boolean;
+  /** A merge stopped on conflicts. */
+  merging?: boolean;
   files: GitFileStatus[];
 }
 
@@ -1830,6 +2070,84 @@ export interface FileDiff {
   path: string;
   diff: string;
   binary: boolean;
+}
+
+/** A conflicted file's three versions (null where that side has none). */
+export interface GitConflict {
+  path: string;
+  kind:
+    | "both_modified"
+    | "both_added"
+    | "deleted_by_us"
+    | "deleted_by_them"
+    | "added_by_us"
+    | "added_by_them"
+    | "both_deleted";
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  has_base: boolean;
+  has_ours: boolean;
+  has_theirs: boolean;
+  binary: boolean;
+  too_large: boolean;
+}
+
+export interface GitBranch {
+  name: string;
+  /** Its upstream on origin; null while unpublished. */
+  upstream: string | null;
+}
+
+export interface GitBranches {
+  /** The checked-out branch; null on a detached HEAD. */
+  current: string | null;
+  local: GitBranch[];
+  /** Branch names on origin (local or not). */
+  remote: string[];
+  /** Why the remote's branches couldn't be listed. */
+  remote_error: string | null;
+}
+
+export interface GitCommit {
+  sha: string;
+  short_sha: string;
+  author: string;
+  /** Author date, ISO 8601. */
+  date: string;
+  subject: string;
+  /** More than one: a merge. */
+  parents: string[];
+}
+
+export interface GitLog {
+  commits: GitCommit[];
+  has_more: boolean;
+}
+
+export interface GitCommitFile {
+  /** A, M, D, R (renamed), C (copied), T (type changed). */
+  status: string;
+  path: string;
+  orig_path: string | null;
+}
+
+export interface GitCommitDetail extends GitCommit {
+  /** The message after its subject line. */
+  body: string;
+  /** What `files` are compared with: the first parent; null for a root commit. */
+  parent: string | null;
+  files: GitCommitFile[];
+}
+
+/** Both sides of one file's diff; null where the file doesn't exist. */
+export interface FileVersions {
+  path: string;
+  original: string | null;
+  modified: string | null;
+  binary: boolean;
+  /** Over 2 MB: no content is sent. */
+  too_large: boolean;
 }
 
 export interface LocalPath {

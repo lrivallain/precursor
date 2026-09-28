@@ -256,6 +256,122 @@ const scenes = {
     },
   },
 
+  // The same file in Monaco. Left unfocused so no blinking cursor differs
+  // between the light and dark shots.
+  "workspaces-editor": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator(".monaco-editor .view-line", { hasText: "Release checklist" }).waitFor();
+      await sleep(500);
+      return undefined;
+    },
+  },
+
+  // A workflow definition whose first step names a missing agent file: the
+  // check's finding, underlined, with its hover and the list below.
+  "workspaces-definitions": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/definitions/workflows/weekly-digest.workflow.yaml`, {
+        waitUntil: "networkidle",
+      });
+      await page.getByLabel("Definition check").getByText("1 error").waitFor();
+      await page.locator(".monaco-editor .squiggly-error").first().waitFor();
+      await page
+        .locator(".monaco-editor .view-line", { hasText: "change-collector" })
+        .hover({ position: { x: 220, y: 6 } });
+      await page.locator(".monaco-hover", { hasText: "no agent file" }).first().waitFor();
+      await sleep(400);
+      return undefined;
+    },
+  },
+
+  // The git workspace's Changes tab, with one file's diff against HEAD. The
+  // pane is chosen through the stored preference, as a returning user has it.
+  "workspaces-changes": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "changes"),
+      );
+      await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
+      // The diff gets the assistant's width, to show side by side.
+      await page.getByRole("button", { name: "Hide assistant" }).click();
+      const changes = page.getByLabel("Changes", { exact: true });
+      await changes.getByRole("button", { name: /^on-call\.md,/ }).click();
+      await page.locator(".monaco-diff-editor .view-line", { hasText: "error budget" }).first().waitFor();
+      await page.getByText("3 of 3 to commit").waitFor();
+      await changes.getByLabel("Commit message").fill("Document handoffs and incident reviews");
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
+  // The History tab: a commit opened to its files, one of them compared with
+  // the commit's parent.
+  "workspaces-history": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "history"),
+      );
+      await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Hide assistant" }).click();
+      const history = page.getByLabel("History", { exact: true });
+      await history.getByRole("button", { name: /Page owners sooner/ }).click();
+      await history.getByRole("button", { name: /^on-call\.md,/ }).click();
+      await page.locator(".monaco-diff-editor .view-line", { hasText: "15 minutes" }).first().waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
+  // The git bar's branch picker, open: local branches (one unpublished) and
+  // the ones only the remote has.
+  "workspaces-branches": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/handbook/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Team handbook", exact: true }).waitFor();
+      await page.getByRole("button", { name: /Switch or create a branch/ }).click();
+      await page.getByRole("dialog", { name: "Branches" }).getByText("On the remote").waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(400);
+      return undefined;
+    },
+  },
+
+  // A merge stopped on a conflict: the banner, the Changes tab's conflict,
+  // and the file in the editor with Accept lenses above the block. The first
+  // (light) run does the Pull and the Merge; the dark one finds it in progress.
+  "workspaces-conflict": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "changes"),
+      );
+      await page.goto(`${BASE}/ws/runbooks`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Hide assistant" }).click();
+      const banner = page.getByText("Merge in progress");
+      if (!(await banner.isVisible())) {
+        await page.getByRole("button", { name: "Pull" }).click();
+        await page.getByRole("button", { name: "Merge remote changes" }).click();
+        await banner.waitFor();
+      }
+      const changes = page.getByLabel("Changes", { exact: true });
+      await changes.getByRole("button", { name: /^escalation\.md, conflict/ }).click();
+      await page.getByRole("button", { name: "Resolve in the editor" }).click();
+      await page.locator(".monaco-editor .codelens-decoration", { hasText: "Accept current" }).first().waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

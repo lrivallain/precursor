@@ -285,8 +285,9 @@ concurrency governor. See the
 ## Workspaces
 
 A `Workspace` is a git clone or local directory the assistant can browse and edit.
-`services/workspace_git.py` clones/pulls/commits (token injected at op time, never
-stored); `services/workspace_fs.py` does sandboxed file ops — every path is routed
+`services/workspace_git.py` clones/fetches/pulls/commits/pushes (token injected at
+op time, never stored; paths, branch names and revisions checked before git sees
+them; literal pathspecs, no terminal prompts); `services/workspace_fs.py` does sandboxed file ops — every path is routed
 through `safe_join`, which rejects traversal outside the workspace root and blocks
 `.git`. The same sandbox backs the `workspace-fs` and `drawio` MCP servers.
 
@@ -296,7 +297,8 @@ Vite + React 19 + Tailwind, built to `frontend/dist` and bundled inside the whee
 All HTTP goes through `src/lib/api.ts`; streaming chat uses a manual SSE reader
 (`src/lib/sse.ts`) since it POSTs a JSON body; cross-window sync uses the
 `/api/events` SSE stream. Theming is via CSS variables (`light` / `dark` /
-`system`).
+`system`). The Files editor (Monaco) is a lazily loaded chunk: `lib/monaco.ts`
+wires its workers and derives the editor theme from those variables.
 
 ## Security & deployment model
 

@@ -67,6 +67,111 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Git workspaces merge, and conflicts are resolved in the editor.**
+  - **Starting a merge:** when Pull (or Push) finds that the branch and the
+    remote have both moved on, the bar offers **Merge remote changes**. It
+    records a merge commit and is refused while anything is uncommitted.
+  - **Conflicts:** a **Merge in progress** bar stays up, and the Changes tab
+    lists the conflicted files first.
+    - A text conflict opens in the editor, tinted, with **Accept current /
+      incoming / both** above each block. Save, then **Mark resolved**, which is
+      refused while a conflict marker remains.
+    - A binary conflict, or one side deleting the file, offers **Keep yours** or
+      **Keep theirs**, after a confirmation.
+  - **Finishing:** **Complete merge** once none are left, or **Abort merge**
+    after a confirmation.
+  - **Consistent behaviour:** the merge always runs as `git merge` and ignores
+    the user's git settings (rebasing pulls, `merge.ff`, conflict style,
+    editor).
+  - **API:** new `POST /api/workspaces/{id}/git/merge`, `GET /git/conflict`,
+    `POST /git/resolve`, `/git/merge/complete` and `/git/merge/abort`.
+  - **Stricter names:** branch names and paths with surrounding whitespace or
+    control characters are refused instead of trimmed. A new branch can't be
+    named like another kind of ref (`refs/…`, `origin/…`, `HEAD`…).
+- **Git workspaces switch and create branches.** The branch name in the git bar
+  opens a picker.
+  - **What it lists:** local branches (unpublished ones marked) and the
+    branches only the remote has. Picking a remote one creates a local branch
+    that tracks it, even in a single-branch clone.
+  - **Creating:** a new branch starts from the current commit and stays local
+    until published.
+  - **Nothing is lost:** switching is refused while anything is uncommitted
+    (the files are named), during a merge, or on a detached HEAD. Nothing is
+    ever forced or stashed.
+  - **The open file:** unsaved edits ask first. After the switch the file is
+    reloaded, or closed if the branch doesn't have it.
+  - **Robustness:** remote branch names git wouldn't accept are never listed,
+    and a new branch never tracks the one it started from, even with
+    `branch.autoSetupMerge=always`.
+  - **API:** new `GET`/`POST /api/workspaces/{id}/git/branches` and
+    `POST /git/switch`.
+- **Git workspaces have a History tab.**
+  - **Browsing:** the branch's commits, newest first, with **Load more**. A
+    commit opens to its message and changed files, and each file's diff
+    against the commit before it.
+  - **Merges and the first commit:** a merge is compared with its first parent
+    and says so. The first commit shows its files as added.
+  - **One file's history:** **File history** beside an open file's name lists
+    the commits that changed it, across renames, and opens that file's diff
+    directly.
+  - **Phones:** the commit message and opened commits now survive a look at a
+    file or diff.
+  - **API:** new `GET /api/workspaces/{id}/git/log` and
+    `/git/commits/{sha}`. The status gains `head`, and `file-versions`
+    compares against an empty original when given `head` without `base`.
+- **Git workspaces review changes in a Changes tab, with a real diff.** The
+  Files section's left pane gains a **Changes** tab beside **Files**, replacing
+  the Review & Push dialog.
+  - **What it shows:** every changed file, ticked to be committed, with a
+    commit message box and **Commit** or **Commit & Push**. The pane you last
+    used is remembered.
+  - **The diff:** a file opens in Monaco's diff editor, comparing the last
+    commit with the working copy, side by side or inline (always inline on a
+    phone). Binary and very large files say so.
+  - **Change bars:** the editor's margin marks lines added, modified or removed
+    since the last commit, refreshed on open and on save.
+  - **Discard asks plainly:** a new file's confirmation says that discarding
+    deletes it, with a **Delete file** button. A rename's says it restores the
+    old name.
+  - **Phones:** the git bar wraps instead of pushing Pull and Push off-screen.
+  - **API:** new `GET /api/workspaces/{id}/git/file-versions`.
+- **Git workspaces know where they stand against the remote.**
+  - **Refresh:** opening a git workspace, and Refresh, fetch from the remote,
+    so "↓ N behind" is real (fetching changes no file). If the remote can't be
+    reached, an icon says so.
+  - **Commit and Push are separate:** the review can commit locally, and
+    **Push N** sends commits later.
+  - **New branches:** a branch that isn't on the remote shows **not published**,
+    and **Publish** pushes it and sets its upstream. A branch that only tracks a
+    local one counts as unpublished too.
+  - **Branch switches outside Precursor:** Pull and Push follow the checked-out
+    branch, even when it was switched in a terminal or VS Code, and the
+    workspace remembers it.
+  - **Fixes:**
+    - A pushed branch other than the cloned one stays tracked.
+    - File names with spaces, non-ASCII characters and renames are reported
+      correctly.
+    - Change badges show in a workspace limited to a subfolder.
+    - Discard now also resets staged changes, and removes a file the last commit
+      doesn't have. It used to do nothing to such a file.
+  - **Hardening:** request paths are checked before git sees them. Pathspec
+    magic such as `:/` is literal, git never waits on a prompt, and a clone URL
+    can't pass options to git.
+  - **API:** new `POST /api/workspaces/{id}/git/fetch`, `/git/commit` and
+    `/git/push`. The status gains `upstream`, `detached`, `merging`, and per-file
+    `orig_path`, `conflicted` and `browse_path`.
+  - **Definition schemas:** `docs/schemas/` drops the titles Pydantic generated
+    from field names. The Files editor's hovers show only descriptions.
+- **The Files section edits with Monaco, the VS Code editor core.** It replaces
+  the plain text box:
+  - syntax highlighting, find and replace, multiple cursors and folding;
+  - <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves;
+  - YAML and JSON are checked as you type;
+  - switching to a preview and back keeps undo history.
+
+  The editor follows the app's theme and works on phones. It downloads the first
+  time a file is edited, so the rest of the app is unchanged in size. New
+  frontend dependencies: `monaco-editor` and `monaco-yaml`.
 - **An agent's page now separates its result from its activity.** Refining a
   deliverable over several follow-ups used to stack every draft at the foot of
   the page, oldest last, so the current one was the hardest to find. The body
@@ -177,6 +282,85 @@ are the per-version history; releasing does not rewrite this file.
   everywhere else.
 
 ### Added
+
+- **Delete a folder in Files.** Hover a folder in the tree and choose **Delete
+  folder**: it goes with everything in it, after a confirmation that counts the
+  files and says whether they can be restored (committed files in a git
+  workspace, from Changes). The workspace's own folder, `.git`, and the folder
+  holding the agent and workflow definitions can't be deleted; a symlinked
+  folder loses only the link.
+
+- **Definition files get editor help in the Files section.** A `*.agent.yaml`
+  or `*.workflow.yaml` file is completed and validated against its JSON Schema
+  as you type: key suggestions, and unknown keys and wrong types underlined.
+  After a save, the definitions check's findings are underlined on the lines
+  they concern, and clicking one in the list under the editor jumps there.
+  - **API:** `GET /api/definitions/schema/{kind}` serves the schema, and
+    `/file-issues` findings carry `line`, `column`, `end_line` and
+    `end_column`.
+- **Open in VS Code from the Files section.** A button beside the open file's
+  path opens it in VS Code, and one in the workspace bar opens the whole working
+  copy as a folder. Both are `vscode://file/…` links to the server's copy, so VS
+  Code must run on the same computer. **Copy local path** now includes a
+  workspace's subdirectory; it used to drop it, which gave a path that didn't
+  exist.
+- **Agent and workflow definition files (work in progress).** A first step
+  toward declaring agents and workflows in YAML files, with only execution data
+  (runs, progress, scheduling, triggers) left in the database. Opt-in: by
+  default everything still runs from the database. See
+  [docs/definitions.md](docs/definitions.md).
+  - **File format.** `*.agent.yaml` and `*.workflow.yaml`, checked strictly:
+    unknown keys, duplicate YAML keys and contradictory settings are errors.
+    Workflow steps have stable keys, so `on_fail` and context sources survive
+    a reorder. JSON Schemas under `docs/schemas/` give editors completion.
+  - **Folder check.** `GET /api/definitions/check` and `precursor validate
+    [FOLDER]` report invalid files, duplicate ids and agent paths that point
+    nowhere. The app's check also warns about role and MCP server names this
+    instance doesn't have, and shows which agents and workflows have a file.
+  - **Export.** `POST /api/definitions/export` writes a file for every agent and
+    workflow, linked to its row, without deleting anything. The folder is
+    `PRECURSOR_DEFINITIONS_DIR`, by default `<data dir>/definitions`.
+  - **Files mode.** `PRECURSOR_DEFINITIONS_SOURCE=files` declares every linked
+    agent and workflow from its file, everywhere it is read. The database
+    columns are left untouched. A workflow's step rows follow the file's step
+    list between runs, and each run records the file and hash it ran from. A
+    broken file is refused rather than replaced by the old database copy.
+    New files join the Agents list and Workflows gallery, a moved file keeps
+    its history, and each agent and workflow page shows which file declares
+    it. Saving, creating or deleting an agent or workflow in the app writes
+    (or removes) its file, keeping step keys across saves; a file with errors
+    is never overwritten from the app. Comments in a file aren't kept when the
+    app rewrites it.
+  - **Permission review.** In files mode, a file that widens what an agent or
+    workflow may do (approval policy, autonomy, tools, MCP servers, budget, new
+    steps) can't run until someone accepts the change in the app; narrowing
+    never needs review, and what the app writes itself is accepted. The
+    assistant's file tools can't write the definitions folder.
+  - **Definitions in git.** `PRECURSOR_DEFINITIONS_WORKSPACE` keeps the
+    definitions folder in a workspace: a pull applies at once (still behind
+    the permission review), and opening a definition file in Files shows the
+    check's findings for it, refreshed on save.
+  - **Agents & workflows workspace.** By default the definition files live in
+    a built-in workspace that leads the Files section; it can't be removed
+    while it holds any.
+  - **Migration wizard.** Settings → Definition files walks through the move
+    to files: overview, a review that opens each file as it will be written
+    next to what's on disk, the migration itself (a database copy first, every
+    file verified against the database — nothing switches on a difference), a
+    try-it-out step where switching back is still possible, and finally, on
+    request, the **database cleanup**: once confirmed (tick and type *clean
+    up*), the declarations are cleared from the database and switching back is
+    no longer possible. The wizard then confirms the migration is finished.
+    The choice survives restarts; `PRECURSOR_DEFINITIONS_SOURCE=files` still
+    forces files mode.
+  - **Invitation to migrate.** The Agents and Workflows homes open with a
+    banner while the database still declares agents or workflows, leading to
+    the wizard ("Not now" hides it for a week). After the switch it only
+    offers to write the files of leftovers; after the cleanup it's gone.
+  - **Fixed in files mode:** the stall watchdog read its timeout from the
+    database instead of the workflow's file; agents stamped from a blueprint
+    got no file; search didn't find prompts that only the files held; titles
+    and names edited in files didn't reach search and name matching.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

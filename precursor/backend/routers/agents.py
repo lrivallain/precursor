@@ -76,6 +76,10 @@ from precursor.backend.services.agents.directives import parse_agent_command
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
 from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler
 
@@ -180,6 +184,14 @@ async def _current_runs(session: AsyncSession, agents: list[AgentSession]) -> di
     return {run.agent_id: run for run in result.scalars().all()}
 
 
+async def _attach_review(
+    session: AsyncSession, agent: AgentSession, read: AgentSessionRead
+) -> None:
+    """Files mode: list the permission changes its file makes that await review."""
+    if read.definition is not None:
+        read.definition.review = await definition_trust.pending_changes(session, agent)
+
+
 def _to_read(
     agent: AgentSession,
     unread: int,
@@ -190,6 +202,8 @@ def _to_read(
     read = AgentSessionRead.model_validate(agent)
     read.unread_count = unread
     read.workflow_count = workflow_count
+    if not agent.inline:
+        read.definition = definition_overlay.source_of(agent)
     if current_run is not None:
         read.current_run = AgentRunRead.model_validate(current_run)
     if activity:
@@ -576,6 +590,10 @@ async def list_agents(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentSessionRead]:
+    # Files mode: an agent file new to this instance joins the roster, and
+    # titles edited in the files reach the searchable column.
+    await definition_anchors.adopt_new_files(session)
+    await definition_anchors.sync_names(session)
     # Inline agents are execution vessels owned by a workflow step, not units the
     # user manages, so they stay out of the roster. They are deliberately still
     # listed by ``/attention`` below: a blocked inline step must remain
@@ -597,7 +615,7 @@ async def list_agents(
     workflows = await _workflow_counts(session, ids)
     activity = get_agent_manager().live_activity(ids)
     runs = await _current_runs(session, agents)
-    return [
+    reads = [
         _to_read(
             a,
             unread.get(a.id, 0),
@@ -607,6 +625,9 @@ async def list_agents(
         )
         for a in agents
     ]
+    for agent, read in zip(agents, reads, strict=True):
+        await _attach_review(session, agent, read)
+    return reads
 
 
 @router.get("/archived", response_model=list[AgentSessionRead])
@@ -663,6 +684,10 @@ async def _spawn_agent(
         status="pending" if start else "waiting",
     )
     session.add(agent)
+    await session.flush()
+    # Files mode: declared by a new file from the start — written before the
+    # commit, so nothing can start the agent before its file exists.
+    await definition_writer.save_agent(session, agent)
     await session.commit()
     await session.refresh(agent)
 
@@ -695,7 +720,7 @@ async def create_agent(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Agent task is required")
 
     title = (payload.title or task_prompt).strip()[:200] or "Agent task"
-    return await _spawn_agent(
+    agent = await _spawn_agent(
         session,
         title=title,
         task_prompt=task_prompt,
@@ -718,6 +743,7 @@ async def create_agent(
         blueprint_id=payload.blueprint_id,
         start=payload.start,
     )
+    return agent
 
 
 @router.get("/{agent_id}/workflows", response_model=list[WorkflowSummary])
@@ -751,13 +777,15 @@ async def get_agent(
     workflows = await _workflow_counts(session, [agent.id])
     activity = get_agent_manager().live_activity([agent.id])
     runs = await _current_runs(session, [agent])
-    return _to_read(
+    read = _to_read(
         agent,
         unread.get(agent.id, 0),
         activity.get(agent.id),
         workflows.get(agent.id, 0),
         runs.get(agent.id),
     )
+    await _attach_review(session, agent, read)
+    return read
 
 
 @router.get("/{agent_id}/events", response_model=AgentEventPage)
@@ -1039,6 +1067,9 @@ async def update_agent(
             agent.task_prompt = new_task
             task_changed = True
 
+    # Files mode: the file is the declaration, so the edit goes there — before
+    # the commit, because the refresh below re-reads the agent from its file.
+    await definition_writer.save_agent(session, agent)
     await session.commit()
     await session.refresh(agent)
 
@@ -1117,6 +1148,7 @@ async def delete_agent(agent_id: str, session: AsyncSession = Depends(get_sessio
     await get_agent_manager().teardown_session(aid, forget=True)
     await session.delete(agent)
     await session.commit()
+    definition_writer.remove_file(agent)
     await publish_agent_changed(agent_session_id=aid, topic_id=topic_id, chat_id=chat_id)
 
 

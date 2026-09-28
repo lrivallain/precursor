@@ -32,14 +32,30 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DefinitionFileReport,
+  DefinitionKind,
+  DefinitionsCheckReport,
+  DefinitionsExportResult,
+  DefinitionsStatus,
+  DefinitionSource,
+  FinalizeResult,
+  MigrationItemDetail,
+  MigrationPreview,
+  MigrationResult,
+  RevertResult,
   DrawioStatus,
   GhCloseResult,
   GhCreateDraft,
   GhCreatePostResult,
   GhSyncResult,
   FileDiff,
+  FileVersions,
   GitActionResult,
+  GitBranches,
+  GitCommitDetail,
+  GitConflict,
   GitHubIssue,
+  GitLog,
   GitStatus,
   IssueComment,
   IssueLabel,
@@ -778,6 +794,47 @@ export const api = {
       }),
   },
 
+  definitions: {
+    // Work in progress (docs/definitions.md): the folder check and the one-shot
+    // export of database agents/workflows into definition files.
+    check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    // The migration from database-declared to file-declared agents and workflows.
+    status: () => request<DefinitionsStatus>(`/api/definitions/status`),
+    migration: () => request<MigrationPreview>(`/api/definitions/migration`),
+    migrate: (acknowledge: boolean) =>
+      request<MigrationResult>(`/api/definitions/migrate`, {
+        method: "POST",
+        body: JSON.stringify({ acknowledge }),
+      }),
+    revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
+    migrationItem: (kind: DefinitionKind, id: number) =>
+      request<MigrationItemDetail>(`/api/definitions/migration/items/${kind}/${id}`),
+    // The last, irreversible step: clears the declarations out of the database.
+    finalize: () =>
+      request<FinalizeResult>(`/api/definitions/finalize`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      }),
+    fileIssues: (workspaceId: number, path: string) =>
+      request<DefinitionFileReport>(
+        `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
+      ),
+    // The JSON Schema of a kind of definition file, for the Files editor.
+    schema: (kind: DefinitionKind) =>
+      request<Record<string, unknown>>(`/api/definitions/schema/${kind}`),
+    // Files mode: accept the permissions an agent's or workflow's file grants now.
+    accept: (kind: DefinitionKind, id: number | string, contentHash?: string | null) =>
+      request<DefinitionSource>(`/api/definitions/accept`, {
+        method: "POST",
+        body: JSON.stringify({ kind, id, content_hash: contentHash ?? null }),
+      }),
+    export: (overwrite = false) =>
+      request<DefinitionsExportResult>(
+        `/api/definitions/export${overwrite ? "?overwrite=true" : ""}`,
+        { method: "POST" },
+      ),
+  },
+
   messages: {
     // Messages
     list: (topicId: number, opts?: MessageWindow) =>
@@ -1386,6 +1443,12 @@ export const api = {
         `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
         { method: "DELETE" },
       ),
+    // A folder and everything in it (never the workspace's own folder).
+    deleteFolder: (workspaceId: number, path: string) =>
+      request<void>(
+        `/api/workspaces/${workspaceId}/folder?path=${encodeURIComponent(path)}`,
+        { method: "DELETE" },
+      ),
     renameEntry: (workspaceId: number, path: string, newPath: string) =>
       request<WorkspaceFileNode>(`/api/workspaces/${workspaceId}/rename`, {
         method: "POST",
@@ -1393,8 +1456,24 @@ export const api = {
       }),
     gitStatus: (workspaceId: number) =>
       request<GitStatus>(`/api/workspaces/${workspaceId}/git/status`),
+    // Updates the remote-tracking branch (ahead/behind); changes no file.
+    gitFetch: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/fetch`, {
+        method: "POST",
+      }),
     gitPull: (workspaceId: number) =>
       request<GitActionResult>(`/api/workspaces/${workspaceId}/git/pull`, {
+        method: "POST",
+      }),
+    // Commit locally; `paths` selects files, otherwise every change.
+    gitCommit: (workspaceId: number, message: string, paths?: string[]) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/commit`, {
+        method: "POST",
+        body: JSON.stringify(paths ? { message, paths } : { message }),
+      }),
+    // Push the checked-out branch, publishing it the first time.
+    gitPush: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/push`, {
         method: "POST",
       }),
     gitCommitPush: (
@@ -1411,6 +1490,71 @@ export const api = {
         `/api/workspaces/${workspaceId}/git/discard?path=${encodeURIComponent(path)}`,
         { method: "POST" },
       ),
+    // A file at `base` (HEAD) and in the working copy — or at `head` — for the
+    // diff editor. `originalPath` is a rename's old name.
+    // With `head` and no `base` (a root commit), the original side is empty.
+    gitFileVersions: (
+      workspaceId: number,
+      path: string,
+      opts: { originalPath?: string | null; base?: string | null; head?: string } = {},
+    ) => {
+      const q = new URLSearchParams({ path });
+      if (opts.originalPath) q.set("original_path", opts.originalPath);
+      if (opts.base) q.set("base", opts.base);
+      if (opts.head) q.set("head", opts.head);
+      return request<FileVersions>(`/api/workspaces/${workspaceId}/git/file-versions?${q}`);
+    },
+    // A page of history, newest first; `path` limits it to one file (by its
+    // repository path), following renames.
+    gitLog: (workspaceId: number, opts: { limit?: number; skip?: number; path?: string | null } = {}) => {
+      const q = new URLSearchParams();
+      if (opts.limit) q.set("limit", String(opts.limit));
+      if (opts.skip) q.set("skip", String(opts.skip));
+      if (opts.path) q.set("path", opts.path);
+      return request<GitLog>(`/api/workspaces/${workspaceId}/git/log?${q}`);
+    },
+    // Local branches and the remote's (asked of the remote itself).
+    gitBranches: (workspaceId: number) =>
+      request<GitBranches>(`/api/workspaces/${workspaceId}/git/branches`),
+    // Check out a branch (local, or only on the remote). 409 names what stands
+    // in the way: nothing is ever forced or stashed.
+    gitSwitch: (workspaceId: number, name: string) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/switch`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    // Create a branch from HEAD and check it out (unpublished until pushed).
+    gitCreateBranch: (workspaceId: number, name: string) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/branches`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    // Merge the remote's branch; `ok: false` with `status.merging` means it
+    // stopped on conflicts.
+    gitMerge: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge`, { method: "POST" }),
+    gitConflict: (workspaceId: number, path: string) =>
+      request<GitConflict>(
+        `/api/workspaces/${workspaceId}/git/conflict?path=${encodeURIComponent(path)}`,
+      ),
+    // Mark a conflict resolved: as edited (refused while markers remain), or
+    // by keeping one side.
+    gitResolve: (workspaceId: number, path: string, side?: "ours" | "theirs") =>
+      request<GitStatus>(`/api/workspaces/${workspaceId}/git/resolve`, {
+        method: "POST",
+        body: JSON.stringify(side ? { path, side } : { path }),
+      }),
+    gitMergeComplete: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/complete`, {
+        method: "POST",
+      }),
+    gitMergeAbort: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/abort`, {
+        method: "POST",
+      }),
+    // One commit: message, first parent and changed files.
+    gitCommitDetail: (workspaceId: number, sha: string) =>
+      request<GitCommitDetail>(`/api/workspaces/${workspaceId}/git/commits/${sha}`),
     gitDiff: (workspaceId: number, path: string) =>
       request<FileDiff>(
         `/api/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}`,

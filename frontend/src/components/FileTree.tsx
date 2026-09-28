@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Trash2,
 } from "lucide-react";
 import { InlineTitle } from "./InlineTitle";
 import type { WorkspaceFileNode } from "../lib/types";
@@ -94,6 +95,7 @@ export function FileTree({
   onCancelCreate,
   onRename,
   onMove,
+  onDeleteFolder,
 }: {
   files: WorkspaceFileNode[];
   activePath: string | null;
@@ -105,6 +107,7 @@ export function FileTree({
   onCancelCreate: () => void;
   onRename: (path: string, newName: string) => Promise<void>;
   onMove: (src: string, targetDir: string) => Promise<void>;
+  onDeleteFolder?: (path: string) => void;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -272,6 +275,19 @@ export function FileTree({
                 >
                   <FolderPlus size={13} />
                 </button>
+                {onDeleteFolder && (
+                  <button
+                    className="p-0.5 rounded hover:bg-bg text-muted hover:text-red-500"
+                    aria-label={`Delete folder ${node.name}`}
+                    data-tooltip="Delete folder"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteFolder(node.path);
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
             </div>
             {!isCollapsed && (

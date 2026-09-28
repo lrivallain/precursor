@@ -160,6 +160,18 @@ class AgentSession(Base, TimestampMixin):
     # this is purely a UX affordance — an unlisted, step-private definition.
     inline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
+    # Files mode only (docs/definitions.md): for a step's private agent, the
+    # workflow step it executes, as ``<workflow file id>/<step key>``. Its prompt
+    # and model are read from that step, the way a listed agent's declaration is
+    # read from its own file through ``export_id``.
+    definition_ref: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+
+    # Files mode only: the permissions (approval policy, autonomy, tools, MCP
+    # scope, budget) a human last accepted for this agent's file, as JSON. A
+    # file that widens them is held for review before it can run. Null = never
+    # recorded: the database columns (what was set in the app) stand in.
+    accepted_permissions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # --- Capability defaults -------------------------------------------------
     # What this agent may draw on. Defaults keep today's behaviour (everything
     # on). Turning things off is a real lever on both cost and focus: a step that
