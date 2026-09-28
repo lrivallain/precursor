@@ -17,11 +17,13 @@ import {
   Pencil,
   RefreshCw,
   Save,
+  SquareCode,
   Trash2,
   Upload,
   Workflow,
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
+import { vscodeUrl, workspaceAbsolutePath } from "../lib/localPath";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useIsNarrow } from "../lib/useMediaQuery";
 import { useConfirm } from "./ConfirmDialog";
@@ -80,6 +82,30 @@ function isDrawio(name: string): boolean {
   return lower.endsWith(".drawio") || lower.endsWith(".drawio.xml");
 }
 
+const VSCODE_HINT =
+  "\nOpens the server's copy, so VS Code must run on the same computer.";
+
+function OpenInVSCode({
+  href,
+  label,
+  size,
+}: {
+  href: string;
+  label: string;
+  size: number;
+}) {
+  return (
+    <a
+      className="p-1 rounded text-muted hover:text-text hover:bg-surface"
+      href={href}
+      aria-label={label}
+      data-tooltip={label + VSCODE_HINT}
+    >
+      <SquareCode size={size} />
+    </a>
+  );
+}
+
 // --------------------------------------------------------------------------
 // Workspace: file tree + editor + chat for one workspace
 // --------------------------------------------------------------------------
@@ -111,6 +137,8 @@ export function WorkspaceView({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
+  // The working copy's absolute path on the server, for "Open in VS Code".
+  const [rootPath, setRootPath] = useState<string | null>(null);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
   const [pendingCreate, setPendingCreate] = useState<{
@@ -156,6 +184,20 @@ export function WorkspaceView({
     void refreshFiles();
     void refreshStatus();
   }, [refreshFiles, refreshStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRootPath(null);
+    api.workspaces
+      .localPath(area.id)
+      .then(({ path }) => {
+        if (!cancelled) setRootPath(path);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [area.id]);
 
   // Open the file named in the URL once the tree has loaded. Keyed off the
   // currently-open file rather than a one-shot flag, so a *new* deep link —
@@ -280,8 +322,9 @@ export function WorkspaceView({
   async function copyFilePath(path: string): Promise<void> {
     setError(null);
     try {
-      const { path: root } = await api.workspaces.localPath(area.id);
-      const full = `${root.replace(/\/+$/, "")}/${path}`;
+      const root = rootPath ?? (await api.workspaces.localPath(area.id)).path;
+      // Tree paths are relative to the subdir, not the working copy.
+      const full = workspaceAbsolutePath(root, area.subdir, path);
       await navigator.clipboard.writeText(full);
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
@@ -339,9 +382,15 @@ export function WorkspaceView({
           }}
           onDeleted={onDeleted}
           onError={setError}
+          rootPath={rootPath}
         />
       ) : (
-        <LocalWorkspaceBar area={area} onDeleted={onDeleted} onError={setError} />
+        <LocalWorkspaceBar
+          area={area}
+          onDeleted={onDeleted}
+          onError={setError}
+          rootPath={rootPath}
+        />
       )}
 
       {error && (
@@ -487,6 +536,15 @@ export function WorkspaceView({
                     <ClipboardCopy size={15} />
                   )}
                 </button>
+                {rootPath && (
+                  <OpenInVSCode
+                    href={vscodeUrl(
+                      workspaceAbsolutePath(rootPath, area.subdir, activePath),
+                    )}
+                    label="Open in VS Code"
+                    size={15}
+                  />
+                )}
                 <a
                   className="p-1 rounded text-muted hover:text-text hover:bg-surface"
                   href={workspaceRawUrl(area.slug, activePath)}
@@ -575,10 +633,12 @@ function LocalWorkspaceBar({
   area,
   onDeleted,
   onError,
+  rootPath,
 }: {
   area: Workspace;
   onDeleted: () => void;
   onError: (msg: string | null) => void;
+  rootPath: string | null;
 }) {
   const confirmAction = useConfirm();
   const [copied, setCopied] = useState(false);
@@ -644,6 +704,13 @@ function LocalWorkspaceBar({
           <ClipboardCopy size={13} />
         )}
       </button>
+      {rootPath && (
+        <OpenInVSCode
+          href={vscodeUrl(rootPath)}
+          label="Open folder in VS Code"
+          size={13}
+        />
+      )}
       <div className="flex-1" />
       {/* Its folder holds every agent and workflow declaration. */}
       {!area.hosts_definitions && (
@@ -672,6 +739,7 @@ function GitBar({
   onAfterSync,
   onDeleted,
   onError,
+  rootPath,
 }: {
   area: Workspace;
   status: GitStatus | null;
@@ -680,6 +748,7 @@ function GitBar({
   onAfterSync: () => Promise<void>;
   onDeleted: () => void;
   onError: (msg: string | null) => void;
+  rootPath: string | null;
 }) {
   const confirmAction = useConfirm();
   const [busy, setBusy] = useState<"pull" | "push" | null>(null);
@@ -804,6 +873,13 @@ function GitBar({
             <ClipboardCopy size={13} />
           )}
         </button>
+        {rootPath && (
+          <OpenInVSCode
+            href={vscodeUrl(rootPath)}
+            label="Open folder in VS Code"
+            size={13}
+          />
+        )}
 
         <div className="flex-1" />
 

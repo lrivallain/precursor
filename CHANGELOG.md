@@ -126,6 +126,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Open in VS Code from the Files section.** A button beside the open file's
+  path opens it in VS Code, and one in the workspace bar opens the whole working
+  copy as a folder. Both are `vscode://file/…` links to the server's copy, so VS
+  Code must run on the same computer. **Copy local path** now includes a
+  workspace's subdirectory; it used to drop it, which gave a path that didn't
+  exist.
 - **Agent and workflow definition files (work in progress).** A first step
   toward declaring agents and workflows in YAML files, with only execution data
   (runs, progress, scheduling, triggers) left in the database. Opt-in: by

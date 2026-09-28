@@ -52,6 +52,22 @@ workspace root.
 Markdown files get a rendered **Preview**, HTML files render in a sandboxed
 frame, and `.drawio` files open in a full diagram editor (below).
 
+## Opening in VS Code
+
+When a change is easier to make in a full editor, **Open in VS Code** hands it
+over:
+
+- the button beside an open file's path opens that file;
+- the one in the workspace bar opens the whole working copy as a folder.
+
+Both are `vscode://file/…` links to the **server's** copy. They only work when VS
+Code runs on the same computer as Precursor, which is the usual local setup.
+Changes you save there appear in the Files section and in the git status like any
+other edit.
+
+**Copy local path** gives the same absolute path, including a workspace's
+subdirectory.
+
 ## The workspace assistant
 
 The **Assistant** pane beside the editor is a conversation about the workspace,
