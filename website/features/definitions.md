@@ -87,7 +87,9 @@ files** directly. The wizard takes you through it:
   tools can't write definition files at all.
 - **Keep them in git** with `PRECURSOR_DEFINITIONS_WORKSPACE`: a
   [workspace](/features/workspaces) becomes the definitions folder, so you pull,
-  edit (with the check shown under the editor) and push from the Files section.
+  edit and push from the Files section. The editor completes and validates
+  definition files as you type, and marks the check's findings in the file
+  (see [the Agents & workflows workspace](/features/workspaces#the-agents-workflows-workspace)).
 
 See also [Import & export](/features/transfer) for sharing a single agent or
 workflow as a file, and the [configuration reference](/reference/configuration).

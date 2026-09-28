@@ -269,6 +269,25 @@ const scenes = {
     },
   },
 
+  // A workflow definition whose first step names a missing agent file: the
+  // check's finding, underlined, with its hover and the list below.
+  "workspaces-definitions": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/definitions/workflows/weekly-digest.workflow.yaml`, {
+        waitUntil: "networkidle",
+      });
+      await page.getByLabel("Definition check").getByText("1 error").waitFor();
+      await page.locator(".monaco-editor .squiggly-error").first().waitFor();
+      await page
+        .locator(".monaco-editor .view-line", { hasText: "change-collector" })
+        .hover({ position: { x: 220, y: 6 } });
+      await page.locator(".monaco-hover", { hasText: "no agent file" }).first().waitFor();
+      await sleep(400);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

@@ -990,9 +990,16 @@ async def test_files_shows_the_check_for_a_definition_file(
         ok = report("defs/agents/ok.agent.yaml")
         broken = report("defs/workflows/w.workflow.yaml")
         outside = report("notes.md")
-    assert (ok["in_definitions"], ok["valid"], ok["issues"]) == (True, True, [])
+    assert ok["in_definitions"] and ok["valid"] and ok["issues"] == []
     assert broken["path"] == "workflows/w.workflow.yaml" and broken["valid"] is True
-    assert [i["location"] for i in broken["issues"]] == ["steps[a].agent"]
+    [dangling] = broken["issues"]
+    assert dangling["location"] == "steps[a].agent"
+    # Placed on the value in the file (yaml.safe_dump: `- key: a` / `  agent: …`).
+    text = (root / "defs" / "workflows" / "w.workflow.yaml").read_text(encoding="utf-8")
+    line = text.splitlines()[dangling["line"] - 1]
+    start, end = dangling["column"] - 1, dangling["end_column"] - 1
+    assert line[start:end] == "agents/missing.agent.yaml"
+    assert dangling["end_line"] == dangling["line"]
     assert outside == {
         "in_definitions": False,
         "path": None,

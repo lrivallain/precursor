@@ -1108,6 +1108,45 @@ async def seed() -> None:
         )
         s.add(Workspace(name="Design notes", slug="design-notes", kind="local"))
 
+        # The built-in "Agents & workflows" workspace (created at startup once
+        # Agents mode is on), with a workflow whose first step names an agent
+        # file that doesn't exist: the Files editor marks it.
+        definitions_dir = Path(os.environ["PRECURSOR_DATA_DIR"]) / "workspaces" / "definitions"
+        (definitions_dir / "agents").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "workflows").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "agents" / "digest-writer.agent.yaml").write_text(
+            "kind: agent\n"
+            "id: digest-writer\n"
+            "title: Digest writer\n"
+            "prompt: |\n"
+            "  Turn the week's merged pull requests and incident notes into a short\n"
+            "  engineering digest: highlights first, then risks, then thanks.\n"
+            "autonomy:\n"
+            "  enabled: true\n"
+            "  max_steps: 6\n",
+            encoding="utf-8",
+        )
+        (definitions_dir / "workflows" / "weekly-digest.workflow.yaml").write_text(
+            "kind: workflow\n"
+            "id: weekly-digest\n"
+            "name: Weekly engineering digest\n"
+            "description: Gather the week's changes, write the digest, and wait for an OK.\n"
+            "steps:\n"
+            "  - key: gather\n"
+            "    agent: agents/change-collector.agent.yaml\n"
+            "  - key: write\n"
+            "    agent: agents/digest-writer.agent.yaml\n"
+            "    context:\n"
+            "      mode: selected\n"
+            "      from: [gather]\n"
+            "  - key: review\n"
+            "    kind: approval\n"
+            "    instructions: Read the digest before it goes out.\n"
+            "    on_fail: write\n",
+            encoding="utf-8",
+        )
+        s.add(Workspace(name="Agents & workflows", slug="definitions", kind="local"))
+
         await s.commit()
 
     print("Seeded the demo database.")

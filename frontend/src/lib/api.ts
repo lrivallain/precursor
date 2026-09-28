@@ -814,6 +814,9 @@ export const api = {
       request<DefinitionFileReport>(
         `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
       ),
+    // The JSON Schema of a kind of definition file, for the Files editor.
+    schema: (kind: DefinitionKind) =>
+      request<Record<string, unknown>>(`/api/definitions/schema/${kind}`),
     // Files mode: accept the permissions an agent's or workflow's file grants now.
     accept: (kind: DefinitionKind, id: number | string, contentHash?: string | null) =>
       request<DefinitionSource>(`/api/definitions/accept`, {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CircleCheck, CircleAlert, TriangleAlert } from "lucide-react";
 import { api } from "../lib/api";
-import type { DefinitionFileReport } from "../lib/types";
+import type { DefinitionFileReport, DefinitionIssue } from "../lib/types";
 
 export function isDefinitionFile(path: string): boolean {
   const name = path.split("/").pop() ?? "";
@@ -9,25 +9,21 @@ export function isDefinitionFile(path: string): boolean {
 }
 
 /**
- * Under the Files editor: the definitions check's findings for the open file,
- * when it is an agent or workflow definition inside the definitions folder.
- * `version` bumps after each save so the findings follow the file on disk.
+ * The definitions check's report on the open file, when it is an agent or
+ * workflow definition. `version` bumps after each save so the report follows
+ * the file on disk.
  */
-export function DefinitionFileIssues({
-  workspaceId,
-  path,
-  version,
-}: {
-  workspaceId: number;
-  path: string;
-  version: number;
-}) {
+export function useDefinitionReport(
+  workspaceId: number,
+  path: string | null,
+  version: number,
+): DefinitionFileReport | null {
   const [report, setReport] = useState<DefinitionFileReport | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setReport(null);
-    if (!isDefinitionFile(path)) return;
+    if (!path || !isDefinitionFile(path)) return;
     api.definitions
       .fileIssues(workspaceId, path)
       .then((r) => {
@@ -39,6 +35,36 @@ export function DefinitionFileIssues({
     };
   }, [workspaceId, path, version]);
 
+  return report;
+}
+
+/** An issue the editor can point at: the check placed it in the text. */
+export function isPlaced(issue: DefinitionIssue): issue is DefinitionIssue & {
+  line: number;
+  column: number;
+  end_line: number;
+  end_column: number;
+} {
+  return (
+    issue.line != null &&
+    issue.column != null &&
+    issue.end_line != null &&
+    issue.end_column != null
+  );
+}
+
+/**
+ * Under the Files editor: the definitions check's findings for the open file,
+ * when it is an agent or workflow definition inside the definitions folder.
+ * A finding placed in the text moves the editor to it on click.
+ */
+export function DefinitionFileIssues({
+  report,
+  onReveal,
+}: {
+  report: DefinitionFileReport | null;
+  onReveal?: (line: number, column: number) => void;
+}) {
   if (!report?.in_definitions) return null;
   const errors = report.issues.filter((i) => i.severity === "error");
   const warnings = report.issues.filter((i) => i.severity === "warning");
@@ -70,17 +96,44 @@ export function DefinitionFileIssues({
       </div>
       {report.issues.length > 0 && (
         <ul className="mt-1 space-y-0.5">
-          {report.issues.map((issue, i) => (
-            <li key={i} className="flex gap-1.5">
-              <span
-                className={issue.severity === "error" ? "text-red-500" : "text-amber-500"}
-              >
-                {issue.severity}
-              </span>
-              {issue.location && <code className="text-muted">{issue.location}</code>}
-              <span>{issue.message}</span>
-            </li>
-          ))}
+          {report.issues.map((issue, i) => {
+            const body = (
+              <>
+                <span
+                  className={`shrink-0 ${
+                    issue.severity === "error" ? "text-red-500" : "text-amber-500"
+                  }`}
+                >
+                  {issue.severity}
+                </span>
+                {issue.location && (
+                  <code className="shrink-0 text-muted">{issue.location}</code>
+                )}
+                <span>{issue.message}</span>
+                {isPlaced(issue) && (
+                  <span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-muted">
+                    line {issue.line}
+                  </span>
+                )}
+              </>
+            );
+            return (
+              <li key={i}>
+                {isPlaced(issue) && onReveal ? (
+                  <button
+                    type="button"
+                    className="flex w-full gap-1.5 rounded text-left hover:bg-surface"
+                    data-tooltip="Show in the editor"
+                    onClick={() => onReveal(issue.line, issue.column)}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className="flex gap-1.5">{body}</div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

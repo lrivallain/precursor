@@ -6,7 +6,9 @@ either mode; accepting permission changes applies to files mode only.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -16,6 +18,7 @@ from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AgentSession, Workflow, Workspace
 from precursor.backend.routers.workspaces import browse_root
+from precursor.backend.schemas.definitions import definition_json_schema
 from precursor.backend.schemas.definitions_api import (
     DefinitionAcceptRequest,
     DefinitionFileReport,
@@ -40,6 +43,7 @@ from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.definitions.exporter import export_definitions
 from precursor.backend.services.definitions.home import ensure_definitions_workspace
 from precursor.backend.services.definitions.loader import kind_for
+from precursor.backend.services.definitions.positions import with_positions
 from precursor.backend.services.definitions.service import check_folder
 
 router = APIRouter(prefix="/api/definitions", tags=["definitions"])
@@ -151,13 +155,26 @@ async def definition_file_issues(
     rel = target.relative_to(root).as_posix()
     report = await check_folder(session, root)
     summary = next((f for f in report.files if f.path == rel), None)
+    issues = [i for i in report.issues if i.path == rel]
+    # An unreadable file keeps its findings unplaced; the check reports it.
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        issues = with_positions(target.read_text(encoding="utf-8"), issues)
     return DefinitionFileReport(
         in_definitions=True,
         path=rel,
         kind=kind,
         valid=summary.valid if summary is not None else None,
-        issues=[i for i in report.issues if i.path == rel],
+        issues=issues,
     )
+
+
+@router.get("/schema/{kind}")
+async def definition_schema(kind: DefinitionKind) -> dict[str, Any]:
+    """The JSON Schema of one kind of definition file (as in ``docs/schemas/``).
+
+    The Files editor validates and completes definition files against it.
+    """
+    return definition_json_schema(kind)
 
 
 # --- Migration ------------------------------------------------------------

@@ -136,6 +136,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Definition files get editor help in the Files section.** A `*.agent.yaml`
+  or `*.workflow.yaml` file is completed and validated against its JSON Schema
+  as you type: key suggestions, and unknown keys and wrong types underlined.
+  After a save, the definitions check's findings are underlined on the lines
+  they concern, and clicking one in the list under the editor jumps there.
+  - **API:** `GET /api/definitions/schema/{kind}` serves the schema, and
+    `/file-issues` findings carry `line`, `column`, `end_line` and
+    `end_column`.
 - **Open in VS Code from the Files section.** A button beside the open file's
   path opens it in VS Code, and one in the workspace bar opens the whole working
   copy as a folder. Both are `vscode://file/…` links to the server's copy, so VS

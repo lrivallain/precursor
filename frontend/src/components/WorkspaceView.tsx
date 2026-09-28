@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardCheck,
   ClipboardCopy,
@@ -33,7 +33,12 @@ import { WorkspaceChat } from "./WorkspaceChat";
 import { FileTree } from "./FileTree";
 import { ChangesModal } from "./GitDiffViewer";
 import { DrawioEditor } from "./DrawioEditor";
-import { DefinitionFileIssues } from "./DefinitionFileIssues";
+import {
+  DefinitionFileIssues,
+  isPlaced,
+  useDefinitionReport,
+} from "./DefinitionFileIssues";
+import type { CodeEditorHandle, EditorMarker } from "./CodeEditor";
 import { PlainTextEditor } from "./PlainTextEditor";
 import type {
   GitActionResult,
@@ -165,6 +170,7 @@ export function WorkspaceView({
   // The file whose editor has been shown: it then stays mounted (hidden) under
   // a preview, keeping its undo history, scroll and cursor.
   const [editorFor, setEditorFor] = useState<string | null>(null);
+  const editorHandle = useRef<CodeEditorHandle | null>(null);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
   const [pendingCreate, setPendingCreate] = useState<{
@@ -181,6 +187,22 @@ export function WorkspaceView({
   useEffect(() => {
     if (editorVisible) setEditorFor(activePath);
   }, [editorVisible, activePath]);
+
+  const definitionReport = useDefinitionReport(area.id, activePath, savedVersion);
+  const markers = useMemo<EditorMarker[]>(
+    () =>
+      (definitionReport?.in_definitions ? definitionReport.issues : [])
+        .filter(isPlaced)
+        .map((i) => ({
+          severity: i.severity,
+          message: i.location ? `${i.message} (${i.location})` : i.message,
+          line: i.line,
+          column: i.column,
+          endLine: i.end_line,
+          endColumn: i.end_column,
+        })),
+    [definitionReport],
+  );
 
   // Resizable Files panel (left). Width persists per browser.
   const { width: filesWidth, onMouseDown: onFilesResize } = useResizableWidth({
@@ -645,6 +667,8 @@ export function WorkspaceView({
                               cursorRef.current = { line, column };
                             }}
                             compact={narrow}
+                            markers={markers}
+                            handle={editorHandle}
                           />
                         </Suspense>
                       </div>
@@ -653,9 +677,12 @@ export function WorkspaceView({
                 )}
               </div>
               <DefinitionFileIssues
-                workspaceId={area.id}
-                path={activePath}
-                version={savedVersion}
+                report={definitionReport}
+                onReveal={
+                  editorVisible
+                    ? (line, column) => editorHandle.current?.reveal(line, column)
+                    : undefined
+                }
               />
             </>
           ) : (

@@ -64,6 +64,40 @@ export const monacoYaml = configureMonacoYaml(
   { enableSchemaRequest: false, format: { enable: true } },
 );
 
+const DEFINITION_KINDS = ["agent", "workflow"] as const;
+let definitionSchemas: Promise<void> | null = null;
+
+/**
+ * Give `*.agent.yaml` / `*.workflow.yaml` their JSON Schema: completion,
+ * hovers, and unknown keys flagged as you type. Fetched once, the first time
+ * such a file is opened; the backend serves the same schema as `docs/schemas/`.
+ */
+export function loadDefinitionSchemas(
+  load: (kind: (typeof DEFINITION_KINDS)[number]) => Promise<Record<string, unknown>>,
+): Promise<void> {
+  definitionSchemas ??= Promise.all(DEFINITION_KINDS.map((kind) => load(kind)))
+    .then((schemas) =>
+      monacoYaml.update({
+        schemas: DEFINITION_KINDS.flatMap((kind, i) => [
+          {
+            uri: new URL(`/api/definitions/schema/${kind}`, window.location.origin).href,
+            fileMatch: [`**/*.${kind}.yaml`],
+            schema: schemas[i] as object,
+          },
+          // Where the documented modeline (`$schema=../../../schemas/…`)
+          // resolves for a file in the definitions workspace: the schema is
+          // known, not "unable to load".
+          { uri: `file:///schemas/${kind}.schema.json`, fileMatch: [], schema: schemas[i] as object },
+        ]),
+      }),
+    )
+    .catch(() => {
+      // Retry on the next definition file rather than never.
+      definitionSchemas = null;
+    });
+  return definitionSchemas;
+}
+
 const LANGUAGES: [suffix: string, language: string][] = [
   [".md", "markdown"],
   [".markdown", "markdown"],

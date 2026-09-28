@@ -138,6 +138,16 @@ def _yaml_error(exc: yaml.YAMLError) -> str:
     return f"not valid YAML: {problem}"
 
 
+def yaml_error_mark(text: str) -> yaml.error.Mark | None:
+    """Where ``text`` stops being YAML the loader accepts; None when it loads."""
+    try:
+        yaml.load(text, Loader=_StrictLoader)  # _StrictLoader is a SafeLoader
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+        return mark if isinstance(mark, yaml.error.Mark) else None
+    return None
+
+
 # --- Validation errors ------------------------------------------------------
 
 

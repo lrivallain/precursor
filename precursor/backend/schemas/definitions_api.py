@@ -55,6 +55,12 @@ class DefinitionIssue(BaseModel):
     # Where in the file, e.g. ``steps[brief].context.from``.
     location: str | None = None
     message: str
+    # Where that is in the text, 1-based, end exclusive. Only filled in for one
+    # opened file (``/file-issues``), to mark the editor; null when unknown.
+    line: int | None = None
+    column: int | None = None
+    end_line: int | None = None
+    end_column: int | None = None
 
 
 class DefinitionFileSummary(BaseModel):

@@ -1,5 +1,32 @@
-import { useEffect, useRef } from "react";
-import { EDITOR_FONT, languageFor, monaco, wrapsLines } from "../lib/monaco";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { Ref } from "react";
+import { api } from "../lib/api";
+import {
+  EDITOR_FONT,
+  languageFor,
+  loadDefinitionSchemas,
+  monaco,
+  wrapsLines,
+} from "../lib/monaco";
+import { isDefinitionFile } from "./DefinitionFileIssues";
+
+/** A finding to underline, e.g. from the definitions check. 1-based, end exclusive. */
+export interface EditorMarker {
+  severity: "error" | "warning";
+  message: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+export interface CodeEditorHandle {
+  /** Move the cursor to a position and scroll it into view. */
+  reveal: (line: number, column: number) => void;
+}
+
+// Kept apart from monaco-yaml's own markers, which it replaces as you type.
+const MARKER_OWNER = "precursor-check";
 
 export interface CodeEditorProps {
   /** Identifies the file across editors, e.g. `<workspace slug>/<path>`. */
@@ -13,6 +40,9 @@ export interface CodeEditorProps {
   onCursorChange?: (line: number, column: number) => void;
   /** Phones: drop the chrome that eats horizontal space. */
   compact?: boolean;
+  /** Findings about the file as last saved; they move with later edits. */
+  markers?: EditorMarker[];
+  handle?: Ref<CodeEditorHandle | null>;
 }
 
 /**
@@ -27,24 +57,48 @@ export function CodeEditor({
   onSave,
   onCursorChange,
   compact = false,
+  markers,
+  handle,
 }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
+  const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const callbacks = useRef({ onChange, onSave, onCursorChange });
   callbacks.current = { onChange, onSave, onCursorChange };
-  // Read on mount only: later values arrive through the sync effect below.
-  const initialValue = useRef(value);
+  // The model is created from the value at that moment; later values arrive
+  // through the sync effect below.
+  const latestValue = useRef(value);
+  latestValue.current = value;
   // What the editor reported and the parent may not have rendered yet.
   const emitted = useRef<string[]>([]);
 
   useEffect(() => {
-    if (!host.current) return;
+    let disposed = false;
+    let dispose = () => {};
+    // A definition file waits for its schema: configuring it later would
+    // restart the YAML worker that the first file had just started.
+    const ready = isDefinitionFile(path)
+      ? loadDefinitionSchemas(api.definitions.schema)
+      : Promise.resolve();
+    void ready.then(() => {
+      if (disposed || !host.current) return;
+      dispose = mount(host.current);
+    });
+    return () => {
+      disposed = true;
+      dispose();
+    };
+    // The key identifies the file; the parent remounts us for another one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelKey]);
+
+  function mount(element: HTMLElement): () => void {
     // A file: URI so monaco-yaml's schema globs match the file's name.
     const uri = monaco.Uri.from({ scheme: "file", path: `/${modelKey}` });
     const model =
       monaco.editor.getModel(uri) ??
-      monaco.editor.createModel(initialValue.current, languageFor(path), uri);
-    const editor = monaco.editor.create(host.current, {
+      monaco.editor.createModel(latestValue.current, languageFor(path), uri);
+    const instance = monaco.editor.create(element, {
       model,
       ...EDITOR_FONT,
       automaticLayout: true,
@@ -61,7 +115,7 @@ export function CodeEditor({
         ? { lineNumbersMinChars: 2, folding: false, glyphMargin: false }
         : {}),
     });
-    editor.addAction({
+    instance.addAction({
       id: "precursor.save",
       label: "Save file",
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
@@ -72,20 +126,20 @@ export function CodeEditor({
       emitted.current.push(text);
       callbacks.current.onChange(text);
     });
-    const cursor = editor.onDidChangeCursorPosition((e) =>
+    const cursor = instance.onDidChangeCursorPosition((e) =>
       callbacks.current.onCursorChange?.(e.position.lineNumber, e.position.column),
     );
-    editorRef.current = editor;
+    editorRef.current = instance;
+    setEditor(instance);
     return () => {
       changes.dispose();
       cursor.dispose();
-      editor.dispose();
+      instance.dispose();
       model.dispose();
       editorRef.current = null;
+      setEditor(null);
     };
-    // The key identifies the file; the parent remounts us for another one.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelKey]);
+  }
 
   // The buffer can change outside the editor: a reload after a pull, or the
   // diagram editor writing its XML. As an edit, so it stays undoable.
@@ -97,7 +151,7 @@ export function CodeEditor({
       emitted.current.splice(0, seen + 1);
       return;
     }
-    const model = editorRef.current?.getModel();
+    const model = editor?.getModel();
     if (model && model.getValue() !== value) {
       model.pushEditOperations(
         [],
@@ -105,15 +159,48 @@ export function CodeEditor({
         () => null,
       );
     }
-  }, [value]);
+  }, [editor, value]);
 
   useEffect(() => {
-    editorRef.current?.updateOptions(
+    const model = editor?.getModel();
+    if (!model) return;
+    monaco.editor.setModelMarkers(
+      model,
+      MARKER_OWNER,
+      (markers ?? []).map((m) => ({
+        severity:
+          m.severity === "error" ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: m.message,
+        source: "Precursor check",
+        startLineNumber: m.line,
+        startColumn: m.column,
+        endLineNumber: m.endLine,
+        endColumn: m.endColumn,
+      })),
+    );
+  }, [editor, markers]);
+
+  useImperativeHandle(
+    handle,
+    () => ({
+      reveal(line, column) {
+        const editor = editorRef.current;
+        if (!editor) return;
+        editor.setPosition({ lineNumber: line, column });
+        editor.revealPositionInCenterIfOutsideViewport({ lineNumber: line, column });
+        editor.focus();
+      },
+    }),
+    [],
+  );
+
+  useEffect(() => {
+    editor?.updateOptions(
       compact
         ? { lineNumbersMinChars: 2, folding: false }
         : { lineNumbersMinChars: 5, folding: true },
     );
-  }, [compact]);
+  }, [editor, compact]);
 
   return <div ref={host} className="h-full w-full" />;
 }

@@ -175,6 +175,13 @@ The JSON Schema covers structure, types and allowed values. The cross-field
 rules above (for example "an approval step has no agent") are enforced by
 Precursor itself.
 
+Precursor's own Files editor needs no modeline: it applies the same schemas,
+served by `GET /api/definitions/schema/{kind}`, to every `*.agent.yaml` and
+`*.workflow.yaml`. It also shows the check's findings on the lines they
+concern: `GET /api/definitions/file-issues` gives each one a
+`line`/`column` range. A file that still carries the modeline above gets the
+same schema; the modeline is only for other editors.
+
 The schemas are generated from the Pydantic models in
 `precursor/backend/schemas/definitions.py`; after changing a model, run:
 

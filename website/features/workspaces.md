@@ -25,10 +25,22 @@ sessions, and the assistant operates on them through a **sandboxed** file layer.
 
 Once Agents mode is on, the list starts with a built-in **Agents & workflows**
 workspace: the folder that holds your agent and workflow
-[definition files](/features/definitions) (work in progress). Opening a
-definition file there shows its check — errors and warnings with their
-location — under the editor, refreshed on save. It can't be removed while it
-holds definition files, and the assistant's file tools can only read it.
+[definition files](/features/definitions) (work in progress). It can't be
+removed while it holds definition files, and the assistant's file tools can
+only read it.
+
+Definition files get help while you edit them:
+
+- **As you type:** the editor knows the file format, so it suggests keys
+  (<kbd>Ctrl</kbd>+<kbd>Space</kbd>) and underlines unknown keys and wrong
+  types. This works for any `*.agent.yaml` or `*.workflow.yaml` file, in any
+  workspace.
+- **On save:** in the definitions folder, the full check runs, including
+  cross-file checks such as an agent path that points nowhere or a role this
+  instance doesn't have. Its errors and warnings are listed under the editor
+  and underlined in the file. Click one in the list to jump to its line.
+
+<Screenshot src="/screenshots/workspaces-definitions.png" alt="A workflow definition open in the editor, with an agent path underlined and the check below saying there is no agent file at that path" caption="The check's findings, marked in the file." />
 
 ## The sandbox
 

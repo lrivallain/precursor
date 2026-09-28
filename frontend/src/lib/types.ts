@@ -1019,6 +1019,14 @@ export interface DefinitionIssue {
   /** Where in the file, e.g. `steps[brief].context.from`. */
   location: string | null;
   message: string;
+  /**
+   * Where that is in the text: 1-based, end exclusive, UTF-16 columns (as in
+   * Monaco). Only set by `/file-issues`; null when unknown.
+   */
+  line?: number | null;
+  column?: number | null;
+  end_line?: number | null;
+  end_column?: number | null;
 }
 
 export interface DefinitionFileSummary {
