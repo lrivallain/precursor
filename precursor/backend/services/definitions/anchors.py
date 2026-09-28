@@ -490,3 +490,42 @@ async def refresh(session: AsyncSession) -> None:
     overlay.invalidate()
     await adopt_new_files(session)
     await sync_all(session)
+    await sync_names(session)
+
+
+async def sync_names(session: AsyncSession) -> bool:
+    """Copy each file's agent title / workflow name into its row's column.
+
+    Names are the one part of a declaration the database keeps for itself (also
+    after the cleanup): search, name matching and ordering run on them in SQL,
+    where the projection can't reach. Written without touching ``updated_at`` —
+    it's an index, not an edit. ``True`` if any row changed.
+    """
+    if not overlay.files_mode():
+        return False
+    dset = overlay.current_definitions()
+    titles = {f.raw_id: d.title for f, d in dset.agents() if dset.find("agent", f.raw_id) is f}
+    names = {f.raw_id: d.name for f, d in dset.workflows() if dset.find("workflow", f.raw_id) is f}
+    changed = False
+    for model, column, wanted in (
+        (AgentSession, AgentSession.title, titles),
+        (Workflow, Workflow.name, names),
+    ):
+        if not wanted:
+            continue
+        rows = await session.execute(
+            select(model.id, model.export_id, column).where(model.export_id.in_(list(wanted)))
+        )
+        for row_id, export_id, current in rows.all():
+            target = wanted.get(export_id)
+            if target is not None and target != current:
+                await session.execute(
+                    update(model)
+                    .where(model.id == row_id)
+                    .values({column.key: target, "updated_at": model.updated_at})
+                    .execution_options(synchronize_session=False)
+                )
+                changed = True
+    if changed:
+        await session.commit()
+    return changed

@@ -2637,15 +2637,32 @@ async def sweep_stalled_steps(session: AsyncSession, manager: AgentManager) -> i
     timeout = no watchdog). Returns how many runs it intervened in.
     """
     now = datetime.now(UTC)
-    result = await session.execute(
-        select(Workflow.id, Workflow.step_timeout_seconds).where(
-            Workflow.status == "running",
-            Workflow.step_timeout_seconds.is_not(None),
-            Workflow.current_run_id.is_not(None),
+    if definition_overlay.files_mode():
+        # The timeout is declared by each workflow's (pinned) file, not the
+        # column: load the rows so they're projected, and read it from there.
+        running = (
+            (
+                await session.execute(
+                    select(Workflow).where(
+                        Workflow.status == "running", Workflow.current_run_id.is_not(None)
+                    )
+                )
+            )
+            .scalars()
+            .all()
         )
-    )
+        candidates = [(w.id, w.step_timeout_seconds) for w in running]
+    else:
+        result = await session.execute(
+            select(Workflow.id, Workflow.step_timeout_seconds).where(
+                Workflow.status == "running",
+                Workflow.step_timeout_seconds.is_not(None),
+                Workflow.current_run_id.is_not(None),
+            )
+        )
+        candidates = list(result.tuples().all())
     swept = 0
-    for workflow_id, step_timeout in result.all():
+    for workflow_id, step_timeout in candidates:
         timeout = step_timeout or 0
         if timeout <= 0:
             continue

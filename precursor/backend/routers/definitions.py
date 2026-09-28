@@ -19,9 +19,13 @@ from precursor.backend.routers.workspaces import browse_root
 from precursor.backend.schemas.definitions_api import (
     DefinitionAcceptRequest,
     DefinitionFileReport,
+    DefinitionKind,
     DefinitionsCheckReport,
     DefinitionsExportResult,
     DefinitionSource,
+    FinalizeRequest,
+    FinalizeResult,
+    MigrationItemDetail,
     MigrationPreview,
     MigrationRequest,
     MigrationResult,
@@ -67,6 +71,13 @@ async def export_to_files(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Definitions are read from files; overwriting them from the database is disabled",
+        )
+    if definition_overlay.finalized() is not None:
+        # The database no longer declares anything: an export would write blank
+        # agents over any file that went missing.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The migration is finished: the database no longer holds declarations to export",
         )
     await ensure_definitions_workspace(session)
     return await export_definitions(session, Path(settings.definitions_dir), overwrite=overwrite)
@@ -177,5 +188,34 @@ async def revert_to_database(session: AsyncSession = Depends(get_session)) -> Re
     """Copy the files' declarations back into the database and use it again."""
     try:
         return await migration.revert(session)
+    except migration.MigrationRefused as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.get("/migration/items/{kind}/{item_id}", response_model=MigrationItemDetail)
+async def migration_item(
+    kind: DefinitionKind, item_id: int, session: AsyncSession = Depends(get_session)
+) -> MigrationItemDetail:
+    """The file the migration would write for one agent or workflow, next to the
+    one on disk now."""
+    try:
+        return await migration.item_detail(session, kind, item_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except migration.MigrationRefused as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post("/finalize", response_model=FinalizeResult)
+async def finalize_migration(
+    payload: FinalizeRequest, session: AsyncSession = Depends(get_session)
+) -> FinalizeResult:
+    """Clean the declarations out of the database — irreversible from the app.
+
+    ``ok: false`` with ``issues`` means verification failed and nothing was
+    cleared (missing files may have been written meanwhile).
+    """
+    try:
+        return await migration.finalize(session, confirm=payload.confirm)
     except migration.MigrationRefused as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

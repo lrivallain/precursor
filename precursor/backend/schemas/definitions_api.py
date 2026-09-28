@@ -171,7 +171,52 @@ class MigrationItem(BaseModel):
     reason: str | None = None
 
 
+class MigrationRecord(BaseModel):
+    """When the switch to files happened, and what it did (for the wizard)."""
+
+    at: str
+    snapshot: str | None = None
+    created: int = 0
+    regenerated: int = 0
+    unchanged: int = 0
+    added_from_disk: int = 0
+
+
+class FinalizedRecord(BaseModel):
+    """The cleanup: after it the database holds no declaration any more."""
+
+    at: str
+    snapshot: str | None = None
+    agents: int = 0
+    step_prompts: int = 0
+    workflows: int = 0
+    steps: int = 0
+
+
+class CleanupPreview(BaseModel):
+    """What cleaning up the database would clear, and whether it can now."""
+
+    ready: bool = False
+    # Why not yet: every agent and workflow needs one valid file first.
+    blockers: list[str] = []
+    # Worth knowing, not blocking (e.g. permission changes still under review).
+    warnings: list[str] = []
+    agents: int = 0
+    step_prompts: int = 0
+    workflows: int = 0
+    steps: int = 0
+    # Agents and workflows that have no file yet; cleanup writes one for each
+    # (from the database, which still declares them) before clearing anything.
+    missing_files: list[str] = []
+
+
 class MigrationPreview(BaseModel):
+    # database: not migrated. files: migrated, can still switch back.
+    # finalized: the database was cleaned up; the migration is over.
+    stage: Literal["database", "files", "finalized"] = "database"
+    migrated: MigrationRecord | None = None
+    finalized: FinalizedRecord | None = None
+    cleanup: CleanupPreview | None = None
     source: Literal["database", "files"]
     # PRECURSOR_DEFINITIONS_SOURCE=files: files mode is forced, so it can't be
     # switched back from the app.
@@ -217,3 +262,29 @@ class RevertResult(BaseModel):
     # Declarations that couldn't be copied back (file missing or broken); the
     # database keeps its older values for those.
     skipped: list[str] = []
+
+
+class MigrationItemDetail(BaseModel):
+    """The actual content behind one preview line."""
+
+    kind: DefinitionKind
+    id: int
+    name: str
+    action: Literal["create", "regenerate", "unchanged"]
+    path: str | None = None
+    # The file as the migration would write it, from the database.
+    proposed: str
+    # The file on disk now; null when there is none yet.
+    current: str | None = None
+
+
+class FinalizeRequest(BaseModel):
+    # Must be true: the cleanup can't be undone from the app.
+    confirm: bool = False
+
+
+class FinalizeResult(BaseModel):
+    ok: bool
+    finalized: FinalizedRecord | None = None
+    written: int = 0
+    issues: list[DefinitionIssue] = []

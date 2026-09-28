@@ -49,21 +49,27 @@ give editors completion.
 
 ## Getting there from today's data
 
-Open **Settings → Workflows → Definition files**:
+Open **Settings → Definition files**. A wizard takes you through it:
 
-1. **Preview.** For every agent and workflow it says whether a file will be
-   written, rewritten from the database (and why), or is already up to date —
-   plus anything in the way (a workflow mid-run, two files with the same id).
-2. **Migrate to files.** A copy of the database is taken, the files are written
-   and **verified** against the database — if anything differs, nothing is
-   switched — and from then on the files declare your agents and workflows.
-   Each run records which file version it used, and pages show their file.
-3. **Switch back to the database** at any time (until the old database
-   columns are removed): the files' current contents are copied back first.
+1. **Overview** — what's declared today, where the files will go (the
+   **Agents & workflows** workspace), what stays in the database, and anything
+   in the way (a workflow mid-run, two files with the same id).
+2. **Review** — every agent and workflow with what happens to its file: new,
+   rewritten from the database (and why), or already up to date. Open a line to
+   see the **file itself**, as it will be written, next to what's on disk now.
+3. **Migrate** — a copy of the database is taken, the files are written and
+   **verified** against the database; if anything differs, nothing switches.
+4. **Try it out** — the files now declare your agents and workflows. Edit them
+   in Files, run workflows, watch the folder check. **Switch back to the
+   database** is still one click away.
+5. **Clean up** — when you're sure, and only then: the database stops holding a
+   copy of your agents and workflows. You confirm by ticking a box and typing
+   *clean up*. **After this, switching back isn't possible** (a copy of the
+   database is taken first).
+6. **Done** — the wizard confirms the migration is finished, with what was
+   cleared and where the database copies are.
 
-The files live in the built-in **Agents & workflows** workspace, first in the
-[Files](/features/workspaces) section. `precursor validate <folder>` checks a
-folder from a terminal or CI.
+`precursor validate <folder>` checks a folder from a terminal or CI.
 
 ## Working in files mode
 

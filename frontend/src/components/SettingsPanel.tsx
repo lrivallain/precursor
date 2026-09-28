@@ -17,6 +17,7 @@ import {
   Brain,
   SlidersHorizontal,
   Workflow as WorkflowIcon,
+  FileCode2,
   Mic,
   BarChart3,
   Bot,
@@ -61,6 +62,7 @@ import { PluginsSettings } from "./PluginsSettings";
 import { resolveSettingsPages } from "../lib/plugins";
 import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
+import { DefinitionsMigrationWizard } from "./DefinitionsMigrationWizard";
 
 interface Props {
   onClose: () => void;
@@ -124,6 +126,7 @@ type CoreCategory =
   | "memory"
   | "agents"
   | "workflows"
+  | "definitions"
   | "plugins"
   | "stats"
   | "backup"
@@ -173,6 +176,7 @@ const CATEGORIES: ReadonlyArray<CategoryDef> = [
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
   { id: "workflows", label: "Workflows", icon: WorkflowIcon, group: "Extensions" },
+  { id: "definitions", label: "Definition files", icon: FileCode2, group: "Extensions" },
   { id: "plugins", label: "Plugins", icon: Puzzle, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "backup", label: "Backup", icon: HardDriveDownload, group: "Advanced" },
@@ -1437,7 +1441,10 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
             {category === "agents" && <AgentsSettings />}
             {category === "plugins" && <PluginsSettings />}
             {activePluginPage && <activePluginPage.Component />}
-            {category === "workflows" && <WorkflowsSettings />}
+            {category === "workflows" && (
+              <WorkflowsSettings onOpenMigration={() => setCategory("definitions")} />
+            )}
+            {category === "definitions" && <DefinitionsMigrationWizard />}
 
             {category === "stats" && <StatsTab />}
 

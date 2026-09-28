@@ -35,15 +35,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor.backend.config import get_settings
-from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, AppSetting, Role, Workflow, WorkflowStep
 from precursor.backend.schemas.definitions import AgentDefinition, WorkflowDefinition
 from precursor.backend.schemas.definitions_api import (
+    CleanupPreview,
     DefinitionIssue,
     DefinitionKind,
     DefinitionsExportResult,
     DefinitionsWorkspaceRef,
+    FinalizedRecord,
+    FinalizeResult,
     MigrationItem,
+    MigrationItemDetail,
     MigrationPreview,
+    MigrationRecord,
     MigrationResult,
     RevertResult,
 )
@@ -69,6 +74,8 @@ from precursor.backend.services.definitions.loader import (
 from precursor.backend.services.definitions.writer import preferred_step_keys
 
 ACTIVE = overlay.ACTIVE_WORKFLOW_STATUSES
+# What the switch to files did, for the wizard: ``{"at", "snapshot", …}``.
+MIGRATED_SETTING_KEY = "definitions_migrated"
 
 
 # --- Planning ---------------------------------------------------------------
@@ -305,20 +312,56 @@ def _sample_path(dset: DefinitionSet) -> str | None:
     return ordered[0].path if ordered else None
 
 
+async def _read_record(session: AsyncSession, key: str) -> dict[str, Any] | None:
+    row = await session.get(AppSetting, key)
+    if row is None or not row.value:
+        return None
+    value = json.loads(row.value)
+    return value if isinstance(value, dict) else None
+
+
+async def _write_record(session: AsyncSession, key: str, value: dict[str, Any] | None) -> None:
+    row = await session.get(AppSetting, key)
+    if value is None:
+        if row is not None:
+            await session.delete(row)
+    elif row is None:
+        session.add(AppSetting(key=key, value=json.dumps(value)))
+    else:
+        row.value = json.dumps(value)
+
+
 async def preview(session: AsyncSession) -> MigrationPreview:
-    if overlay.files_mode():
-        blockers = ["Agents and workflows are already declared by their files"]
+    migrated = await _read_record(session, MIGRATED_SETTING_KEY)
+    migrated_record = MigrationRecord(**migrated) if migrated else None
+    if (done := overlay.finalized()) is not None:
         return MigrationPreview(
+            stage="finalized",
+            migrated=migrated_record,
+            finalized=FinalizedRecord(**done),
             source="files",
             forced=overlay.source_forced(),
             folder=str(overlay.definitions_root()),
             workspace=await _workspace_ref(session),
             sample_path=_sample_path(overlay.current_definitions()),
-            blockers=blockers,
+            blockers=["The migration is finished: the database no longer holds declarations"],
+        )
+    if overlay.files_mode():
+        return MigrationPreview(
+            stage="files",
+            migrated=migrated_record,
+            cleanup=await cleanup_preview(session),
+            source="files",
+            forced=overlay.source_forced(),
+            folder=str(overlay.definitions_root()),
+            workspace=await _workspace_ref(session),
+            sample_path=_sample_path(overlay.current_definitions()),
+            blockers=["Agents and workflows are already declared by their files"],
         )
     plan = await _plan(session)
     has_errors = any(i.severity == "error" for i in plan.issues)
     return MigrationPreview(
+        stage="database",
         source="database",
         folder=str(plan.root),
         workspace=await _workspace_ref(session),
@@ -328,6 +371,75 @@ async def preview(session: AsyncSession) -> MigrationPreview:
         blockers=plan.blockers,
         ready=not plan.blockers,
         needs_confirmation=bool(plan.count("regenerate")) or has_errors,
+    )
+
+
+async def item_detail(
+    session: AsyncSession, kind: DefinitionKind, row_id: int
+) -> MigrationItemDetail:
+    """The file the migration would write for one agent or workflow, and the
+    one on disk now — the content behind a preview line."""
+    if overlay.files_mode():
+        raise MigrationRefused("Agents and workflows are already declared by their files")
+    plan = await _plan(session)
+    planned = next((p for p in plan.planned if p.item.kind == kind and p.item.id == row_id), None)
+    if planned is None or planned.item.action == "new_from_disk":
+        raise LookupError(f"No {kind} {row_id} in the migration")
+    doc = planned.doc
+    if doc is None:
+        doc = await _new_document(session, kind, row_id)
+    current: str | None = None
+    if planned.item.path:
+        try:
+            current = (plan.root / planned.item.path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            current = None
+    action = planned.item.action
+    assert action in ("create", "regenerate", "unchanged")
+    return MigrationItemDetail(
+        kind=kind,
+        id=row_id,
+        name=planned.item.name,
+        action=action,
+        path=planned.item.path,
+        proposed=render_document(doc),
+        current=current,
+    )
+
+
+async def _new_document(session: AsyncSession, kind: DefinitionKind, row_id: int) -> dict[str, Any]:
+    """What the export would write for a row with no file yet (id shown as-is,
+    or as a placeholder when it will be minted at migration)."""
+    root = overlay.definitions_root()
+    roles = {r.id: r.name for r in (await session.execute(select(Role))).scalars()}
+    ctx = _Context(root=root, roles=roles, result=DefinitionsExportResult(root=str(root)))
+    if kind == "agent":
+        agent = await session.get(AgentSession, row_id)
+        assert agent is not None
+        return _agent_document(ctx, agent, agent.export_id or "(assigned when migrating)", "")
+    workflow = (
+        await session.execute(
+            select(Workflow)
+            .where(Workflow.id == row_id)
+            .options(selectinload(Workflow.steps).selectinload(WorkflowStep.agent))
+        )
+    ).scalar_one()
+    dset = overlay.current_definitions()
+    agent_paths: dict[int, str] = {}
+    for step in workflow.steps:
+        if step.agent is not None and not step.agent.inline:
+            linked = dset.find("agent", step.agent.export_id)
+            agent_paths[step.agent.id] = (
+                linked.path if linked is not None else "agents/(new file).agent.yaml"
+            )
+    rows = sorted(workflow.steps, key=lambda s: s.position)
+    return _workflow_document(
+        ctx,
+        workflow,
+        workflow.export_id or "(assigned when migrating)",
+        "",
+        agent_paths,
+        steps=rows,
     )
 
 
@@ -442,6 +554,18 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
     )
     workflows = (await session.execute(select(Workflow))).scalars().all()
     await _accept_all(session, check.dset, [*agents, *workflows])
+    await _write_record(
+        session,
+        MIGRATED_SETTING_KEY,
+        {
+            "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "snapshot": snapshot,
+            "created": result.created,
+            "regenerated": result.regenerated,
+            "unchanged": result.unchanged,
+            "added_from_disk": result.added_from_disk,
+        },
+    )
     await session.commit()
     await overlay.persist_source(session, "files")
     # Step rows are tied to their file steps, and files nobody here had yet
@@ -456,6 +580,12 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
 
 async def revert(session: AsyncSession) -> RevertResult:
     """Copy the files' declarations into the database, then use the database."""
+    if (done := overlay.finalized()) is not None:
+        raise MigrationRefused(
+            f"The database was cleaned up on {done.get('at', '?')}; switching back isn't possible "
+            "any more. Restoring the database copy taken then is the only way back"
+            + (f" ({done['snapshot']})" if done.get("snapshot") else "")
+        )
     if not overlay.files_mode():
         raise MigrationRefused("Agents and workflows are already declared by the database")
     if overlay.source_forced():
@@ -548,9 +678,229 @@ async def revert(session: AsyncSession) -> RevertResult:
                 )
         result.workflows += 1
 
+    await _write_record(session, MIGRATED_SETTING_KEY, None)
     await session.commit()
     await overlay.persist_source(session, "database")
     with overlay._lock:
         overlay._pins.clear()
     result.source = "database"
     return result
+
+
+# --- Cleanup (the last, irreversible step) ---------------------------------
+
+# What a cleaned-up row holds in its declaration columns: the model defaults.
+# Names are kept — search, ordering and name matching run on them in SQL, and
+# they are re-synced from the files (``anchors.sync_names``).
+_BLANK_AGENT: dict[str, Any] = {
+    "task_prompt": "",
+    "model": None,
+    "role_id": None,
+    "approval_policy": None,
+    "autonomy_enabled": False,
+    "max_steps": 12,
+    "use_mcp": True,
+    "use_skills": True,
+    "use_memory": True,
+    "mcp_servers": None,
+    "token_budget": None,
+    "max_retries": 0,
+}
+_BLANK_WORKFLOW: dict[str, Any] = {
+    "description": None,
+    "icon": None,
+    "color": None,
+    "role_id": None,
+    "approval_policy": None,
+    "clear_artifacts": True,
+    "max_loops": 3,
+    "step_timeout_seconds": None,
+}
+_BLANK_STEP: dict[str, Any] = {
+    "name": None,
+    "kind": "task",
+    "instructions": None,
+    "on_fail_position": None,
+    "on_error": "fail",
+    "max_retries": 0,
+    "on_reject": "rework",
+    "context_mode": "auto",
+    "context_sources": None,
+    "use_mcp": None,
+    "use_skills": None,
+    "use_memory": None,
+    "mcp_servers": None,
+}
+
+
+async def cleanup_preview(session: AsyncSession) -> CleanupPreview:
+    """What cleaning up would clear, and what must be fixed before it can."""
+    from sqlalchemy import func
+
+    from precursor.backend.services.definitions.checker import check_definitions
+
+    preview = CleanupPreview()
+    if overlay.finalized() is not None or not overlay.files_mode():
+        return preview
+    dset = await asyncio.to_thread(load_definitions, overlay.definitions_root())
+
+    active = (
+        (await session.execute(select(Workflow.name).where(Workflow.status.in_(ACTIVE))))
+        .scalars()
+        .all()
+    )
+    if active:
+        preview.blockers.append(
+            f"{', '.join(repr(n) for n in active)} "
+            f"{'is' if len(active) == 1 else 'are'} mid-run; let it finish or cancel it first"
+        )
+    # Once the database's copy is gone, the files are all there is: they must
+    # all be usable first.
+    for issue in check_definitions(dset):
+        if issue.severity == "error":
+            where = ": ".join(p for p in (issue.path, issue.location) if p)
+            preview.blockers.append(f"{where}: {issue.message}" if where else issue.message)
+
+    agents = (
+        (await session.execute(select(AgentSession).where(AgentSession.inline.is_(False))))
+        .scalars()
+        .all()
+    )
+    workflows = (await session.execute(select(Workflow))).scalars().all()
+    for agent in agents:
+        if dset.find("agent", agent.export_id) is None and not dset.by_id.get(
+            agent.export_id or ""
+        ):
+            preview.missing_files.append(f"agent '{agent.title}'")
+        elif changes := await trust.pending_changes(session, agent):
+            preview.warnings.append(
+                f"agent '{agent.title}' has permission changes waiting for review "
+                f"({'; '.join(changes)}); they stay pending"
+            )
+    for workflow in workflows:
+        if dset.find("workflow", workflow.export_id) is None and not dset.by_id.get(
+            workflow.export_id or ""
+        ):
+            preview.missing_files.append(f"workflow '{workflow.name}'")
+        elif changes := await trust.pending_changes(session, workflow):
+            preview.warnings.append(
+                f"workflow '{workflow.name}' has permission changes waiting for review "
+                f"({'; '.join(changes)}); they stay pending"
+            )
+
+    preview.agents = len(agents)
+    preview.workflows = len(workflows)
+    preview.step_prompts = (
+        await session.execute(
+            select(func.count()).select_from(AgentSession).where(AgentSession.inline.is_(True))
+        )
+    ).scalar_one()
+    preview.steps = (
+        await session.execute(select(func.count()).select_from(WorkflowStep))
+    ).scalar_one()
+    preview.ready = not preview.blockers
+    return preview
+
+
+async def _verify_all_declared(session: AsyncSession) -> list[str]:
+    """Everything that would be left with no declaration once the columns are blank."""
+    overlay.invalidate()
+    dset = overlay.current_definitions()
+    problems: list[str] = []
+    for agent in (
+        (await session.execute(select(AgentSession).where(AgentSession.inline.is_(False))))
+        .scalars()
+        .all()
+    ):
+        linked = dset.find("agent", agent.export_id)
+        if linked is None or linked.definition is None:
+            problems.append(f"agent '{agent.title}' has no valid file")
+    for workflow in (
+        (
+            await session.execute(
+                select(Workflow).options(
+                    selectinload(Workflow.steps).selectinload(WorkflowStep.agent)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    ):
+        linked = dset.find("workflow", workflow.export_id)
+        if linked is None or not isinstance(linked.definition, WorkflowDefinition):
+            problems.append(f"workflow '{workflow.name}' has no valid file")
+            continue
+        if not anchors.same_steps(workflow, linked.definition):
+            problems.append(f"workflow '{workflow.name}': its steps aren't tied to its file")
+            continue
+        for step in workflow.steps:
+            vessel = step.agent
+            if (
+                vessel is not None
+                and vessel.inline
+                and overlay.definition_error(vessel) is not None
+            ):
+                problems.append(
+                    f"workflow '{workflow.name}': a step's prompt can't be read from its file"
+                )
+    return problems
+
+
+async def finalize(session: AsyncSession, *, confirm: bool) -> FinalizeResult:
+    """Clean the declarations out of the database. The last step; no way back.
+
+    Refused unless confirmed, in files mode, with nothing mid-run and every
+    file valid. Files still missing are written first (from the database, which
+    still declares those rows), everything is verified, a copy of the database
+    is taken, and only then are the declaration columns reset.
+    """
+    if not confirm:
+        raise MigrationRefused("Cleaning up the database can't be undone; confirm it first")
+    if overlay.finalized() is not None:
+        raise MigrationRefused("The database was already cleaned up")
+    if not overlay.files_mode():
+        raise MigrationRefused("Migrate to definition files first")
+    ready = await cleanup_preview(session)
+    if not ready.ready:
+        raise MigrationRefused("; ".join(ready.blockers))
+
+    snapshot = await _snapshot("cleanup")
+    root = overlay.definitions_root()
+    exported = await export_definitions(session, root)
+    await anchors.refresh(session)
+    session.expire_all()
+    problems = await _verify_all_declared(session)
+    if problems:
+        return FinalizeResult(
+            ok=False,
+            written=len(exported.written),
+            issues=[DefinitionIssue(severity="error", message=p) for p in problems],
+        )
+
+    counts = {
+        "agents": ready.agents,
+        "step_prompts": ready.step_prompts,
+        "workflows": ready.workflows,
+        "steps": ready.steps,
+    }
+    for model, blank in (
+        (AgentSession, _BLANK_AGENT),
+        (Workflow, _BLANK_WORKFLOW),
+        (WorkflowStep, _BLANK_STEP),
+    ):
+        await session.execute(
+            update(model)
+            .values(**blank, updated_at=model.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+    await session.commit()
+    record = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "snapshot": snapshot, **counts}
+    await overlay.persist_source(session, "files")
+    await overlay.persist_finalized(session, record)
+    session.expire_all()
+    return FinalizeResult(
+        ok=True,
+        finalized=FinalizedRecord(**record),
+        written=len(exported.written),
+        issues=exported.issues,
+    )

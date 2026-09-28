@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Loader2, Workflow as WorkflowIcon } from "lucide-react";
 import { api } from "../lib/api";
-import { DefinitionsMigrationPanel } from "./DefinitionsMigrationPanel";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 
 /**
@@ -34,7 +33,7 @@ const CAPABILITIES: {
   },
 ];
 
-export function WorkflowsSettings() {
+export function WorkflowsSettings({ onOpenMigration }: { onOpenMigration?: () => void } = {}) {
   const settings = useSettings();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +132,22 @@ export function WorkflowsSettings() {
         </label>
       </section>
 
-      <DefinitionsMigrationPanel />
+      {onOpenMigration && (
+        <section className="space-y-1">
+          <h3 className="text-sm font-medium">Definition files</h3>
+          <p className="text-[11px] text-muted">
+            Declare workflows and their agents in YAML files instead of the database (work in
+            progress).{" "}
+            <button
+              type="button"
+              onClick={onOpenMigration}
+              className="text-accent hover:underline"
+            >
+              Open the migration wizard
+            </button>
+          </p>
+        </section>
+      )}
 
       {error && <p className="text-[12px] text-red-500">{error}</p>}
       {busy && (

@@ -487,6 +487,7 @@ async def list_workflows(
     # Files mode: new workflow files join the gallery, and step changes made in
     # the files reach the rows.
     await definition_anchors.adopt_new_files(session)
+    await definition_anchors.sync_names(session)
     changed = await definition_anchors.sync_all(session)
     stmt = (
         select(Workflow)

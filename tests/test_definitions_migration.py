@@ -372,3 +372,262 @@ async def test_revert_is_refused_when_files_mode_is_forced(
         resp = client.post("/api/definitions/revert")
     assert resp.status_code == 409
     assert "PRECURSOR_DEFINITIONS_SOURCE" in resp.json()["detail"]
+
+
+# --- Wizard: stages, content, cleanup ---------------------------------------
+
+
+async def test_the_preview_follows_the_stages(env: Path) -> None:
+    await _seed()
+    with TestClient(create_app()) as client:
+        first = client.get("/api/definitions/migration").json()
+        assert (first["stage"], first["migrated"], first["finalized"]) == ("database", None, None)
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        second = client.get("/api/definitions/migration").json()
+        assert second["stage"] == "files"
+        assert second["migrated"]["created"] == 3 and second["migrated"]["snapshot"]
+        assert second["cleanup"]["ready"] is True
+        assert (second["cleanup"]["agents"], second["cleanup"]["workflows"]) == (2, 1)
+        assert (second["cleanup"]["step_prompts"], second["cleanup"]["steps"]) == (1, 2)
+        client.post("/api/definitions/finalize", json={"confirm": True})
+        third = client.get("/api/definitions/migration").json()
+    assert third["stage"] == "finalized"
+    assert third["finalized"]["agents"] == 2 and third["finalized"]["snapshot"]
+
+
+async def test_the_review_shows_the_actual_files(env: Path) -> None:
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        new = client.get(f"/api/definitions/migration/items/workflow/{ids['workflow']}").json()
+        assert new["action"] == "create" and new["current"] is None
+        assert "Write" in new["proposed"] and "{{step.write.output}}" in new["proposed"]
+
+        client.post("/api/definitions/export")
+        preview = client.get("/api/definitions/migration").json()
+        writer = next(
+            i for i in preview["items"] if i["id"] == ids["writer"] and i["kind"] == "agent"
+        )
+        _write(env, writer["path"], {**_load(env, writer["path"]), "prompt": "hand edit"})
+        detail = client.get(f"/api/definitions/migration/items/agent/{ids['writer']}").json()
+        missing = client.get("/api/definitions/migration/items/agent/999999")
+    assert detail["action"] == "regenerate"
+    assert "prompt: hand edit" in detail["current"]
+    assert "prompt: write it" in detail["proposed"]
+    assert missing.status_code == 404
+
+
+async def test_the_cleanup_needs_confirmation_and_files_mode(env: Path) -> None:
+    await _seed()
+    with TestClient(create_app()) as client:
+        not_yet = client.post("/api/definitions/finalize", json={"confirm": True})
+        assert not_yet.status_code == 409 and "Migrate" in not_yet.json()["detail"]
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        unconfirmed = client.post("/api/definitions/finalize", json={})
+    assert unconfirmed.status_code == 409 and "can't be undone" in unconfirmed.json()["detail"]
+
+
+async def test_the_cleanup_is_blocked_by_a_broken_file(env: Path) -> None:
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        path = client.get(f"/api/agents/{ids['writer']}").json()["definition"]["path"]
+        _write(env, path, {**_load(env, path), "titel": "typo"})
+        preview = client.get("/api/definitions/migration").json()
+        resp = client.post("/api/definitions/finalize", json={"confirm": True})
+    assert preview["cleanup"]["ready"] is False
+    assert any(path in b for b in preview["cleanup"]["blockers"])
+    assert resp.status_code == 409
+
+
+async def test_cleaning_up_empties_the_columns_and_everything_still_works(env: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.definitions import overlay
+
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        # An agent that got no file in files mode (e.g. an older code path):
+        # the cleanup writes it from the database before clearing anything.
+        async with SessionLocal() as session:
+            late = AgentSession(
+                title=f"Late {ids['tag']}", task_prompt="late prompt", status="waiting"
+            )
+            session.add(late)
+            await session.commit()
+            late_id = late.id
+        preview = client.get("/api/definitions/migration").json()
+        assert preview["cleanup"]["missing_files"] == [f"agent 'Late {ids['tag']}'"]
+
+        resp = client.post("/api/definitions/finalize", json={"confirm": True})
+        assert resp.status_code == 200, resp.text
+        result = resp.json()
+        assert result["ok"] is True and result["written"] == 1
+        assert Path(result["finalized"]["snapshot"]).is_file()
+
+        # Declared by the files, with nothing left in the columns.
+        agent = client.get(f"/api/agents/{ids['writer']}").json()
+        assert (agent["task_prompt"], agent["approval_policy"]) == ("write it", "manual")
+        assert client.get(f"/api/agents/{late_id}").json()["task_prompt"] == "late prompt"
+        wf = client.get(f"/api/workflows/{ids['workflow']}").json()
+        assert (wf["max_loops"], wf["steps"][1]["kind"]) == (4, "gate")
+        assert wf["steps"][1]["agent"]["task_prompt"] == "PASS if fine"
+
+        # No way back from the app, and nothing to export from the database.
+        revert = client.post("/api/definitions/revert")
+        assert revert.status_code == 409 and "isn't possible" in revert.json()["detail"]
+        assert client.post("/api/definitions/export").status_code == 409
+        again = client.post("/api/definitions/finalize", json={"confirm": True})
+        assert again.status_code == 409
+
+    assert await _raw(
+        "agent_sessions", ids["writer"], "task_prompt", "approval_policy", "title"
+    ) == (
+        "",
+        None,
+        f"Writer {ids['tag']}",  # names stay, as a search index
+    )
+    assert await _raw("agent_sessions", ids["vessel"], "task_prompt") == ("",)
+    assert await _raw("workflows", ids["workflow"], "max_loops", "name") == (
+        3,
+        f"Pipeline {ids['tag']}",
+    )
+    from sqlalchemy import text as sql_text
+
+    async with SessionLocal() as session:
+        step_kinds = (
+            await session.execute(
+                sql_text("select kind, instructions from workflow_steps where workflow_id = :w"),
+                {"w": ids["workflow"]},
+            )
+        ).all()
+    assert {tuple(r) for r in step_kinds} == {("task", None)}
+
+    # The workflow still runs from its file, and survives a restart.
+    overlay._persisted_source = None
+    overlay._finalized = None
+    async with SessionLocal() as session:
+        await overlay.refresh_source(session)
+    assert overlay.files_mode() and overlay.finalized() is not None
+    started: list[int] = []
+
+    class _Mgr:
+        def start_task(self, agent_id: int, extra_context: str | None = None, *, run_id=None):  # type: ignore[no-untyped-def]
+            started.append(agent_id)
+            return (agent_id, extra_context)
+
+        def cancel(self, agent_id: int, *, run_id=None):  # type: ignore[no-untyped-def]
+            return None
+
+        def enqueue(self, item) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    async with SessionLocal() as session:
+        await wf_mod.start_workflow(session, _Mgr(), ids["workflow"])  # type: ignore[arg-type]
+    assert started == [ids["writer"]]
+    async with SessionLocal() as session:
+        wf_row = await session.get(Workflow, ids["workflow"])
+        assert wf_row is not None and wf_row.status == "running"
+
+
+async def test_after_cleanup_a_missing_file_refuses_to_run(env: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services.definitions import overlay
+
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        client.post("/api/definitions/finalize", json={"confirm": True})
+        path = client.get(f"/api/agents/{ids['writer']}").json()["definition"]["path"]
+        (env / path).unlink()
+        overlay.invalidate()
+        body = client.get(f"/api/agents/{ids['writer']}").json()
+        check = client.get("/api/definitions/check").json()
+    assert body["definition"]["state"] == "invalid"
+    assert "restore the file" in body["definition"]["message"]
+    assert check["ok"] is False
+    async with SessionLocal() as session:
+        row = await session.get(AgentSession, ids["writer"])
+        assert row is not None and "missing" in (overlay.definition_error(row) or "")
+
+
+# --- Gaps closed on the way -------------------------------------------------
+
+
+async def test_a_blueprint_agent_gets_its_file_in_files_mode(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentBlueprint
+    from precursor.backend.services.agents import runtime
+
+    monkeypatch.setattr(runtime, "agents_available", lambda: (True, "test"))
+    await _seed()
+    async with SessionLocal() as session:
+        bp = AgentBlueprint(name=f"BP {_uid()}", task_prompt="from a blueprint")
+        session.add(bp)
+        await session.commit()
+        bp_id = bp.id
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        resp = client.post(f"/api/agents/blueprints/{bp_id}/instantiate", json={"start": False})
+        assert resp.status_code == 201, resp.text
+        body = client.get(f"/api/agents/{resp.json()['id']}").json()
+    assert body["definition"]["state"] == "file"
+    assert _load(env, body["definition"]["path"])["prompt"] == "from a blueprint"
+
+
+async def test_the_watchdog_reads_the_timeout_from_the_file(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow
+    from precursor.backend.services.agents import workflow as wf_mod
+
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        path = client.get(f"/api/workflows/{ids['workflow']}").json()["definition"]["path"]
+    _write(env, path, {**_load(env, path), "step_timeout_seconds": 30})
+    async with SessionLocal() as session:
+        wf = await session.get(Workflow, ids["workflow"])
+        assert wf is not None
+        wf.status, wf.current_run_id = "running", 0
+        await session.commit()
+    # Only the file has a timeout; the column never did.
+    assert await _raw("workflows", ids["workflow"], "step_timeout_seconds") == (None,)
+
+    considered: list[int] = []
+    real_lock = wf_mod._workflow_lock
+
+    def spy(workflow_id: int):  # type: ignore[no-untyped-def]
+        considered.append(workflow_id)
+        return real_lock(workflow_id)
+
+    monkeypatch.setattr(wf_mod, "_workflow_lock", spy)
+    async with SessionLocal() as session:
+        await wf_mod.sweep_stalled_steps(session, object())  # type: ignore[arg-type]
+    assert considered == [ids["workflow"]]
+
+
+async def test_search_finds_prompts_that_live_in_files(env: Path) -> None:
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        path = client.get(f"/api/agents/{ids['writer']}").json()["definition"]["path"]
+        _write(env, path, {**_load(env, path), "prompt": "count the zanzibar penguins"})
+        hits = client.get("/api/search", params={"q": "zanzibar"}).json()
+    agents = [h for h in hits["results"] if h["section"] == "agents"]
+    assert [(h["entity_id"], h["field"]) for h in agents] == [(ids["writer"], "prompt")]
+
+
+async def test_names_edited_in_files_reach_the_searchable_column(env: Path) -> None:
+    ids = await _seed()
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        path = client.get(f"/api/agents/{ids['writer']}").json()["definition"]["path"]
+        _write(env, path, {**_load(env, path), "title": "Renamed on disk"})
+        client.get("/api/agents")
+    assert await _raw("agent_sessions", ids["writer"], "title") == ("Renamed on disk",)

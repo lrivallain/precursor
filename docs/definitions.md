@@ -287,10 +287,21 @@ curl -s localhost:8000/api/definitions/check | jq '{ok, error_count, warning_cou
 
 ## Migrating an install
 
-**Settings → Workflows → Definition files** moves an install from database-
-declared to file-declared agents and workflows — and back. It's the step that
-has to happen before the database's declaration columns can be dropped
-(roadmap step 9), so it is built to change nothing about how anything runs:
+**Settings → Definition files** is a wizard that moves an install from
+database-declared to file-declared agents and workflows, one step at a time:
+**Overview** → **Review** → **Migrate** → **Try it out** → **Clean up** →
+**Done**. It is built to change nothing about how anything runs, and it can be
+undone right up to the cleanup. The steps map onto these operations:
+
+- **Overview** shows what's declared today, where the files will go, what stays
+  in the database, and anything blocking.
+- **Review** lists every agent and workflow with what will happen to its file,
+  and opens each one on its **actual content**: the file as it will be written,
+  next to the file on disk now (`GET /api/definitions/migration/items/{kind}/{id}`).
+- **Migrate** runs the migration below; **Try it out** shows the folder check
+  and pending reviews, with **Switch back** still available; **Clean up** and
+  **Done** are described [below](#cleaning-up-the-database).
+
 
 1. **Preview** (`GET /api/definitions/migration`). For every agent and workflow:
    a **new file**, a file **rewritten from the database** (it differs, with the
@@ -312,15 +323,56 @@ has to happen before the database's declaration columns can be dropped
      database's), the install switches to files mode, and step rows are tied to
      their file steps. Files added from the folder become agents and workflows
      whose permissions wait for review.
-3. **Switch back** (`POST /api/definitions/revert`), until the columns are
-   dropped: every file's declaration is copied into the database columns —
-   steps and step prompts included — and the database declares agents and
-   workflows again. A database copy is taken first; files with errors are
-   skipped and listed. The files stay where they are.
+3. **Switch back** (`POST /api/definitions/revert`), until the cleanup: every
+   file's declaration is copied into the database columns — steps and step
+   prompts included — and the database declares agents and workflows again. A
+   database copy is taken first; files with errors are skipped and listed. The
+   files stay where they are.
 
 The choice is saved in the database (the `definitions_source` setting) and
 survives restarts. `PRECURSOR_DEFINITIONS_SOURCE=files` forces files mode
 regardless; switching back from the app is then refused.
+
+### Cleaning up the database
+
+The last step, taken only when you ask for it: the database stops holding a
+copy of your agents and workflows. **It can't be undone from the app** —
+switching back is no longer possible afterwards, and the only way back is
+restoring the database copy taken just before.
+
+- **Preview** (in `GET /api/definitions/migration`, as `cleanup`): what will be
+  cleared, the agents and workflows that still have no file (they are written
+  from the database first), permission reviews still pending, and what blocks
+  it — any error in the folder (a broken file, a duplicate id, a dangling agent
+  path), or a workflow mid-run. The files will be all there is, so they must all
+  be usable.
+- **Clean up** (`POST /api/definitions/finalize` with `confirm: true`; the
+  wizard also asks you to tick a box and type *clean up*):
+  1. a copy of the database is taken (`…-before-cleanup.db`);
+  2. files still missing are written, and step rows tied to their file steps;
+  3. every agent, workflow and step prompt is **verified** to be declared by a
+     valid file — if not, nothing is cleared (`ok: false`, `issues`);
+  4. the declaration columns are reset to their defaults: prompts, models,
+     roles, policies, capabilities and limits of agents; workflow settings; the
+     declarations of every workflow step. **Kept**: run history, events,
+     artifacts and state, schedules, triggers and webhook tokens, each row's
+     link to its file (`export_id`, `definition_ref`), accepted permissions,
+     and **names** — agent titles and workflow names stay as a search index,
+     kept in step with the files, because search, ordering and name matching
+     run on them in SQL.
+- **Done**: the wizard confirms the migration is finished, with the date, what
+  was cleared, and both database copies. The state is saved
+  (`definitions_finalized`) and survives restarts.
+
+After the cleanup:
+
+- files mode is permanent; switching back and the export (there is nothing in
+  the database to export from) are refused;
+- an agent or workflow whose file goes missing **refuses to run** — there is no
+  database copy to fall back to — until the file is restored, from git or from
+  the database copy; the folder check reports it as an error;
+- values the app still writes to the old columns as a side effect of a save are
+  never read; they go away with the columns (roadmap step 9).
 
 ## Files mode
 
@@ -511,9 +563,10 @@ Each step ships on its own and is validated before the next starts.
    assistant's file tools cannot write the definitions folder.
 8. ✅ The definitions folder can be a git workspace: pull, check, accept, push.
    By default it's the built-in **Agents & workflows** workspace.
-   ✅ **Migration** from the database to files — previewed, verified,
-   reversible — in Settings → Workflows.
-9. The old declaration columns are removed from the database. Before that, the
-   upgrade must run the same migration automatically for every install still in
-   database mode — refusing to drop anything if it doesn't verify — and
-   switching back goes away with the columns.
+   ✅ **Migration wizard** in Settings → Definition files — previewed with
+   each file's content, verified, reversible — ending, on request, with the
+   **database cleanup** (irreversible).
+9. The old declaration columns are dropped from the schema (an Alembic
+   migration for every install). Before that, the upgrade must migrate and
+   clean up every install still in database mode automatically — refusing to
+   drop anything if it doesn't verify.

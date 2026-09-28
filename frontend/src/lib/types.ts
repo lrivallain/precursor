@@ -1087,7 +1087,42 @@ export interface MigrationItem {
   reason: string | null;
 }
 
+export interface MigrationRecord {
+  at: string;
+  snapshot: string | null;
+  created: number;
+  regenerated: number;
+  unchanged: number;
+  added_from_disk: number;
+}
+
+export interface FinalizedRecord {
+  at: string;
+  snapshot: string | null;
+  agents: number;
+  step_prompts: number;
+  workflows: number;
+  steps: number;
+}
+
+export interface CleanupPreview {
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  agents: number;
+  step_prompts: number;
+  workflows: number;
+  steps: number;
+  /** Agents and workflows without a file yet; the cleanup writes them first. */
+  missing_files: string[];
+}
+
 export interface MigrationPreview {
+  /** database: not migrated · files: migrated, can switch back · finalized: done, no way back. */
+  stage: "database" | "files" | "finalized";
+  migrated: MigrationRecord | null;
+  finalized: FinalizedRecord | null;
+  cleanup: CleanupPreview | null;
   source: "database" | "files";
   /** PRECURSOR_DEFINITIONS_SOURCE=files forces files mode. */
   forced: boolean;
@@ -1112,6 +1147,26 @@ export interface MigrationResult {
   added_from_disk: number;
   issues: DefinitionIssue[];
   mismatches: string[];
+}
+
+/** The actual content behind one migration preview line. */
+export interface MigrationItemDetail {
+  kind: DefinitionKind;
+  id: number;
+  name: string;
+  action: "create" | "regenerate" | "unchanged";
+  path: string | null;
+  /** The file as the migration would write it. */
+  proposed: string;
+  /** The file on disk now; null when there is none yet. */
+  current: string | null;
+}
+
+export interface FinalizeResult {
+  ok: boolean;
+  finalized: FinalizedRecord | null;
+  written: number;
+  issues: DefinitionIssue[];
 }
 
 export interface RevertResult {

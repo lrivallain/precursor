@@ -37,6 +37,8 @@ import type {
   DefinitionsCheckReport,
   DefinitionsExportResult,
   DefinitionSource,
+  FinalizeResult,
+  MigrationItemDetail,
   MigrationPreview,
   MigrationResult,
   RevertResult,
@@ -798,6 +800,14 @@ export const api = {
         body: JSON.stringify({ acknowledge }),
       }),
     revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
+    migrationItem: (kind: DefinitionKind, id: number) =>
+      request<MigrationItemDetail>(`/api/definitions/migration/items/${kind}/${id}`),
+    // The last, irreversible step: clears the declarations out of the database.
+    finalize: () =>
+      request<FinalizeResult>(`/api/definitions/finalize`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      }),
     fileIssues: (workspaceId: number, path: string) =>
       request<DefinitionFileReport>(
         `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,

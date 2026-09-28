@@ -253,6 +253,9 @@ def permissions_of(defn: AgentDefinition | WorkflowDefinition) -> dict[str, Any]
 async def accepted_for(session: AsyncSession, row: AgentSession | Workflow) -> dict[str, Any]:
     """The permissions last accepted for ``row``."""
     if row.accepted_permissions is None:
+        if overlay.finalized() is not None:
+            # The columns were cleaned up: they vouch for nothing any more.
+            return {}
         return await _database_baseline(session, row)
     try:
         return json.loads(row.accepted_permissions) or {}

@@ -590,8 +590,10 @@ async def list_agents(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentSessionRead]:
-    # Files mode: an agent file new to this instance joins the roster.
+    # Files mode: an agent file new to this instance joins the roster, and
+    # titles edited in the files reach the searchable column.
     await definition_anchors.adopt_new_files(session)
+    await definition_anchors.sync_names(session)
     # Inline agents are execution vessels owned by a workflow step, not units the
     # user manages, so they stay out of the roster. They are deliberately still
     # listed by ``/attention`` below: a blocked inline step must remain
@@ -682,6 +684,10 @@ async def _spawn_agent(
         status="pending" if start else "waiting",
     )
     session.add(agent)
+    await session.flush()
+    # Files mode: declared by a new file from the start — written before the
+    # commit, so nothing can start the agent before its file exists.
+    await definition_writer.save_agent(session, agent)
     await session.commit()
     await session.refresh(agent)
 
@@ -737,9 +743,6 @@ async def create_agent(
         blueprint_id=payload.blueprint_id,
         start=payload.start,
     )
-    # Files mode: a new agent is declared by a new file from the start.
-    if await definition_writer.save_agent(session, agent):
-        await session.commit()
     return agent
 
 

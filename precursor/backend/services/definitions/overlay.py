@@ -84,10 +84,19 @@ ACTIVE_WORKFLOW_STATUSES = frozenset({"running", "paused", "awaiting_approval"})
 # cached: ``files_mode`` runs in every load listener and can't query.
 SOURCE_SETTING_KEY = "definitions_source"
 _persisted_source: str | None = None
+# Set once the database's copy of the declarations was cleaned up (the last,
+# irreversible step of the migration): ``{"at": …, "snapshot": …, …}``.
+FINALIZED_SETTING_KEY = "definitions_finalized"
+_finalized: dict[str, Any] | None = None
 
 
 def files_mode() -> bool:
-    return source_forced() or _persisted_source == "files"
+    return source_forced() or _persisted_source == "files" or _finalized is not None
+
+
+def finalized() -> dict[str, Any] | None:
+    """The cleanup record, once the database no longer holds any declaration."""
+    return _finalized
 
 
 def source_forced() -> bool:
@@ -96,10 +105,26 @@ def source_forced() -> bool:
 
 
 async def refresh_source(session: AsyncSession) -> None:
-    global _persisted_source
+    global _persisted_source, _finalized
     row = await session.get(AppSetting, SOURCE_SETTING_KEY)
     value = json.loads(row.value) if row is not None and row.value else None
     _persisted_source = value if value in ("database", "files") else None
+    done = await session.get(AppSetting, FINALIZED_SETTING_KEY)
+    record = json.loads(done.value) if done is not None and done.value else None
+    _finalized = record if isinstance(record, dict) else None
+
+
+async def persist_finalized(session: AsyncSession, record: dict[str, Any]) -> None:
+    """Record the cleanup (commits). There is no way back from it in the app."""
+    global _finalized
+    row = await session.get(AppSetting, FINALIZED_SETTING_KEY)
+    if row is None:
+        session.add(AppSetting(key=FINALIZED_SETTING_KEY, value=json.dumps(record)))
+    else:
+        row.value = json.dumps(record)
+    await session.commit()
+    _finalized = record
+    invalidate()
 
 
 async def persist_source(session: AsyncSession, value: str) -> None:
@@ -426,6 +451,13 @@ def definition_error(obj: AgentSession | Workflow) -> str | None:
         return f"its id is used by several files ({', '.join(shared)}); give each its own id"
     linked = linked_file(obj)
     if linked is None:
+        if _finalized is not None and not (isinstance(obj, AgentSession) and obj.inline):
+            # The database's copy is gone: without its file there is nothing
+            # to run, and running the blank columns would be worse.
+            return (
+                "its definition file is missing, and the database no longer holds its "
+                "declaration; restore the file (from git, or the database copy taken at cleanup)"
+            )
         return None
     if linked.definition is None:
         return f"its definition file {linked.path} has errors; fix it, then run again"
@@ -444,6 +476,8 @@ def source_of(obj: AgentSession | Workflow) -> DefinitionSource | None:
         return DefinitionSource(state="invalid", path=shared[0], message=definition_error(obj))
     linked = linked_file(obj)
     if linked is None:
+        if _finalized is not None:
+            return DefinitionSource(state="invalid", message=definition_error(obj))
         return DefinitionSource(
             state="none", message="No definition file yet; still declared by the database"
         )
@@ -557,3 +591,35 @@ def _step_loaded(target: WorkflowStep, _context: object) -> None:
 @event.listens_for(WorkflowStep, "refresh")
 def _step_refreshed(target: WorkflowStep, _context: object, attrs: Collection[str] | None) -> None:
     project_step(target, attrs)
+
+
+@dataclass(frozen=True)
+class PromptMatches:
+    """Files whose prompt (or title) matches a search, by how rows link to them."""
+
+    agent_ids: tuple[str, ...] = ()
+    step_refs: tuple[str, ...] = ()
+
+
+def search_prompts(query: str) -> PromptMatches:
+    """Search the declarations that only the files hold, in files mode.
+
+    The database's prompt columns are stale (or, after cleanup, blank), so a
+    text search over them alone would miss what the files say.
+    """
+    needle = query.strip().lower()
+    if not files_mode() or not needle:
+        return PromptMatches()
+    dset = current_definitions()
+    agents = [
+        f.raw_id
+        for f, agent in dset.agents()
+        if f.raw_id and (needle in agent.prompt.lower() or needle in agent.title.lower())
+    ]
+    steps = [
+        make_ref(workflow.id, step.key)
+        for _f, workflow in dset.workflows()
+        for step in workflow.steps
+        if step.prompt is not None and needle in step.prompt.lower()
+    ]
+    return PromptMatches(tuple(agents), tuple(steps))

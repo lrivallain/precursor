@@ -21,6 +21,7 @@ from precursor.backend.schemas.definitions_api import (
     UnlinkedAgent,
     UnlinkedWorkflow,
 )
+from precursor.backend.services.definitions import overlay
 from precursor.backend.services.definitions.checker import InstanceNames, build_report
 from precursor.backend.services.definitions.loader import DefinitionSet, load_definitions
 from precursor.backend.services.mcp.client import get_mcp_client_manager
@@ -96,12 +97,24 @@ async def check_folder(session: AsyncSession, root: Path) -> DefinitionsCheckRep
             parts.append(f"{missing_agents} agent{'s' if missing_agents > 1 else ''}")
         if missing_workflows:
             parts.append(f"{missing_workflows} workflow{'s' if missing_workflows > 1 else ''}")
-        report.issues.append(
-            DefinitionIssue(
-                severity="warning",
-                message=f"{' and '.join(parts)} in the database have no definition file yet; "
-                "the export writes them",
+        if overlay.finalized() is not None:
+            # Nothing else declares them any more: they can't run until restored.
+            report.issues.append(
+                DefinitionIssue(
+                    severity="error",
+                    message=f"{' and '.join(parts)} have lost their definition file; restore "
+                    "them from git or the database copy taken at cleanup",
+                )
             )
-        )
-        report.warning_count += 1
+            report.error_count += 1
+            report.ok = False
+        else:
+            report.issues.append(
+                DefinitionIssue(
+                    severity="warning",
+                    message=f"{' and '.join(parts)} in the database have no definition file "
+                    "yet; the export writes them",
+                )
+            )
+            report.warning_count += 1
     return report

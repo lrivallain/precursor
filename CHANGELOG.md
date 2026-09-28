@@ -165,11 +165,20 @@ are the per-version history; releasing does not rewrite this file.
   - **Agents & workflows workspace.** By default the definition files live in
     a built-in workspace that leads the Files section; it can't be removed
     while it holds any.
-  - **Migration.** Settings → Workflows → Definition files previews the move
-    to files, then writes, verifies (nothing switches if a file doesn't match
-    the database) and switches, after taking a copy of the database; switching
-    back copies the files into the database first. The choice survives
-    restarts; `PRECURSOR_DEFINITIONS_SOURCE=files` still forces files mode.
+  - **Migration wizard.** Settings → Definition files walks through the move
+    to files: overview, a review that opens each file as it will be written
+    next to what's on disk, the migration itself (a database copy first, every
+    file verified against the database — nothing switches on a difference), a
+    try-it-out step where switching back is still possible, and finally, on
+    request, the **database cleanup**: once confirmed (tick and type *clean
+    up*), the declarations are cleared from the database and switching back is
+    no longer possible. The wizard then confirms the migration is finished.
+    The choice survives restarts; `PRECURSOR_DEFINITIONS_SOURCE=files` still
+    forces files mode.
+  - **Fixed in files mode:** the stall watchdog read its timeout from the
+    database instead of the workflow's file; agents stamped from a blueprint
+    got no file; search didn't find prompts that only the files held; titles
+    and names edited in files didn't reach search and name matching.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

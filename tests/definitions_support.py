@@ -10,7 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # App settings these tests change, restored afterwards.
-_SETTINGS = ("agents_enabled", "definitions_source")
+_SETTINGS = (
+    "agents_enabled",
+    "definitions_source",
+    "definitions_migrated",
+    "definitions_finalized",
+)
 
 
 @dataclass
