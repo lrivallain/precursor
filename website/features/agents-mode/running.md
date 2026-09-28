@@ -104,6 +104,22 @@ approval policy and capability toggles it started with, so changing the
 definition mid-flight primes the *next* run rather than moving the ground under
 the current one.
 
+## Session lifetime and runtime recovery
+
+Every agent drives the same **Copilot CLI** process, and each run holds a live
+session in it. Once a run has been at rest for **15 minutes** (idle, completed,
+failed or blocked, not waiting on an approval), Precursor disconnects its
+session to free the memory. Nothing is lost: the conversation stays on disk, and
+the next message, Resume or answer reconnects to it. Approvals you granted
+**for the session** are reset along with it, just as they are when a session is
+rebuilt.
+
+If the CLI process itself dies, for example when it runs out of memory, the
+next agent request or the watchdog's next check (at most a minute later)
+restarts it. You don't need to restart Precursor. A turn that was in flight when
+the CLI died is marked **interrupted** by the watchdog. Use **Resume** to retry
+it.
+
 ## Unread badges & notifications
 
 Agent sessions track unread activity just like topics and chats. When a

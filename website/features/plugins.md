@@ -97,6 +97,13 @@ you can withdraw the permission as easily as you gave it. Listing and toggling
 plugins is always available; so is running the command yourself.
 :::
 
+::: info On Windows, install with Precursor stopped
+Windows won't replace files a running program holds open, and a `uv tool`
+install is rebuilt as a whole — so a running Precursor can't reinstall itself
+there. The panel shows the command instead of an **Install** button: run
+`precursor service stop`, the command, then `precursor service start`.
+:::
+
 ## Versions and upgrades
 
 Plugins version **independently of Precursor**. Each one is checked against the

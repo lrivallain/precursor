@@ -13,6 +13,58 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Windows gets the same one-command install.** `scripts/install.ps1` is the
+  PowerShell twin of `install.sh`: `irm …/install.ps1 | iex` installs the nightly
+  build with the Kanban and tray extras, registers the login items and starts
+  Precursor. It reads the same `PRECURSOR_*` variables. Both installers now also
+  accept `PRECURSOR_EXTRAS=none` for the lean core, since PowerShell can't set a
+  variable to an empty string, and `PRECURSOR_WHEEL` to install a given wheel.
+- **Windows CI.** The backend suite now runs on `windows-latest`, and a new job
+  runs the whole Windows journey on the wheel CI builds. It installs with
+  `install.ps1` in Windows PowerShell 5.1, checks the login items, stops and
+  restarts the app, replays the login entry, self-updates, and uninstalls.
+
+### Fixed
+
+- **Windows: no console window left on screen.** The login items were
+  Startup-folder `.cmd` files that ran the console script, so a terminal window
+  stayed open for as long as Precursor ran, and closing it killed the app. They
+  are now per-user `Run` entries that run `pythonw`. Older `.cmd` files are
+  removed on install and uninstall. The tray now starts at install time rather
+  than at the next login, and only one runs per data directory.
+- **Windows: busy ports looked free.** The port probes set `SO_REUSEADDR`. On
+  Windows that option lets a bind succeed over a live listener, so
+  `service install` never moved off a busy `8000` and the instance then failed
+  to bind. The WorkIQ sign-in port check had the same bug. Ports in a Hyper-V or
+  WSL excluded range now count as busy too.
+- **Windows: stopping is graceful.** `service stop` used `taskkill` without
+  `/F`, which can't stop a windowless process. So every stop waited 20 seconds
+  and then killed the app hard. It now sends Ctrl+Break, which uvicorn treats
+  like SIGTERM.
+- **Windows: no console flashes.** The tray checked the instance with
+  `tasklist` every 3 seconds, and each call flashed a console window. The check
+  now uses the Win32 API. Detached instances get a hidden console, so the `git`,
+  `gh` and MCP processes they start stay hidden too.
+- **Windows: self-update works.** `uv tool install --force` can't replace files
+  a running Precursor holds open, and the command asking for the update is one
+  of them. On Windows the update now stops the app and the tray, then hands the
+  install to a helper run by the base interpreter. The helper installs the new
+  build, restarts both, and logs to `logs/update.log`. The returning tray says
+  how it went. In-app plugin installs, which hit the same limit, now show the
+  command to run while Precursor is stopped.
+- **Windows: `pythonw` no longer crashes on startup.** `pythonw` has no
+  stdout/stderr, so it died on its first log line. Its output now goes to
+  `logs/windows.<app|tray>.out.log`.
+- **Windows: text encodings.** Output from `uv`, `gh` and `npm` is decoded as
+  UTF-8 rather than the ANSI code page, which garbled `uv`'s error trees or
+  raised on them. `precursor --dev` now finds `npm.cmd`.
+- **Self-update with a relocated `UV_TOOL_DIR`.** A `uv tool` install was only
+  recognised by a `…/uv/tools/…` path, so one moved with `UV_TOOL_DIR` was
+  treated as a plain wheel install that couldn't update itself. uv's install
+  receipt is now the signal, on every platform.
+
 ### Changed
 
 - **Git workspaces merge, and conflicts are resolved in the editor.**
@@ -720,6 +772,27 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Workflow steps no longer lose their final answer.** Precursor handled each
+  Copilot SDK event in its own task, and a burst of events could be processed
+  out of order. At the end of a turn, *idle* was sometimes handled before the
+  final message. The step was then recorded with an empty or stale output, and
+  its `ARTIFACT` blocks were dropped. The next step saw its input as missing:
+  the Morning AI briefing's email step reported `MISSING_PERSISTENCE` and sent
+  nothing, and a meeting-triage *Collect* step handed on no invitations. SDK
+  events are now handled one at a time per agent, in the order the SDK emits
+  them.
+- **Agents recover when the Copilot CLI crashes.** All agents share a single
+  Copilot CLI process. When it died (seen as a V8 "JavaScript heap out of
+  memory" after about 35 hours), Precursor didn't notice. Every later agent run
+  and workflow step then failed at once with `[Errno 32] Broken pipe` until the
+  app was restarted. Precursor now restarts the CLI on the next agent request,
+  or within a minute through the watchdog.
+- **Finished agent runs no longer leak memory into the Copilot CLI.** A run's
+  live SDK session was never disconnected, and workflows open a new run for
+  every step. A 30-minute schedule left hundreds of idle sessions (and more
+  than 10,000 open handles) in the CLI, which is what exhausted its heap.
+  Sessions now disconnect after 15 minutes at rest. The next turn resumes them
+  from disk.
 - **Agent-timeline retention works on large archives again.** Once more than
   ~32k archived agent events were due for pruning, the sweep measured them in a
   single `IN (…)` query and SQLite rejected it with "too many SQL variables" —

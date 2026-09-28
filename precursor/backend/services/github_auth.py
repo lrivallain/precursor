@@ -24,6 +24,7 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend import winproc
 from precursor.backend.config import get_settings
 from precursor.backend.models import AppSetting
 
@@ -54,9 +55,12 @@ def _run_gh_auth_token() -> str:
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=3,
             check=False,
+            # The tray resolves a token too, and it has no console to lend.
+            **winproc.no_window(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("gh auth token failed: %s", exc)
