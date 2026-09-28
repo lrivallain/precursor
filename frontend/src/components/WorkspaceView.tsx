@@ -553,6 +553,52 @@ export function WorkspaceView({
     }
   }
 
+  async function deleteFolder(path: string): Promise<void> {
+    const inside = (p: string) => p.startsWith(`${path}/`);
+    const count = files.filter((f) => f.type === "file" && inside(f.path)).length;
+    const definitions = area.hosts_definitions
+      ? files.filter(
+          (f) => inside(f.path) && /\.(agent|workflow)\.yaml$/.test(f.path),
+        ).length
+      : 0;
+    const what =
+      count === 0
+        ? `Delete the empty folder "${path}"?`
+        : `Delete "${path}" and the ${count} file${count === 1 ? "" : "s"} in it?`;
+    const extra = [
+      definitions > 0
+        ? `${definitions} of them declare${definitions === 1 ? "s" : ""} an agent or workflow, which will stop working.`
+        : null,
+      area.kind === "git"
+        ? "Committed files can be restored from Changes until you commit; files that were never committed are gone for good."
+        : "This can't be undone.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (
+      !(await confirmAction({
+        message: `${what} ${extra}`,
+        confirmLabel: "Delete folder",
+        variant: "danger",
+      }))
+    )
+      return;
+    setError(null);
+    try {
+      await api.workspaces.deleteFolder(area.id, path);
+      if (activePath && inside(activePath)) {
+        setActivePath(null);
+        onPathChange(null);
+        setContent("");
+        setSavedContent("");
+      }
+      await refreshFiles();
+      await refreshStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   // Files may have changed under git's hands: reload the tree, the status and
   // the open file.
   async function afterGitChange(): Promise<void> {
@@ -971,6 +1017,7 @@ export function WorkspaceView({
               onCancelCreate={() => setPendingCreate(null)}
               onRename={handleRename}
               onMove={handleMove}
+              onDeleteFolder={(path) => void deleteFolder(path)}
             />
           </div>
           )}

@@ -231,6 +231,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Delete a folder in Files.** Hover a folder in the tree and choose **Delete
+  folder**: it goes with everything in it, after a confirmation that counts the
+  files and says whether they can be restored (committed files in a git
+  workspace, from Changes). The workspace's own folder, `.git`, and the folder
+  holding the agent and workflow definitions can't be deleted; a symlinked
+  folder loses only the link.
+
 - **Definition files get editor help in the Files section.** A `*.agent.yaml`
   or `*.workflow.yaml` file is completed and validated against its JSON Schema
   as you type: key suggestions, and unknown keys and wrong types underlined.

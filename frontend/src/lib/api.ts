@@ -1443,6 +1443,12 @@ export const api = {
         `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
         { method: "DELETE" },
       ),
+    // A folder and everything in it (never the workspace's own folder).
+    deleteFolder: (workspaceId: number, path: string) =>
+      request<void>(
+        `/api/workspaces/${workspaceId}/folder?path=${encodeURIComponent(path)}`,
+        { method: "DELETE" },
+      ),
     renameEntry: (workspaceId: number, path: string, newPath: string) =>
       request<WorkspaceFileNode>(`/api/workspaces/${workspaceId}/rename`, {
         method: "POST",

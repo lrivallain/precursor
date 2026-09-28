@@ -8,6 +8,7 @@ reads/writes.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from precursor.backend.schemas import FileNode
@@ -150,6 +151,30 @@ def delete_file(root: Path, rel: str) -> None:
     if target.is_dir():
         raise IsADirectoryError(rel)
     target.unlink()
+
+
+def delete_dir(root: Path, rel: str) -> int:
+    """Delete the folder ``rel`` and everything in it; returns how many files went.
+
+    Never the root itself. A symlink to a folder loses only the link: its
+    target, which may hold anything, is left alone.
+    """
+    target = safe_join(root, rel)
+    parts = [p for p in Path((rel or "").strip().strip("/")).parts if p not in ("", ".")]
+    if target == root.resolve() or not parts:
+        raise UnsafePathError("The workspace's own folder can't be deleted")
+    lexical = root.joinpath(*parts)
+    if lexical.is_symlink():
+        lexical.unlink()
+        return 0
+    if not target.exists():
+        raise FileNotFoundError(rel)
+    if not target.is_dir():
+        raise NotADirectoryError(rel)
+    files = sum(1 for p in target.rglob("*") if p.is_file() or p.is_symlink())
+    # rmtree doesn't follow symlinks inside the folder: it removes the links.
+    shutil.rmtree(target)
+    return files
 
 
 def rename(root: Path, src_rel: str, dst_rel: str) -> None:

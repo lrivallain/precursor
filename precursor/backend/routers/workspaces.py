@@ -343,6 +343,36 @@ async def delete_file_endpoint(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found") from exc
 
 
+@router.delete("/{workspace_id}/folder", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_folder_endpoint(
+    workspace_id: int,
+    path: str = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete a folder and everything in it (never the workspace's own folder)."""
+    ws = await _get_workspace(workspace_id, session)
+    root = browse_root(ws)
+    try:
+        target = fs.safe_join(root, path)
+    except fs.UnsafePathError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if target != root.resolve() and definitions_home.holds_definitions(target):
+        # Every agent and workflow declared there would go with it.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This folder holds your agent and workflow definition files; it can't be deleted.",
+        )
+    try:
+        fs.delete_dir(root, path)
+    except fs.UnsafePathError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found") from exc
+    if _holds_definitions(root):
+        # Definition files may have gone with it: don't wait for the cache.
+        definition_overlay.invalidate()
+
+
 @router.post("/{workspace_id}/rename", response_model=FileNode)
 async def rename_endpoint(
     workspace_id: int,

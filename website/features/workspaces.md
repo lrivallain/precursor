@@ -206,6 +206,14 @@ workspace root.
 Markdown files get a rendered **Preview**, HTML files render in a sandboxed
 frame, and `.drawio` files open in a full diagram editor (below).
 
+Hover a folder in the tree for its actions: **New file**, **New folder**, and
+**Delete folder**, which removes the folder with everything in it once you
+confirm. The confirmation says how many files go, and whether they can come
+back: in a git workspace, committed files can be restored from **Changes** until
+you commit; anywhere else, deleting can't be undone. A folder that holds your
+agent and workflow [definition files](/features/definitions) can't be deleted,
+and a symlinked folder loses only the link, never what it points to.
+
 ## The editor
 
 Files open in **Monaco**, the editor core of VS Code:
